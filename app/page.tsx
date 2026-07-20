@@ -28,6 +28,11 @@ interface DatiBolletta {
   punF2: number;
   punF3: number;
   totaleConsumo: number;
+  // NUOVI CAMPI RICHIESTI
+  consumoAnnuo: string;
+  statoPagamenti: string;
+  cmor: string;
+  interessiMora: string;
 }
 
 export default function Home() {
@@ -94,7 +99,12 @@ export default function Home() {
         punF1: 0.10717,
         punF2: 0.13144,
         punF3: 0.12081,
-        totaleConsumo: 6848.59
+        totaleConsumo: 6848.59,
+        // Dati Reali estratti:
+        consumoAnnuo: '77.270 kWh',
+        statoPagamenti: 'Regolare (Nessuna morosità)',
+        cmor: 'Assente (0 €)',
+        interessiMora: 'Assenti (0 €)'
       });
     }, 2500);
   };
@@ -199,7 +209,32 @@ export default function Home() {
                   </div>
                 </div>
 
-                {/* 2. CONDIZIONE CONTRATTUALE ATTUALE */}
+                {/* 2. VERIFICA RISCHI & CONSUMO ANNUO */}
+                <div className="p-6 bg-slate-100/80 border border-slate-200 rounded-xl">
+                  <h3 className="font-bold text-gray-800 text-base mb-3">
+                    🔍 Verifica Morosità, Oneri e Consumo Annuo
+                  </h3>
+                  <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm">
+                    <div className="bg-white p-3 rounded-lg shadow-sm border">
+                      <span className="text-gray-500 block text-xs">Stato Pagamenti</span>
+                      <span className="font-bold text-emerald-600 text-xs">{datiBolletta.statoPagamenti}</span>
+                    </div>
+                    <div className="bg-white p-3 rounded-lg shadow-sm border">
+                      <span className="text-gray-500 block text-xs">Addebiti CMOR</span>
+                      <span className="font-semibold text-gray-800">{datiBolletta.cmor}</span>
+                    </div>
+                    <div className="bg-white p-3 rounded-lg shadow-sm border">
+                      <span className="text-gray-500 block text-xs">Interessi di Mora</span>
+                      <span className="font-semibold text-gray-800">{datiBolletta.interessiMora}</span>
+                    </div>
+                    <div className="bg-white p-3 rounded-lg shadow-sm border">
+                      <span className="text-gray-500 block text-xs">Consumo Annuo</span>
+                      <span className="font-extrabold text-blue-700">{datiBolletta.consumoAnnuo}</span>
+                    </div>
+                  </div>
+                </div>
+
+                {/* 3. CONDIZIONE CONTRATTUALE ATTUALE */}
                 <div className="p-6 bg-amber-50/60 border border-amber-200 rounded-xl">
                   <h3 className="font-bold text-amber-900 text-base mb-3">
                     📋 Offerta & Condizioni Contrattuali Attuali
@@ -222,10 +257,10 @@ export default function Home() {
                   </div>
                 </div>
 
-                {/* 3. CONSUMI E PUN */}
+                {/* 4. CONSUMI E PUN */}
                 <div className="p-6 bg-slate-50 border border-slate-200 rounded-xl">
                   <h3 className="font-bold text-gray-800 text-base mb-4">
-                    ⚡ Consumi Fatturati e Indici PUN GME del Mese
+                    ⚡ Consumi Mese Fatturato e Indici PUN GME
                   </h3>
                   <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-4">
                     <div className="bg-white p-4 rounded-lg shadow-sm border">
@@ -246,7 +281,7 @@ export default function Home() {
                   </div>
 
                   <div className="p-4 bg-emerald-100/70 border border-emerald-300 text-emerald-900 rounded-lg flex justify-between items-center">
-                    <span className="font-semibold">Totale Consumo Fatturato:</span>
+                    <span className="font-semibold">Totale Consumo Mese:</span>
                     <span className="text-lg font-extrabold">{datiBolletta.totaleConsumo.toLocaleString('it-IT')} kWh</span>
                   </div>
                 </div>
@@ -306,6 +341,7 @@ export default function Home() {
                   <td className="px-4 py-3 font-semibold">Maggio 2026</td>
                   <td className="px-4 py-3">0,107170</td>
                   <td className="px-4 py-3">0,131440</td>
+                  <td className="px-4 py-3">0,120810</td>
                 </tr>
               </tbody>
             </table>
