@@ -21,6 +21,7 @@ interface DatiBolletta {
   tipologiaCliente: string;
   cteApplicata: string;
   scadenzaCondizioni: string;
+  modalitaPagamento: string; // NUOVO CAMPO
   f1: number;
   f2: number;
   f3: number;
@@ -28,7 +29,6 @@ interface DatiBolletta {
   punF2: number;
   punF3: number;
   totaleConsumo: number;
-  // NUOVI CAMPI RICHIESTI
   consumoAnnuo: string;
   statoPagamenti: string;
   cmor: string;
@@ -93,6 +93,7 @@ export default function Home() {
         tipologiaCliente: 'Business (Altri usi)',
         cteApplicata: 'Prezzo Variabile Energia',
         scadenzaCondizioni: 'Indeterminata',
+        modalitaPagamento: 'Domiciliazione Bancaria (IT64********2420)',
         f1: 2581.88,
         f2: 1868.97,
         f3: 2397.74,
@@ -100,7 +101,6 @@ export default function Home() {
         punF2: 0.13144,
         punF3: 0.12081,
         totaleConsumo: 6848.59,
-        // Dati Reali estratti:
         consumoAnnuo: '77.270 kWh',
         statoPagamenti: 'Regolare (Nessuna morosità)',
         cmor: 'Assente (0 €)',
@@ -237,9 +237,9 @@ export default function Home() {
                 {/* 3. CONDIZIONE CONTRATTUALE ATTUALE */}
                 <div className="p-6 bg-amber-50/60 border border-amber-200 rounded-xl">
                   <h3 className="font-bold text-amber-900 text-base mb-3">
-                    📋 Offerta & Condizioni Contrattuali Attuali
+                    📋 Offerta & Modalità di Pagamento
                   </h3>
-                  <div className="grid grid-cols-1 md:grid-cols-3 gap-4 text-sm">
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-sm mb-3">
                     <div>
                       <span className="text-gray-500 block text-xs">Tipo Contratto</span>
                       <span className="font-semibold text-gray-800">{datiBolletta.tipoContratto}</span>
@@ -248,10 +248,18 @@ export default function Home() {
                       <span className="text-gray-500 block text-xs">Offerta Commerciale</span>
                       <span className="font-semibold text-gray-800">{datiBolletta.cteApplicata}</span>
                     </div>
+                  </div>
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-sm border-t border-amber-200/60 pt-3">
                     <div>
                       <span className="text-gray-500 block text-xs">Scadenza Condizioni</span>
                       <span className="font-semibold text-amber-800 bg-amber-100 px-2 py-0.5 rounded text-xs">
                         {datiBolletta.scadenzaCondizioni}
+                      </span>
+                    </div>
+                    <div>
+                      <span className="text-gray-500 block text-xs">Modalità di Pagamento</span>
+                      <span className="font-bold text-emerald-800 bg-emerald-100/80 px-2 py-0.5 rounded text-xs">
+                        💳 {datiBolletta.modalitaPagamento}
                       </span>
                     </div>
                   </div>
