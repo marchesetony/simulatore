@@ -2,11 +2,14 @@
 
 import React, { useState } from 'react';
 
-interface FileElaborato {
-  id: number;
-  nome: string;
-  stato: 'loading' | 'success';
-  risultato?: string;
+interface CTEArchiviata {
+  id: string;
+  nomeOfferta: string;
+  fornitore: string;
+  target: 'Business' | 'Consumer';
+  spread: number; // €/kWh
+  pcfAnnuo: number; // €/anno
+  scadenzaOfferta: string; // YYYY-MM-DD
 }
 
 interface DatiBolletta {
@@ -36,12 +39,14 @@ interface DatiBolletta {
   spesaMateriaPrimaAttuale: number;
 }
 
-interface OffertaSimulata {
-  nome: string;
-  fornitore: string;
-  spread: number;
-  quotaFissaAnnuo: number;
-  costoStimatoMese: number;
+interface DettaglioSimulazione {
+  cte: CTEArchiviata;
+  costoF1: number;
+  costoF2: number;
+  costoF3: number;
+  costoConsumiTotale: number;
+  costoFissoMese: number;
+  costoMateriaPrimaMese: number;
   risparmioMese: number;
   risparmioAnnuo: number;
 }
@@ -49,46 +54,59 @@ interface OffertaSimulata {
 export default function Home() {
   const [tabAttiva, setTabAttiva] = useState<'bollette' | 'cte' | 'pun' | 'simulatore'>('bollette');
   
-  // Stato CTE Massivo
-  const [fileListCTE, setFileListCTE] = useState<FileElaborato[]>([]);
+  // Archivio Dinamico CTE caricate (Simulate da OCR massivo + validità)
+  const [archivioCTE, setArchivioCTE] = useState<CTEArchiviata[]>([
+    {
+      id: 'cte-1',
+      nomeOfferta: 'BE STRONG GAS/LUCE B2B 2026',
+      fornitore: 'E2E Energy Solution',
+      target: 'Business',
+      spread: 0.0115,
+      pcfAnnuo: 108,
+      scadenzaOfferta: '2026-12-31' // Valida
+    },
+    {
+      id: 'cte-2',
+      nomeOfferta: 'Be Top per MT/BT Impresa',
+      fornitore: 'Power Grid Italia',
+      target: 'Business',
+      spread: 0.0140,
+      pcfAnnuo: 96,
+      scadenzaOfferta: '2026-09-30' // Valida
+    },
+    {
+      id: 'cte-3',
+      nomeOfferta: 'Be Smart 40.000 Promo GME',
+      fornitore: 'Smart Light S.p.A.',
+      target: 'Business',
+      spread: 0.0165,
+      pcfAnnuo: 120,
+      scadenzaOfferta: '2026-08-15' // Valida
+    },
+    {
+      id: 'cte-4',
+      nomeOfferta: 'Offerta Scaduta Spring 2025',
+      fornitore: 'Old Energy',
+      target: 'Business',
+      spread: 0.0080,
+      pcfAnnuo: 60,
+      scadenzaOfferta: '2025-12-31' // Scaduta (verrà filtrata via)
+    }
+  ]);
+
+  // CTE selezionata per visualizzare il dettaglio
+  const [cteSelezionataDettaglio, setCteSelezionataDettaglio] = useState<DettaglioSimulazione | null>(null);
 
   // Stato Bolletta PDF
   const [loadingBolletta, setLoadingBolletta] = useState(false);
   const [datiBolletta, setDatiBolletta] = useState<DatiBolletta | null>(null);
-
-  const handleUploadCTE = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    if (!e.target.files) return;
-    const nuoviFiles = Array.from(e.target.files);
-    const filesArray: FileElaborato[] = nuoviFiles.map((file, index) => ({
-      id: Date.now() + index,
-      nome: file.name,
-      stato: 'loading'
-    }));
-
-    setFileListCTE((prev) => [...filesArray, ...prev]);
-
-    filesArray.forEach((f, i) => {
-      setTimeout(() => {
-        setFileListCTE((prev) =>
-          prev.map((item) =>
-            item.id === f.id
-              ? {
-                  ...item,
-                  stato: 'success',
-                  risultato: `Offerta estratta dall'AI con successo nel database.`
-                }
-              : item
-          )
-        );
-      }, (i + 1) * 1200);
-    });
-  };
 
   const handleUploadBolletta = async (e: React.ChangeEvent<HTMLInputElement>) => {
     if (!e.target.files?.[0]) return;
     setLoadingBolletta(true);
     setDatiBolletta(null);
 
+    // Dati reali estratti dalla bolletta PASTICCERIA ROSARIO SAS
     setTimeout(() => {
       setLoadingBolletta(false);
       setDatiBolletta({
@@ -117,42 +135,51 @@ export default function Home() {
         interessiMora: 'Assenti (0 €)',
         spesaMateriaPrimaAttuale: 1344.15
       });
-    }, 2500);
+    }, 2000);
   };
 
-  const calcolaSimulazione = (): OffertaSimulata[] => {
+  // Algoritmo: Filtra solo CTE valide (non scadute) e calcola il ranking
+  const calcolaSimulazioneArchivio = (): DettaglioSimulazione[] => {
     if (!datiBolletta) return [];
 
-    const consumiTot = datiBolletta.totaleConsumo;
-    const punMedio = (datiBolletta.f1 * datiBolletta.punF1 + datiBolletta.f2 * datiBolletta.punF2 + datiBolletta.f3 * datiBolletta.punF3) / consumiTot;
+    const oggi = new Date().toISOString().split('T')[0]; // Data attuale (2026)
 
-    const offerte = [
-      { nome: 'EcoBusiness Flex 12M', fornitore: 'Green Power S.p.A.', spread: 0.012, quotaFissaAnnuo: 120 },
-      { nome: 'Luce Impresa Dynamic', fornitore: 'Next Energy', spread: 0.015, quotaFissaAnnuo: 96 },
-      { nome: 'B2B Top Protection GME', fornitore: 'Sorgente Elettrica', spread: 0.018, quotaFissaAnnuo: 144 },
-    ];
+    // 1. FILTRO: Solo CTE non scadute
+    const cteValide = archivioCTE.filter((cte) => cte.scadenzaOfferta >= oggi);
 
-    return offerte.map((o) => {
-      const quotaConsumiMese = consumiTot * (punMedio + o.spread);
-      const quotaFissaMese = o.quotaFissaAnnuo / 12;
-      const costoMese = quotaConsumiMese + quotaFissaMese;
-      const risparmioM = datiBolletta.spesaMateriaPrimaAttuale - costoMese;
+    // 2. CALCOLO DETTAGLIATO PER CIASCUNA CTE
+    const calcolate = cteValide.map((cte) => {
+      const costoF1 = datiBolletta.f1 * (datiBolletta.punF1 + cte.spread);
+      const costoF2 = datiBolletta.f2 * (datiBolletta.punF2 + cte.spread);
+      const costoF3 = datiBolletta.f3 * (datiBolletta.punF3 + cte.spread);
+      
+      const costoConsumiTotale = costoF1 + costoF2 + costoF3;
+      const costoFissoMese = cte.pcfAnnuo / 12;
+      const costoMateriaPrimaMese = costoConsumiTotale + costoFissoMese;
+      
+      const risparmioMese = datiBolletta.spesaMateriaPrimaAttuale - costoMateriaPrimaMese;
+      const risparmioAnnuo = risparmioMese * 12;
 
       return {
-        nome: o.nome,
-        fornitore: o.fornitore,
-        spread: o.spread,
-        quotaFissaAnnuo: o.quotaFissaAnnuo,
-        costoStimatoMese: costoMese,
-        risparmioMese: risparmioM,
-        risparmioAnnuo: risparmioM * 12,
+        cte,
+        costoF1,
+        costoF2,
+        costoF3,
+        costoConsumiTotale,
+        costoFissoMese,
+        costoMateriaPrimaMese,
+        risparmioMese,
+        risparmioAnnuo
       };
-    }).sort((a, b) => b.risparmioMese - a.risparmioMese);
+    });
+
+    // 3. ORDINAMENTO PER RISPARMIO DECRESCENTE E PRENDO LE PRIME 3
+    return calcolate.sort((a, b) => b.risparmioMese - a.risparmioMese).slice(0, 3);
   };
 
-  const offerteSimulate = calcolaSimulazione();
+  const top3Simulate = calcolaSimulazioneArchivio();
 
-  // Dati Storici PUN GME (Storico esteso degli ultimi mesi)
+  // Dati Storici PUN GME (Storico ultimi mesi)
   const storicoPUN = [
     { mese: 'Giugno 2026', f1: '0,125760', f2: '0,151700', f3: '0,127240' },
     { mese: 'Maggio 2026', f1: '0,107170', f2: '0,131440', f3: '0,120810' },
@@ -194,7 +221,7 @@ export default function Home() {
                 : 'border-transparent text-gray-500 hover:text-gray-700'
             }`}
           >
-            ⚡ 2. Caricamento Massivo CTE
+            ⚡ 2. Caricamento Massivo CTE ({archivioCTE.length})
           </button>
           <button
             onClick={() => setTabAttiva('pun')}
@@ -204,7 +231,7 @@ export default function Home() {
                 : 'border-transparent text-gray-500 hover:text-gray-700'
             }`}
           >
-            📊 3. Indice PUN GME (Storico)
+            📊 3. Indice PUN GME
           </button>
           <button
             onClick={() => setTabAttiva('simulatore')}
@@ -214,7 +241,7 @@ export default function Home() {
                 : 'border-transparent text-gray-500 hover:text-gray-700'
             }`}
           >
-            🏆 4. Simulazione & Comparazione
+            🏆 4. Simulazione CTE Archivio
           </button>
         </div>
 
@@ -234,7 +261,7 @@ export default function Home() {
 
             {datiBolletta && (
               <div className="mt-6 space-y-6">
-                {/* 1. ANAGRAFICA E FORNITURA */}
+                {/* ANAGRAFICA E FORNITURA */}
                 <div className="p-6 bg-slate-50 border border-slate-200 rounded-xl">
                   <h3 className="font-bold text-gray-800 text-base mb-4 border-b pb-2 flex items-center justify-between">
                     <span>📌 Dati Anagrafici e Fornitura ({datiBolletta.periodo})</span>
@@ -271,11 +298,9 @@ export default function Home() {
                   </div>
                 </div>
 
-                {/* 2. VERIFICA RISCHI & CONSUMO ANNUO */}
+                {/* VERIFICA RISCHI */}
                 <div className="p-6 bg-slate-100/80 border border-slate-200 rounded-xl">
-                  <h3 className="font-bold text-gray-800 text-base mb-3">
-                    🔍 Verifica Morosità, Oneri e Consumo Annuo
-                  </h3>
+                  <h3 className="font-bold text-gray-800 text-base mb-3">🔍 Verifica Morosità, Oneri e Consumo Annuo</h3>
                   <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm">
                     <div className="bg-white p-3 rounded-lg shadow-sm border">
                       <span className="text-gray-500 block text-xs">Stato Pagamenti</span>
@@ -296,11 +321,9 @@ export default function Home() {
                   </div>
                 </div>
 
-                {/* 3. CONDIZIONE CONTRATTUALE ATTUALE */}
+                {/* CONDIZIONE ATTUALE */}
                 <div className="p-6 bg-amber-50/60 border border-amber-200 rounded-xl">
-                  <h3 className="font-bold text-amber-900 text-base mb-3">
-                    📋 Offerta & Modalità di Pagamento
-                  </h3>
+                  <h3 className="font-bold text-amber-900 text-base mb-3">📋 Offerta & Modalità di Pagamento</h3>
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-sm mb-3">
                     <div>
                       <span className="text-gray-500 block text-xs">Tipo Contratto</span>
@@ -314,24 +337,18 @@ export default function Home() {
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-sm border-t border-amber-200/60 pt-3">
                     <div>
                       <span className="text-gray-500 block text-xs">Scadenza Condizioni</span>
-                      <span className="font-semibold text-amber-800 bg-amber-100 px-2 py-0.5 rounded text-xs">
-                        {datiBolletta.scadenzaCondizioni}
-                      </span>
+                      <span className="font-semibold text-amber-800 bg-amber-100 px-2 py-0.5 rounded text-xs">{datiBolletta.scadenzaCondizioni}</span>
                     </div>
                     <div>
                       <span className="text-gray-500 block text-xs">Modalità di Pagamento</span>
-                      <span className="font-bold text-emerald-800 bg-emerald-100/80 px-2 py-0.5 rounded text-xs">
-                        💳 {datiBolletta.modalitaPagamento}
-                      </span>
+                      <span className="font-bold text-emerald-800 bg-emerald-100/80 px-2 py-0.5 rounded text-xs">💳 {datiBolletta.modalitaPagamento}</span>
                     </div>
                   </div>
                 </div>
 
-                {/* 4. CONSUMI E PUN */}
+                {/* CONSUMI MESE */}
                 <div className="p-6 bg-slate-50 border border-slate-200 rounded-xl">
-                  <h3 className="font-bold text-gray-800 text-base mb-4">
-                    ⚡ Consumi Mese Fatturato e Indici PUN GME
-                  </h3>
+                  <h3 className="font-bold text-gray-800 text-base mb-4">⚡ Consumi Mese Fatturato e Indici PUN GME</h3>
                   <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-4">
                     <div className="bg-white p-4 rounded-lg shadow-sm border">
                       <div className="text-xs text-gray-500">Consumo F1</div>
@@ -364,31 +381,39 @@ export default function Home() {
         {/* TAB 2: CTE MASSIVO */}
         {tabAttiva === 'cte' && (
           <div>
-            <div className="border-2 border-dashed border-blue-200 rounded-xl p-8 flex flex-col items-center bg-blue-50/30">
+            <div className="border-2 border-dashed border-blue-200 rounded-xl p-8 flex flex-col items-center bg-blue-50/30 mb-6">
               <label className="cursor-pointer bg-blue-600 hover:bg-blue-700 text-white font-semibold py-2.5 px-6 rounded-lg shadow transition-colors">
-                Seleziona CTE PDF (Massivo)
-                <input type="file" accept="application/pdf" className="hidden" onChange={handleUploadCTE} multiple />
+                Carica Nuove CTE PDF (Massivo)
+                <input type="file" accept="application/pdf" className="hidden" multiple />
               </label>
-              <p className="text-xs text-gray-400 mt-2">Puoi selezionare fino a 30 CTE contemporaneamente</p>
+              <p className="text-xs text-gray-400 mt-2">I dati estratti dalle CTE verranno salvati nell'archivio sottostante</p>
             </div>
 
-            {fileListCTE.length > 0 && (
-              <div className="mt-6">
-                <h3 className="font-bold text-gray-800 mb-3">Monitor CTE ({fileListCTE.length} file)</h3>
-                <div className="space-y-2 max-h-64 overflow-y-auto">
-                  {fileListCTE.map((f) => (
-                    <div key={f.id} className="p-3 bg-emerald-50 border border-emerald-200 text-emerald-900 rounded-lg text-sm flex justify-between">
-                      <span className="font-medium">{f.nome}</span>
-                      <span className="text-xs bg-emerald-200 px-2 py-0.5 rounded font-bold">{f.risultato || 'Elaborazione...'}</span>
+            <h3 className="font-bold text-gray-800 mb-3">📋 Archivio CTE Attivo per la Simulazione</h3>
+            <div className="space-y-3">
+              {archivioCTE.map((cte) => {
+                const isScaduta = cte.scadenzaOfferta < new Date().toISOString().split('T')[0];
+                return (
+                  <div key={cte.id} className={`p-4 rounded-xl border flex justify-between items-center text-sm ${isScaduta ? 'bg-red-50/50 border-red-200 opacity-60' : 'bg-white border-gray-200 shadow-sm'}`}>
+                    <div>
+                      <div className="font-bold text-gray-900">{cte.nomeOfferta} <span className="text-xs font-normal text-gray-500">({cte.fornitore})</span></div>
+                      <div className="text-xs text-gray-500 mt-1">Spread: <strong>{cte.spread} €/kWh</strong> | Q.Fissa: <strong>{cte.pcfAnnuo} €/anno</strong></div>
                     </div>
-                  ))}
-                </div>
-              </div>
-            )}
+                    <div>
+                      {isScaduta ? (
+                        <span className="bg-red-100 text-red-800 text-xs px-2.5 py-1 rounded-full font-bold">SCADUTA ({cte.scadenzaOfferta})</span>
+                      ) : (
+                        <span className="bg-emerald-100 text-emerald-800 text-xs px-2.5 py-1 rounded-full font-bold">VALIDA fino al {cte.scadenzaOfferta}</span>
+                      )}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
           </div>
         )}
 
-        {/* TAB 3: TABELLA PUN GME ESTESA */}
+        {/* TAB 3: TABELLA PUN GME */}
         {tabAttiva === 'pun' && (
           <div className="overflow-x-auto">
             <table className="w-full text-sm text-left text-gray-600">
@@ -414,7 +439,7 @@ export default function Home() {
           </div>
         )}
 
-        {/* TAB 4: SIMULATORE & COMPARATORE */}
+        {/* TAB 4: SIMULATORE ARCHIVIO CTE */}
         {tabAttiva === 'simulatore' && (
           <div>
             {!datiBolletta ? (
@@ -423,25 +448,36 @@ export default function Home() {
               </div>
             ) : (
               <div className="space-y-6">
+                
+                {/* PROFILO CLIENTE */}
                 <div className="bg-blue-50 border border-blue-200 p-4 rounded-xl flex justify-between items-center text-sm">
                   <div>
                     <span className="text-gray-500 block text-xs">Profilo Cliente per Simulazione</span>
                     <span className="font-bold text-gray-800">{datiBolletta.intestatario} ({datiBolletta.consumoAnnuo}/anno)</span>
                   </div>
                   <div className="text-right">
-                    <span className="text-gray-500 block text-xs">Spesa Materia Prima Attuale</span>
+                    <span className="text-gray-500 block text-xs">Materia Prima Attuale in Bolletta</span>
                     <span className="font-extrabold text-gray-800">{datiBolletta.spesaMateriaPrimaAttuale.toFixed(2)} €/mese</span>
                   </div>
                 </div>
 
-                <h3 className="font-bold text-gray-800 text-lg">🏆 Classifica Offerte CTE per Risparmio Economico</h3>
+                <div className="flex justify-between items-center">
+                  <h3 className="font-bold text-gray-800 text-lg">🏆 Top 3 CTE Valide in Archivio</h3>
+                  <span className="text-xs text-gray-500">Filtrate solo offerte non scadute</span>
+                </div>
 
+                {/* CLASSIFICA TOP 3 */}
                 <div className="space-y-4">
-                  {offerteSimulate.map((offerta, index) => (
+                  {top3Simulate.map((item, index) => (
                     <div
-                      key={index}
-                      className={`p-6 rounded-xl border transition-all ${
-                        index === 0 ? 'bg-emerald-50/70 border-emerald-300 shadow-md ring-2 ring-emerald-500/20' : 'bg-white border-gray-200'
+                      key={item.cte.id}
+                      onClick={() => setCteSelezionataDettaglio(item)}
+                      className={`p-6 rounded-xl border cursor-pointer transition-all hover:shadow-lg ${
+                        cteSelezionataDettaglio?.cte.id === item.cte.id
+                          ? 'ring-2 ring-blue-600 bg-blue-50/30'
+                          : index === 0
+                          ? 'bg-emerald-50/70 border-emerald-300 shadow-sm'
+                          : 'bg-white border-gray-200'
                       }`}
                     >
                       <div className="flex flex-col md:flex-row justify-between md:items-center gap-4">
@@ -450,30 +486,85 @@ export default function Home() {
                             {index === 0 && (
                               <span className="bg-emerald-600 text-white text-xs font-bold px-2 py-0.5 rounded">MIGLIOR OFFERTA</span>
                             )}
-                            <h4 className="font-bold text-gray-900 text-base">{offerta.nome}</h4>
+                            <h4 className="font-bold text-gray-900 text-base">{item.cte.nomeOfferta}</h4>
                           </div>
-                          <p className="text-xs text-gray-500 mt-1">Fornitore: {offerta.fornitore}</p>
+                          <p className="text-xs text-gray-500 mt-1">Fornitore: {item.cte.fornitore} | Scadenza: {item.cte.scadenzaOfferta}</p>
                           <div className="flex gap-4 text-xs text-gray-600 mt-2">
-                            <span>Spread: <strong>{offerta.spread} €/kWh</strong></span>
-                            <span>Fisso: <strong>{offerta.quotaFissaAnnuo} €/anno</strong></span>
+                            <span>Spread: <strong>{item.cte.spread} €/kWh</strong></span>
+                            <span>Fisso $P_{`{CF}`}$: <strong>{item.cte.pcfAnnuo} €/anno</strong></span>
                           </div>
                         </div>
 
                         <div className="flex items-center gap-6 border-t md:border-t-0 pt-3 md:pt-0">
                           <div>
-                            <span className="text-xs text-gray-400 block">Materia Prima Stimata</span>
-                            <span className="text-base font-bold text-gray-800">{offerta.costoStimatoMese.toFixed(2)} €/mese</span>
+                            <span className="text-xs text-gray-400 block">Stima Materia Prima</span>
+                            <span className="text-base font-bold text-gray-800">{item.costoMateriaPrimaMese.toFixed(2)} €/mese</span>
                           </div>
                           <div className="bg-emerald-100 p-3 rounded-xl text-emerald-900 text-right">
                             <span className="text-xs text-emerald-700 block font-semibold">Risparmio Stimato</span>
-                            <span className="text-lg font-extrabold text-emerald-700">+{offerta.risparmioMese.toFixed(2)} €/mese</span>
-                            <span className="text-xs block text-emerald-800 font-medium">({offerta.risparmioAnnuo.toFixed(2)} €/anno)</span>
+                            <span className="text-lg font-extrabold text-emerald-700">+{item.risparmioMese.toFixed(2)} €/mese</span>
+                            <span className="text-xs block text-emerald-800 font-medium">({item.risparmioAnnuo.toFixed(2)} €/anno)</span>
                           </div>
                         </div>
+                      </div>
+
+                      <div className="mt-3 text-right">
+                        <span className="text-xs font-bold text-blue-600 hover:underline">
+                          {cteSelezionataDettaglio?.cte.id === item.cte.id ? '▲ Nascondi Dettaglio Calcolo' : '🔍 Clicca per vedere il Dettaglio Analitico'}
+                        </span>
                       </div>
                     </div>
                   ))}
                 </div>
+
+                {/* PANNELLO DETTAGLIO ANALITICO DELLA CTE SELEZIONATA */}
+                {cteSelezionataDettaglio && (
+                  <div className="p-6 bg-slate-900 text-white rounded-2xl shadow-2xl animate-fade-in mt-6">
+                    <div className="flex justify-between items-start border-b border-slate-700 pb-4 mb-4">
+                      <div>
+                        <span className="bg-blue-500 text-white text-xs px-2.5 py-0.5 rounded font-bold uppercase">Prospetto Analitico Dettagliato</span>
+                        <h4 className="text-xl font-bold mt-1 text-white">{cteSelezionataDettaglio.cte.nomeOfferta}</h4>
+                        <p className="text-xs text-slate-400">Formula applicata: Consumo Fascia × (PUN Fascia + Spread) + Quota Fissa</p>
+                      </div>
+                      <button
+                        onClick={() => setCteSelezionataDettaglio(null)}
+                        className="text-slate-400 hover:text-white font-bold text-sm bg-slate-800 px-3 py-1 rounded"
+                      >
+                        ✕ Chiudi
+                      </button>
+                    </div>
+
+                    <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6 text-sm">
+                      <div className="bg-slate-800/80 p-4 rounded-xl border border-slate-700">
+                        <span className="text-xs text-slate-400 block">Dettaglio Fascia F1 ({datiBolletta.f1} kWh)</span>
+                        <div className="text-base font-bold text-blue-400 mt-1">{cteSelezionataDettaglio.costoF1.toFixed(2)} €</div>
+                        <span className="text-xs text-slate-400 font-mono mt-1 block">PUN ({datiBolletta.punF1}) + Spread ({cteSelezionataDettaglio.cte.spread})</span>
+                      </div>
+                      <div className="bg-slate-800/80 p-4 rounded-xl border border-slate-700">
+                        <span className="text-xs text-slate-400 block">Dettaglio Fascia F2 ({datiBolletta.f2} kWh)</span>
+                        <div className="text-base font-bold text-blue-400 mt-1">{cteSelezionataDettaglio.costoF2.toFixed(2)} €</div>
+                        <span className="text-xs text-slate-400 font-mono mt-1 block">PUN ({datiBolletta.punF2}) + Spread ({cteSelezionataDettaglio.cte.spread})</span>
+                      </div>
+                      <div className="bg-slate-800/80 p-4 rounded-xl border border-slate-700">
+                        <span className="text-xs text-slate-400 block">Dettaglio Fascia F3 ({datiBolletta.f3} kWh)</span>
+                        <div className="text-base font-bold text-blue-400 mt-1">{cteSelezionataDettaglio.costoF3.toFixed(2)} €</div>
+                        <span className="text-xs text-slate-400 font-mono mt-1 block">PUN ({datiBolletta.punF3}) + Spread ({cteSelezionataDettaglio.cte.spread})</span>
+                      </div>
+                    </div>
+
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4 bg-slate-800/50 p-4 rounded-xl border border-slate-700 text-sm">
+                      <div>
+                        <span className="text-slate-400 text-xs block">Quota Fissa Commercializzazione ($P_{`{CF}`}$)</span>
+                        <span className="font-semibold text-slate-200">{(cteSelezionataDettaglio.cte.pcfAnnuo / 12).toFixed(2)} €/mese ({cteSelezionataDettaglio.cte.pcfAnnuo} €/anno)</span>
+                      </div>
+                      <div>
+                        <span className="text-slate-400 text-xs block">Totale Stima Materia Prima Mese</span>
+                        <span className="font-extrabold text-emerald-400 text-lg">{cteSelezionataDettaglio.costoMateriaPrimaMese.toFixed(2)} €/mese</span>
+                      </div>
+                    </div>
+                  </div>
+                )}
+
               </div>
             )}
           </div>
