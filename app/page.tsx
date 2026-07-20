@@ -11,13 +11,14 @@ interface FileElaborato {
 
 interface DatiBolletta {
   periodo: string;
+  fornitore: string;
   intestatario: string;
   codiceFiscale: string;
   pod: string;
   indirizzoFornitura: string;
   potenzaImpegnata: string;
   tipoContratto: string;
-  tipologiaCliente: 'Consumer Residente' | 'Consumer Non Residente' | 'Business';
+  tipologiaCliente: string;
   cteApplicata: string;
   scadenzaCondizioni: string;
   f1: number;
@@ -26,6 +27,7 @@ interface DatiBolletta {
   punF1: number;
   punF2: number;
   punF3: number;
+  totaleConsumo: number;
 }
 
 export default function Home() {
@@ -71,25 +73,28 @@ export default function Home() {
     setLoadingBolletta(true);
     setDatiBolletta(null);
 
+    // Dati reali estratti dall'OCR della bolletta E2E COMPANY ENERGY
     setTimeout(() => {
       setLoadingBolletta(false);
       setDatiBolletta({
-        periodo: 'Giugno 2026',
-        intestatario: 'Mario Rossi',
-        codiceFiscale: 'RSSMRA80A01H501U',
-        pod: 'IT001E12345678',
-        indirizzoFornitura: 'Via Roma 123, 00100 Roma (RM)',
-        potenzaImpegnata: '3,0 kW',
-        tipoContratto: 'Mercato Libero - Monorario/Multiorario',
-        tipologiaCliente: 'Consumer Residente',
-        cteApplicata: 'Luce Luce Chiara Casa GME',
-        scadenzaCondizioni: '31/10/2026',
-        f1: 150,
-        f2: 120,
-        f3: 210,
-        punF1: 0.12576,
-        punF2: 0.15170,
-        punF3: 0.12724
+        periodo: 'Maggio 2026 (01/05/2026 - 31/05/2026)',
+        fornitore: 'E2E COMPANY ENERGY SPA',
+        intestatario: 'PASTICCERIA ROSARIO SAS',
+        codiceFiscale: '03478070794',
+        pod: 'IT001E79026920',
+        indirizzoFornitura: 'VIALE DELLA PACE SNC - 89900 VIBO VALENTIA (VV)',
+        potenzaImpegnata: '30,0 kW',
+        tipoContratto: 'Mercato Libero',
+        tipologiaCliente: 'Business (Altri usi)',
+        cteApplicata: 'Prezzo Variabile Energia',
+        scadenzaCondizioni: 'Indeterminata',
+        f1: 2581.88,
+        f2: 1868.97,
+        f3: 2397.74,
+        punF1: 0.10717,
+        punF2: 0.13144,
+        punF3: 0.12081,
+        totaleConsumo: 6848.59
       });
     }, 2500);
   };
@@ -168,6 +173,10 @@ export default function Home() {
                   
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-sm">
                     <div>
+                      <span className="text-gray-500 block text-xs">Fornitore Attuale</span>
+                      <span className="font-semibold text-gray-800">{datiBolletta.fornitore}</span>
+                    </div>
+                    <div>
                       <span className="text-gray-500 block text-xs">Intestatario</span>
                       <span className="font-semibold text-gray-800">{datiBolletta.intestatario}</span>
                     </div>
@@ -183,7 +192,7 @@ export default function Home() {
                       <span className="text-gray-500 block text-xs">Potenza Impegnata</span>
                       <span className="font-semibold text-gray-800">{datiBolletta.potenzaImpegnata}</span>
                     </div>
-                    <div className="md:col-span-2">
+                    <div>
                       <span className="text-gray-500 block text-xs">Indirizzo Fornitura</span>
                       <span className="font-semibold text-gray-800">{datiBolletta.indirizzoFornitura}</span>
                     </div>
@@ -201,7 +210,7 @@ export default function Home() {
                       <span className="font-semibold text-gray-800">{datiBolletta.tipoContratto}</span>
                     </div>
                     <div>
-                      <span className="text-gray-500 block text-xs">CTE Applicata</span>
+                      <span className="text-gray-500 block text-xs">Offerta Commerciale</span>
                       <span className="font-semibold text-gray-800">{datiBolletta.cteApplicata}</span>
                     </div>
                     <div>
@@ -221,24 +230,24 @@ export default function Home() {
                   <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-4">
                     <div className="bg-white p-4 rounded-lg shadow-sm border">
                       <div className="text-xs text-gray-500">Consumo F1</div>
-                      <div className="text-xl font-bold text-gray-800">{datiBolletta.f1} kWh</div>
+                      <div className="text-xl font-bold text-gray-800">{datiBolletta.f1.toLocaleString('it-IT')} kWh</div>
                       <div className="text-xs text-blue-600 mt-1">PUN GME: {datiBolletta.punF1} €/kWh</div>
                     </div>
                     <div className="bg-white p-4 rounded-lg shadow-sm border">
                       <div className="text-xs text-gray-500">Consumo F2</div>
-                      <div className="text-xl font-bold text-gray-800">{datiBolletta.f2} kWh</div>
+                      <div className="text-xl font-bold text-gray-800">{datiBolletta.f2.toLocaleString('it-IT')} kWh</div>
                       <div className="text-xs text-blue-600 mt-1">PUN GME: {datiBolletta.punF2} €/kWh</div>
                     </div>
                     <div className="bg-white p-4 rounded-lg shadow-sm border">
                       <div className="text-xs text-gray-500">Consumo F3</div>
-                      <div className="text-xl font-bold text-gray-800">{datiBolletta.f3} kWh</div>
+                      <div className="text-xl font-bold text-gray-800">{datiBolletta.f3.toLocaleString('it-IT')} kWh</div>
                       <div className="text-xs text-blue-600 mt-1">PUN GME: {datiBolletta.punF3} €/kWh</div>
                     </div>
                   </div>
 
                   <div className="p-4 bg-emerald-100/70 border border-emerald-300 text-emerald-900 rounded-lg flex justify-between items-center">
                     <span className="font-semibold">Totale Consumo Fatturato:</span>
-                    <span className="text-lg font-extrabold">{datiBolletta.f1 + datiBolletta.f2 + datiBolletta.f3} kWh</span>
+                    <span className="text-lg font-extrabold">{datiBolletta.totaleConsumo.toLocaleString('it-IT')} kWh</span>
                   </div>
                 </div>
 
@@ -297,13 +306,6 @@ export default function Home() {
                   <td className="px-4 py-3 font-semibold">Maggio 2026</td>
                   <td className="px-4 py-3">0,107170</td>
                   <td className="px-4 py-3">0,131440</td>
-                  <td className="px-4 py-3">0,120810</td>
-                </tr>
-                <tr className="border-b bg-white">
-                  <td className="px-4 py-3 font-semibold">Aprile 2026</td>
-                  <td className="px-4 py-3">0,111140</td>
-                  <td className="px-4 py-3">0,138260</td>
-                  <td className="px-4 py-3">0,116630</td>
                 </tr>
               </tbody>
             </table>
