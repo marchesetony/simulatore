@@ -9,6 +9,25 @@ interface FileElaborato {
   risultato?: string;
 }
 
+interface DatiBolletta {
+  periodo: string;
+  intestatario: string;
+  codiceFiscale: string;
+  pod: string;
+  indirizzoFornitura: string;
+  potenzaImpegnata: string;
+  tipoContratto: string;
+  tipologiaCliente: 'Consumer Residente' | 'Consumer Non Residente' | 'Business';
+  cteApplicata: string;
+  scadenzaCondizioni: string;
+  f1: number;
+  f2: number;
+  f3: number;
+  punF1: number;
+  punF2: number;
+  punF3: number;
+}
+
 export default function Home() {
   const [tabAttiva, setTabAttiva] = useState<'bollette' | 'cte' | 'pun'>('bollette');
   
@@ -17,16 +36,7 @@ export default function Home() {
 
   // Stato Bolletta PDF
   const [loadingBolletta, setLoadingBolletta] = useState(false);
-  const [datiBolletta, setDatiBolletta] = useState<{
-    periodo: string;
-    f1: number;
-    f2: number;
-    f3: number;
-    punF1: number;
-    punF2: number;
-    punF3: number;
-    spesaMateriaPrima: number;
-  } | null>(null);
+  const [datiBolletta, setDatiBolletta] = useState<DatiBolletta | null>(null);
 
   const handleUploadCTE = async (e: React.ChangeEvent<HTMLInputElement>) => {
     if (!e.target.files) return;
@@ -65,13 +75,21 @@ export default function Home() {
       setLoadingBolletta(false);
       setDatiBolletta({
         periodo: 'Giugno 2026',
+        intestatario: 'Mario Rossi',
+        codiceFiscale: 'RSSMRA80A01H501U',
+        pod: 'IT001E12345678',
+        indirizzoFornitura: 'Via Roma 123, 00100 Roma (RM)',
+        potenzaImpegnata: '3,0 kW',
+        tipoContratto: 'Mercato Libero - Monorario/Multiorario',
+        tipologiaCliente: 'Consumer Residente',
+        cteApplicata: 'Luce Luce Chiara Casa GME',
+        scadenzaCondizioni: '31/10/2026',
         f1: 150,
         f2: 120,
         f3: 210,
         punF1: 0.12576,
         punF2: 0.15170,
-        punF3: 0.12724,
-        spesaMateriaPrima: 72.45
+        punF3: 0.12724
       });
     }, 2500);
   };
@@ -133,37 +151,97 @@ export default function Home() {
                 {loadingBolletta ? 'Lettura OCR e recupero PUN GME...' : 'Carica Bolletta Elettrica (PDF)'}
                 <input type="file" accept="application/pdf" className="hidden" onChange={handleUploadBolletta} disabled={loadingBolletta} />
               </label>
-              <p className="text-xs text-gray-400 mt-2">Carica la bolletta del cliente per estrarre consumi e mese</p>
+              <p className="text-xs text-gray-400 mt-2">Carica la bolletta del cliente per estrarre tutti i dati contrattuali e tecnici</p>
             </div>
 
             {datiBolletta && (
-              <div className="mt-6 p-6 bg-slate-50 border border-slate-200 rounded-xl">
-                <h3 className="font-bold text-gray-800 text-lg mb-4">
-                  📌 Risultati Estrazione OCR Bolletta ({datiBolletta.periodo})
-                </h3>
+              <div className="mt-6 space-y-6">
                 
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
-                  <div className="bg-white p-4 rounded-lg shadow-sm border">
-                    <div className="text-xs text-gray-500">Consumo F1</div>
-                    <div className="text-xl font-bold text-gray-800">{datiBolletta.f1} kWh</div>
-                    <div className="text-xs text-blue-600 mt-1">PUN GME: {datiBolletta.punF1} €/kWh</div>
-                  </div>
-                  <div className="bg-white p-4 rounded-lg shadow-sm border">
-                    <div className="text-xs text-gray-500">Consumo F2</div>
-                    <div className="text-xl font-bold text-gray-800">{datiBolletta.f2} kWh</div>
-                    <div className="text-xs text-blue-600 mt-1">PUN GME: {datiBolletta.punF2} €/kWh</div>
-                  </div>
-                  <div className="bg-white p-4 rounded-lg shadow-sm border">
-                    <div className="text-xs text-gray-500">Consumo F3</div>
-                    <div className="text-xl font-bold text-gray-800">{datiBolletta.f3} kWh</div>
-                    <div className="text-xs text-blue-600 mt-1">PUN GME: {datiBolletta.punF3} €/kWh</div>
+                {/* 1. ANAGRAFICA E FORNITURA */}
+                <div className="p-6 bg-slate-50 border border-slate-200 rounded-xl">
+                  <h3 className="font-bold text-gray-800 text-base mb-4 border-b pb-2 flex items-center justify-between">
+                    <span>📌 Dati Anagrafici e Fornitura ({datiBolletta.periodo})</span>
+                    <span className="bg-blue-100 text-blue-800 text-xs px-2.5 py-1 rounded-full font-bold">
+                      {datiBolletta.tipologiaCliente}
+                    </span>
+                  </h3>
+                  
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-sm">
+                    <div>
+                      <span className="text-gray-500 block text-xs">Intestatario</span>
+                      <span className="font-semibold text-gray-800">{datiBolletta.intestatario}</span>
+                    </div>
+                    <div>
+                      <span className="text-gray-500 block text-xs">Codice Fiscale / P.IVA</span>
+                      <span className="font-semibold text-gray-800">{datiBolletta.codiceFiscale}</span>
+                    </div>
+                    <div>
+                      <span className="text-gray-500 block text-xs">Codice POD</span>
+                      <span className="font-semibold text-blue-700 font-mono">{datiBolletta.pod}</span>
+                    </div>
+                    <div>
+                      <span className="text-gray-500 block text-xs">Potenza Impegnata</span>
+                      <span className="font-semibold text-gray-800">{datiBolletta.potenzaImpegnata}</span>
+                    </div>
+                    <div className="md:col-span-2">
+                      <span className="text-gray-500 block text-xs">Indirizzo Fornitura</span>
+                      <span className="font-semibold text-gray-800">{datiBolletta.indirizzoFornitura}</span>
+                    </div>
                   </div>
                 </div>
 
-                <div className="p-4 bg-emerald-100/70 border border-emerald-300 text-emerald-900 rounded-lg flex justify-between items-center">
-                  <span className="font-semibold">Totale Consumo Fatturato:</span>
-                  <span className="text-lg font-extrabold">{datiBolletta.f1 + datiBolletta.f2 + datiBolletta.f3} kWh</span>
+                {/* 2. CONDIZIONE CONTRATTUALE ATTUALE */}
+                <div className="p-6 bg-amber-50/60 border border-amber-200 rounded-xl">
+                  <h3 className="font-bold text-amber-900 text-base mb-3">
+                    📋 Offerta & Condizioni Contrattuali Attuali
+                  </h3>
+                  <div className="grid grid-cols-1 md:grid-cols-3 gap-4 text-sm">
+                    <div>
+                      <span className="text-gray-500 block text-xs">Tipo Contratto</span>
+                      <span className="font-semibold text-gray-800">{datiBolletta.tipoContratto}</span>
+                    </div>
+                    <div>
+                      <span className="text-gray-500 block text-xs">CTE Applicata</span>
+                      <span className="font-semibold text-gray-800">{datiBolletta.cteApplicata}</span>
+                    </div>
+                    <div>
+                      <span className="text-gray-500 block text-xs">Scadenza Condizioni</span>
+                      <span className="font-semibold text-amber-800 bg-amber-100 px-2 py-0.5 rounded text-xs">
+                        {datiBolletta.scadenzaCondizioni}
+                      </span>
+                    </div>
+                  </div>
                 </div>
+
+                {/* 3. CONSUMI E PUN */}
+                <div className="p-6 bg-slate-50 border border-slate-200 rounded-xl">
+                  <h3 className="font-bold text-gray-800 text-base mb-4">
+                    ⚡ Consumi Fatturati e Indici PUN GME del Mese
+                  </h3>
+                  <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-4">
+                    <div className="bg-white p-4 rounded-lg shadow-sm border">
+                      <div className="text-xs text-gray-500">Consumo F1</div>
+                      <div className="text-xl font-bold text-gray-800">{datiBolletta.f1} kWh</div>
+                      <div className="text-xs text-blue-600 mt-1">PUN GME: {datiBolletta.punF1} €/kWh</div>
+                    </div>
+                    <div className="bg-white p-4 rounded-lg shadow-sm border">
+                      <div className="text-xs text-gray-500">Consumo F2</div>
+                      <div className="text-xl font-bold text-gray-800">{datiBolletta.f2} kWh</div>
+                      <div className="text-xs text-blue-600 mt-1">PUN GME: {datiBolletta.punF2} €/kWh</div>
+                    </div>
+                    <div className="bg-white p-4 rounded-lg shadow-sm border">
+                      <div className="text-xs text-gray-500">Consumo F3</div>
+                      <div className="text-xl font-bold text-gray-800">{datiBolletta.f3} kWh</div>
+                      <div className="text-xs text-blue-600 mt-1">PUN GME: {datiBolletta.punF3} €/kWh</div>
+                    </div>
+                  </div>
+
+                  <div className="p-4 bg-emerald-100/70 border border-emerald-300 text-emerald-900 rounded-lg flex justify-between items-center">
+                    <span className="font-semibold">Totale Consumo Fatturato:</span>
+                    <span className="text-lg font-extrabold">{datiBolletta.f1 + datiBolletta.f2 + datiBolletta.f3} kWh</span>
+                  </div>
+                </div>
+
               </div>
             )}
           </div>
