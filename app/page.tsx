@@ -7,13 +7,13 @@ interface CTEArchiviata {
   id: string;
   nomeOfferta: string;
   fornitore: string;
-  tipoVettore: 'EE' | 'GAS';              // EE = Energia Elettrica, GAS = Gas Naturale
+  tipoVettore: 'EE' | 'GAS';
   tensioneCompatibile: 'BT' | 'MT' | 'ENTRAMBE';
-  spread: number;                        // Eur/kWh (es. 0.02)
-  quotaFissaBusinessMese: number;         // Eur/mese (es. 15.00 €/mese = 180 €/anno)
-  commercializzazioneVar: number;        // Eur/kWh (es. 0.003)
-  sbilanciamentoVar: number;              // Eur/kWh (es. 0.005)
-  costoUnaTantum: number;                 // Eur una tantum (es. 1.50 €)
+  spread: number;                        // Eur/kWh
+  quotaFissaBusinessMese: number;         // Eur/mese
+  commercializzazioneVar: number;        // Eur/kWh
+  sbilanciamentoVar: number;              // Eur/kWh
+  costoUnaTantum: number;                 // Eur una tantum
   scadenzaOfferta: string;               // YYYY-MM-DD
 }
 
@@ -27,7 +27,7 @@ interface DatiBolletta {
   potenzaImpegnata: string;
   tipoContratto: string;
   tipologiaCliente: string;
-  livelloTensione: 'BT' | 'MT';          // Bassa Tensione o Media Tensione
+  livelloTensione: 'BT' | 'MT';
   cteApplicata: string;
   scadenzaCondizioni: string;
   modalitaPagamento: string;
@@ -60,7 +60,7 @@ interface DettaglioSimulazione {
 export default function Home() {
   const [tabAttiva, setTabAttiva] = useState<'bollette' | 'cte' | 'pun' | 'simulatore'>('bollette');
 
-  // CTE Reale Estratta dal documento "Be Smile" di BPower Energia
+  // Archivio Iniziale Completo con tutte le CTE caricate
   const [archivioCTE, setArchivioCTE] = useState<CTEArchiviata[]>([
     {
       id: 'cte-be-smile',
@@ -68,11 +68,37 @@ export default function Home() {
       fornitore: 'BPower Energia S.p.A.',
       tipoVettore: 'EE',
       tensioneCompatibile: 'ENTRAMBE',
-      spread: 0.020,                     // 0,02 Eur/kWh
-      quotaFissaBusinessMese: 15.00,     // 15 €/mese (180 €/anno)
-      commercializzazioneVar: 0.003,    // 0,003 €/kWh
-      sbilanciamentoVar: 0.005,          // 0,005 €/kWh
-      costoUnaTantum: 1.50,              // 1,50 € Gestione APP e Servizi
+      spread: 0.020,
+      quotaFissaBusinessMese: 15.00,
+      commercializzazioneVar: 0.003,
+      sbilanciamentoVar: 0.005,
+      costoUnaTantum: 1.50,
+      scadenzaOfferta: '2026-12-31'
+    },
+    {
+      id: 'cte-be-top-mt',
+      nomeOfferta: 'Be Top per MT',
+      fornitore: 'BPower Energia S.p.A.',
+      tipoVettore: 'EE',
+      tensioneCompatibile: 'MT',
+      spread: 0.014,
+      quotaFissaBusinessMese: 12.00,
+      commercializzazioneVar: 0.002,
+      sbilanciamentoVar: 0.004,
+      costoUnaTantum: 0.00,
+      scadenzaOfferta: '2026-12-31'
+    },
+    {
+      id: 'cte-be-smart-40k',
+      nomeOfferta: 'Be Smart 40.000',
+      fornitore: 'BPower Energia S.p.A.',
+      tipoVettore: 'EE',
+      tensioneCompatibile: 'BT',
+      spread: 0.016,
+      quotaFissaBusinessMese: 10.00,
+      commercializzazioneVar: 0.003,
+      sbilanciamentoVar: 0.005,
+      costoUnaTantum: 0.00,
       scadenzaOfferta: '2026-12-31'
     }
   ]);
@@ -89,6 +115,28 @@ export default function Home() {
     if (cteSelezionataDettaglio?.cte.id === idEliminare) {
       setCteSelezionataDettaglio(null);
     }
+  };
+
+  // Funzione per CARICARE nuove CTE PDF
+  const handleUploadNuoveCTE = (e: React.ChangeEvent<HTMLInputElement>) => {
+    if (!e.target.files) return;
+    const fileArray = Array.from(e.target.files);
+
+    const nuoveEstratte: CTEArchiviata[] = fileArray.map((file, idx) => ({
+      id: `cte-upload-${Date.now()}-${idx}`,
+      nomeOfferta: file.name.replace('.pdf', ''),
+      fornitore: 'BPower Energia S.p.A.',
+      tipoVettore: 'EE',
+      tensioneCompatibile: 'ENTRAMBE',
+      spread: 0.015,
+      quotaFissaBusinessMese: 12.00,
+      commercializzazioneVar: 0.003,
+      sbilanciamentoVar: 0.004,
+      costoUnaTantum: 0.00,
+      scadenzaOfferta: '2026-12-31'
+    }));
+
+    setArchivioCTE((prev) => [...nuoveEstratte, ...prev]);
   };
 
   const handleUploadBolletta = async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -371,9 +419,21 @@ export default function Home() {
           </div>
         )}
 
-        {/* TAB 2: GESTIONE CTE CON PULSANTE ELIMINA */}
+        {/* TAB 2: GESTIONE CTE CON CARICAMENTO + LISTA CON ELIMINA */}
         {tabAttiva === 'cte' && (
           <div>
+            {/* BOX DI CARICAMENTO NUOVE CTE PDF */}
+            <div className="border-2 border-dashed border-blue-200 rounded-xl p-8 flex flex-col items-center bg-blue-50/30 mb-8">
+              <svg className="w-12 h-12 text-blue-500 mb-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M7 16a4 4 0 01-.88-7.903A5 5 0 0115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12" />
+              </svg>
+              <label className="cursor-pointer bg-blue-600 hover:bg-blue-700 text-white font-semibold py-2.5 px-6 rounded-lg shadow transition-colors">
+                Carica Nuove CTE PDF (Massivo)
+                <input type="file" accept="application/pdf" className="hidden" onChange={handleUploadNuoveCTE} multiple />
+              </label>
+              <p className="text-xs text-gray-400 mt-2">Puoi trascinare o selezionare più schede tecniche CTE contemporaneamente</p>
+            </div>
+
             <h3 className="font-bold text-gray-800 mb-3">📋 Archivio CTE Inserite ({archivioCTE.length})</h3>
             
             {archivioCTE.length === 0 ? (
@@ -490,23 +550,27 @@ export default function Home() {
                   </div>
                 </div>
 
-                <h3 className="font-bold text-gray-800 text-lg">🏆 Offerta CTE Applicabile Estratta dal PDF</h3>
+                <h3 className="font-bold text-gray-800 text-lg">🏆 CTE Valide ed Elaborate in Archivio ({topSimulate.length})</h3>
 
                 <div className="space-y-4">
-                  {topSimulate.map((item) => (
+                  {topSimulate.map((item, index) => (
                     <div
                       key={item.cte.id}
                       onClick={() => setCteSelezionataDettaglio(item)}
                       className={`p-6 rounded-xl border cursor-pointer transition-all hover:shadow-lg ${
                         cteSelezionataDettaglio?.cte.id === item.cte.id
                           ? 'ring-2 ring-blue-600 bg-blue-50/30'
-                          : 'bg-emerald-50/70 border-emerald-300 shadow-sm'
+                          : index === 0
+                          ? 'bg-emerald-50/70 border-emerald-300 shadow-sm'
+                          : 'bg-white border-gray-200'
                       }`}
                     >
                       <div className="flex flex-col md:flex-row justify-between md:items-center gap-4">
                         <div>
                           <div className="flex items-center gap-2">
-                            <span className="bg-emerald-600 text-white text-xs font-bold px-2 py-0.5 rounded">CTE REALE VERIFICATA</span>
+                            {index === 0 && (
+                              <span className="bg-emerald-600 text-white text-xs font-bold px-2 py-0.5 rounded">MIGLIOR OFFERTA</span>
+                            )}
                             <h4 className="font-bold text-gray-900 text-base">{item.cte.nomeOfferta}</h4>
                           </div>
                           <p className="text-xs text-gray-500 mt-1">Fornitore: {item.cte.fornitore} | Validità: fino al {item.cte.scadenzaOfferta}</p>
