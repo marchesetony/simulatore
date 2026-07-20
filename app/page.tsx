@@ -21,7 +21,7 @@ interface DatiBolletta {
   tipologiaCliente: string;
   cteApplicata: string;
   scadenzaCondizioni: string;
-  modalitaPagamento: string; // NUOVO CAMPO
+  modalitaPagamento: string;
   f1: number;
   f2: number;
   f3: number;
@@ -33,10 +33,21 @@ interface DatiBolletta {
   statoPagamenti: string;
   cmor: string;
   interessiMora: string;
+  spesaMateriaPrimaAttuale: number;
+}
+
+interface OffertaSimulata {
+  nome: string;
+  fornitore: string;
+  spread: number; // €/kWh
+  quotaFissaAnnuo: number; // €/anno
+  costoStimatoMese: number;
+  risparmioMese: number;
+  risparmioAnnuo: number;
 }
 
 export default function Home() {
-  const [tabAttiva, setTabAttiva] = useState<'bollette' | 'cte' | 'pun'>('bollette');
+  const [tabAttiva, setTabAttiva] = useState<'bollette' | 'cte' | 'pun' | 'simulatore'>('bollette');
   
   // Stato CTE Massivo
   const [fileListCTE, setFileListCTE] = useState<FileElaborato[]>([]);
@@ -78,7 +89,7 @@ export default function Home() {
     setLoadingBolletta(true);
     setDatiBolletta(null);
 
-    // Dati reali estratti dall'OCR della bolletta E2E COMPANY ENERGY
+    // Dati reali estratti dalla bolletta PASTICCERIA ROSARIO SAS
     setTimeout(() => {
       setLoadingBolletta(false);
       setDatiBolletta({
@@ -104,10 +115,44 @@ export default function Home() {
         consumoAnnuo: '77.270 kWh',
         statoPagamenti: 'Regolare (Nessuna morosità)',
         cmor: 'Assente (0 €)',
-        interessiMora: 'Assenti (0 €)'
+        interessiMora: 'Assenti (0 €)',
+        spesaMateriaPrimaAttuale: 1344.15 // spesa vendita energia in bolletta
       });
     }, 2500);
   };
+
+  // Calcolo Offerte Simulate basato sui consumi reali della bolletta
+  const calcolaSimulazione = (): OffertaSimulata[] => {
+    if (!datiBolletta) return [];
+
+    const consumiTot = datiBolletta.totaleConsumo;
+    const punMedio = (datiBolletta.f1 * datiBolletta.punF1 + datiBolletta.f2 * datiBolletta.punF2 + datiBolletta.f3 * datiBolletta.punF3) / consumiTot;
+
+    const offerte: { nome: string; fornitore: string; spread: number; quotaFissaAnnuo: number }[] = [
+      { nome: 'EcoBusiness Flex 12M', fornitore: 'Green Power S.p.A.', spread: 0.012, quotaFissaAnnuo: 120 },
+      { nome: 'Luce Impresa Dynamic', fornitore: 'Next Energy', spread: 0.015, quotaFissaAnnuo: 96 },
+      { nome: 'B2B Top Protection GME', fornitore: 'Sorgente Elettrica', spread: 0.018, quotaFissaAnnuo: 144 },
+    ];
+
+    return offerte.map((o) => {
+      const quotaConsumiMese = consumiTot * (punMedio + o.spread);
+      const quotaFissaMese = o.quotaFissaAnnuo / 12;
+      const costoMese = quotaConsumiMese + quotaFissaMese;
+      const risparmioM = datiBolletta.spesaMateriaPrimaAttuale - costoMese;
+
+      return {
+        nome: o.nome,
+        fornitore: o.fornitore,
+        spread: o.spread,
+        quotaFissaAnnuo: o.quotaFissaAnnuo,
+        costoStimatoMese: costoMese,
+        risparmioMese: risparmioM,
+        risparmioAnnuo: risparmioM * 12,
+      };
+    }).sort((a, b) => b.risparmioMese - a.risparmioMese);
+  };
+
+  const offerteSimulate = calcolaSimulazione();
 
   return (
     <div className="min-h-screen bg-gray-50 p-6 font-sans flex flex-col items-center">
@@ -122,10 +167,10 @@ export default function Home() {
         </p>
 
         {/* MENU TABS */}
-        <div className="flex border-b border-gray-200 mb-8 space-x-4">
+        <div className="flex border-b border-gray-200 mb-8 space-x-4 overflow-x-auto">
           <button
             onClick={() => setTabAttiva('bollette')}
-            className={`pb-3 font-semibold text-sm transition-colors border-b-2 ${
+            className={`pb-3 font-semibold text-sm transition-colors border-b-2 whitespace-nowrap ${
               tabAttiva === 'bollette'
                 ? 'border-blue-600 text-blue-600'
                 : 'border-transparent text-gray-500 hover:text-gray-700'
@@ -135,7 +180,7 @@ export default function Home() {
           </button>
           <button
             onClick={() => setTabAttiva('cte')}
-            className={`pb-3 font-semibold text-sm transition-colors border-b-2 ${
+            className={`pb-3 font-semibold text-sm transition-colors border-b-2 whitespace-nowrap ${
               tabAttiva === 'cte'
                 ? 'border-blue-600 text-blue-600'
                 : 'border-transparent text-gray-500 hover:text-gray-700'
@@ -145,13 +190,23 @@ export default function Home() {
           </button>
           <button
             onClick={() => setTabAttiva('pun')}
-            className={`pb-3 font-semibold text-sm transition-colors border-b-2 ${
+            className={`pb-3 font-semibold text-sm transition-colors border-b-2 whitespace-nowrap ${
               tabAttiva === 'pun'
                 ? 'border-blue-600 text-blue-600'
                 : 'border-transparent text-gray-500 hover:text-gray-700'
             }`}
           >
-            📊 3. Indice PUN GME (Fasce)
+            📊 3. Indice PUN GME
+          </button>
+          <button
+            onClick={() => setTabAttiva('simulatore')}
+            className={`pb-3 font-semibold text-sm transition-colors border-b-2 whitespace-nowrap ${
+              tabAttiva === 'simulatore'
+                ? 'border-blue-600 text-blue-600'
+                : 'border-transparent text-gray-500 hover:text-gray-700'
+            }`}
+          >
+            🏆 4. Simulazione & Comparazione
           </button>
         </div>
 
@@ -171,7 +226,6 @@ export default function Home() {
 
             {datiBolletta && (
               <div className="mt-6 space-y-6">
-                
                 {/* 1. ANAGRAFICA E FORNITURA */}
                 <div className="p-6 bg-slate-50 border border-slate-200 rounded-xl">
                   <h3 className="font-bold text-gray-800 text-base mb-4 border-b pb-2 flex items-center justify-between">
@@ -353,6 +407,71 @@ export default function Home() {
                 </tr>
               </tbody>
             </table>
+          </div>
+        )}
+
+        {/* TAB 4: SIMULATORE & COMPARATORE */}
+        {tabAttiva === 'simulatore' && (
+          <div>
+            {!datiBolletta ? (
+              <div className="text-center py-12 bg-gray-50 rounded-xl border border-dashed">
+                <p className="text-gray-500 font-medium">⚠️ Prima di eseguire la simulazione, carica una bolletta nella scheda "1. Lettore Bolletta Cliente".</p>
+              </div>
+            ) : (
+              <div className="space-y-6">
+                <div className="bg-blue-50 border border-blue-200 p-4 rounded-xl flex justify-between items-center text-sm">
+                  <div>
+                    <span className="text-gray-500 block text-xs">Profilo Cliente per Simulazione</span>
+                    <span className="font-bold text-gray-800">{datiBolletta.intestatario} ({datiBolletta.consumoAnnuo}/anno)</span>
+                  </div>
+                  <div className="text-right">
+                    <span className="text-gray-500 block text-xs">Spesa Materia Prima Attuale</span>
+                    <span className="font-extrabold text-gray-800">{datiBolletta.spesaMateriaPrimaAttuale.toFixed(2)} €/mese</span>
+                  </div>
+                </div>
+
+                <h3 className="font-bold text-gray-800 text-lg">🏆 Classifica Offerte CTE per Risparmio Economico</h3>
+
+                <div className="space-y-4">
+                  {offerteSimulate.map((offerta, index) => (
+                    <div
+                      key={index}
+                      className={`p-6 rounded-xl border transition-all ${
+                        index === 0 ? 'bg-emerald-50/70 border-emerald-300 shadow-md ring-2 ring-emerald-500/20' : 'bg-white border-gray-200'
+                      }`}
+                    >
+                      <div className="flex flex-col md:flex-row justify-between md:items-center gap-4">
+                        <div>
+                          <div className="flex items-center gap-2">
+                            {index === 0 && (
+                              <span className="bg-emerald-600 text-white text-xs font-bold px-2 py-0.5 rounded">MIGLIOR OFFERTA</span>
+                            )}
+                            <h4 className="font-bold text-gray-900 text-base">{offerta.nome}</h4>
+                          </div>
+                          <p className="text-xs text-gray-500 mt-1">Fornitore: {offerta.fornitore}</p>
+                          <div className="flex gap-4 text-xs text-gray-600 mt-2">
+                            <span>Spread: <strong>{offerta.spread} €/kWh</strong></span>
+                            <span>Fisso: <strong>{offerta.quotaFissaAnnuo} €/anno</strong></span>
+                          </div>
+                        </div>
+
+                        <div className="flex items-center gap-6 border-t md:border-t-0 pt-3 md:pt-0">
+                          <div>
+                            <span className="text-xs text-gray-400 block">Materia Prima Stimata</span>
+                            <span className="text-base font-bold text-gray-800">{offerta.costoStimatoMese.toFixed(2)} €/mese</span>
+                          </div>
+                          <div className="bg-emerald-100 p-3 rounded-xl text-emerald-900 text-right">
+                            <span className="text-xs text-emerald-700 block font-semibold">Risparmio Stimato</span>
+                            <span className="text-lg font-extrabold text-emerald-700">+{offerta.risparmioMese.toFixed(2)} €/mese</span>
+                            <span className="text-xs block text-emerald-800 font-medium">({offerta.risparmioAnnuo.toFixed(2)} €/anno)</span>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
           </div>
         )}
 
