@@ -60,8 +60,8 @@ interface DettaglioSimulazione {
 export default function Home() {
   const [tabAttiva, setTabAttiva] = useState<'bollette' | 'cte' | 'pun' | 'simulatore'>('bollette');
 
-  // CTE Reale Estratta esattamente dal documento "Be Smile" di BPower Energia
-  const [archivioCTE] = useState<CTEArchiviata[]>([
+  // CTE Reale Estratta dal documento "Be Smile" di BPower Energia
+  const [archivioCTE, setArchivioCTE] = useState<CTEArchiviata[]>([
     {
       id: 'cte-be-smile',
       nomeOfferta: 'Be Smile',
@@ -82,6 +82,14 @@ export default function Home() {
   // Stato Bolletta PDF (Pasticceria Rosario SAS)
   const [loadingBolletta, setLoadingBolletta] = useState(false);
   const [datiBolletta, setDatiBolletta] = useState<DatiBolletta | null>(null);
+
+  // Funzione per ELIMINARE una CTE dall'archivio
+  const handleEliminaCTE = (idEliminare: string) => {
+    setArchivioCTE((prev) => prev.filter((item) => item.id !== idEliminare));
+    if (cteSelezionataDettaglio?.cte.id === idEliminare) {
+      setCteSelezionataDettaglio(null);
+    }
+  };
 
   const handleUploadBolletta = async (e: React.ChangeEvent<HTMLInputElement>) => {
     if (!e.target.files?.[0]) return;
@@ -121,16 +129,12 @@ export default function Home() {
     }, 2000);
   };
 
-  // Algoritmo di simulazione rigoroso e privo di errori di incrocio (GAS vs EE, MT vs BT)
+  // Algoritmo di simulazione rigoroso
   const calcolaSimulazioneArchivio = (): DettaglioSimulazione[] => {
     if (!datiBolletta) return [];
 
     const oggi = new Date().toISOString().split('T')[0];
 
-    // FILTRO TASSATIVO:
-    // 1. Esclude le offerte GAS per fornitura EE
-    // 2. Esclude le offerte con validità scaduta
-    // 3. Verifica compatibilità Bassa/Media tensione
     const cteValide = archivioCTE.filter((cte) => {
       const isEE = cte.tipoVettore === 'EE';
       const isNonScaduta = cte.scadenzaOfferta >= oggi;
@@ -139,7 +143,6 @@ export default function Home() {
     });
 
     const calcolate = cteValide.map((cte) => {
-      // Prezzo energia al kWh = PUN + Spread + Comm.Variabile + Sbilanciamento
       const prezzoUnipF1 = datiBolletta.punF1 + cte.spread + cte.commercializzazioneVar + cte.sbilanciamentoVar;
       const prezzoUnipF2 = datiBolletta.punF2 + cte.spread + cte.commercializzazioneVar + cte.sbilanciamentoVar;
       const prezzoUnipF3 = datiBolletta.punF3 + cte.spread + cte.commercializzazioneVar + cte.sbilanciamentoVar;
@@ -215,7 +218,7 @@ export default function Home() {
                 : 'border-transparent text-gray-500 hover:text-gray-700'
             }`}
           >
-            ⚡ 2. Caricamento CTE ({archivioCTE.length})
+            ⚡ 2. Gestione CTE ({archivioCTE.length})
           </button>
           <button
             onClick={() => setTabAttiva('pun')}
@@ -368,44 +371,70 @@ export default function Home() {
           </div>
         )}
 
-        {/* TAB 2: CTE ARCHIVIO */}
+        {/* TAB 2: GESTIONE CTE CON PULSANTE ELIMINA */}
         {tabAttiva === 'cte' && (
           <div>
-            <h3 className="font-bold text-gray-800 mb-3">📋 Dettaglio CTE "Be Smile" Estratto Correttamente</h3>
-            {archivioCTE.map((cte) => (
-              <div key={cte.id} className="p-5 rounded-xl border bg-white border-gray-200 shadow-sm space-y-3">
-                <div className="flex justify-between items-center border-b pb-2">
-                  <div className="font-bold text-gray-900 text-lg">{cte.nomeOfferta} <span className="text-xs font-normal text-gray-500">({cte.fornitore})</span></div>
-                  <span className="bg-emerald-100 text-emerald-800 text-xs px-2.5 py-1 rounded-full font-bold">VALIDA fino al {cte.scadenzaOfferta}</span>
-                </div>
-                <div className="grid grid-cols-2 md:grid-cols-4 gap-3 text-xs">
-                  <div>
-                    <span className="text-gray-500 block">Tipo Vettore</span>
-                    <span className="font-bold text-blue-700">{cte.tipoVettore} (Energia Elettrica)</span>
-                  </div>
-                  <div>
-                    <span className="text-gray-500 block">Spread (α)</span>
-                    <span className="font-bold text-gray-900">{cte.spread} €/kWh</span>
-                  </div>
-                  <div>
-                    <span className="text-gray-500 block">Quota Fissa Business</span>
-                    <span className="font-bold text-gray-900">{cte.quotaFissaBusinessMese} €/mese ({cte.quotaFissaBusinessMese * 12} €/anno)</span>
-                  </div>
-                  <div>
-                    <span className="text-gray-500 block">Commercializzazione Var.</span>
-                    <span className="font-bold text-gray-900">{cte.commercializzazioneVar} €/kWh</span>
-                  </div>
-                  <div>
-                    <span className="text-gray-500 block">Sbilanciamento</span>
-                    <span className="font-bold text-gray-900">{cte.sbilanciamentoVar} €/kWh</span>
-                  </div>
-                  <div>
-                    <span className="text-gray-500 block">Una-Tantum App/Servizi</span>
-                    <span className="font-bold text-amber-700">{cte.costoUnaTantum} €</span>
-                  </div>
-                </div>
+            <h3 className="font-bold text-gray-800 mb-3">📋 Archivio CTE Inserite ({archivioCTE.length})</h3>
+            
+            {archivioCTE.length === 0 ? (
+              <div className="p-8 text-center text-gray-500 border border-dashed rounded-xl bg-gray-50">
+                Nessuna CTE presente in archivio.
               </div>
-            ))}
+            ) : (
+              <div className="space-y-4">
+                {archivioCTE.map((cte) => (
+                  <div key={cte.id} className="p-5 rounded-xl border bg-white border-gray-200 shadow-sm space-y-3 relative">
+                    <div className="flex justify-between items-center border-b pb-2">
+                      <div>
+                        <span className="font-bold text-gray-900 text-lg">{cte.nomeOfferta}</span>
+                        <span className="text-xs text-gray-500 ml-2">({cte.fornitore})</span>
+                      </div>
+                      
+                      <div className="flex items-center gap-3">
+                        <span className="bg-emerald-100 text-emerald-800 text-xs px-2.5 py-1 rounded-full font-bold">
+                          VALIDA fino al {cte.scadenzaOfferta}
+                        </span>
+                        
+                        {/* PULSANTE CANCELLAZIONE CTE */}
+                        <button
+                          onClick={() => handleEliminaCTE(cte.id)}
+                          className="bg-red-50 hover:bg-red-100 text-red-600 hover:text-red-700 px-3 py-1 rounded-lg text-xs font-bold border border-red-200 transition-colors flex items-center gap-1"
+                        >
+                          🗑️ Elimina CTE
+                        </button>
+                      </div>
+                    </div>
+
+                    <div className="grid grid-cols-2 md:grid-cols-4 gap-3 text-xs">
+                      <div>
+                        <span className="text-gray-500 block">Tipo Vettore</span>
+                        <span className="font-bold text-blue-700">{cte.tipoVettore} (Energia Elettrica)</span>
+                      </div>
+                      <div>
+                        <span className="text-gray-500 block">Spread (α)</span>
+                        <span className="font-bold text-gray-900">{cte.spread} €/kWh</span>
+                      </div>
+                      <div>
+                        <span className="text-gray-500 block">Quota Fissa Business</span>
+                        <span className="font-bold text-gray-900">{cte.quotaFissaBusinessMese} €/mese ({cte.quotaFissaBusinessMese * 12} €/anno)</span>
+                      </div>
+                      <div>
+                        <span className="text-gray-500 block">Commercializzazione Var.</span>
+                        <span className="font-bold text-gray-900">{cte.commercializzazioneVar} €/kWh</span>
+                      </div>
+                      <div>
+                        <span className="text-gray-500 block">Sbilanciamento</span>
+                        <span className="font-bold text-gray-900">{cte.sbilanciamentoVar} €/kWh</span>
+                      </div>
+                      <div>
+                        <span className="text-gray-500 block">Una-Tantum App/Servizi</span>
+                        <span className="font-bold text-amber-700">{cte.costoUnaTantum} €</span>
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
           </div>
         )}
 
@@ -444,7 +473,7 @@ export default function Home() {
               </div>
             ) : topSimulate.length === 0 ? (
               <div className="text-center py-12 bg-amber-50 rounded-xl border border-amber-200">
-                <p className="text-amber-800 font-medium">⚠️ Nessuna CTE elettrica compatibile in archivio.</p>
+                <p className="text-amber-800 font-medium">⚠️ Nessuna CTE elettrica compatibile presente in archivio.</p>
               </div>
             ) : (
               <div className="space-y-6">
