@@ -61,7 +61,6 @@ export default function Home() {
     setLoadingBolletta(true);
     setDatiBolletta(null);
 
-    // Simulazione estrazione OCR Bolletta + Query automatico PUN GME per quel mese
     setTimeout(() => {
       setLoadingBolletta(false);
       setDatiBolletta({
@@ -89,7 +88,7 @@ export default function Home() {
           Piattaforma di analisi bollette, estrazione schede CTE e confronto con l'indice PUN del GME.
         </p>
 
-        {/* MENU DI NAVIGAZIONE A SCHEDE (TABS) */}
+        {/* MENU TABS */}
         <div className="flex border-b border-gray-200 mb-8 space-x-4">
           <button
             onClick={() => setTabAttiva('bollette')}
@@ -123,7 +122,7 @@ export default function Home() {
           </button>
         </div>
 
-        {/* TAB 1: LETTORE BOLLETTE */}
+        {/* TAB 1: BOLLETTE */}
         {tabAttiva === 'bollette' && (
           <div>
             <div className="border-2 border-dashed border-blue-200 rounded-xl p-8 flex flex-col items-center bg-blue-50/30">
@@ -170,7 +169,7 @@ export default function Home() {
           </div>
         )}
 
-        {/* TAB 2: CARICAMENTO MASSIVO CTE */}
+        {/* TAB 2: CTE MASSIVO */}
         {tabAttiva === 'cte' && (
           <div>
             <div className="border-2 border-dashed border-blue-200 rounded-xl p-8 flex flex-col items-center bg-blue-50/30">
