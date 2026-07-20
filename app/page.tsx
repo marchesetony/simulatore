@@ -116,7 +116,7 @@ export default function Home() {
     });
   };
 
-  // HANDLER UPLOAD E PARSING Delle CTE REALI
+  // PARSER AVANZATO CON REGEX ROBUSTE PER LE CTE REAL
   const handleUploadNuoveCTE = async (e: React.ChangeEvent<HTMLInputElement>) => {
     if (!e.target.files) return;
     setLoadingCTE(true);
@@ -126,19 +126,29 @@ export default function Home() {
 
     for (let i = 0; i < fileArray.length; i++) {
       const file = fileArray[i];
-      const text = await estraiTestoDaPDF(file);
+      const textRaw = await estraiTestoDaPDF(file);
+      // Pulizia spazi e caratteri unicode
+      const text = textRaw.replace(/\s+/g, ' ');
 
-      // 1. Nome Offerta
-      const matchNome = text.match(/(?:CONDIZIONE TECNICO ECONOMICHE|Offerta|CTE)\s*[-–]?\s*([A-Za-z0-9\s._]+)/i);
-      const nomeClean = file.name.replace(/\.pdf$/i, '');
-      const nomeOfferta = matchNome && matchNome[1].length < 40 ? matchNome[1].trim() : nomeClean;
+      // 1. Nome Offerta pulito
+      const nameFromFileName = file.name.replace(/\.pdf$/i, '').trim();
+      let nomeOfferta = nameFromFileName;
+      
+      // Se nel testo c'è una riga tipo "Be Smile" o "Be Relax FLEX" prima del codice offerta
+      const matchTitolo = text.match(/(Be\s+[A-Za-z0-9\s]+?)(?=\s*\d{2}\.\d{2}-|\s*Offerta|\s*VALIDITÀ)/i);
+      if (matchTitolo && matchTitolo[1].trim().length > 2 && matchTitolo[1].trim().length < 35) {
+        nomeOfferta = matchTitolo[1].trim();
+      }
 
       // 2. Spread / Corrispettivo fisso d'acquisto (€/kWh)
-      const matchSpread = text.match(/(?:corrispettivo fisso d'acquisto|spread|alfa)[^0-9]*(\d+[,.]\d+)/i);
+      // Cerca pattern tipo: "corrispettivo fisso d'acquisto ... pari a 0,02 Eur/kWh" oppure "0,02 Eur/kWh" o "spread ... 0,015"
+      const matchSpread = text.match(/(?:corrispettivo fisso d['’]acquisto|spread|alfa)[^0-9,.]*?(\d+[,.]\d+)/i) ||
+                          text.match(/pari a\s*(\d+[,.]\d+)\s*(?:Eur|€)\s*\/\s*kWh/i);
       const spreadVal = matchSpread ? parseFloat(matchSpread[1].replace(',', '.')) : 0.0;
 
       // 3. Quota Fissa Business (€/mese)
-      const matchQuotaFissa = text.match(/(?:Quota fissa business|fisso|commercializzazione fissa)[^0-9]*(\d+[,.]?\d*)\s*€\s*\/\s*mese/i);
+      const matchQuotaFissa = text.match(/Quota fissa business\s*pari\s*a\s*(\d+[,.]?\d*)\s*€\s*\/\s*mese/i) ||
+                              text.match(/(?:fisso|commercializzazione fissa)[^0-9]*?(\d+[,.]?\d*)\s*€\s*\/\s*mese/i);
       const quotaFissaVal = matchQuotaFissa ? parseFloat(matchQuotaFissa[1].replace(',', '.')) : 0.0;
 
       // 4. Commercializzazione Variabile (€/kWh)
@@ -150,15 +160,18 @@ export default function Home() {
       const sbilVal = matchSbil ? parseFloat(matchSbil[1].replace(',', '.')) : 0.0;
 
       // 6. Una-Tantum (€)
-      const matchUnaTantum = text.match(/(?:una tantum|gestione APP)[^0-9]*€?\s*(\d+[,.]\d+)/i);
+      const matchUnaTantum = text.match(/(?:una tantum|gestione APP)[^0-9]*?€?\s*(\d+[,.]\d+)/i);
       const unaTantumVal = matchUnaTantum ? parseFloat(matchUnaTantum[1].replace(',', '.')) : 0.0;
 
       // 7. Scadenza (YYYY-MM-DD)
-      const matchScadenza = text.match(/entro\s*il\s*(\d{2}\/\d{2}\/\d{4})/i);
+      const matchScadenza = text.match(/(?:entro il|validit[àa] offerta dal [0-9\/]+ al)\s*(\d{2}\/\d{2}\/\d{4})/i) ||
+                            text.match(/(\d{2}\/\d{2}\/\d{4})/);
       let scadenzaFormatted = '2026-12-31';
       if (matchScadenza) {
         const parts = matchScadenza[1].split('/');
-        scadenzaFormatted = `${parts[2]}-${parts[1]}-${parts[0]}`;
+        if (parts.length === 3) {
+          scadenzaFormatted = `${parts[2]}-${parts[1]}-${parts[0]}`;
+        }
       }
 
       // Riconoscimento Vettore (EE vs GAS)
@@ -461,7 +474,7 @@ export default function Home() {
           </div>
         )}
 
-        {/* TAB 2: CARICAMENTO ED ESTRAZIONE PDF.JS REALE */}
+        {/* TAB 2: GESTIONE CTE PARSER REALE */}
         {tabAttiva === 'cte' && (
           <div>
             <div className="border-2 border-dashed border-blue-200 rounded-xl p-8 flex flex-col items-center bg-blue-50/30 mb-8">
@@ -469,10 +482,10 @@ export default function Home() {
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M7 16a4 4 0 01-.88-7.903A5 5 0 0115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12" />
               </svg>
               <label className="cursor-pointer bg-blue-600 hover:bg-blue-700 text-white font-semibold py-2.5 px-6 rounded-lg shadow transition-colors">
-                {loadingCTE ? 'Lettura PDF e Parsing in corso...' : 'Carica Nuove CTE PDF (Massivo)'}
+                {loadingCTE ? 'Estrazione testo PDF in corso...' : 'Carica Nuove CTE PDF (Massivo)'}
                 <input type="file" accept="application/pdf,.pdf" className="hidden" onChange={handleUploadNuoveCTE} disabled={loadingCTE} multiple />
               </label>
-              <p className="text-xs text-gray-400 mt-2">I PDF verranno decodificati direttamente ed estratti i corrispettivi reali</p>
+              <p className="text-xs text-gray-400 mt-2">I file PDF verranno analizzati con il nuovo parser regex potenziato</p>
             </div>
 
             <h3 className="font-bold text-gray-800 mb-3">📋 Archivio CTE Inserite dall'Utente ({archivioCTE.length})</h3>
