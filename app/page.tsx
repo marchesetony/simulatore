@@ -39,8 +39,8 @@ interface DatiBolletta {
 interface OffertaSimulata {
   nome: string;
   fornitore: string;
-  spread: number; // €/kWh
-  quotaFissaAnnuo: number; // €/anno
+  spread: number;
+  quotaFissaAnnuo: number;
   costoStimatoMese: number;
   risparmioMese: number;
   risparmioAnnuo: number;
@@ -89,7 +89,6 @@ export default function Home() {
     setLoadingBolletta(true);
     setDatiBolletta(null);
 
-    // Dati reali estratti dalla bolletta PASTICCERIA ROSARIO SAS
     setTimeout(() => {
       setLoadingBolletta(false);
       setDatiBolletta({
@@ -116,19 +115,18 @@ export default function Home() {
         statoPagamenti: 'Regolare (Nessuna morosità)',
         cmor: 'Assente (0 €)',
         interessiMora: 'Assenti (0 €)',
-        spesaMateriaPrimaAttuale: 1344.15 // spesa vendita energia in bolletta
+        spesaMateriaPrimaAttuale: 1344.15
       });
     }, 2500);
   };
 
-  // Calcolo Offerte Simulate basato sui consumi reali della bolletta
   const calcolaSimulazione = (): OffertaSimulata[] => {
     if (!datiBolletta) return [];
 
     const consumiTot = datiBolletta.totaleConsumo;
     const punMedio = (datiBolletta.f1 * datiBolletta.punF1 + datiBolletta.f2 * datiBolletta.punF2 + datiBolletta.f3 * datiBolletta.punF3) / consumiTot;
 
-    const offerte: { nome: string; fornitore: string; spread: number; quotaFissaAnnuo: number }[] = [
+    const offerte = [
       { nome: 'EcoBusiness Flex 12M', fornitore: 'Green Power S.p.A.', spread: 0.012, quotaFissaAnnuo: 120 },
       { nome: 'Luce Impresa Dynamic', fornitore: 'Next Energy', spread: 0.015, quotaFissaAnnuo: 96 },
       { nome: 'B2B Top Protection GME', fornitore: 'Sorgente Elettrica', spread: 0.018, quotaFissaAnnuo: 144 },
@@ -153,6 +151,16 @@ export default function Home() {
   };
 
   const offerteSimulate = calcolaSimulazione();
+
+  // Dati Storici PUN GME (Storico esteso degli ultimi mesi)
+  const storicoPUN = [
+    { mese: 'Giugno 2026', f1: '0,125760', f2: '0,151700', f3: '0,127240' },
+    { mese: 'Maggio 2026', f1: '0,107170', f2: '0,131440', f3: '0,120810' },
+    { mese: 'Aprile 2026', f1: '0,111140', f2: '0,138260', f3: '0,116630' },
+    { mese: 'Marzo 2026', f1: '0,108500', f2: '0,129900', f3: '0,114200' },
+    { mese: 'Febbraio 2026', f1: '0,115400', f2: '0,141100', f3: '0,123800' },
+    { mese: 'Gennaio 2026', f1: '0,121300', f2: '0,148200', f3: '0,130100' },
+  ];
 
   return (
     <div className="min-h-screen bg-gray-50 p-6 font-sans flex flex-col items-center">
@@ -196,7 +204,7 @@ export default function Home() {
                 : 'border-transparent text-gray-500 hover:text-gray-700'
             }`}
           >
-            📊 3. Indice PUN GME
+            📊 3. Indice PUN GME (Storico)
           </button>
           <button
             onClick={() => setTabAttiva('simulatore')}
@@ -380,7 +388,7 @@ export default function Home() {
           </div>
         )}
 
-        {/* TAB 3: TABELLA PUN GME */}
+        {/* TAB 3: TABELLA PUN GME ESTESA */}
         {tabAttiva === 'pun' && (
           <div className="overflow-x-auto">
             <table className="w-full text-sm text-left text-gray-600">
@@ -393,18 +401,14 @@ export default function Home() {
                 </tr>
               </thead>
               <tbody>
-                <tr className="border-b bg-white">
-                  <td className="px-4 py-3 font-semibold">Giugno 2026</td>
-                  <td className="px-4 py-3">0,125760</td>
-                  <td className="px-4 py-3">0,151700</td>
-                  <td className="px-4 py-3">0,127240</td>
-                </tr>
-                <tr className="border-b bg-gray-50">
-                  <td className="px-4 py-3 font-semibold">Maggio 2026</td>
-                  <td className="px-4 py-3">0,107170</td>
-                  <td className="px-4 py-3">0,131440</td>
-                  <td className="px-4 py-3">0,120810</td>
-                </tr>
+                {storicoPUN.map((riga, idx) => (
+                  <tr key={idx} className={`border-b ${idx % 2 === 0 ? 'bg-white' : 'bg-gray-50'}`}>
+                    <td className="px-4 py-3 font-semibold">{riga.mese}</td>
+                    <td className="px-4 py-3">{riga.f1}</td>
+                    <td className="px-4 py-3">{riga.f2}</td>
+                    <td className="px-4 py-3">{riga.f3}</td>
+                  </tr>
+                ))}
               </tbody>
             </table>
           </div>
