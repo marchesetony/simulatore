@@ -574,6 +574,80 @@ Foundation V1 deve tuttavia predisporre le fondamenta architetturali necessarie 
 - configurazione validata;
 - futura persistenza di record verificati degli indici di mercato.
 
+## Decisione 8 — Politica internazionale di localizzazione e trasferimento dei dati
+
+**APPROVED BY PRODUCT OWNER**
+
+Data di approvazione: **22 luglio 2026**
+
+### Principio approvato
+
+L'applicazione non è soggetta a una restrizione assoluta di localizzazione dei dati nell'Unione Europea o nello Spazio Economico Europeo.
+
+Database, storage documentale privato, backup, autenticazione, monitoraggio, OCR, AI e altri servizi operativi possono essere localizzati o trattare dati:
+
+- nell'Unione Europea o nello Spazio Economico Europeo;
+- negli Stati Uniti;
+- in altri Paesi.
+
+Un provider o una localizzazione esterna all'UE/SEE può essere utilizzato soltanto dopo che i requisiti applicabili di sicurezza, privacy, contrattuali, operativi e di trasferimento internazionale sono stati valutati, documentati e approvati.
+
+Nessun provider è approvato per il solo fatto che questa decisione generale consenta il trattamento internazionale.
+
+### Valutazione obbligatoria del provider
+
+Prima che un servizio possa trattare bollette reali, documenti CTE reali, dati personali, dati contrattuali o informazioni commerciali riservate, la valutazione deve coprire:
+
+- localizzazioni di storage e trattamento;
+- trasferimenti internazionali e trasferimenti successivi;
+- decisione di adeguatezza applicabile, ove disponibile;
+- partecipazione all'EU-US Data Privacy Framework, ove rilevante;
+- Clausole Contrattuali Standard o altro meccanismo di trasferimento applicabile, ove richiesto;
+- cifratura in transito e a riposo;
+- controlli di accesso e responsabilità per la gestione delle chiavi;
+- impegni di retention e cancellazione;
+- cancellazione di copie temporanee e cache;
+- utilizzo o non utilizzo dei dati cliente per l'addestramento di modelli o servizi;
+- sub-responsabili e relative localizzazioni;
+- notifica e risposta agli incidenti;
+- auditabilità;
+- uscita contrattuale e portabilità dei dati;
+- cancellazione verificata dopo la cessazione del servizio.
+
+### Stati Uniti e altri Paesi terzi
+
+L'utilizzo di un provider degli Stati Uniti è consentito quando l'organizzazione selezionata e l'accordo di trasferimento soddisfano i requisiti applicabili.
+
+È consentito anche l'utilizzo di provider in altri Paesi non UE/SEE quando sono documentati una decisione di adeguatezza applicabile oppure un altro meccanismo di trasferimento valido e le garanzie richieste.
+
+Le deroghe per trasferimenti eccezionali o occasionali non devono essere trattate come meccanismo predefinito per un trattamento operativo continuativo.
+
+### Conseguenze architetturali
+
+- le integrazioni con i provider devono utilizzare adapter sostituibili;
+- le informazioni su provider e regione devono essere documentate;
+- sub-responsabili e meccanismi di trasferimento devono poter essere mantenuti in un registro dei provider;
+- segreti e credenziali devono rimanere specifici per ambiente;
+- i documenti reali non devono essere inviati a un provider non approvato;
+- i provider OCR o AI non devono conservare documenti operativi né utilizzarli per addestramento, salvo approvazione separata;
+- la sostituzione del provider e l'esportazione dei dati devono essere tecnicamente possibili;
+- i log non devono esporre documenti completi o dati personali non controllati;
+- le future modifiche di provider devono superare una nuova valutazione prima dell'utilizzo operativo.
+
+### Conseguenza per Foundation V1
+
+Foundation V1 deve rimanere indipendente dai provider e predisporre:
+
+- adapter dei servizi;
+- configurazione ambiente validata;
+- registri dei provider e decision record;
+- audit event;
+- confini di controllo degli accessi;
+- separazione degli ambienti;
+- fondamenta per migrazione sicura e uscita dal provider.
+
+Questa decisione non seleziona né approva alcuno specifico provider di database, storage, autenticazione, monitoraggio, OCR, AI, cloud o hosting.
+
 ## Elementi ancora soggetti a futura approvazione
 
 Le decisioni seguenti non sono assunte da questo documento e richiedono approvazione o un processo decisionale successivo:
@@ -616,7 +690,6 @@ Le decisioni seguenti non sono assunte da questo documento e richiedono approvaz
 - retention contrattuale eccezionale;
 - tempistiche di eliminazione delle copie presenti nei backup;
 - runbook dettagliati di cancellazione;
-- requisiti geografici di localizzazione dei dati;
 - base giuridica, informative e documentazione privacy applicabili;
 - procedura approvata per l'ambiente pilot protetto;
 - provider di elaborazione documentale;
@@ -634,6 +707,19 @@ Le decisioni seguenti non sono assunte da questo documento e richiedono approvaz
 - configurazione concreta di CI/CD;
 - configurazione Vercel Preview e Production;
 - branch e workflow definitivo di promozione in Production.
+
+### Provider, localizzazione e trasferimenti internazionali
+
+- selezione di ciascun provider;
+- regioni selezionate;
+- meccanismo di trasferimento applicabile a ciascun provider;
+- valutazione contrattuale e privacy;
+- sub-responsabili;
+- configurazione di cifratura e gestione delle chiavi;
+- condizioni di retention e cancellazione;
+- impostazioni relative all'utilizzo dei dati per addestramento;
+- autorizzazione operativa al trattamento di documenti reali;
+- runbook di uscita dal provider e migrazione.
 
 ### Indice PUN GME
 
@@ -659,7 +745,7 @@ Questo documento è la fonte autoritativa per i futuri task Codex relativi al pe
 
 I futuri task devono:
 
-- rispettare le sette decisioni indicate come **APPROVED BY PRODUCT OWNER**;
+- rispettare le otto decisioni indicate come **APPROVED BY PRODUCT OWNER**;
 - non reintrodurre nello scope Foundation V1 le funzionalità esplicitamente escluse;
 - non semplificare l'architettura in un modello single-tenant;
 - non scegliere autonomamente elementi indicati come ancora soggetti a futura approvazione;
