@@ -391,6 +391,85 @@ Foundation V1 non include ancora:
 
 Il prototipo corrente non protetto e gli ambienti Preview ordinari non devono essere utilizzati con bollette reali dei clienti o documenti CTE riservati.
 
+## Decisione 6 — Ciclo di vita, visibilità, retention e cancellazione dei documenti
+
+**APPROVED BY PRODUCT OWNER**
+
+Data di approvazione: **22 luglio 2026**
+
+### A. Bollette dei clienti
+
+Il ciclo di vita approvato per le bollette dei clienti è:
+
+1. `Uploaded`;
+2. `Active`;
+3. `Archived`;
+4. `Scheduled for deletion`;
+5. `Deleted`.
+
+#### Regola di retention approvata
+
+- una bolletta cliente archiviata deve essere cancellata definitivamente 60 giorni di calendario dopo il relativo timestamp `archived_at`;
+- il periodo di retention inizia quando la bolletta entra nello stato `Archived`;
+- la disattivazione dell'utente o la sospensione del tenant non deve archiviare o cancellare automaticamente una bolletta;
+- le bollette archiviate non devono essere utilizzate in nuovi processi operativi, salvo applicazione di una regola di ripristino approvata separatamente;
+- la cancellazione deve essere eseguita da un processo controllato lato server;
+- gli eventi di cancellazione devono essere auditabili;
+- devono essere rimossi il file del documento, i dati operativi estratti, le copie temporanee generate e i riferimenti storage non più necessari;
+- possono rimanere esclusivamente le informazioni di audit minime necessarie a dimostrare che la cancellazione è avvenuta;
+- le informazioni di audit conservate non devono contenere il documento completo, dati personali estratti o contenuti riservati del documento.
+
+### B. Condizioni Tecnico-Economiche — CTE
+
+Il ciclo di vita approvato per i documenti CTE è:
+
+1. `Active`;
+2. `Expired`;
+3. `Archived`;
+4. `Scheduled for deletion`;
+5. `Deleted`.
+
+#### Regole approvate di visibilità e utilizzo
+
+- per impostazione predefinita, gli elenchi operativi devono mostrare esclusivamente i documenti CTE attivi;
+- il motore di simulazione deve utilizzare esclusivamente documenti CTE attivi e altrimenti idonei;
+- i documenti CTE scaduti o archiviati non devono essere selezionabili per nuove simulazioni;
+- quando una CTE raggiunge la data di scadenza contrattuale, deve diventare automaticamente `Expired` e `Archived` tramite un processo controllato lato server;
+- l'archiviazione deve conservare il riferimento storico necessario per le simulazioni generate in precedenza e per gli audit record fino alla cancellazione.
+
+#### Regola di retention approvata
+
+- una CTE archiviata deve essere cancellata definitivamente 12 mesi di calendario dopo il relativo timestamp `archived_at`;
+- quando l'archiviazione automatica avviene alla scadenza contrattuale, `archived_at` deve registrare tale transizione;
+- la cancellazione deve rimuovere il documento sorgente e i dati CTE operativi non più necessari;
+- può rimanere esclusivamente una prova di audit minima e non sensibile della cancellazione;
+- il contenuto di una CTE cancellata non deve rimanere disponibile tramite URL permanenti, cache, copie temporanee o normali query applicative.
+
+### C. Autorizzazione ed enforcement
+
+- le transizioni del ciclo di vita devono essere applicate lato server;
+- gli Agent non devono poter cancellare definitivamente i documenti;
+- i permessi per archiviazione, richieste di cancellazione, annullamento e ripristino devono essere granulari e auditabili;
+- l'isolamento tenant deve essere applicato a ogni operazione del ciclo di vita;
+- i job di cancellazione pianificata devono essere idempotenti e sicuri da ritentare;
+- i job di cancellazione falliti devono essere registrati nei log senza esporre il contenuto dei documenti;
+- un documento già cancellato non deve essere ricreato silenziosamente da cache o copie temporanee;
+- la cancellazione non deve interrompere la catena minima di audit relativa alle simulazioni precedenti, ma tale catena non deve conservare il contenuto del documento cancellato.
+
+### D. Conseguenze per Foundation V1
+
+Foundation V1 deve predisporre:
+
+- stati e timestamp del ciclo di vita;
+- campi `archived_at` e `deleted_at`;
+- regole di autorizzazione lato server;
+- fondamenta per la cancellazione pianificata;
+- audit event;
+- interfacce di cancellazione sicure;
+- separazione tra dati documentali operativi e metadati minimi di audit.
+
+Foundation V1 continua a non includere OCR, estrazione automatica delle CTE, importazione PUN, formule di simulazione, motore GAS, ranking o report commerciali.
+
 ## Elementi ancora soggetti a futura approvazione
 
 Le decisioni seguenti non sono assunte da questo documento e richiedono approvazione o un processo decisionale successivo:
@@ -427,8 +506,12 @@ Le decisioni seguenti non sono assunte da questo documento e richiedono approvaz
 
 ### Dati e documenti
 
-- periodi esatti di retention;
-- calendari e procedure di cancellazione e archiviazione;
+- regole di retention differenti per altre categorie future di documenti;
+- procedure di legal hold;
+- regole di ripristino dei documenti archiviati;
+- retention contrattuale eccezionale;
+- tempistiche di eliminazione delle copie presenti nei backup;
+- runbook dettagliati di cancellazione;
 - requisiti geografici di localizzazione dei dati;
 - base giuridica, informative e documentazione privacy applicabili;
 - procedura approvata per l'ambiente pilot protetto;
@@ -464,7 +547,7 @@ Questo documento è la fonte autoritativa per i futuri task Codex relativi al pe
 
 I futuri task devono:
 
-- rispettare le cinque decisioni indicate come **APPROVED BY PRODUCT OWNER**;
+- rispettare le sei decisioni indicate come **APPROVED BY PRODUCT OWNER**;
 - non reintrodurre nello scope Foundation V1 le funzionalità esplicitamente escluse;
 - non semplificare l'architettura in un modello single-tenant;
 - non scegliere autonomamente elementi indicati come ancora soggetti a futura approvazione;
