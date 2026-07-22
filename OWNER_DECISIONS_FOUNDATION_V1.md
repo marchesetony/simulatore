@@ -281,6 +281,116 @@ Questa decisione comporta che:
 - tutte le assegnazioni di tenant e ruolo devono essere auditabili;
 - il supporto futuro di ulteriori metodi di onboarding non deve indebolire il modello di accesso controllato approvato.
 
+## Decisione 5 — Trattamento di bollette reali e documenti CTE reali
+
+**APPROVED BY PRODUCT OWNER**
+
+Data di approvazione: **22 luglio 2026**
+
+### Requisito di prodotto
+
+L'applicazione è destinata a trattare:
+
+- bollette reali di energia elettrica e gas dei clienti;
+- dati contrattuali e commerciali reali contenuti in tali bollette;
+- documenti reali delle Condizioni Tecnico-Economiche, indicati come CTE;
+- documenti CTE reali forniti o utilizzati dalle aziende clienti;
+- dati strutturati necessari per eseguire simulazioni energetiche e restituire i risultati richiesti.
+
+L'uso di documenti reali è un requisito essenziale del prodotto e non deve essere sostituito da dati sintetici nel prodotto operativo.
+
+### Regole per gli ambienti
+
+#### 1. Sviluppo Local
+
+- sono consentiti esclusivamente dati sintetici e documenti PDF sintetici;
+- sono vietati bollette reali dei clienti e documenti CTE reali riservati;
+- gli sviluppatori non devono conservare copie locali non controllate dei documenti operativi.
+
+#### 2. Test automatizzati e CI
+
+- sono consentite esclusivamente fixture sintetiche;
+- non devono essere presenti dati personali, contrattuali, di pagamento, bancari, di consumo, POD, PDR, fiscali o commerciali riservati reali;
+- log e artefatti di test non devono contenere documenti reali.
+
+#### 3. Ambienti Vercel Preview ordinari
+
+- per impostazione predefinita sono consentiti esclusivamente documenti sintetici;
+- i documenti reali sono vietati finché l'ambiente non viene esplicitamente classificato e approvato come ambiente pilot protetto.
+
+#### 4. Ambiente pilot protetto
+
+Bollette reali e documenti CTE reali possono essere utilizzati soltanto dopo che tutti i controlli richiesti sono stati implementati e verificati, inclusi:
+
+- autenticazione;
+- autorizzazione lato server;
+- isolamento tenant;
+- storage documentale privato;
+- accesso controllato ai documenti;
+- variabili d'ambiente e credenziali sicure;
+- audit trail;
+- cancellazione controllata;
+- regole di retention approvate;
+- logging operativo con redazione dei dati;
+- prevenzione degli accessi cross-tenant;
+- procedure documentate di incidente e rollback.
+
+#### 5. Production
+
+La Production è destinata a trattare bollette reali e documenti CTE reali dopo che i controlli richiesti di sicurezza, privacy, autorizzazione, storage, audit, retention, cancellazione e operatività hanno superato i relativi criteri di accettazione.
+
+### Classificazione dei documenti
+
+Le bollette reali devono essere trattate come documenti protetti perché possono contenere:
+
+- dati identificativi personali e aziendali;
+- identificativi fiscali;
+- indirizzi di fornitura;
+- identificativi POD o PDR;
+- informazioni di consumo e contrattuali;
+- modalità di pagamento;
+- riferimenti bancari;
+- informazioni sullo stato dei pagamenti, morosità, CMOR o interessi.
+
+I documenti CTE reali devono essere trattati come documenti commerciali protetti perché possono contenere:
+
+- condizioni del fornitore;
+- prezzi, spread, quote fisse e variabili;
+- periodi di validità contrattuale;
+- regole commerciali;
+- informazioni aziendali riservate o ad accesso limitato.
+
+### Conseguenze architetturali obbligatorie
+
+- ogni documento deve appartenere a un tenant;
+- l'accesso ai documenti deve essere autorizzato lato server;
+- i documenti devono essere archiviati privatamente e non devono mai essere accessibili pubblicamente tramite URL permanente;
+- metadati e contenuto del documento devono rimanere logicamente separati quando appropriato;
+- i log non devono mai contenere il contenuto completo dei documenti o dati personali non controllati;
+- gli eventi di accesso, download, upload, sostituzione, archiviazione e cancellazione devono essere auditabili;
+- la sospensione del tenant deve bloccare il normale accesso senza cancellare automaticamente i documenti;
+- i dati estratti da un documento devono conservarne la provenance e il riferimento al documento sorgente;
+- le informazioni mancanti o illeggibili non devono essere inventate o sostituite silenziosamente con valori predefiniti;
+- i dati estratti tramite OCR o AI devono essere verificati secondo il futuro workflow di estrazione approvato prima di essere utilizzati in calcoli definitivi;
+- questa decisione non seleziona alcun provider di elaborazione documentale;
+- questa decisione non approva alcuna durata specifica di retention, provider, localizzazione geografica dei dati o base giuridica.
+
+### Conseguenza per Foundation V1
+
+Foundation V1 deve creare le fondamenta sicure necessarie per il successivo utilizzo operativo di bollette reali e documenti CTE reali.
+
+Foundation V1 non include ancora:
+
+- OCR delle bollette;
+- estrazione automatica delle CTE;
+- formule di simulazione energetica;
+- importazione del PUN;
+- motore GAS;
+- ranking delle offerte;
+- generazione di report commerciali.
+
+Il prototipo corrente non protetto e gli ambienti Preview ordinari non devono essere utilizzati con bollette reali dei clienti o documenti CTE riservati.
+
 ## Elementi ancora soggetti a futura approvazione
 
 Le decisioni seguenti non sono assunte da questo documento e richiedono approvazione o un processo decisionale successivo:
@@ -317,16 +427,14 @@ Le decisioni seguenti non sono assunte da questo documento e richiedono approvaz
 
 ### Dati e documenti
 
-- limiti massimi di dimensione e quantità dei documenti;
-- tipi di file ammessi oltre ai PDF, se previsti;
-- durata della retention;
-- tempi e modalità della cancellazione fisica;
-- eventuali regole di legal hold;
-- requisiti di backup, RPO e RTO;
-- scansione antimalware e quarantena;
-- classificazione definitiva dei dati e requisiti di trattamento;
-- regioni ammesse per dati e servizi;
-- condizioni per l'uso di dati reali in ambienti non produttivi.
+- periodi esatti di retention;
+- calendari e procedure di cancellazione e archiviazione;
+- requisiti geografici di localizzazione dei dati;
+- base giuridica, informative e documentazione privacy applicabili;
+- procedura approvata per l'ambiente pilot protetto;
+- provider di elaborazione documentale;
+- dettagli della procedura di risposta agli incidenti;
+- autorizzazione per ciascun ambiente operativo.
 
 ### Tecnologia e fornitori
 
@@ -356,7 +464,7 @@ Questo documento è la fonte autoritativa per i futuri task Codex relativi al pe
 
 I futuri task devono:
 
-- rispettare le quattro decisioni indicate come **APPROVED BY PRODUCT OWNER**;
+- rispettare le cinque decisioni indicate come **APPROVED BY PRODUCT OWNER**;
 - non reintrodurre nello scope Foundation V1 le funzionalità esplicitamente escluse;
 - non semplificare l'architettura in un modello single-tenant;
 - non scegliere autonomamente elementi indicati come ancora soggetti a futura approvazione;
