@@ -216,6 +216,71 @@ Questa decisione comporta che:
 - assegnazioni, scope dei dati ed entitlement devono essere verificati oltre al ruolo nominale;
 - i test di autorizzazione devono coprire sia i permessi consentiti sia i tentativi di accesso negati per ciascun livello.
 
+## Decisione 4 — Modello di accesso e invito degli utenti
+
+**APPROVED BY PRODUCT OWNER**
+
+Data di approvazione: **22 luglio 2026**
+
+Foundation V1 deve utilizzare esclusivamente un accesso controllato.
+
+La registrazione pubblica self-service non è consentita.
+
+### Modello di accesso approvato
+
+1. Il Platform Owner / Super Admin crea l'azienda cliente e provisiona o invita il primo Tenant Admin.
+2. Il Tenant Admin può invitare Sales Manager e Agent autorizzati appartenenti allo stesso tenant.
+3. Prima di creare o accettare un invito, il sistema deve verificare:
+   - stato del tenant;
+   - stato dell'abbonamento o del contratto;
+   - disponibilità di licenze utente;
+   - ruolo consentito;
+   - indirizzo email valido;
+   - assenza di membership esistenti incompatibili.
+4. Ogni invito deve essere:
+   - associato esattamente a un tenant;
+   - associato a un ruolo approvato;
+   - utilizzabile una sola volta;
+   - limitato nel tempo;
+   - revocabile prima dell'accettazione;
+   - auditabile.
+5. Gli utenti non devono poter selezionare o cambiare autonomamente il proprio tenant.
+6. La disattivazione di un utente deve:
+   - bloccare l'accesso;
+   - liberare la licenza utente attiva, quando applicabile;
+   - conservare lo storico degli audit event e i riferimenti di ownership;
+   - non cancellare automaticamente documenti, attività o dati storici.
+7. Quando un tenant è sospeso:
+   - agli utenti del tenant deve essere impedito il normale utilizzo dell'applicazione;
+   - i dati del tenant devono rimanere conservati;
+   - il Platform Owner / Super Admin deve mantenere il controllo amministrativo autorizzato;
+   - la riattivazione deve essere possibile senza ricostruire l'account del tenant.
+8. Gli eventi di invito, attivazione, disattivazione, revoca e accettazione devono essere applicati lato server e registrati nell'audit trail.
+
+### Funzionalità escluse da Foundation V1
+
+Foundation V1 non deve includere:
+
+- registrazione pubblica;
+- creazione autonoma di aziende;
+- onboarding aperto tramite marketplace;
+- checkout automatico dell'abbonamento;
+- riscossione automatica dei pagamenti.
+
+Il pagamento e l'attivazione contrattuale possono essere gestiti inizialmente in modo manuale dal Platform Owner.
+
+### Conseguenze per l'architettura
+
+Questa decisione comporta che:
+
+- l'autenticazione deve essere separata dalla membership del tenant e dall'autorizzazione;
+- un'identità autenticata non deve ottenere accesso a un tenant senza una membership attiva;
+- i token di invito devono essere memorizzati e gestiti in modo sicuro;
+- gli inviti scaduti, revocati o già utilizzati devono essere rifiutati;
+- i limiti delle licenze utente devono essere verificati lato server;
+- tutte le assegnazioni di tenant e ruolo devono essere auditabili;
+- il supporto futuro di ulteriori metodi di onboarding non deve indebolire il modello di accesso controllato approvato.
+
 ## Elementi ancora soggetti a futura approvazione
 
 Le decisioni seguenti non sono assunte da questo documento e richiedono approvazione o un processo decisionale successivo:
@@ -240,10 +305,15 @@ Le decisioni seguenti non sono assunte da questo documento e richiedono approvaz
 - identificatori tecnici e granularità definitiva dei singoli permessi associati ai quattro ruoli approvati;
 - regole dettagliate di assegnazione di clienti, documenti, agenti e strutture commerciali;
 - eventuali ruoli aggiuntivi oltre ai quattro ruoli iniziali approvati;
-- possibilità che un utente appartenga in futuro a più tenant;
-- workflow operativo dettagliato per invito, provisioning, sostituzione e disattivazione degli utenti;
-- requisiti MFA, SSO o identity federation;
-- processo di recupero e revoca degli accessi.
+
+### Accesso, inviti e identità
+
+- durata di validità degli inviti;
+- limiti e regole per il reinvio degli inviti;
+- provider per la consegna delle email;
+- provider di identità definitivo;
+- workflow dettagliato di recupero dell'account;
+- supporto futuro per membership dello stesso utente in più tenant.
 
 ### Dati e documenti
 
@@ -262,10 +332,8 @@ Le decisioni seguenti non sono assunte da questo documento e richiedono approvaz
 
 - provider del database;
 - ORM o query layer e strumento di migrazione;
-- provider o libreria di autenticazione;
 - provider dello storage documentale;
 - provider di error monitoring e logging;
-- servizio email;
 - framework di test unitari, integrazione ed end-to-end;
 - soluzione per feature flag;
 - configurazione concreta di CI/CD;
@@ -288,7 +356,7 @@ Questo documento è la fonte autoritativa per i futuri task Codex relativi al pe
 
 I futuri task devono:
 
-- rispettare le tre decisioni indicate come **APPROVED BY PRODUCT OWNER**;
+- rispettare le quattro decisioni indicate come **APPROVED BY PRODUCT OWNER**;
 - non reintrodurre nello scope Foundation V1 le funzionalità esplicitamente escluse;
 - non semplificare l'architettura in un modello single-tenant;
 - non scegliere autonomamente elementi indicati come ancora soggetti a futura approvazione;
