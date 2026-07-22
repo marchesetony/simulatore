@@ -470,6 +470,110 @@ Foundation V1 deve predisporre:
 
 Foundation V1 continua a non includere OCR, estrazione automatica delle CTE, importazione PUN, formule di simulazione, motore GAS, ranking o report commerciali.
 
+## Decisione 7 — Regola di corrispondenza mensile dell'Indice PUN GME
+
+**APPROVED BY PRODUCT OWNER**
+
+Data di approvazione: **22 luglio 2026**
+
+### Requisito di prodotto
+
+L'applicazione deve acquisire e conservare i valori mensili ufficiali dell'Indice PUN GME per le tre fasce orarie:
+
+- F1;
+- F2;
+- F3.
+
+Ogni valore conservato deve mantenere:
+
+- mese di riferimento;
+- anno di riferimento;
+- fascia oraria;
+- valore e unità originali;
+- valore normalizzato utilizzato dal motore di calcolo;
+- riferimento alla fonte ufficiale;
+- timestamp di acquisizione;
+- stato di verifica;
+- informazioni di audit dell'importazione.
+
+### Regola di corrispondenza per la simulazione
+
+Una simulazione deve utilizzare i valori PUN ufficiali F1, F2 e F3 appartenenti allo stesso mese e allo stesso anno del periodo di consumo della bolletta caricata.
+
+Esempi:
+
+- il consumo F1 di una bolletta di maggio deve utilizzare il PUN F1 di maggio;
+- il consumo F2 di una bolletta di maggio deve utilizzare il PUN F2 di maggio;
+- il consumo F3 di una bolletta di maggio deve utilizzare il PUN F3 di maggio.
+
+Il sistema non deve utilizzare:
+
+- l'ultimo mese disponibile come sostituto;
+- la media dei quattro mesi precedenti;
+- valori stimati;
+- valori inventati;
+- valori di fallback silenziosi;
+- un mese diverso dal periodo di consumo della bolletta.
+
+### Regola di eleggibilità dei quattro mesi
+
+Alla data della simulazione, il mese di riferimento della bolletta deve appartenere a uno dei quattro mesi di calendario completi immediatamente precedenti il mese della simulazione.
+
+Esempio:
+
+Per una simulazione effettuata durante luglio 2026, i mesi di bolletta eleggibili sono:
+
+- marzo 2026;
+- aprile 2026;
+- maggio 2026;
+- giugno 2026.
+
+Febbraio 2026 o un mese precedente è fuori dalla finestra consentita.
+
+Luglio 2026 non è eleggibile perché non è un mese precedente completo.
+
+### Regola per dati mancanti
+
+Se il valore PUN GME ufficiale F1, F2 o F3 relativo al mese esatto della bolletta è mancante, non verificato o non disponibile:
+
+- la simulazione definitiva deve essere bloccata;
+- l'utente deve ricevere un messaggio di validazione chiaro;
+- non deve essere applicato alcun mese alternativo, media, stima, zero o valore predefinito.
+
+### Regola per bollette multi-mese
+
+Se una bolletta include consumi appartenenti a più mesi di calendario:
+
+- i consumi devono essere separati per mese quando sono disponibili dati mensili affidabili;
+- ogni quantità di consumo mensile deve utilizzare i valori PUN ufficiali F1, F2 e F3 dello stesso mese;
+- il sistema non deve assegnare arbitrariamente l'intera bolletta a un solo mese;
+- se non è disponibile una ripartizione mensile affidabile, la simulazione definitiva deve essere bloccata in attesa di verifica.
+
+### Conseguenze architetturali
+
+- l'importazione PUN deve essere deterministica e indipendente dall'AI generativa;
+- le importazioni devono essere idempotenti e ripetibili in sicurezza;
+- i record duplicati per mese e fascia devono essere impediti;
+- i valori storici non devono essere sovrascritti silenziosamente;
+- la conversione delle unità deve essere esplicita e testata;
+- la provenance della fonte deve essere conservata;
+- soltanto valori ufficiali verificati possono essere utilizzati nelle simulazioni definitive;
+- il Platform Owner / Super Admin deve poter ispezionare lo stato dell'importazione e avviare un nuovo tentativo manuale autorizzato;
+- i fallimenti di importazione e validazione devono essere auditabili senza esporre il contenuto dei documenti dei clienti.
+
+### Conseguenza per Foundation V1
+
+Foundation V1 non implementa ancora l'importazione GME o il motore di simulazione.
+
+Foundation V1 deve tuttavia predisporre le fondamenta architetturali necessarie per:
+
+- job pianificati lato server;
+- audit event;
+- autorizzazione;
+- separazione degli ambienti;
+- configurazione validata;
+- futura persistenza di record verificati degli indici di mercato.
+
 ## Elementi ancora soggetti a futura approvazione
 
 Le decisioni seguenti non sono assunte da questo documento e richiedono approvazione o un processo decisionale successivo:
@@ -531,11 +635,19 @@ Le decisioni seguenti non sono assunte da questo documento e richiedono approvaz
 - configurazione Vercel Preview e Production;
 - branch e workflow definitivo di promozione in Production.
 
+### Indice PUN GME
+
+- meccanismo ufficiale esatto di acquisizione dal GME;
+- frequenza e pianificazione dell'importazione;
+- formato della fonte ed endpoint tecnico;
+- workflow di verifica manuale;
+- trattamento di correzioni o ripubblicazioni da parte del GME;
+- workflow dettagliato di ripartizione multi-mese quando la bolletta non contiene consumi mensili affidabili.
+
 ### Milestone successive
 
 - requisiti e provider OCR;
 - strategia di estrazione delle CTE;
-- fonti e processo di importazione del PUN GME;
 - formule e criteri di validazione della simulazione elettrica;
 - requisiti del motore GAS;
 - criteri di ranking delle offerte;
@@ -547,7 +659,7 @@ Questo documento è la fonte autoritativa per i futuri task Codex relativi al pe
 
 I futuri task devono:
 
-- rispettare le sei decisioni indicate come **APPROVED BY PRODUCT OWNER**;
+- rispettare le sette decisioni indicate come **APPROVED BY PRODUCT OWNER**;
 - non reintrodurre nello scope Foundation V1 le funzionalità esplicitamente escluse;
 - non semplificare l'architettura in un modello single-tenant;
 - non scegliere autonomamente elementi indicati come ancora soggetti a futura approvazione;
