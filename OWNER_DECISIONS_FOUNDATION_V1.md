@@ -648,6 +648,241 @@ Foundation V1 deve rimanere indipendente dai provider e predisporre:
 
 Questa decisione non seleziona né approva alcuno specifico provider di database, storage, autenticazione, monitoraggio, OCR, AI, cloud o hosting.
 
+## Decisione 9 — Workflow controllato di rilascio Preview e Production
+
+**APPROVED BY PRODUCT OWNER**
+
+Data di approvazione: **22 luglio 2026**
+
+### Principio di rilascio approvato
+
+Nessun aggiornamento applicativo può essere pubblicato direttamente in Production.
+
+Ogni modifica deve attraversare un workflow controllato composto da:
+
+1. sviluppo su un branch separato da `main`;
+2. commit e push sul branch remoto autorizzato;
+3. revisione tramite Pull Request;
+4. deployment Vercel Preview isolato;
+5. controlli tecnici automatizzati;
+6. verifica funzionale;
+7. approvazione del Product Owner;
+8. merge autorizzato in `main`;
+9. deployment controllato in Production;
+10. verifica post-deployment.
+
+### Modifiche dirette in Production
+
+Durante le operazioni ordinarie sono vietati:
+
+- lo sviluppo diretto su `main`;
+- il push diretto su `main` di modifiche non revisionate;
+- il deployment diretto in Production da un branch non approvato;
+- l'aggiramento della verifica in Preview;
+- il merge senza i controlli richiesti;
+- il merge senza l'approvazione funzionale del Product Owner;
+- l'utilizzo della Production come ambiente di test;
+- il test dei deployment Preview ordinari con documenti reali dei clienti.
+
+### Regole per branch e Pull Request
+
+- lo sviluppo deve avvenire su branch dedicati;
+- `main` è il branch di rilascio in Production;
+- ogni modifica materiale deve utilizzare una Pull Request;
+- la Pull Request deve descrivere chiaramente scope, rischi, test, migrazioni, modifiche di configurazione e considerazioni sul rollback;
+- modifiche non correlate non devono essere combinate senza giustificazione;
+- i rilievi di revisione irrisolti devono bloccare il merge;
+- prima del merge, il branch deve essere sincronizzato e privo di conflitti;
+- i controlli di protezione del branch devono essere abilitati quando tecnicamente configurati.
+
+### Requisiti di Vercel Preview
+
+Ogni Pull Request o branch di sviluppo autorizzato deve generare una Vercel Preview isolata, ove tecnicamente supportato.
+
+La Preview deve essere utilizzata per verificare:
+
+- build dell'applicazione;
+- interfaccia utente;
+- comportamento responsive;
+- navigazione;
+- comportamento delle autorizzazioni;
+- isolamento dei tenant;
+- gestione degli errori;
+- configurazione dell'ambiente;
+- compatibilità delle migrazioni del database;
+- comportamento dell'integrazione con lo storage;
+- comportamento degli audit event;
+- aspettative di accessibilità;
+- rischi di regressione.
+
+L'approvazione della Preview non autorizza l'uso in Production di dati reali dei clienti.
+
+### Gate automatizzati di rilascio
+
+Prima del merge in `main`, i controlli automatizzati richiesti devono essere superati.
+
+I gate di rilascio devono includere progressivamente:
+
+- installazione delle dipendenze;
+- analisi statica;
+- validazione TypeScript;
+- linting;
+- test unitari;
+- test di integrazione;
+- test delle autorizzazioni;
+- test dell'isolamento dei tenant;
+- validazione delle migrazioni;
+- build di Production;
+- controlli di sicurezza;
+- controlli sull'esposizione di segreti;
+- validazione della configurazione richiesta.
+
+Il fallimento di un controllo obbligatorio blocca il merge, salvo approvazione di una procedura di emergenza esplicitamente documentata.
+
+### Approvazione del Product Owner
+
+Tony Marchese, in qualità di Product Owner, deve approvare il risultato funzionale prima che un rilascio materiale venga integrato in `main`.
+
+L'approvazione del Product Owner copre:
+
+- coerenza con i requisiti approvati;
+- comportamento business atteso;
+- workflow utente;
+- risultato visibile dell'applicazione;
+- readiness del rilascio dal punto di vista del prodotto.
+
+L'approvazione del Product Owner non sostituisce le verifiche tecniche, di sicurezza, privacy o migrazione.
+
+### Separazione degli ambienti
+
+Gli ambienti Local, CI, Preview, pilot protetto e Production devono rimanere logicamente separati.
+
+Devono utilizzare elementi separati o adeguatamente isolati per:
+
+- variabili d'ambiente;
+- credenziali;
+- segreti;
+- database o schemi di database, ove richiesto;
+- ubicazioni di storage;
+- configurazione dell'autenticazione;
+- endpoint webhook;
+- job pianificati;
+- configurazione del monitoraggio;
+- configurazione dei servizi di terze parti.
+
+I segreti di Production non devono essere esposti agli ambienti Local, CI o Preview ordinari.
+
+### Regole sui dati
+
+- lo sviluppo Local deve utilizzare dati sintetici;
+- la CI deve utilizzare dati sintetici;
+- i deployment Vercel Preview ordinari devono utilizzare dati sintetici;
+- bollette reali dei clienti e documenti CTE reali non devono essere utilizzati negli ambienti Preview ordinari;
+- un pilot protetto può utilizzare documenti reali soltanto dopo l'autorizzazione operativa separata e l'adozione delle garanzie richieste dalla decisione approvata sui documenti reali;
+- i dati di Production non devono essere copiati in Preview senza un processo approvato separatamente, controllato, minimizzato e documentato.
+
+### Migrazioni del database
+
+Ogni rilascio che contiene modifiche al database deve documentare e verificare:
+
+- ordine delle migrazioni;
+- compatibilità all'indietro;
+- eventuale downtime previsto;
+- rischi di trasformazione dei dati;
+- strategia di rollback o roll-forward;
+- validazione successiva alla migrazione;
+- comportamento quando le versioni dell'applicazione e del database differiscono temporaneamente.
+
+Le migrazioni distruttive o irreversibili richiedono un'ulteriore revisione esplicita prima del rilascio in Production.
+
+### Registro dei rilasci
+
+Ogni rilascio in Production deve conservare:
+
+- identificativo del rilascio o SHA del commit;
+- data e ora del rilascio;
+- Pull Request approvata;
+- modifiche incluse;
+- informazioni sulle migrazioni;
+- modifiche di configurazione rilevanti;
+- esito dei test e delle verifiche;
+- approvazione del Product Owner;
+- approvazione tecnica, ove richiesta;
+- limitazioni note;
+- istruzioni di rollback o recovery;
+- esito della verifica post-deployment.
+
+### Rollback e recovery
+
+Ogni rilascio materiale deve disporre di una strategia pratica di rollback o recovery.
+
+La strategia deve considerare:
+
+- rollback dell'applicazione;
+- compatibilità del database;
+- compatibilità dello storage;
+- job in background;
+- attività pianificate;
+- feature flag;
+- integrazioni esterne;
+- dati creati dopo il deployment.
+
+Il rollback non deve cancellare, corrompere, duplicare o esporre silenziosamente dati dei clienti.
+
+### Rilasci di emergenza
+
+Un rilascio di emergenza può utilizzare un processo accelerato soltanto quando necessario per affrontare:
+
+- un incidente di sicurezza;
+- un accesso non autorizzato;
+- un'esposizione attiva di dati;
+- una grave indisponibilità del servizio;
+- un rischio di corruzione dei dati;
+- un difetto critico legale od operativo.
+
+Anche durante un'emergenza:
+
+- la modifica deve essere isolata e minima;
+- la motivazione deve essere documentata;
+- l'autorizzazione deve essere registrata;
+- i test devono essere eseguiti nella massima misura compatibile con la sicurezza;
+- deve esistere un piano di rollback;
+- deve essere completata una revisione successiva al rilascio;
+- il Product Owner deve essere informato;
+- i controlli normali devono essere ripristinati immediatamente dopo.
+
+### Disabilitazione delle funzionalità e manutenzione
+
+Il Platform Owner / Super Admin deve poter, ove tecnicamente predisposto:
+
+- disabilitare una funzionalità interessata;
+- porre una funzione in modalità manutenzione;
+- mostrare una comunicazione di manutenzione appropriata;
+- preservare i servizi non interessati;
+- impedire elaborazioni non sicure;
+- ripristinare la funzione dopo la verifica.
+
+Questa autorità non deve consentire deployment di codice non controllati né l'aggiramento dell'isolamento dei tenant, dell'audit o dei requisiti di protezione dei dati.
+
+### Conseguenza per Foundation V1
+
+Foundation V1 deve predisporre le fondamenta tecniche e procedurali per:
+
+- sviluppo basato su branch;
+- controlli delle Pull Request;
+- deployment Vercel Preview;
+- separazione degli ambienti;
+- configurazione validata;
+- test automatizzati;
+- controlli delle migrazioni;
+- registri dei rilasci;
+- auditabilità;
+- rollback e recovery;
+- futura configurazione della protezione dei branch;
+- disabilitazione sicura delle funzionalità, ove applicabile.
+
+Questa decisione definisce il workflow di rilascio, ma non autorizza in questa fase un merge in `main` né un rilascio in Production.
+
 ## Elementi ancora soggetti a futura approvazione
 
 Le decisioni seguenti non sono assunte da questo documento e richiedono approvazione o un processo decisionale successivo:
@@ -704,9 +939,19 @@ Le decisioni seguenti non sono assunte da questo documento e richiedono approvaz
 - provider di error monitoring e logging;
 - framework di test unitari, integrazione ed end-to-end;
 - soluzione per feature flag;
-- configurazione concreta di CI/CD;
-- configurazione Vercel Preview e Production;
-- branch e workflow definitivo di promozione in Production.
+- configurazione concreta di CI/CD.
+
+### Workflow di rilascio
+
+- configurazione esatta della protezione dei branch GitHub;
+- numero richiesto e identità dei revisori tecnici;
+- controlli CI obbligatori esatti;
+- strategia di merge esatta;
+- meccanismo esatto di autorizzazione del deployment in Production;
+- autorizzazione dettagliata dei rilasci di emergenza;
+- runbook dettagliato di rollback;
+- convenzione di versionamento dei rilasci;
+- configurazione infrastrutturale specifica del provider per Preview e Production.
 
 ### Provider, localizzazione e trasferimenti internazionali
 
@@ -745,7 +990,7 @@ Questo documento è la fonte autoritativa per i futuri task Codex relativi al pe
 
 I futuri task devono:
 
-- rispettare le otto decisioni indicate come **APPROVED BY PRODUCT OWNER**;
+- rispettare le nove decisioni indicate come **APPROVED BY PRODUCT OWNER**;
 - non reintrodurre nello scope Foundation V1 le funzionalità esplicitamente escluse;
 - non semplificare l'architettura in un modello single-tenant;
 - non scegliere autonomamente elementi indicati come ancora soggetti a futura approvazione;
