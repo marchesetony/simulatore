@@ -883,6 +883,227 @@ Foundation V1 deve predisporre le fondamenta tecniche e procedurali per:
 
 Questa decisione definisce il workflow di rilascio, ma non autorizza in questa fase un merge in `main` né un rilascio in Production.
 
+## Decisione 10 — Autorizzazione alla discovery tecnica e alla progettazione architetturale di Foundation V1
+
+**APPROVED BY PRODUCT OWNER**
+
+Data di approvazione: **22 luglio 2026**
+
+### Scopo approvato
+
+È autorizzata una fase controllata di discovery tecnica e progettazione architetturale.
+
+Il suo scopo è trasformare le prime nove decisioni approvate dal Product Owner in:
+
+- un'architettura Foundation V1 eseguibile;
+- una roadmap di implementazione dettagliata;
+- confini tecnici chiari;
+- alternative documentate;
+- criteri di accettazione verificabili;
+- un piano di sviluppo ordinato;
+- dipendenze, rischi e decisioni irrisolte identificati.
+
+Questa autorizzazione copre esclusivamente analisi e documentazione tecnica.
+
+Non autorizza l'implementazione.
+
+### Aree di discovery autorizzate
+
+La fase di discovery può analizzare e progettare:
+
+- architettura applicativa modulare;
+- confini lato server e lato client;
+- architettura di autenticazione;
+- gestione delle sessioni;
+- inviti controllati;
+- membership dei tenant;
+- multi-tenancy SaaS;
+- isolamento dei tenant;
+- ruoli e permessi granulari;
+- autorizzazione lato server;
+- capacità del Platform Owner;
+- capacità del Tenant Admin;
+- capacità del Sales Manager / Coordinator;
+- capacità dell'Agent / Sales Operator;
+- fondamenta di abbonamenti e licenze;
+- limiti dei posti utente;
+- entitlement e controlli delle funzionalità;
+- sospensione e ripristino dei tenant;
+- architettura del database;
+- strategia di migrazione;
+- storage documentale privato;
+- provenance dei documenti;
+- stati del ciclo di vita di bollette e CTE;
+- archiviazione e cancellazione pianificata;
+- audit logging;
+- fondamenta dell'automazione della retention;
+- job pianificati lato server;
+- gestione degli errori;
+- osservabilità e monitoraggio con dati oscurati;
+- validazione della configurazione;
+- separazione degli ambienti Local, CI, Preview, pilot protetto e Production;
+- strategia di test;
+- continuous integration;
+- gate di rilascio;
+- fondamenta di rollback e recovery;
+- adapter per provider futuri;
+- fondamenta della futura importazione del GME PUN Index;
+- confini delle future integrazioni OCR e AI;
+- controlli di sicurezza e privacy;
+- struttura della documentazione tecnica.
+
+### Attività autorizzate
+
+Codex può:
+
+- ispezionare il repository corrente;
+- ispezionare la documentazione di progetto esistente;
+- identificare i confini del codice legacy;
+- mappare dipendenze e debito tecnico;
+- confrontare alternative architetturali;
+- proporre modelli dati;
+- proporre strutture di moduli e directory;
+- proporre interfacce e adapter di servizio;
+- proporre matrici di autorizzazione;
+- proporre macchine a stati dei documenti;
+- proporre sequenze di migrazione;
+- proporre livelli di test;
+- proporre controlli CI e di rilascio;
+- proporre strutture delle variabili d'ambiente senza valori reali;
+- identificare criteri di selezione dei provider;
+- identificare rischi, trade-off e prerequisiti;
+- creare documentazione tecnica di pianificazione nel repository soltanto quando riceve un'istruzione separata;
+- raccomandare un ordine di implementazione.
+
+### Attività vietate
+
+Durante questa fase di discovery, Codex non deve:
+
+- modificare il codice applicativo;
+- effettuare refactoring del codice applicativo;
+- eliminare codice applicativo;
+- installare o aggiornare dipendenze;
+- modificare `package-lock.json`;
+- creare un database;
+- eseguire migrazioni del database;
+- creare account presso provider esterni;
+- selezionare o approvare definitivamente un provider;
+- configurare Vercel;
+- modificare le impostazioni GitHub;
+- configurare la protezione dei branch;
+- aggiungere segreti o credenziali reali;
+- utilizzare bollette reali dei clienti;
+- utilizzare documenti CTE reali;
+- trattare dati personali o riservati dei clienti;
+- abilitare servizi OCR o AI;
+- implementare l'acquisizione dei dati GME;
+- implementare simulazioni;
+- creare una Pull Request;
+- effettuare merge in `main`;
+- eseguire deployment in Production;
+- autorizzare l'uso in Production.
+
+### Deliverable attesi dalla discovery
+
+La discovery tecnica deve infine produrre una proposta di documentazione che copra almeno:
+
+1. architettura target;
+2. confini modulari;
+3. struttura proposta del repository;
+4. flusso di autenticazione e invito;
+5. modello di tenant e membership;
+6. matrice di autorizzazione;
+7. fondamenta di abbonamenti, licenze, posti utente ed entitlement;
+8. modello di database proposto;
+9. architettura dello storage privato;
+10. macchine a stati del ciclo di vita dei documenti;
+11. modello degli audit event;
+12. architettura della retention e cancellazione pianificata;
+13. modello di separazione degli ambienti;
+14. strategia degli adapter dei provider;
+15. strategia di test;
+16. strategia CI e dei gate di rilascio;
+17. strategia di migrazione e rollback;
+18. strategia di osservabilità ed errori con dati oscurati;
+19. considerazioni sulle minacce per sicurezza e privacy;
+20. fasi di implementazione ordinate;
+21. criteri di accettazione per ogni fase;
+22. rischi e dipendenze;
+23. decisioni che richiedono ancora l'approvazione del Product Owner.
+
+### Neutralità rispetto ai provider
+
+La discovery può confrontare possibili provider e architetture.
+
+Ogni confronto deve distinguere:
+
+- fatti verificati;
+- assunzioni;
+- vantaggi;
+- limitazioni;
+- dipendenze operative;
+- implicazioni di sicurezza e privacy;
+- rischi di portabilità e vendor lock-in;
+- costi che richiedono ancora una verifica aggiornata.
+
+Nessun provider diventa approvato per il solo fatto di essere raccomandato in un documento di discovery.
+
+Qualsiasi selezione di provider richiede una decisione separata del Product Owner e le valutazioni previste dalla Decisione 8.
+
+### Confine del prototipo legacy
+
+La discovery deve trattare l'applicazione corrente come un prototipo legacy.
+
+Per ogni area rilevante deve identificare esplicitamente se l'implementazione esistente debba essere:
+
+- mantenuta;
+- sottoposta a refactoring;
+- sostituita;
+- isolata temporaneamente;
+- rimossa soltanto durante una successiva fase di implementazione autorizzata.
+
+Nessuna funzionalità legacy può essere trattata silenziosamente come pronta per la Production.
+
+### Confine dello scope Foundation V1
+
+La discovery deve rispettare la Decisione 1.
+
+Foundation V1 predispone fondamenta professionali e un ciclo di vita documentale non interpretativo.
+
+Foundation V1 non implementa:
+
+- estrazione OCR;
+- estrazione delle condizioni commerciali dalle CTE;
+- acquisizione PUN;
+- simulazioni elettriche;
+- simulazioni gas;
+- confronti tra offerte;
+- ranking;
+- report finali;
+- interpretazione documentale tramite AI generativa.
+
+I moduli futuri possono essere considerati soltanto per assicurare che Foundation V1 non crei vicoli ciechi architetturali.
+
+### Controllo delle decisioni e della revisione
+
+Ogni assunzione che influisce su comportamento del prodotto, regole commerciali, privacy, sicurezza, retention, permessi utente o workflow operativo deve essere identificata.
+
+Codex non deve decidere silenziosamente questioni di business irrisolte.
+
+Gli elementi che richiedono l'approvazione del Product Owner devono essere elencati chiaramente e rimanere pendenti fino all'approvazione esplicita del Product Owner.
+
+### Autorizzazione all'implementazione
+
+Il completamento della documentazione di discovery non autorizzerà automaticamente l'implementazione.
+
+Deve essere rilasciata un'autorizzazione separata all'implementazione dopo:
+
+- revisione tecnica;
+- revisione del Product Owner;
+- risoluzione o rinvio esplicito delle decisioni bloccanti;
+- approvazione della prima fase di implementazione;
+- conferma dei controlli sui branch e sui rilasci.
+
 ## Elementi ancora soggetti a futura approvazione
 
 Le decisioni seguenti non sono assunte da questo documento e richiedono approvazione o un processo decisionale successivo:
@@ -941,6 +1162,25 @@ Le decisioni seguenti non sono assunte da questo documento e richiedono approvaz
 - soluzione per feature flag;
 - configurazione concreta di CI/CD.
 
+### Architettura e autorizzazione all'implementazione
+
+- approvazione dell'architettura finale;
+- selezione dei provider;
+- provider e regione del database;
+- provider di autenticazione;
+- provider dello storage;
+- provider di monitoraggio;
+- meccanismo dei job pianificati;
+- modello dati esatto;
+- matrice di autorizzazione esatta;
+- ristrutturazione esatta del repository;
+- aggiunte esatte alle dipendenze;
+- autorizzazione della fase di implementazione;
+- approvazione della sequenza di implementazione;
+- identità del revisore tecnico;
+- scope della prima Pull Request;
+- autorizzazione a modificare il codice applicativo.
+
 ### Workflow di rilascio
 
 - configurazione esatta della protezione dei branch GitHub;
@@ -990,7 +1230,7 @@ Questo documento è la fonte autoritativa per i futuri task Codex relativi al pe
 
 I futuri task devono:
 
-- rispettare le nove decisioni indicate come **APPROVED BY PRODUCT OWNER**;
+- rispettare le dieci decisioni indicate come **APPROVED BY PRODUCT OWNER**;
 - non reintrodurre nello scope Foundation V1 le funzionalità esplicitamente escluse;
 - non semplificare l'architettura in un modello single-tenant;
 - non scegliere autonomamente elementi indicati come ancora soggetti a futura approvazione;
