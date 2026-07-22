@@ -140,6 +140,82 @@ Questa decisione comporta che:
 - log e audit event devono identificare attore, tenant, azione e risultato senza registrare segreti o contenuti documentali non necessari;
 - Preview e Production devono usare dati, credenziali e risorse separate.
 
+## Decisione 3 — Ruoli utente iniziali
+
+**APPROVED BY PRODUCT OWNER**
+
+Data di approvazione: **22 luglio 2026**
+
+Foundation V1 deve includere i seguenti ruoli iniziali.
+
+### 1. Platform Owner / Super Admin
+
+Responsabilità e permessi:
+
+- creare, attivare, sospendere, bloccare e riattivare le aziende clienti;
+- assegnare piani, limiti contrattuali, limiti utenti e funzionalità abilitate;
+- gestire date di inizio del contratto, date di scadenza, proroghe e restrizioni personalizzate;
+- accedere ai controlli amministrativi e tecnici a livello di piattaforma;
+- consultare gli audit log autorizzati;
+- gestire gli aggiornamenti della piattaforma, inclusi:
+  - aggiornamenti software;
+  - attivazione progressiva di nuove funzionalità;
+  - comunicazioni di manutenzione;
+  - note di rilascio;
+  - disabilitazione temporanea di funzionalità durante la manutenzione tecnica.
+
+### 2. Tenant Admin
+
+Responsabilità e permessi:
+
+- gestire gli utenti appartenenti all'azienda cliente;
+- invitare, attivare, disattivare e sostituire utenti;
+- assegnare ruoli e permessi interni;
+- visualizzare le licenze utenti disponibili e utilizzate;
+- gestire la rete commerciale dell'azienda;
+- accedere a tutti i dati autorizzati appartenenti al tenant;
+- configurare restrizioni interne entro i limiti imposti dal Platform Owner.
+
+Il Tenant Admin non può modificare piani commerciali, limiti contrattuali o impostazioni a livello di piattaforma.
+
+### 3. Sales Manager / Coordinator
+
+Responsabilità e permessi:
+
+- gestire gli agenti assegnati;
+- monitorare le attività della rete commerciale assegnata;
+- accedere a clienti, documenti, simulazioni e proposte autorizzati;
+- supervisionare il lavoro della struttura assegnata.
+
+Il Sales Manager non può modificare abbonamenti, licenze, limiti contrattuali o impostazioni generali del tenant.
+
+I riferimenti a simulazioni e proposte definiscono autorizzazioni future e non introducono tali moduli nel perimetro di Foundation V1: restano valide le esclusioni della Decisione 1.
+
+### 4. Agent / Sales Operator
+
+Responsabilità e permessi:
+
+- accedere esclusivamente ai clienti e ai documenti assegnati o esplicitamente autorizzati;
+- caricare documenti;
+- utilizzare esclusivamente le funzionalità abilitate dal piano del tenant e dai permessi assegnati;
+- creare simulazioni e proposte commerciali quando tali moduli saranno implementati.
+
+L'Agent non può accedere ai dati appartenenti ad altri agenti, salvo autorizzazione esplicita.
+
+I riferimenti a simulazioni e proposte commerciali definiscono autorizzazioni future e non modificano il perimetro Foundation V1 approvato nella Decisione 1.
+
+### Conseguenze per l'architettura
+
+Questa decisione comporta che:
+
+- i permessi devono essere applicati lato server;
+- l'isolamento dei tenant deve essere applicato a ogni ruolo;
+- i nomi dei ruoli non devono sostituire controlli granulari dei permessi;
+- ruoli e permessi futuri devono poter essere estesi senza riprogettare il modello tenant;
+- la gestione degli aggiornamenti della piattaforma deve essere riservata agli utenti Platform Owner / Super Admin;
+- assegnazioni, scope dei dati ed entitlement devono essere verificati oltre al ruolo nominale;
+- i test di autorizzazione devono coprire sia i permessi consentiti sia i tentativi di accesso negati per ciascun livello.
+
 ## Elementi ancora soggetti a futura approvazione
 
 Le decisioni seguenti non sono assunte da questo documento e richiedono approvazione o un processo decisionale successivo:
@@ -161,11 +237,11 @@ Le decisioni seguenti non sono assunte da questo documento e richiedono approvaz
 
 ### Utenti, ruoli e autorizzazioni
 
-- denominazione definitiva dei ruoli;
-- matrice completa dei permessi del Platform Owner;
-- ruoli interni alla Customer Company;
+- identificatori tecnici e granularità definitiva dei singoli permessi associati ai quattro ruoli approvati;
+- regole dettagliate di assegnazione di clienti, documenti, agenti e strutture commerciali;
+- eventuali ruoli aggiuntivi oltre ai quattro ruoli iniziali approvati;
 - possibilità che un utente appartenga in futuro a più tenant;
-- regole di invito, provisioning, sostituzione e disattivazione degli agenti;
+- workflow operativo dettagliato per invito, provisioning, sostituzione e disattivazione degli utenti;
 - requisiti MFA, SSO o identity federation;
 - processo di recupero e revoca degli accessi.
 
@@ -212,7 +288,7 @@ Questo documento è la fonte autoritativa per i futuri task Codex relativi al pe
 
 I futuri task devono:
 
-- rispettare le due decisioni indicate come **APPROVED BY PRODUCT OWNER**;
+- rispettare le tre decisioni indicate come **APPROVED BY PRODUCT OWNER**;
 - non reintrodurre nello scope Foundation V1 le funzionalità esplicitamente escluse;
 - non semplificare l'architettura in un modello single-tenant;
 - non scegliere autonomamente elementi indicati come ancora soggetti a futura approvazione;
