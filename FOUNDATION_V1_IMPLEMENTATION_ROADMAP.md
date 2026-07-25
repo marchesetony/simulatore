@@ -12,10 +12,14 @@ Define a complete, evidence-based possible implementation sequence for Foundatio
 
 Sequencing identity, tenancy, authorization, licensing foundations, persistence, private storage, lifecycle, audit, retention, providers, testing, release, observability, operational security, migration readiness, and controlled release.
 
+
+Decision 11 adds a future graphical validation sequence before functional comparison/PDF work; this remains outside Foundation V1 implementation.
 ## 4. Non-goals
 
 No implementation, future interpretive capability, provider selection, code, dependency, configuration, schema, migration, test, workflow, environment, account, Preview, Production, real document, or customer data.
 
+
+Logo/PDF comparison, extraction, calculations, reports, and real-document behavior remain non-goals and NOT AUTHORIZED.
 ## 5. Verified current repository state
 
 | Subject | Classification | Repository evidence | Current result | Roadmap significance | Unresolved question |
@@ -454,6 +458,8 @@ Provider states are UNASSESSED, DISCOVERY_ONLY, ASSESSMENT_IN_PROGRESS, CONDITIO
 
 Synthetic, fixture, generated, anonymized, pseudonymized, real tenant, real customer, real document, metadata, audit, and telemetry remain distinct. Pseudonymized real data is not automatically synthetic. Real data NOT AUTHORIZED.
 
+
+Decision 11 requires synthetic-only fixtures for graphical validation; logo/source/page data classes and real-data approval remain pending.
 ## 17. Security and Privacy preconditions
 
 ### A. Security preconditions
@@ -992,6 +998,8 @@ Each privacy precondition is separately assessed; lawful basis, purpose, role, l
 - **Failure behavior:** Keep Production and real data prohibited.
 - **Current status:** NOT AUTHORIZED.
 
+
+Security/Privacy review must separately address logo access, source/page provenance, PDF contents, expiry evidence, retention, and real-data boundaries.
 ## 18. Legal, regulatory, commercial, and consumer-protection preconditions
 
 Each entry below is independently assessed. Blocking values are YES, NO, or CONDITIONAL; unresolved applicable matters remain PENDING and fail closed.
@@ -1578,6 +1586,8 @@ Each entry below is independently assessed. Blocking values are YES, NO, or COND
 
 No Legal approval, regulatory conformity, commercial approval, consumer-protection compliance, Production readiness, or real-data readiness is claimed by this roadmap.
 
+
+Legal/regulatory/commercial review remains pending for logo rights, estimate warnings, PDF claims, formula contract, and customer-facing comparison content.
 ## 19. Testing and evidence preconditions
 
 ### 1. DRAFT
@@ -2466,6 +2476,18 @@ A predecessor commit is insufficient; PHASE_COMPLETE is required. No automatic t
 - **Implementation status:** NOT AUTHORIZED
 
 
+
+The roadmap workstreams must preserve graphical validation as a synthetic presentation package and keep functional comparison/PDF capabilities outside Foundation V1.
+
+Decision 11 sequence: graphical validation precedes functional validation; the graphical package is synthetic-only and presentation-only; no implementation is authorized.
+
+Private document identity, source/page evidence, logo access, and future PDF artifacts require separate storage and access decisions; real documents remain NOT AUTHORIZED.
+
+Lifecycle treatment of logo assets, source documents, and derived PDFs remains a future retention/deletion decision; no mechanism is selected.
+
+Any future graphical or functional release requires separate release, Production, and real-data authorization; this roadmap authorizes none.
+
+The future expiry fallback must be exactly `Data di scadenza: non rilevata nel documento — verifica necessaria`; this roadmap authorizes no extraction or implementation.
 ## 20. Documentation-synchronization rule
 
 Every verified fact, decision, provider/environment state, migration, test, defect, correction, release, and acceptance updates its canonical document; documentation may not be deferred.
@@ -5595,6 +5617,12 @@ Schema migration, data migration, backfill, reconciliation, synthetic seed, dete
 - **Retention relationship:** Retention remains PENDING; no duration is invented.
 - **Implementation status:** NOT AUTHORIZED
 
+
+Update existing open decisions to include Decision 11 subjects: logo ownership/formats/storage/scope/replacement, formula inputs, provenance, expiry labels/error behavior, PDF layout/content, retention, access, and testing. No new decision count is introduced.
+
+Acceptance must verify Decision 11 sequencing, synthetic-only graphical behavior, exact expiry fallback, provenance, PDF content contract, and absence of implementation authorization.
+
+Decision 11 does not authorize graphical or functional implementation; only documentation synchronization and future authorization-package preparation are permitted.
 ## 49. Security-verification mapping
 
 ### 1. identity

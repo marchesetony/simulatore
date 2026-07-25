@@ -64,6 +64,8 @@ Included documentation boundaries: modular architecture; identity and controlled
 
 OCR; text recognition; Bill/CTE structured extraction; confidence; automated correction; human-review workflow implementation; PUN/tariff/reference ingestion; normalization; calculations/formulas; simulations/scenarios; comparisons/rankings; recommendations/commercial advice; reports/exports; AI/generative AI/agents; automated contractual actions; integrations/public APIs; batch/scheduled processing; notifications; analytics/search; mobile/native/offline/biometric features; Production; real data.
 
+
+**Decisione 11 synchronization:** A future graphical validation package may be synthetic-only and presentation-only; functional comparison/PDF behavior remains separately unauthorized. OCR, extraction, calculations, comparisons, reports, PDF export, real data, and Production remain NOT AUTHORIZED.
 ## 11. Future capability-family inventory
 
 Each family is a proposal only. For every row: source authority and execution authority remain separately approved; tenant, role, entitlement, provider, evidence, human review, security/privacy, prerequisites, and release gates are required; current status and implementation status are NOT AUTHORIZED.
@@ -841,6 +843,8 @@ Plan, commercial contract, manual payment evidence, licence, seat, entitlement, 
 
 Source document, source text, extracted field, normalized field, human-corrected field, official/imported reference data, assumed value, derived value, calculation, simulation, comparison, recommendation, report, export, and AI-generated content are distinct classes. Each requires authority, provenance, mutability, validation, tenant scope, permitted/prohibited interpretation, evidence, retention relationship, and NOT AUTHORIZED implementation. Derived data never overwrites source; missing values are never invented; pseudonymized real data is not automatically synthetic.
 
+
+**Decisione 11 synchronization:** Logo assets, source documents, pages, extracted facts, calculations, assumptions, and unavailable data require distinct future data classes and provenance. Real documents/data remain NOT AUTHORIZED; graphical validation uses fixed synthetic fixtures only.
 ## 17. Environment boundary
 
 |environment|permitted future activity|permitted/prohibited data|providers and capability state|testing/evidence|teardown/status|
@@ -908,6 +912,8 @@ Provider states, in order: UNASSESSED; DISCOVERY_ONLY; ASSESSMENT_IN_PROGRESS; C
 
 The sequence remains `branch → push → Pull Request → Preview → checks → approval → merge → Production → verification`. No direct Production or force bypass. Capability release approval is distinct from provider, entitlement, real-data, tenant, calculation-rule, official-source, Legal, Privacy, Security, commercial, and Product Owner approval. No Production or real-data execution is authorized.
 
+
+**Decisione 11 synchronization:** Graphical approval precedes any functional package, release, real-document, or real-data consideration; neither graphical evidence nor PDF preview grants authority.
 ## 20. Evidence, audit, and provenance boundary
 
 Source, extraction, confidence, correction, official-source, calculation, simulation, comparison, recommendation, report, AI-generation, provider, release, audit, and operational telemetry evidence are distinct. Telemetry is not automatically audit evidence; audit evidence is not source truth; recording cannot grant authority; missing evidence is not success; correction preserves prior evidence; derived output requires traceable input/version provenance.
@@ -916,22 +922,34 @@ Source, extraction, confidence, correction, official-source, calculation, simula
 
 **Objective:** future native-text/OCR acquisition with page provenance. **Included:** proposed text, document/page identity, regions, orientation, language, confidence. **Excluded:** invention, interpretation, real documents, OCR implementation. **Trusted inputs:** authorized source document. **Proposed outputs:** text proposal. **Authoritative source:** source document. **Execution authority:** separately approved server process. **Tenant scope:** source tenant only. **Permission/entitlement scope:** approved feature. **Provider boundary:** no OCR provider selected. **Evidence/provenance:** page and source references. **Validation:** unreadable/partial/duplicate/provider failures fail closed. **Failure behavior:** no silent success. **Human-review boundary:** required where defined. **Security/privacy:** no document content in ordinary telemetry. **Release prerequisites:** gates 1–24. **Unresolved decisions:** formats, languages, limits, quality. **Current status:** DISCOVERY_ONLY proposal. **Implementation status:** NOT AUTHORIZED. OCR output is proposed text, not authoritative business data.
 
+
+**Decisione 11 synchronization:** Expiry must reproduce the bill value with document/page evidence and never be inferred. Missing, unreadable, or ambiguous values use the exact required fallback message. OCR/text acquisition remains future and NOT AUTHORIZED.
+
+The exact missing/ambiguous expiry fallback is: `Data di scadenza: non rilevata nel documento — verifica necessaria`. This is a future requirement only.
 ## 22. Bill structured-extraction boundary
 
 **Objective:** propose supplier, customer, POD/PDR, address, period, consumption, power, tariff, taxes, charges, totals, payment status, dates, page/text references, confidence, ambiguity, missing fields, and correction. **Excluded:** final schema, legal/commercial truth, implementation. **Trusted inputs:** source document/text. **Proposed outputs:** versioned fields. **Authoritative source:** source evidence plus approved validation. **Execution authority:** server-authorized process. **Tenant scope:** one tenant. **Permission/entitlement scope:** separately approved. **Provider boundary:** none selected. **Evidence/provenance:** source-page/text links and correction history. **Validation:** missing/conflict fails closed. **Failure behavior:** no invented field. **Human-review boundary:** approved reviewer. **Security/privacy:** least privilege. **Release prerequisites:** source, schema, tests, gates. **Unresolved decisions:** field catalog and rules. **Current status:** DISCOVERY_ONLY. **Implementation status:** NOT AUTHORIZED.
 
+
+**Decisione 11 synchronization:** Bill expiry provenance and fallback behavior are future requirements only; no extraction or interpretation is authorized.
 ## 23. CTE structured-extraction boundary
 
 **Objective:** propose version, supplier, offer, commodity, customer type, market, validity, prices, indexation, spreads, fees, discounts, duration, renewal, withdrawal, payment, guarantees, page/text references, confidence, ambiguity, correction. **Excluded:** legal interpretation and authoritative offer. **Trusted inputs:** source text/document. **Proposed outputs:** versioned fields. **Authoritative source:** source evidence and approved rules. **Execution authority:** server-authorized. **Tenant scope:** source tenant. **Permission/entitlement scope:** approved feature. **Provider boundary:** no extractor selected. **Evidence/provenance:** page/text and versions. **Validation:** regex matches are not authority; stale/missing/conflict fails. **Failure behavior:** no silent success. **Human-review boundary:** required where policy says. **Security/privacy:** no content in telemetry. **Release prerequisites:** approved field catalog/tests. **Unresolved decisions:** schema and interpretation. **Current status:** DISCOVERY_ONLY. **Implementation status:** NOT AUTHORIZED.
 
+
+**Decisione 11 synchronization:** CTE extraction and structured interpretation remain outside Foundation V1; graphical validation may show only fixed synthetic fields.
 ## 24. Human review and correction boundary
 
 **Objective:** governed review. **Included:** assignment, reviewer, original/proposed/corrected values, reason, source, timestamps, tenant, actor, version, conflict, approval/rejection/escalation. **Excluded:** unrestricted access and silent overwrite. **Trusted inputs:** source and proposed evidence. **Proposed outputs:** append-only correction. **Authoritative source:** approved review authority. **Execution authority:** scoped reviewer/server. **Tenant scope:** assigned tenant/document. **Permission/entitlement scope:** review permission. **Provider boundary:** none selected. **Evidence/provenance:** prior values retained. **Validation:** conflicts require resolution. **Failure behavior:** deny ambiguous correction. **Human-review boundary:** this section. **Security/privacy:** least privilege. **Release prerequisites:** authorization and audit. **Unresolved decisions:** reviewer roles. **Current status:** DISCOVERY_ONLY. **Implementation status:** NOT AUTHORIZED.
 
+
+**Decisione 11 synchronization:** Human review, correction, and ambiguity handling remain future decisions; no graphical preview authorizes correction or extraction.
 ## 25. Confidence, quality, and provenance boundary
 
 Model/rule confidence, source quality, completeness, consistency, validation, human review, official-source status, calculation confidence, uncertainty, and unknown remain distinct. Confidence is not legal/commercial correctness; thresholds are PENDING; client-provided confidence is not authoritative; low confidence cannot become success. All dimensions above apply; implementation NOT AUTHORIZED.
 
+
+**Decisione 11 synchronization:** Verified fact, calculated result, assumption, and unavailable-data classes must remain distinct in any future PDF contract.
 ## 26. Official PUN ingestion boundary
 
 Official GME data is the future authoritative source, matched month-to-month across the approved four complete months. Publication identity/date/month/revision, duplicate/corrected/missing/conflicting publications, provenance, and validation are required. Hardcoded values are never official. No endpoint, format, authentication, timing, fallback, storage, provider, or implementation is selected; implementation NOT AUTHORIZED.
@@ -944,6 +962,8 @@ Validate source authority/identity/status, publication/effective dates, revision
 
 Future catalogs require source, supplier, commodity, segment, geography, effective period, units, tax/regulatory/commercial components, version, supersession, corrections, missing/conflicting values. No catalog is invented and no provider selected. Tenant, authority, provenance, validation, security/privacy, release, and NOT AUTHORIZED boundaries apply.
 
+
+**Decisione 11 synchronization:** Future comparison/PDF content may display fixed synthetic tariff fields only; no tariff source or calculation mechanism is selected.
 ## 29. Normalization and validation boundary
 
 Preserve source and normalized values, units, locale, date, decimal, currency, commodity, identifiers, ranges, required/optional status, contradiction, duplicate, correction, provenance, and versioned rules. No destructive overwrite; missing/conflicting input fails closed; rules and mechanism PENDING; implementation NOT AUTHORIZED.
@@ -952,6 +972,8 @@ Preserve source and normalized values, units, locale, date, decimal, currency, c
 
 Future calculation must preserve formula/rule/regulatory identity and versions, inputs/provenance, units, currency, tax assumptions, period/effective dates, rounding/precision, missing/invalid inputs, derived output, timestamp, tenant, actor/system, reproducibility, and evidence. Current browser formulas are not authoritative; no engine selected; no guaranteed savings or contractual truth; implementation NOT AUTHORIZED.
 
+
+**Decisione 11 synchronization:** Functional comparison calculations require a separately approved formula contract; graphical validation performs no calculation.
 ## 31. Simulation and scenario boundary
 
 Baseline, scenario, assumption, forecast, official/user/synthetic/derived values, uncertainty, sensitivity, horizon, period, version, reproducibility, deletion, and report inclusion are distinct. Simulation is not prediction, guarantee, quote, offer, or contract. Authority, tenant, evidence, release, and NOT AUTHORIZED boundaries apply.
@@ -960,6 +982,8 @@ Baseline, scenario, assumption, forecast, official/user/synthetic/derived values
 
 Comparisons require same commodity/customer class/period/consumption/tax/regulatory assumptions, units, calculation version, exclusions, incomplete-data handling, ties, ordering, explainability, provenance, and human review. Ranking is not automatically recommendation or suitability; implementation NOT AUTHORIZED.
 
+
+**Decisione 11 synchronization:** Comparison output and euro/percentage differences remain future functionality; graphical validation is presentation-only.
 ## 33. Recommendation and decision-support boundary
 
 Factual, calculated, compared, ranked, recommended, commercial/regulated advice, preference, suitability, disclaimer, and human decision remain distinct. No autonomous contract, supplier switch, offer acceptance, guaranteed saving, or unreviewed advice. Legal, Privacy, Security, commercial, regulatory, and Product decisions PENDING; implementation NOT AUTHORIZED.
@@ -968,6 +992,8 @@ Factual, calculated, compared, ranked, recommended, commercial/regulated advice,
 
 Reports/exports require type, audience, tenant, source/derived data, assumptions, version, time, creator, redaction, access, expiry, revocation, private delivery, audit evidence, correction, and deletion. No permanent public URL; format/provider pending. Derived artifacts are not source truth; implementation NOT AUTHORIZED.
 
+
+**Decisione 11 synchronization:** PDF export/download and professional layout remain future functionality; no PDF engine or mechanism is selected.
 ## 35. AI-assistant boundary
 
 Question, conversation, tenant, retrieved context, tools, model input/output, provenance, citations, uncertainty, refusal, human confirmation, minimization, retention, training/model-improvement and human-review prohibitions remain explicit. No model/provider/tool or autonomous authority selected; implementation NOT AUTHORIZED.
@@ -1512,6 +1538,8 @@ Standards remain PENDING. Screen reader, keyboard, focus, contrast, zoom, mobile
 - **Current status:** DISCOVERY_ONLY proposal; no capability is approved beyond discovery.
 - **Implementation status:** NOT AUTHORIZED
 
+
+**Decisione 11 synchronization:** Logo placement, typography, hierarchy, tables, page breaks, warnings, print readability, and desktop/mobile presentation are graphical validation concerns using synthetic fixtures only.
 ## 45. Privacy, Legal, and regulatory boundary
 
 Purpose, lawful basis, minimization, transparency, retention/deletion/export, automated decision/profiling, explanation/intervention, energy regulation, consumer protection, recommendation, AI governance, contracts, subprocessors, and locations require Legal/Privacy/regulatory decisions. No compliance claim.
@@ -1524,6 +1552,8 @@ All future capabilities inherit server authorization, tenant isolation, trusted 
 
 Source, extracted, corrected, official, calculation, simulation, comparison, recommendation, report, export, AI conversation, provider, backup, audit, and telemetry retention remain distinct. Requests, confirmations, purge, dependent copies, and resurrection prevention are distinct. No retention values invented.
 
+
+**Decisione 11 synchronization:** Derived comparison PDFs, logo assets, source/page evidence, and expiry evidence require future retention/deletion decisions; no storage or retention mechanism is selected.
 ## 48. Migration, backfill, and reprocessing boundary
 
 Source/target versions, eligibility, authority, tenant/provider, rule/model/calculation versions, original evidence, reprocessed result, comparison, correction, failure/partial result, rollback, audit, and no silent historical rewrite are required. No migration or reprocessing implementation authorized.
@@ -4231,6 +4261,8 @@ At least 70 decisions remain PENDING. Each item has the same required fields: wh
 - **Implementation-blocking status:** YES.
 - **Required approver:** Applicable Product Owner, Legal, Privacy, Security, regulatory, commercial, provider-governance, source, calculation-rules, human-review, or release authority; approval remains PENDING.
 
+
+**Decisione 11 synchronization:** Existing open decisions must cover logo ownership/formats/storage/scope/replacement, PDF layout/content, formula inputs, provenance, expiry labels/error behavior, retention, access control, and testing. Decision 11 remains documentation-only and unresolved implementation mechanisms stay pending.
 ## 59. Acceptance criteria
 
 Documentation acceptance requires exactly 62 sections, 20 families, 10 states, 16 authority boundaries, 4 environments, nine provider states, 20 dependencies, 24 gates, 26 interfaces, at least 60 threats, 20 records, 64 categories, 20 relationships, at least 70 decisions, and exactly 2 Mermaid diagrams. It must preserve Foundation inclusion/exclusion, synthetic-only Local/CI/Preview, Production and real-data NOT AUTHORIZED, no provider/framework/source/formula/retention/region/jurisdiction/threshold/mechanism invention, no autonomous action, no implementation, and Git cleanliness. Documentation does not prove controls, accuracy, compliance, suitability, or readiness.
@@ -4246,3 +4278,6 @@ This document supplies boundaries, prerequisites, dependencies, gates, threats, 
 ## 62. Explicit non-authorizations
 
 This document authorizes none of the following: source-code/dependency/package-script/environment/secrets changes; schemas, databases, ORM, SQL, migrations, storage, routes, services; OCR, Bill/CTE extraction, human review implementation, confidence, PUN/GME/tariff/reference imports, normalization, validation, calculations/formulas, simulations, comparisons/rankings, recommendations, reports/exports; AI/model/prompt/retrieval/agents/autonomous/contractual/financial actions; integrations/APIs/webhooks; batch/queue/scheduler/worker/workflow; notifications, analytics, search, mobile/PWA/native/offline/biometrics/passkeys; feature flags/pilots/real-data pilots; provider selection or real providers; real documents/tenant/customer data; GitHub Actions/configuration/branch protection/checks; Vercel configuration; Preview/PR/review/merge; Production deployment/rollback/hotfix/Production data; legal hold, investigation, support or incident access; or any implementation work. Local, CI, and ordinary Preview remain synthetic-only; Production remains NOT AUTHORIZED.
+
+
+**Decisione 11 synchronization:** This document does not authorize either graphical or functional implementation; the graphical-first sequence and synthetic-only package are proposals pending separate execution authorization.

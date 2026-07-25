@@ -1224,6 +1224,31 @@ Le decisioni seguenti non sono assunte da questo documento e richiedono approvaz
 - criteri di ranking delle offerte;
 - contenuto, responsabilità e formato delle proposte commerciali.
 
+## Decisione 11 ? Sequenza di validazione grafica e funzionale per il confronto documentale
+
+### Pacchetto di validazione grafica
+
+Il primo pacchetto futuro deve essere un prototipo grafico esclusivamente sintetico per approvare layout applicativo, inserimento e anteprima del logo aziendale, schermata del risultato comparativo, impaginazione PDF professionale ispirata al modello di scheda di comparabilit? fornito, tipografia, gerarchia, tabelle, spaziature, interruzioni di pagina, avvisi, leggibilit? in stampa e presentazione desktop/mobile. Pu? usare soltanto fixture sintetiche fisse.
+
+Non pu? eseguire OCR, estrazione, calcoli, persistenza, chiamate a provider, elaborazione di documenti reali o dati reali, n? azioni Production.
+
+### Pacchetto funzionale sintetico
+
+Solo dopo approvazione grafica esplicita pu? essere proposto un pacchetto funzionale separato per inserimento manuale di dati sintetici, sostituzione/rimozione del logo, calcoli con contratto formule approvato, generazione e download PDF, classificazione di fatti verificati, risultati calcolati, assunzioni e dati non disponibili, provenienza documento/pagina, validazione ed errori. Nessuna autorizzazione funzionale ? concessa da questa decisione.
+
+### Regola della data di scadenza
+
+Il risultato futuro deve riportare la data di scadenza dell'offerta/condizioni trovata nella bolletta analizzata, riprodotta come nel documento e con evidenza di documento e pagina. Non pu? essere calcolata o inferita da attivazione, durata, date contrattuali o altri campi. Se mancante, illeggibile o ambigua, deve mostrare esattamente: `Data di scadenza: non rilevata nel documento — verifica necessaria`.
+
+### Contratto contenutistico PDF
+
+Dove verificati o forniti esplicitamente, il PDF futuro deve supportare logo, fornitore/offerta attuale e proposta, POD/PDR, consumo annuo, costi annui stimati, differenza in euro e percentuale, scadenza, prezzo fisso/variabile, indice, spread, oneri fissi, durata, frequenza fatturazione, metodo pagamento, sconti/bonus, servizi, altri oneri, assunzioni, documenti/pagine fonte, dati non disponibili, data calcolo e avviso di stima senza garanzia di risparmio.
+
+### Autorizzazione
+
+Questa decisione approva soltanto sincronizzazione documentale, sequenza grafica prima della funzionale e preparazione di una proposta di autorizzazione del pacchetto grafico. Non autorizza implementazione, provider, meccanismo, dati reali, documenti reali o Production.
+
+
 ## Vincolo per i futuri task Codex
 
 Questo documento è la fonte autoritativa per i futuri task Codex relativi al perimetro Foundation V1 e al modello SaaS multi-tenant.
