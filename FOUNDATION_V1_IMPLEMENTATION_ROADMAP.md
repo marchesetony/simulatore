@@ -8756,7 +8756,9 @@ The following matrix is the measurable blocking acceptance contract. Every crite
 
 ## 61. First authorized implementation-package boundary
 
-The first package is not selected here. It requires Product Owner approval, complete coherent reversible scope, exact files/exclusions/verification/rollback/documentation, and stops at perimeter completion. No package authorized.
+The proposed first package is `GRAPHICAL_VALIDATION_PACKAGE_AUTHORIZATION.md`: a synthetic-only, presentation-only graphical prototype authorization package. It proposes only `app/page.tsx` and `app/globals.css`, no new application files, no new dependencies, and no route change. It covers logo selection/preview/replacement/removal, a fixed synthetic comparison screen, expiry-present and exact missing-expiry states, and an A4 visual preview; it does not generate or download a PDF.
+
+The package remains `Current status: AUTHORIZATION_PENDING` and `Implementation status: NOT AUTHORIZED`. It requires explicit Product Owner approval of exact files, screens/components, fixture, exclusions, verification, rollback, and zero-dependency boundary. Functional validation cannot begin before graphical approval and formal graphical-package closure. No implementation, provider, real document, real data, Production, or autonomous next step is authorized.
 
 ## 62. Explicit non-authorizations
 
