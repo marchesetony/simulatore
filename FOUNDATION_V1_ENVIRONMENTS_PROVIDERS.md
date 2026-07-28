@@ -763,6 +763,10 @@ No decision is resolved by its inclusion.
 
 Decision 12 confirms Local, CI, ordinary Preview, and Production as distinct environment boundaries. Local, CI, and ordinary Preview remain synthetic-only; configuration identity is fail-closed; secrets are server-only and excluded from client output and logs. No provider, secret manager, mechanism, Production activation, or real-data use is selected or authorized.
 
+### Decision 13 synchronization — frozen environment boundary
+
+Decision 13 freezes fail-closed environment/configuration validation and synthetic-only fixtures for Local, CI, and ordinary Preview. No provider, secret manager, Production environment, real data, or external service is introduced by the package baseline.
+
 ## 61. Acceptance criteria
 
 Acceptance requires exactly four environments, ten data classes, fifteen provider categories, nine provider states, twenty-four assessment dimensions, twenty-six Production real-data gates, eighteen environment invariants, sixteen secret/configuration invariants, fourteen idempotent operations, at least twenty races, sixteen coordinated boundaries, twenty-six interfaces, at least forty-five threats, at least forty-eight tests, twelve dependency mappings, and two balanced Mermaid diagrams. Local, CI, and ordinary Preview are synthetic-only. The result must remain provider-neutral, select no provider or mechanism, authorize no implementation or Production, preserve all pending decisions, and leave only this untracked file with empty staging.

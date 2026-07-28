@@ -1290,6 +1290,55 @@ Sono approvati i confini Local, CI, Preview e Production; Local, CI e Preview or
 
 Le otto decisioni sono approvate come baseline di prodotto e pianificazione. L'implementazione non è ancora autorizzata. Restano esclusi e non selezionati provider, database, ORM, SDK, meccanismi concreti, dati reali, OCR, estrazione, calcoli, confronti, PDF funzionale e Production.
 
+## Decisione 13 — Autorizzazione e congelamento del primo pacchetto SaaS
+
+**APPROVED BY PRODUCT OWNER**
+
+È autorizzato e congelato il perimetro del primo pacchetto SaaS Foundation, con baseline `bf50870b5296dbd9048d5effacfe2953f207ac83`. Questa decisione registra l'autorizzazione del pacchetto per un futuro task di implementazione; nessuna implementazione è eseguita da questa sincronizzazione documentale.
+
+### Inventario file autorizzato
+
+File esistenti modificabili:
+
+- `app/page.tsx` — shell applicativa e stati di accesso/invito;
+- `app/layout.tsx` — metadata e wiring del guscio applicativo;
+- `app/globals.css` — layout, stati di caricamento, errore e diniego.
+
+Nuovi file autorizzati:
+
+- `app/lib/foundation/types.ts` — contratti di identità, sessione, invito, tenant, membership, ruolo, permesso ed errore;
+- `app/lib/foundation/identity.ts` — confine provider-neutral dell'identità;
+- `app/lib/foundation/sessions.ts` — validazione, scadenza, rotazione, revoca e logout server-side;
+- `app/lib/foundation/invitations.ts` — ciclo di vita degli inviti e replay protection;
+- `app/lib/foundation/tenants.ts` — stato tenant e membership;
+- `app/lib/foundation/authorization.ts` — autorizzazione deny-by-default, ruoli, permessi e assegnazioni;
+- `app/lib/foundation/repositories.ts` — porte repository tenant-scoped e contratti transazionali;
+- `app/lib/foundation/config.ts` — validazione fail-closed di ambienti e segreti;
+- `app/lib/foundation/errors.ts` — errori redatti e dinieghi;
+- `app/lib/foundation/audit.ts` — evidenze redatte di identità, inviti, membership e autorizzazione;
+- `app/api/foundation/session/route.ts` — boundary server della sessione;
+- `app/api/foundation/invitations/route.ts` — boundary server degli inviti;
+- `app/api/foundation/memberships/route.ts` — boundary server delle membership;
+- `app/api/foundation/authorization/route.ts` — boundary server delle verifiche autorizzative;
+- `FOUNDATION_V1_SYNTHETIC_FIXTURES.md` — fixture sintetiche fisse;
+- `FOUNDATION_V1_FOUNDATION_ACCEPTANCE.md` — evidenze e criteri di accettazione.
+
+### Responsabilità e vincoli
+
+Il pacchetto comprende esclusivamente identità/sessione, inviti controllati, membership tenant, ruoli e permessi server-side, configurazione fail-closed, contratti repository, audit evidence, fixture sintetiche e rollback reversibile. Non sono introdotti nuovi provider o dipendenze; non sono selezionati database, ORM, SDK, session store, framework di test o meccanismi concreti.
+
+### Test ed evidenze di accettazione
+
+Sono richiesti test sintetici per sessioni, scadenza/rotazione/revoca/logout, inviti scaduti/revocati/replay/destinatario/tenant, membership, isolamento cross-tenant, ruoli e permessi falsificati, configurazione mancante, tenant-key enforcement, concorrenza, retry, idempotenza, redazione audit e rollback. L'accettazione richiede deny-by-default server-side, contesto tenant non selezionabile dal client, evidenze complete e assenza di segreti nei log.
+
+### Rollback ed esclusioni
+
+Il rollback deve rimuovere i nuovi file, ripristinare i tre file app autorizzati, invalidare lo stato sintetico introdotto e lasciare invariati file, storia e risorse esterne non pertinenti. Restano esclusi provider, database, ORM, SDK, dipendenze aggiuntive, dati reali, documenti reali, OCR, estrazione, calcoli, confronti, report, PDF, Production, configurazione GitHub/Vercel, autenticazione reale, storage reale, pagamento, licenze automatizzate, funzionalità future e transizioni automatiche.
+
+### Stato
+
+La baseline e il perimetro sono approvati. Il futuro task di implementazione richiede verifica della baseline, del branch, dei file autorizzati, dei test, delle evidenze e del rollback. Nessun codice, configurazione, dipendenza, provider o ambiente è stato modificato da questa decisione.
+
 
 ## Vincolo per i futuri task Codex
 

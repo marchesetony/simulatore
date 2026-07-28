@@ -688,6 +688,10 @@ Meeting these criteria supports review only and does not approve implementation.
 
 Decision 12 approves a server-authoritative identity/session boundary with opaque server-validated sessions, expiry, rotation, revocation, logout, and fail-closed access. It also approves tenant- and role-bound, recipient-bound, single-use, expiring, revocable invitations with replay protection and audit evidence; public self-registration remains excluded. No provider, SDK, session store, email mechanism, implementation, real-user onboarding, or Production use is authorized or selected.
 
+### Decision 13 synchronization — frozen SaaS package
+
+Decision 13 freezes the exact identity/session and invitation responsibilities and the authorized file inventory at baseline `bf50870b5296dbd9048d5effacfe2953f207ac83`. The future implementation must remain provider-neutral, synthetic-only, fail-closed, auditable, and reversible; no provider, SDK, session store, real-user onboarding, or Production action is selected or performed by this synchronization.
+
 ## 34. Explicit non-authorizations
 
 This document does not authorize:

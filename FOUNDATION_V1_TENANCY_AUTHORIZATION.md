@@ -605,6 +605,10 @@ All items remain unresolved.
 
 Decision 12 approves one active membership per user per tenant for the first SaaS package, with explicit membership state and server-resolved tenant context. Multi-tenant membership remains a separate pending decision. It confirms granular server-side permissions for the approved roles, assignment checks, deny-by-default behavior, no client-selected authority, no self-approval, and no unrestricted support access. Implementation, provider selection, and real-data use remain unauthorized.
 
+### Decision 13 synchronization — frozen membership package
+
+Decision 13 freezes the tenant, membership, role, permission, assignment, and deny-by-default responsibilities for the first package. Only the recorded package files may be changed in a future implementation task; no cross-tenant data, real tenant, provider, or external support access is authorized by this synchronization.
+
 ## 36. Acceptance criteria
 
 This document is ready for architecture approval only when:

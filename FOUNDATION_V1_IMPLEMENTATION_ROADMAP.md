@@ -8756,9 +8756,9 @@ The following matrix is the measurable blocking acceptance contract. Every crite
 
 ## 61. First authorized implementation-package boundary
 
-The proposed first package is `GRAPHICAL_VALIDATION_PACKAGE_AUTHORIZATION.md`: a synthetic-only, presentation-only graphical prototype authorization package. It proposes only `app/page.tsx` and `app/globals.css`, no new application files, no new dependencies, and no route change. It covers logo selection/preview/replacement/removal, a fixed synthetic comparison screen, expiry-present and exact missing-expiry states, and an A4 visual preview; it does not generate or download a PDF.
+Decision 13 authorizes and freezes the first SaaS foundation package at baseline `bf50870b5296dbd9048d5effacfe2953f207ac83`. The exact file inventory, module responsibilities, synthetic fixture contract, tests, acceptance evidence, rollback, and exclusions are recorded in `OWNER_DECISIONS_FOUNDATION_V1.md` and must be copied into the future implementation authorization record before any code change.
 
-The package remains `Current status: AUTHORIZATION_PENDING` and `Implementation status: NOT AUTHORIZED`. It requires explicit Product Owner approval of exact files, screens/components, fixture, exclusions, verification, rollback, and zero-dependency boundary. Functional validation cannot begin before graphical approval and formal graphical-package closure. No implementation, provider, real document, real data, Production, or autonomous next step is authorized.
+The package is limited to provider-neutral identity/session, controlled invitations, tenant membership, server-side roles and permissions, fail-closed configuration, repository contracts, redacted audit evidence, synthetic fixtures, and reversible rollback. It uses no new dependencies or providers and selects no database, ORM, SDK, session store, test framework, or concrete mechanism. No implementation has been performed in this synchronization; the future task must verify the frozen baseline and exact file perimeter before starting.
 
 ## 62. Explicit non-authorizations
 
