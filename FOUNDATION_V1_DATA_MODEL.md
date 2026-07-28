@@ -628,6 +628,10 @@ All items remain unresolved.
 | DR provider | Operational recovery | Before Production | No | Yes | Product Owner + required reviews |
 | Provider-exit data format | Portability | Before provider approval | No | Yes | Product Owner + technical/privacy review |
 
+### Decision 12 synchronization — data-access baseline
+
+Decision 12 approves a provider-neutral, server-side data-access boundary in which every tenant-owned record carries trusted tenant ownership and integrity, transaction, concurrency, idempotency, migration, and rollback rules are explicit. Synthetic fixtures are the only permitted data for the first package. Database, ORM, schema tool, migration mechanism, provider, implementation, and real-data migration remain unselected and unauthorized.
+
 ## 59. Acceptance criteria
 
 Architecture approval requires:

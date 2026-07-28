@@ -684,6 +684,10 @@ This document is ready for Product Owner architecture review when:
 
 Meeting these criteria supports review only and does not approve implementation.
 
+### Decision 12 synchronization — first SaaS package
+
+Decision 12 approves a server-authoritative identity/session boundary with opaque server-validated sessions, expiry, rotation, revocation, logout, and fail-closed access. It also approves tenant- and role-bound, recipient-bound, single-use, expiring, revocable invitations with replay protection and audit evidence; public self-registration remains excluded. No provider, SDK, session store, email mechanism, implementation, real-user onboarding, or Production use is authorized or selected.
+
 ## 34. Explicit non-authorizations
 
 This document does not authorize:
