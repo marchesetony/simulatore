@@ -632,6 +632,10 @@ All items remain unresolved.
 
 Decision 12 approves a provider-neutral, server-side data-access boundary in which every tenant-owned record carries trusted tenant ownership and integrity, transaction, concurrency, idempotency, migration, and rollback rules are explicit. Synthetic fixtures are the only permitted data for the first package. Database, ORM, schema tool, migration mechanism, provider, implementation, and real-data migration remain unselected and unauthorized.
 
+### Decision 13 synchronization — frozen repository boundary
+
+Decision 13 freezes repository contracts, tenant-key enforcement, transaction/concurrency/idempotency evidence, synthetic fixtures, and reversible rollback for the first package. No database, ORM, schema, migration tool, provider, or real-data migration is selected or performed.
+
 ## 59. Acceptance criteria
 
 Architecture approval requires:

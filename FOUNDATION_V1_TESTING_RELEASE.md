@@ -774,6 +774,10 @@ All decisions remain pending; hidden settings and current tooling do not resolve
 
 Decision 12 approves a framework-neutral testing contract covering static checks, authorized unit/integration tests, tenant and authorization negatives, failure/retry/concurrency/idempotency paths, synthetic runtime verification, and rollback evidence. Tests cannot grant implementation, provider, release, Production, or real-data authority. Rollback must be isolated and reversible, with separate Product Owner, implementation, review, release, rollback, operations, support, and evidence responsibilities. No test framework, CI provider, implementation, or Production action is selected or authorized.
 
+### Decision 13 synchronization — frozen evidence and rollback boundary
+
+Decision 13 freezes synthetic-only test evidence, acceptance checks, isolated rollback, and separated ownership for the first package. No test framework, CI provider, release action, Production action, dependency, or implementation change is introduced by this synchronization.
+
 ## 61. Acceptance criteria
 
 Acceptance for rigorous review requires: exactly 62 major sections; four complete environment rows; 16 complete authority rows; eight complete test levels; 12 complete evidence categories; eight result states; ten release states; 20 required-check families; 24 release gates; 18 invariants; 14 idempotent operations; at least 20 complete races; 16 complete coordinated boundaries; 26 complete conceptual interfaces; at least 48 complete threats; exactly 64 complete conceptual test categories; 20 complete conceptual records; 12 complete dependency mappings; exactly two balanced Mermaid diagrams; synthetic-only Local, CI and ordinary Preview; no real-data testing; no provider/framework selection; no GitHub/Vercel configuration; no Production or implementation authorization; and a Git state in which only this new document is untracked.

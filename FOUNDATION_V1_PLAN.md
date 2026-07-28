@@ -749,6 +749,10 @@ Non devono essere introdotti in modo parziale, nascosto o presentati come demo o
 
 The approved first SaaS package baseline covers identity/session, controlled invitations, tenant membership, server-side roles and permissions, provider-neutral data access, fail-closed secrets/environments, framework-neutral testing, and isolated rollback/ownership. These decisions do not authorize implementation. Providers, database, ORM, SDK, real data, OCR, extraction, calculations, comparisons, PDF generation, and Production remain excluded and unresolved where applicable.
 
+### Decision 13 synchronization — authorized package freeze
+
+Decision 13 freezes the exact first-package baseline, file inventory, module responsibilities, synthetic tests, acceptance evidence, rollback, and exclusions at `bf50870b5296dbd9048d5effacfe2953f207ac83`. It authorizes only a future implementation task within that perimeter; no code, dependency, provider, database, real-data, or Production action occurs in this synchronization.
+
 ## 20. Prossima decisione richiesta prima di modificare il codice applicativo
 
 **DECISIONE PENDENTE E BLOCCANTE.** Prima di qualsiasi modifica al codice applicativo, il proprietario deve approvare un breve documento decisionale che definisca almeno:
