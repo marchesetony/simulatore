@@ -745,6 +745,10 @@ Foundation V1 realizza esclusivamente le fondamenta applicative e il ciclo sicur
 
 Non devono essere introdotti in modo parziale, nascosto o presentati come demo operativa all'interno dei commit Foundation V1.
 
+### Decision 12 synchronization — first SaaS package baseline
+
+The approved first SaaS package baseline covers identity/session, controlled invitations, tenant membership, server-side roles and permissions, provider-neutral data access, fail-closed secrets/environments, framework-neutral testing, and isolated rollback/ownership. These decisions do not authorize implementation. Providers, database, ORM, SDK, real data, OCR, extraction, calculations, comparisons, PDF generation, and Production remain excluded and unresolved where applicable.
+
 ## 20. Prossima decisione richiesta prima di modificare il codice applicativo
 
 **DECISIONE PENDENTE E BLOCCANTE.** Prima di qualsiasi modifica al codice applicativo, il proprietario deve approvare un breve documento decisionale che definisca almeno:

@@ -601,6 +601,10 @@ All items remain unresolved.
 | Membership reactivation after deactivation | Determines whether reactivation exists, actor authority, invitation/acceptance, retained role/scope, seat allocation, session/security checks, time limits, and audit | Before any reactivation design or schema | No | Yes if included | Product Owner with technical/security review |
 | License or entitlement block restoration workflow | Determines destination state, authorizing actor, complete revalidation, seat handling, session behavior, audit, and commercial-state semantics | Before any commercial-block restoration design or schema | No | Yes if included | Product Owner with technical review |
 
+### Decision 12 synchronization — membership and authorization baseline
+
+Decision 12 approves one active membership per user per tenant for the first SaaS package, with explicit membership state and server-resolved tenant context. Multi-tenant membership remains a separate pending decision. It confirms granular server-side permissions for the approved roles, assignment checks, deny-by-default behavior, no client-selected authority, no self-approval, and no unrestricted support access. Implementation, provider selection, and real-data use remain unauthorized.
+
 ## 36. Acceptance criteria
 
 This document is ready for architecture approval only when:

@@ -1248,6 +1248,48 @@ Dove verificati o forniti esplicitamente, il PDF futuro deve supportare logo, fo
 
 Questa decisione approva soltanto sincronizzazione documentale, sequenza grafica prima della funzionale e preparazione di una proposta di autorizzazione del pacchetto grafico. Non autorizza implementazione, provider, meccanismo, dati reali, documenti reali o Production.
 
+## Decisione 12 — Decisioni per il primo pacchetto SaaS Foundation
+
+**APPROVED BY PRODUCT OWNER**
+
+Questa decisione approva le scelte di prodotto e i confini di pianificazione per il primo pacchetto SaaS successivo alla validazione grafica. Non autorizza implementazione, selezione di provider o meccanismi concreti.
+
+### 1. Identità e sessione
+
+È approvato un confine di identità server-authoritative con sessioni opache validate lato server, scadenza, rotazione, revoca, logout e comportamento fail-closed. Provider, SDK e meccanismo di persistenza della sessione restano da decidere.
+
+### 2. Inviti
+
+Sono approvati inviti vincolati a tenant e ruolo, associati al destinatario, monouso, con scadenza, revoca, protezione dal replay e audit degli esiti. La registrazione pubblica self-service resta esclusa.
+
+### 3. Database e accesso ai dati
+
+È approvato un confine server-side e provider-neutral per l'accesso ai dati, con chiave tenant su ogni record di tenant, integrità, transazioni, concorrenza, idempotenza, migrazioni reversibili e fixture sintetiche. Database, ORM, schema tool e provider non sono selezionati.
+
+### 4. Policy di membership tenant
+
+Per il primo pacchetto è approvata una membership attiva per utente e tenant, con stato esplicito e contesto tenant risolto dal server. Membership simultanee in più tenant richiedono una decisione separata.
+
+### 5. Ruoli e permessi
+
+Sono approvati i ruoli Product Owner, Platform Owner, Tenant Admin, Sales Manager/Coordinator e Agent/Sales Operator, con permessi granulari, assegnazioni verificate lato server, nessun self-approval e nessun accesso supporto illimitato.
+
+### 6. Segreti e ambienti
+
+Sono approvati i confini Local, CI, Preview e Production; Local, CI e Preview ordinario restano synthetic-only; la configurazione deve fallire chiusa e i segreti restano server-only, mai in client o log. Production, provider e secret manager restano non autorizzati e non selezionati.
+
+### 7. Testing
+
+È approvato un contratto di test framework-neutral comprendente statiche, test autorizzati di unità/integrazione, negativi di tenant e autorizzazione, failure/retry/concorrenza/idempotenza, verifica runtime sintetica ed evidenza di rollback. I test non concedono autorità.
+
+### 8. Rollback e responsabilità
+
+È approvato un pacchetto isolato e reversibile con Product Owner come autorità di implementazione, operatore, revisore, release authority, rollback authority, operational owner, support owner e recorder delle evidenze distinti. Nessuna migrazione distruttiva senza recupero verificabile.
+
+### Stato e non autorizzazioni
+
+Le otto decisioni sono approvate come baseline di prodotto e pianificazione. L'implementazione non è ancora autorizzata. Restano esclusi e non selezionati provider, database, ORM, SDK, meccanismi concreti, dati reali, OCR, estrazione, calcoli, confronti, PDF funzionale e Production.
+
 
 ## Vincolo per i futuri task Codex
 
