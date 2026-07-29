@@ -726,3 +726,7 @@ Architecture approval requires measurable evidence that:
 This document does not authorize source-code changes; dependency installation; storage-provider selection; storage account, container, or bucket creation; database selection/creation; migration; upload SDK; direct, proxy, multipart, or resumable upload; CDN; permanent public URLs or public object access; malware-scanning provider or antivirus integration; quarantine implementation; encryption-key provider; queue, scheduler, cache, or backup provider; real tenant documents, customer data, or payment evidence; OCR, AI, PUN import, simulation, comparison, or reporting; Production data migration; Pull Request; merge to `main`; Production deployment; GitHub configuration; or Vercel configuration.
 
 No implementation action is authorized by this technical-discovery document.
+
+### Decision 14 synchronization
+
+Decision 14 supersedes the preceding non-authorization only for the separately approved first real-data package: secure server-side PDF upload and private document storage may be implemented with a documented provider choice, encryption, tenant scope, access controls, retention, deletion, and rollback evidence. Real documents remain blocked until package-specific data and Production approvals are recorded; public URLs, irreversible deletion, and live migration remain prohibited.

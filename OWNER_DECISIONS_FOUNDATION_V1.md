@@ -1354,3 +1354,13 @@ I futuri task devono:
 - fermarsi e richiedere approvazione quando un task dipende da una decisione non ancora assunta.
 
 Eventuali modifiche future a queste decisioni devono essere approvate esplicitamente dal Product Owner e registrate in un documento autoritativo successivo.
+
+## Decisione 14 — Autorizzazione del primo pacchetto dati reali
+
+**APPROVED BY PRODUCT OWNER**
+
+Decisione 14 supersedes prior Foundation restrictions only for the explicitly bounded first real-data package. It authorizes production-quality implementation of real PDF upload, secure document storage, database schema and persistence, OCR integration, AI-assisted structured extraction, per-field confidence scoring, manual validation, document lifecycle controls, and durable audit evidence. Provider, database, ORM, migration, storage, OCR, AI extraction, queue/background processing, cache, and search/indexing choices may be selected only when technically justified and documented with security, privacy, legal, operational, and rollback evidence.
+
+The package remains tenant-isolated, deny-by-default, server-authoritative, least-privilege, encrypted in storage and transit, secret-free on clients, and fail-closed. Production deployment still requires separate Product Owner approval. Live customer-data migration, destructive migrations, irreversible operations, and automatic Production deployment remain prohibited.
+
+Implementation must define and verify provenance, confidence, manual confirmation, retention, deletion, access control, failure handling, rollback, and audit records for every extracted field. Comparison, savings calculations, offer ranking, and PDF report generation remain outside this package.

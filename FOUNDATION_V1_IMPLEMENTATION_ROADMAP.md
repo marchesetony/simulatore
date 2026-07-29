@@ -8783,3 +8783,7 @@ stateDiagram-v2
  COMMITTED_AND_SYNCHRONIZED --> PHASE_COMPLETE
  VERIFICATION_IN_PROGRESS --> IMPLEMENTATION_IN_PROGRESS : correction
 ```
+
+### Decision 14 synchronization
+
+Decision 14 governs the next implementation package for real PDF upload, secure storage, persistence, OCR, AI-assisted structured extraction, confidence scoring, manual validation, lifecycle, and audit. The package requires documented provider and mechanism choices, tenant/Security/Privacy/Legal evidence, tests, rollback, and a frozen file perimeter. Production deployment, live migration, destructive or irreversible operations, comparison, calculations, ranking, and PDF report generation remain unauthorized.

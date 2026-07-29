@@ -775,3 +775,7 @@ La prima decisione operativa raccomandata è autorizzare una **fase di discovery
 - nessuna modifica al comportamento OCR, CTE, PUN o simulazione.
 
 Fino a tale approvazione, questo documento non autorizza l'avvio delle modifiche al codice applicativo.
+
+### Decision 14 synchronization
+
+The first real-data package is now authorized within a separately frozen implementation perimeter. Planning must sequence secure upload and storage, persistence, OCR, extraction, confidence/manual review, lifecycle, audit, retention, deletion, testing, and rollback. Production deployment, live customer-data migration, destructive migrations, comparison, calculations, ranking, and PDF reporting require separate authorization.

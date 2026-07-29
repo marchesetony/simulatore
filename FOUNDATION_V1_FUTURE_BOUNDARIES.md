@@ -4281,3 +4281,7 @@ This document authorizes none of the following: source-code/dependency/package-s
 
 
 **Decisione 11 synchronization:** This document does not authorize either graphical or functional implementation; the graphical-first sequence and synthetic-only package are proposals pending separate execution authorization.
+
+### Decision 14 synchronization
+
+Decision 14 supersedes the listed exclusions only for the explicitly bounded first real-data package: real PDF upload, secure storage, OCR, AI-assisted structured extraction, confidence scoring, manual validation, lifecycle, and audit may now be implemented under tenant, security, privacy, legal, provider, and rollback controls. Comparison, savings calculations, rankings, reports, PDF generation, automatic Production, live migration, and irreversible operations remain outside the authorization.

@@ -664,3 +664,7 @@ Architecture approval requires:
 This document does not authorize source-code or dependency changes; database selection/creation; schema creation; migrations; ORM/persistence library; storage, queue, scheduler, cache, event-bus, or backup provider; real tenants, users, memberships, invitations, contracts, licenses, payment evidence, or documents; OCR; PUN import; simulation/report implementation; Production migration; Pull Request; merge to `main`; Production deployment; GitHub configuration; or Vercel configuration.
 
 No implementation action was performed. Decisions 9 and 10 require separate architecture review, Product Owner approval, resolution/deferral of blocking decisions, and explicit implementation authorization.
+
+### Decision 14 synchronization
+
+Decision 14 authorizes a package-specific schema, persistence, ORM, and migration design for real-document extraction records, tenant keys, provenance, confidence, manual confirmation, and audit references. Choices remain subject to documented technical, Security, Privacy, Legal, provider, and rollback evidence; destructive migrations and live customer-data migration are not authorized.

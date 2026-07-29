@@ -776,3 +776,7 @@ Acceptance requires exactly four environments, ten data classes, fifteen provide
 This document does **NOT AUTHORIZE** source-code changes; dependency installation; database; ORM; SQL; schema; migration; identity, email, payment, object-storage, document-storage, audit-store, SIEM, observability, secrets, backup, OCR, AI, or other provider; encryption or key-management mechanism; queue; scheduler; worker; workflow engine; event bus; disaster recovery; external content processing; real documents; real tenant/customer data; Preview or Production real data; legal hold; investigation or support access; provider migration; data export; Pull Request; merge into `main`; Production deployment; GitHub or Vercel configuration; provider-account access; or implementation work.
 
 Direct Production changes are prohibited. Provider discovery language is not approval, and this document creates no legal, privacy, security, residency, provider, contractual, operational, disaster-recovery, or Production-readiness claim. **Implementation remains NOT AUTHORIZED.**
+
+### Decision 14 synchronization
+
+Decision 14 permits documented selection and use of providers required by the bounded real-data package, including database, ORM, storage, OCR, AI extraction, queue, cache, and search where justified. Each selection requires category, environment, data class, region, subprocessor, support-access, retention, deletion, encryption, and exit evidence. Local, CI, and ordinary Preview remain synthetic-only; Production deployment remains separately unauthorized.
