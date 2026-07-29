@@ -916,3 +916,9 @@ This document does **NOT AUTHORIZE** source changes; dependency/package-script/e
 ### Decision 14 synchronization
 
 Decision 14 authorizes only the bounded real-data package's security and observability controls, with provider and mechanism choices documented separately. Controls remain server-authoritative, least-privilege, redacted, encrypted, tenant-isolated, fail-closed, and evidenced; no Production deployment or real-data activation is implied.
+
+### Decision 15 synchronization
+
+Regulatory results must expose rule/data versions, source references, formulas, inputs, intermediate values, rounding, confidence, uncertainty, and reviewer state. Rule imports, market-data changes, conflicts, and manual overrides require immutable or append-only audit evidence and fail-closed alerts.
+
+Telemetry and evidence must distinguish historical verification, reconstruction, alternative-offer simulation, and future projection, and must record selected index (PUN/PUN Index GME/zonal/fixed/other), tariff band, effective date, profile weighting, fallback reason, and manual-review outcome without exposing document secrets or content.

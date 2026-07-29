@@ -779,3 +779,9 @@ Fino a tale approvazione, questo documento non autorizza l'avvio delle modifiche
 ### Decision 14 synchronization
 
 The first real-data package is now authorized within a separately frozen implementation perimeter. Planning must sequence secure upload and storage, persistence, OCR, extraction, confidence/manual review, lifecycle, audit, retention, deletion, testing, and rollback. Production deployment, live customer-data migration, destructive migrations, comparison, calculations, ranking, and PDF reporting require separate authorization.
+
+### Decision 15 synchronization
+
+The next planning boundary is the provider-neutral regulatory and market-data engine: source governance, versioned rules, document-family expansion, normalization, official market data, tariff calendars, formulas, pass-through verification, reconstruction, simulation, explainability, manual review, and audit/versioning. It remains planning-only until its own implementation perimeter and approvals are frozen.
+
+Planning must explicitly sequence index selection (PUN, PUN Index GME, zonal, fixed, or other official), tariff-band/calendar matching, expanded field normalization, exact-period retrieval and profile weighting, transparent pass-through reconstruction, and distinct historical, alternative-offer, and forward-projection result classes.

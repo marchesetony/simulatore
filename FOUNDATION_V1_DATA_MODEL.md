@@ -668,3 +668,9 @@ No implementation action was performed. Decisions 9 and 10 require separate arch
 ### Decision 14 synchronization
 
 Decision 14 authorizes a package-specific schema, persistence, ORM, and migration design for real-document extraction records, tenant keys, provenance, confidence, manual confirmation, and audit references. Choices remain subject to documented technical, Security, Privacy, Legal, provider, and rollback evidence; destructive migrations and live customer-data migration are not authorized.
+
+### Decision 15 synchronization
+
+The future model must version regulatory rules, official market datasets, tariff calendars, contract formulas, source evidence, effective intervals, checksums, reviewer approvals, extracted bill families, normalized components, reconstruction inputs, intermediate calculations, rounding, confidence, and manual-review state. Missing values remain null; unsupported gas or regulatory cases fail closed.
+
+Model fields must explicitly represent PUN, PUN Index GME, zonal, fixed, and other official indices; monorary/F1-F23/F1-F2-F3/hourly bands and calendar rules; document family and energy/gas/dual-fuel/customer category. The normalized schema must include identity, POD/PDR, periods/dates, readings, monthly/band/hourly quantities, power, active/reactive energy, all quota and regulated pass-through components, losses, fees, taxes, bonus/CMOR/indemnities/deposits/arrears/interest, payment state, totals, adjustments, and contractual formula. Null and ambiguity states are first-class review data.

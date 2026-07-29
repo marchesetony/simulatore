@@ -793,3 +793,9 @@ The document selects no hosting, deployment, testing, identity, database, storag
 ### Decision 14 synchronization
 
 Decision 14 authorizes package-scoped tests for real PDF upload, storage, OCR, extraction, confidence, manual confirmation, lifecycle, audit, retention, deletion, access control, failure, and rollback. Tests use synthetic fixtures unless separately authorized; passing tests do not authorize Production, live-data migration, or irreversible operations.
+
+### Decision 15 synchronization
+
+Future tests must cover document families, historical effective-date selection, official-source provenance, versioned rules and market values, tariff bands, pass-through reconstruction, missing/conflicting data, formula explainability, manual review, reproducibility, and separation of historical verification from simulation. Tests cannot approve legal conclusions or Production.
+
+The test matrix must cover PUN versus PUN Index GME, zonal/fixed/other indices, monorary/F1-F23/F1-F2-F3/hourly matching, holiday calendars, profile weighting, no-average fallback, every normalized field family, null/ambiguous values, unsupported gas combinations, intermediate formulas, rounding, taxes, and projection separation.

@@ -8787,3 +8787,9 @@ stateDiagram-v2
 ### Decision 14 synchronization
 
 Decision 14 governs the next implementation package for real PDF upload, secure storage, persistence, OCR, AI-assisted structured extraction, confidence scoring, manual validation, lifecycle, and audit. The package requires documented provider and mechanism choices, tenant/Security/Privacy/Legal evidence, tests, rollback, and a frozen file perimeter. Production deployment, live migration, destructive or irreversible operations, comparison, calculations, ranking, and PDF report generation remain unauthorized.
+
+### Decision 15 synchronization
+
+Decision 15 adds a future planning boundary for the Regulatory Bill Analysis and Market Data Engine. Its architecture must preserve exact effective periods, official-source provenance, versioned rules and datasets, null-for-missing behavior, manual review, reproducible formulas, explainability, and append-only evidence. No Production deployment, uncontrolled rule ingestion, automatic legal conclusion, customer action, or fabricated official value is authorized.
+
+The roadmap must map PUN/PUN Index GME/zonal/fixed/other index selection, monorary/F1-F23/F1-F2-F3/hourly calendars, all supported bill families and expanded field inventory, exact-period/profile-weighted retrieval, pass-through components, reconstruction, historical verification, alternative-offer simulation, and forward projection to separate evidence and review gates.

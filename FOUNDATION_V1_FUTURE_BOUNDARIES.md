@@ -4285,3 +4285,9 @@ This document authorizes none of the following: source-code/dependency/package-s
 ### Decision 14 synchronization
 
 Decision 14 supersedes the listed exclusions only for the explicitly bounded first real-data package: real PDF upload, secure storage, OCR, AI-assisted structured extraction, confidence scoring, manual validation, lifecycle, and audit may now be implemented under tenant, security, privacy, legal, provider, and rollback controls. Comparison, savings calculations, rankings, reports, PDF generation, automatic Production, live migration, and irreversible operations remain outside the authorization.
+
+### Decision 15 synchronization
+
+Decision 15 defines future regulatory and market-data analysis, including reconstruction, variance analysis, and separated simulations, as a governed next boundary. It does not authorize automated legal advice, uncontrolled source ingestion, unsupported gas calculations, automatic customer action, fabricated values, or Production deployment.
+
+The boundary includes only governed classification, extraction, normalization, official index/market retrieval, tariff calendars, pass-through verification, reconstruction, alternative-offer simulation, and separately assumed forward projection. PUN, PUN Index GME, zonal, fixed, and other official indices; monorary/F1-F23/F1-F2-F3/hourly bands; and all listed bill families remain subject to effective-date, provenance, and manual-review controls.

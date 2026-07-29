@@ -780,3 +780,9 @@ Direct Production changes are prohibited. Provider discovery language is not app
 ### Decision 14 synchronization
 
 Decision 14 permits documented selection and use of providers required by the bounded real-data package, including database, ORM, storage, OCR, AI extraction, queue, cache, and search where justified. Each selection requires category, environment, data class, region, subprocessor, support-access, retention, deletion, encryption, and exit evidence. Local, CI, and ordinary Preview remain synthetic-only; Production deployment remains separately unauthorized.
+
+### Decision 15 synchronization
+
+Regulatory and market-data providers must be primary official institutions or documented official datasets, with source identity, version/checksum, retrieval, effective dates, access controls, and reviewer approval. No unofficial source may authorize a rule; live scraping and Production activation require separate approval and controls.
+
+Provider contracts must identify whether a dataset supplies PUN, PUN Index GME, zonal, fixed, or another official index, and must support official F1/F23/F1-F2-F3/hourly calendars and holiday rules. Retrieval must be reproducible for the exact historical interval; missing or unsupported gas data is denied rather than estimated.
