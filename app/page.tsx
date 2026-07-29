@@ -58,7 +58,7 @@ export default function Home() {
   function removeLogo() { setLogoUrl((previous) => { if (previous) URL.revokeObjectURL(previous); return null; }); }
   const expiry = expiryState === 'present' ? '31/12/2027' : 'Data di scadenza: non rilevata nel documento — verifica necessaria';
 
-  if (foundationMode) return <FoundationTestBench />;
+  if (foundationMode) return <><FoundationTestBench /><BillIngestionBench /></>;
 
   return <main className="demo-shell">
     <header className="topbar"><div><p className="eyebrow">SCHEDA DI COMPARABILITÀ · DEMO SINTETICA</p><h1>Proposta commerciale</h1><p className="subtitle">Presentazione grafica con valori fissi e fittizi. Nessun dato viene estratto o calcolato.</p></div><span className="status-chip">Solo dati sintetici</span></header>
@@ -67,6 +67,14 @@ export default function Home() {
     <section className="print-preview" aria-label="Anteprima A4 di stampa"><div className="print-toolbar"><div><p className="eyebrow">ANTEPRIMA A4</p><h2>Documento pronto per la revisione grafica</h2></div><span>Solo layout di stampa · nessun PDF generato</span></div><PrintReport logoUrl={logoUrl} expiry={expiry} companyName={companyName} /></section>
     <footer className="footer-note">Foundation V1 · package grafico · synthetic presentation only</footer>
   </main>;
+}
+
+type IngestedBill = { id: string; status: string; fileName: string; fields: Record<string, { value: string | null; confidence: number; source: string; confirmed: boolean }> };
+function BillIngestionBench() {
+  const [bill, setBill] = useState<IngestedBill | null>(null); const [error, setError] = useState<string | null>(null); const [busy, setBusy] = useState(false);
+  async function upload(event: ChangeEvent<HTMLInputElement>) { const file = event.target.files?.[0]; if (!file) return; setBusy(true); setError(null); const form = new FormData(); form.set('file', file); try { const response = await fetch('/api/bills', { method: 'POST', headers: { 'x-foundation-tenant-id': 'tenant_local-demo' }, body: form }); const body: unknown = await response.json(); if (!response.ok || typeof body !== 'object' || body === null || !('document' in body)) throw new Error(typeof body === 'object' && body !== null && 'error' in body && typeof body.error === 'string' ? body.error : 'INGESTION_FAILED'); setBill((body as { document: IngestedBill }).document); } catch (cause) { setError(cause instanceof Error ? cause.message : 'INGESTION_FAILED'); } finally { setBusy(false); event.target.value = ''; } }
+  async function correct(field: string, value: string) { if (!bill) return; const response = await fetch(`/api/bills/${bill.id}`, { method: 'PATCH', headers: { 'content-type': 'application/json', 'x-foundation-tenant-id': 'tenant_local-demo' }, body: JSON.stringify({ field, value }) }); if (!response.ok) return; const body = await response.json() as { document: IngestedBill }; setBill(body.document); }
+  return <section className="foundation-ingestion"><div className="bench-header"><div><p className="eyebrow">REAL PDF INGESTION V1 · LOCAL</p><h1>Revisione bolletta</h1><p>Carica un PDF reale in ambiente locale. Nessun confronto, calcolo o PDF viene generato.</p></div><label className="button primary-button">{busy ? 'Validazione…' : 'Seleziona PDF'}<input type="file" accept="application/pdf" onChange={upload} disabled={busy} /></label></div>{error && <div className="bench-error">Operazione negata: {error}</div>}{bill && <div className="ingestion-card"><strong>{bill.fileName}</strong><span>Stato: {bill.status}</span>{Object.entries(bill.fields).map(([name, field]) => <label className="review-field" key={name}><span>{name} · confidenza {Math.round(field.confidence * 100)}% · {field.source}</span><input value={field.value ?? ''} placeholder="Non rilevato" onChange={(event) => void correct(name, event.target.value)} /><small>{field.confirmed ? 'Confermato' : 'Richiede revisione'}</small></label>)}</div>}</section>;
 }
 
 type BenchResult = {
