@@ -1,6 +1,8 @@
 'use client';
 
 import { ChangeEvent, useEffect, useState } from 'react';
+import Link from 'next/link';
+import { useSyncExternalStore } from 'react';
 
 type ExpiryState = 'present' | 'unavailable';
 type LineItem = { item: string; quantity: string; averagePrice: string; current: string; proposed: string; difference: string };
@@ -39,6 +41,11 @@ export default function Home() {
   const [logoUrl, setLogoUrl] = useState<string | null>(null);
   const [companyName, setCompanyName] = useState('');
   const [expiryState, setExpiryState] = useState<ExpiryState>('present');
+  const foundationMode = useSyncExternalStore(
+    () => () => undefined,
+    () => typeof window !== 'undefined' && new URLSearchParams(window.location.search).get('foundation') === '1',
+    () => false,
+  );
   useEffect(() => () => { if (logoUrl) URL.revokeObjectURL(logoUrl); }, [logoUrl]);
 
   function selectLogo(event: ChangeEvent<HTMLInputElement>) {
@@ -51,6 +58,8 @@ export default function Home() {
   function removeLogo() { setLogoUrl((previous) => { if (previous) URL.revokeObjectURL(previous); return null; }); }
   const expiry = expiryState === 'present' ? '31/12/2027' : 'Data di scadenza: non rilevata nel documento — verifica necessaria';
 
+  if (foundationMode) return <FoundationTestBench />;
+
   return <main className="demo-shell">
     <header className="topbar"><div><p className="eyebrow">SCHEDA DI COMPARABILITÀ · DEMO SINTETICA</p><h1>Proposta commerciale</h1><p className="subtitle">Presentazione grafica con valori fissi e fittizi. Nessun dato viene estratto o calcolato.</p></div><span className="status-chip">Solo dati sintetici</span></header>
     <section className="toolbar" aria-label="Controlli della demo"><div className="logo-controls"><div className="logo-stage">{logoUrl ? <img src={logoUrl} alt="Logo aziendale selezionato" /> : <div className="logo-placeholder"><span>LD</span><strong>Logo aziendale</strong><small>Anteprima locale</small></div>}</div><label className="button primary-button">{logoUrl ? 'Sostituisci logo' : 'Inserisci logo'}<input aria-label="Seleziona logo PNG JPEG o WebP" type="file" accept="image/png,image/jpeg,image/webp" onChange={selectLogo} /></label><button className="button ghost-button" type="button" onClick={removeLogo} disabled={!logoUrl}>Rimuovi</button></div><div className="company-input"><label htmlFor="company-name">Ragione sociale da riportare nel documento</label><input id="company-name" value={companyName} onChange={(event) => setCompanyName(event.target.value)} placeholder="Nome azienda" /><button className="text-button" type="button" onClick={() => setCompanyName('')} disabled={!companyName}>Rimuovi ragione sociale</button></div><div className="expiry-control"><span className="control-label">Stato della scadenza condizioni attuali</span><div className="segmented" role="group" aria-label="Stato scadenza"><button className={expiryState === 'present' ? 'selected' : ''} onClick={() => setExpiryState('present')} type="button">Presente</button><button className={expiryState === 'unavailable' ? 'selected' : ''} onClick={() => setExpiryState('unavailable')} type="button">Non rilevata</button></div></div></section>
@@ -58,6 +67,79 @@ export default function Home() {
     <section className="print-preview" aria-label="Anteprima A4 di stampa"><div className="print-toolbar"><div><p className="eyebrow">ANTEPRIMA A4</p><h2>Documento pronto per la revisione grafica</h2></div><span>Solo layout di stampa · nessun PDF generato</span></div><PrintReport logoUrl={logoUrl} expiry={expiry} companyName={companyName} /></section>
     <footer className="footer-note">Foundation V1 · package grafico · synthetic presentation only</footer>
   </main>;
+}
+
+type BenchResult = {
+  scenario: string;
+  request: string;
+  expected: string;
+  actual: string;
+  passed: boolean;
+  evidence: unknown;
+  error?: string;
+};
+
+type BenchGroup = { title: string; endpoint: string; scenarios: ReadonlyArray<{ id: string; label: string }> };
+
+const benchGroups: ReadonlyArray<BenchGroup> = [
+  { title: 'Sessioni', endpoint: '/api/foundation/session', scenarios: [
+    { id: 'valid-session', label: 'Sessione valida' }, { id: 'expired-session', label: 'Sessione scaduta' },
+    { id: 'revoked-session', label: 'Sessione revocata' }, { id: 'rotated-session', label: 'Sessione già ruotata' },
+    { id: 'malformed-request', label: 'Richiesta malformata' },
+  ] },
+  { title: 'Inviti', endpoint: '/api/foundation/invitations', scenarios: [
+    { id: 'valid-invitation', label: 'Invito valido' }, { id: 'expired-invitation', label: 'Invito scaduto' },
+    { id: 'revoked-invitation', label: 'Invito revocato' }, { id: 'replayed-invitation', label: 'Replay invito' },
+    { id: 'wrong-tenant-invitation', label: 'Invito tenant errato' }, { id: 'malformed-request', label: 'Richiesta malformata' },
+  ] },
+  { title: 'Membership', endpoint: '/api/foundation/memberships', scenarios: [
+    { id: 'active-membership', label: 'Membership attiva' }, { id: 'inactive-membership', label: 'Membership inattiva' },
+    { id: 'cross-tenant-membership', label: 'Membership cross-tenant' }, { id: 'malformed-request', label: 'Richiesta malformata' },
+  ] },
+  { title: 'Ruoli e permessi', endpoint: '/api/foundation/authorization', scenarios: [
+    { id: 'product-owner-allowed', label: 'Product Owner · consentito' }, { id: 'product-owner-denied', label: 'Product Owner · negato' },
+    { id: 'platform-owner-allowed', label: 'Platform Owner · consentito' }, { id: 'platform-owner-denied', label: 'Platform Owner · negato' },
+    { id: 'tenant-admin-allowed', label: 'Tenant Admin · consentito' }, { id: 'tenant-admin-denied', label: 'Tenant Admin · negato' },
+    { id: 'sales-manager-allowed', label: 'Sales Manager · consentito' }, { id: 'sales-manager-denied', label: 'Sales Manager · negato' },
+    { id: 'sales-operator-allowed', label: 'Sales Operator · consentito' }, { id: 'sales-operator-denied', label: 'Sales Operator · negato' },
+    { id: 'malformed-request', label: 'Richiesta malformata' },
+  ] },
+];
+
+function FoundationTestBench() {
+  const [results, setResults] = useState<Record<string, BenchResult>>({});
+  const [running, setRunning] = useState<string | null>(null);
+
+  async function runScenario(group: BenchGroup, scenario: string): Promise<void> {
+    const key = `${group.endpoint}:${scenario}`;
+    setRunning(key);
+    try {
+      const response = await fetch(`${group.endpoint}?scenario=${encodeURIComponent(scenario)}`, { method: 'POST' });
+      const body: unknown = await response.json();
+      const result = isBenchResult(body) ? body : {
+        scenario, request: `POST ${group.endpoint}`, expected: 'DENIED', actual: 'DENIED', passed: false,
+        evidence: { safe: true }, error: 'Risposta non valida',
+      };
+      setResults((current) => ({ ...current, [key]: result }));
+    } catch {
+      setResults((current) => ({ ...current, [key]: {
+        scenario, request: `POST ${group.endpoint}`, expected: 'DENIED', actual: 'DENIED', passed: false,
+        evidence: { safe: true }, error: 'Endpoint non disponibile',
+      } }));
+    } finally { setRunning(null); }
+  }
+
+  return <main className="foundation-bench-shell">
+    <header className="bench-header"><div><p className="eyebrow">FOUNDATION V1 · TEST BENCH</p><h1>Verifica SaaS sintetica</h1><p>Solo scenari fissi, provider-neutral e senza persistenza. Il report grafico principale resta invariato su <code>/</code>.</p></div><span className="status-chip">Synthetic-only</span></header>
+    <div className="bench-notice"><strong>Decision 13 · perimetro controllato</strong><span>Nessun login reale, provider, database, dato reale o attivazione Production. I risultati vivono solo nella memoria del browser.</span></div>
+    <div className="bench-grid">{benchGroups.map((group) => <section className="bench-group" key={group.endpoint}><div className="bench-group-heading"><div><p className="eyebrow">API CLOSED-SCENARIO</p><h2>{group.title}</h2></div><code>{group.endpoint}</code></div><div className="bench-scenarios">{group.scenarios.map((scenario) => { const key = `${group.endpoint}:${scenario.id}`; const result = results[key]; return <article className="bench-card" key={scenario.id}><div className="bench-card-top"><strong>{scenario.label}</strong><span className={result?.passed ? 'pass-pill' : result ? 'fail-pill' : 'pending-pill'}>{result ? (result.passed ? 'PASS' : 'FAIL') : 'NON ESEGUITO'}</span></div><p className="bench-scenario-id">Scenario: <code>{scenario.id}</code></p><button className="button primary-button" type="button" onClick={() => void runScenario(group, scenario.id)} disabled={running !== null}>Esegui test</button>{result && <div className="bench-result"><div><span>Request</span><code>{result.request}</code></div><div><span>Expected</span><strong>{result.expected}</strong></div><div><span>Actual</span><strong>{result.actual}</strong></div><div><span>Evidence</span><pre>{JSON.stringify(result.evidence, null, 2)}</pre></div>{result.error && <small className="bench-error">{result.error}</small>}</div>}</article>; })}</div></section>)}</div>
+    <footer className="bench-footer">Foundation V1 · test bench sintetico · <Link href="/">Torna al report grafico</Link></footer>
+  </main>;
+}
+
+function isBenchResult(value: unknown): value is BenchResult {
+  if (typeof value !== 'object' || value === null) return false;
+  return 'scenario' in value && 'expected' in value && 'actual' in value && 'passed' in value && 'evidence' in value;
 }
 
 function ReportContent({ logoUrl, expiry, print = false }: { logoUrl: string | null; expiry: string; print?: boolean }) {
