@@ -789,3 +789,13 @@ Meeting documentation criteria does not prove testing completeness, provider app
 This document does **NOT AUTHORIZE** source-code changes; test implementation; any test framework; dependency installation; package-script, lint, or formatter changes; unit, component, integration, contract, end-to-end, browser/device, accessibility, performance, security, dependency, secret, or coverage tooling; a CI provider or GitHub Actions; GitHub configuration, branch protection, or required checks; Vercel configuration; Preview creation; Pull Request creation; review approval; merge into `main`; Production deployment; rollback or hotfix execution; database, ORM, SQL, schema, or migration; identity, storage, payment, queue, scheduler, worker, SIEM, observability, secrets, or backup provider; OCR, AI, or external content processing; real providers, documents, tenant data, customer data, or Production data; provider migration; data export; support or incident access; or any implementation work.
 
 The document selects no hosting, deployment, testing, identity, database, storage, audit, observability, security, backup, OCR, AI, queue, scheduler, or release provider. A successful build, test, Preview, deployment, or verification never authorizes Production real data. **Implementation remains NOT AUTHORIZED.**
+
+### Decision 14 synchronization
+
+Decision 14 authorizes package-scoped tests for real PDF upload, storage, OCR, extraction, confidence, manual confirmation, lifecycle, audit, retention, deletion, access control, failure, and rollback. Tests use synthetic fixtures unless separately authorized; passing tests do not authorize Production, live-data migration, or irreversible operations.
+
+### Decision 15 synchronization
+
+Future tests must cover document families, historical effective-date selection, official-source provenance, versioned rules and market values, tariff bands, pass-through reconstruction, missing/conflicting data, formula explainability, manual review, reproducibility, and separation of historical verification from simulation. Tests cannot approve legal conclusions or Production.
+
+The test matrix must cover PUN versus PUN Index GME, zonal/fixed/other indices, monorary/F1-F23/F1-F2-F3/hourly matching, holiday calendars, profile weighting, no-average fallback, every normalized field family, null/ambiguous values, unsupported gas combinations, intermediate formulas, rounding, taxes, and projection separation.

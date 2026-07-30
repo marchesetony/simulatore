@@ -609,4 +609,14 @@ Approval requires measurable evidence that: evidence is server-authoritative; te
 
 **PROHIBITED:** source changes; dependency installation; database, ORM, schema, migration, audit store, log platform, SIEM, storage/archive/backup provider, queue, scheduler, workflow, event bus; audit/SecurityEvent implementation; retention/purge jobs; export; legal hold; investigation preservation; incident implementation; cryptographic-immutability or legal-admissibility claims; compliance certification; real-document evidence, real tenant/customer data; OCR, AI, Bill/CTE extraction, PUN, simulation, comparison, reporting; Pull Request; merge to `main`; Production deployment; GitHub or Vercel configuration.
 
+### Decision 14 synchronization
+
+Decision 14 authorizes package-scoped audit, retention, deletion, and incident-preservation implementation for the real-data package. Evidence must be tenant-scoped, redacted, access-controlled, retention-governed, and preserved through failures; this does not grant Production or live-data migration authority.
+
+### Decision 15 synchronization
+
+Audit records for the future engine must bind each result to source institution, document/dataset, publication and effective dates, retrieval, checksum/version, rule, formula, inputs, intermediate calculations, rounding, confidence, reviewer decision, and manual correction. Evidence is append-only or equivalently immutable in the production design.
+
+Retention must preserve the document family, extracted field and null reason, chosen index and tariff band, official calendar, profile weighting, billed/reconstructed values, variance, simulation/projection class, and every source and intermediate calculation needed to reproduce the result.
+
 This document makes no legal, privacy, security, retention, evidentiary, or compliance guarantee. It contains no secrets, credentials, tokens, signed URLs, personal/customer/payment data, real documents, or real identifiers. Implementation remains **NOT AUTHORIZED**.

@@ -776,3 +776,13 @@ Acceptance requires exactly four environments, ten data classes, fifteen provide
 This document does **NOT AUTHORIZE** source-code changes; dependency installation; database; ORM; SQL; schema; migration; identity, email, payment, object-storage, document-storage, audit-store, SIEM, observability, secrets, backup, OCR, AI, or other provider; encryption or key-management mechanism; queue; scheduler; worker; workflow engine; event bus; disaster recovery; external content processing; real documents; real tenant/customer data; Preview or Production real data; legal hold; investigation or support access; provider migration; data export; Pull Request; merge into `main`; Production deployment; GitHub or Vercel configuration; provider-account access; or implementation work.
 
 Direct Production changes are prohibited. Provider discovery language is not approval, and this document creates no legal, privacy, security, residency, provider, contractual, operational, disaster-recovery, or Production-readiness claim. **Implementation remains NOT AUTHORIZED.**
+
+### Decision 14 synchronization
+
+Decision 14 permits documented selection and use of providers required by the bounded real-data package, including database, ORM, storage, OCR, AI extraction, queue, cache, and search where justified. Each selection requires category, environment, data class, region, subprocessor, support-access, retention, deletion, encryption, and exit evidence. Local, CI, and ordinary Preview remain synthetic-only; Production deployment remains separately unauthorized.
+
+### Decision 15 synchronization
+
+Regulatory and market-data providers must be primary official institutions or documented official datasets, with source identity, version/checksum, retrieval, effective dates, access controls, and reviewer approval. No unofficial source may authorize a rule; live scraping and Production activation require separate approval and controls.
+
+Provider contracts must identify whether a dataset supplies PUN, PUN Index GME, zonal, fixed, or another official index, and must support official F1/F23/F1-F2-F3/hourly calendars and holiday rules. Retrieval must be reproducible for the exact historical interval; missing or unsupported gas data is denied rather than estimated.

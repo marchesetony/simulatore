@@ -702,3 +702,13 @@ Approval requires measurable evidence that:
 This document does **not** authorize source-code changes; dependency installation; database or ORM selection/creation; schema migration; storage-provider selection; queue, scheduler, cache, event bus, workflow-engine, job-runner, date-library, PDF-parser, SDK, identity, payment, OCR, AI, or hosting selection; lifecycle/job/archive/expiry/deletion automation; legal-hold or restoration implementation; real-document lifecycle processing; real tenant/customer data; OCR; AI processing; CTE or Bill extraction; PUN import; simulation; comparison; reporting; Production migration/deployment; Pull Request creation; merge to `main`; or GitHub/Vercel configuration.
 
 No real documents, identifiers, secrets, credentials, tokens, personal data, customer data, or payment data are present. No Product Owner decision is weakened. No implementation action is authorized by this technical-discovery document.
+
+### Decision 14 synchronization
+
+Decision 14 authorizes implementation of the bounded real-document lifecycle for upload, OCR/extraction processing, confidence review, confirmation, retention, deletion eligibility, failure, retry, and audit evidence. It does not authorize comparison, savings calculations, ranking, report/PDF generation, irreversible operations, or automatic Production activation.
+
+### Decision 15 synchronization
+
+The future lifecycle includes classification, extraction, normalization, regulatory-data association, rule-version selection by effective period, reconstruction, simulation, explainability, manual review, and append-only evidence. Conflicting rules, missing official data, and ambiguous formulas transition to manual review rather than being inferred.
+
+Classification must distinguish Scontrino, detailed statement, synthetic bill, annex, technical page, electricity, gas, dual-fuel, and customer category; unsupported combinations stop in manual review. Lifecycle states must keep historical verification, reconstructed invoice, alternative-offer simulation, and forward projection separate, with source/effective-period selection and finest required tariff granularity recorded at each transition.

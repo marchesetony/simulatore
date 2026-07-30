@@ -1354,3 +1354,37 @@ I futuri task devono:
 - fermarsi e richiedere approvazione quando un task dipende da una decisione non ancora assunta.
 
 Eventuali modifiche future a queste decisioni devono essere approvate esplicitamente dal Product Owner e registrate in un documento autoritativo successivo.
+
+## Decisione 14 — Autorizzazione del primo pacchetto dati reali
+
+**APPROVED BY PRODUCT OWNER**
+
+Decisione 14 supersedes prior Foundation restrictions only for the explicitly bounded first real-data package. It authorizes production-quality implementation of real PDF upload, secure document storage, database schema and persistence, OCR integration, AI-assisted structured extraction, per-field confidence scoring, manual validation, document lifecycle controls, and durable audit evidence. Provider, database, ORM, migration, storage, OCR, AI extraction, queue/background processing, cache, and search/indexing choices may be selected only when technically justified and documented with security, privacy, legal, operational, and rollback evidence.
+
+The package remains tenant-isolated, deny-by-default, server-authoritative, least-privilege, encrypted in storage and transit, secret-free on clients, and fail-closed. Production deployment still requires separate Product Owner approval. Live customer-data migration, destructive migrations, irreversible operations, and automatic Production deployment remain prohibited.
+
+Implementation must define and verify provenance, confidence, manual confirmation, retention, deletion, access control, failure handling, rollback, and audit records for every extracted field. Comparison, savings calculations, offer ranking, and PDF report generation remain outside this package.
+
+## Decisione 15 — Motore regolatorio e dati di mercato
+
+**APPROVED BY PRODUCT OWNER — ARCHITECTURE AND FUTURE IMPLEMENTATION PLANNING**
+
+Decisione 15 authorizes the architecture, data model, source governance, testing strategy, and future implementation planning for a production-quality Italian electricity and gas regulatory and market-data engine. The engine must apply ARERA, GME, Terna, Acquirente Unico, SII, and other competent primary-source rules only for the exact invoice, consumption, and contractual effective periods; current rules must not be applied retroactively unless the source rule expressly requires it.
+
+Every imported datum must retain institution, source document/dataset, publication date, effective interval, retrieval timestamp, official URL or identifier, checksum/version, ingestion status, and reviewer approval. Unofficial summaries cannot become authoritative. Missing, conflicting, low-confidence, or ambiguous data fail closed into manual review.
+
+The future scope includes document-family classification; expanded bill extraction and normalization; versioned regulatory knowledge and rules; official market values and tariff calendars; contract formulas; pass-through verification; reconstruction; separated historical verification and future simulation; explainability; evidence; manual review; audit; and versioning. The provider-neutral modules are: Document Classification Engine, Regulatory Knowledge Base, Regulatory Rule Engine, Market Data Engine, Tariff Calendar Engine, Contract Formula Engine, Pass-Through Cost Engine, Invoice Reconstruction Engine, Simulation Engine, Explainability and Evidence Engine, Manual Review Workflow, and Audit and Versioning Layer.
+
+Decisione 15 does not authorize Production deployment, automated legal conclusions, unreviewed rule ingestion, uncontrolled scraping, automatic complaints or switching, unsupported gas calculations, fabricated official values, or autonomous offer execution. Production and live-data activation remain separately authorized.
+
+### Requisiti vincolanti del motore
+
+The applicable electricity reference must be selected from PUN, PUN Index GME, zonal prices, fixed-price formulas, or another official contractual index according to the contract wording, consumption interval, and effective regulatory/market framework. The engine must support monorary, F1/F23, F1/F2/F3, hourly, and finer contractual structures with official tariff-band calendars and holiday rules; matching must use the finest required granularity.
+
+Supported document families are Scontrino dell’Energia, detailed bill, detailed cost statement, synthetic bill, annex, technical-detail page, electricity, gas, dual-fuel, domestic, non-domestic, condominium, business, and public-administration documents. Unsupported combinations enter controlled manual review.
+
+The extraction model must cover supplier/customer identity, tax code, VAT number, POD/PDR, address, market/service, offer name/code, billing and consumption periods, issue/due dates, reading types, estimated/actual/recalculated quantities, monthly and F1/F2/F3/F23/hourly consumption, committed/available power, active/reactive energy, energy/power/fixed quotas, sale, transport, distribution, metering, system charges, dispatching, pass-through, losses, spread, fixed fees, taxes, excise, VAT, bonus, CMOR, indemnities, deposits, arrears, interest, payment method/status, totals, prior balance, adjustments, recalculations, and indexation formula. Missing or ambiguous values remain null and require review.
+
+Historical verification must retrieve official values for the exact required month, day, hour, or band and weight them by actual customer profile, or by monthly/band quantities only where contractually sufficient. A simple monthly average is prohibited where finer data are required. Index, spread, losses, fixed fees, commercial components, rounding, and taxes are separate transparent steps with all intermediates preserved. Incomplete formulas fail closed.
+
+Reconstructed invoice calculation, billed-versus-reconstructed verification, alternative-offer simulation using the same historical profile, and future projection using separately governed forward assumptions are distinct result classes. A projection is never historical verification.
