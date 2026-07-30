@@ -84,7 +84,13 @@ type BenchResult = {
   actual: string;
   passed: boolean;
   evidence: unknown;
-  error?: string;
+  error?: unknown;
+};
+
+type BenchErrorShape = {
+  readonly code?: unknown;
+  readonly message?: unknown;
+  readonly correlationId?: unknown;
 };
 
 type BenchGroup = { title: string; endpoint: string; scenarios: ReadonlyArray<{ id: string; label: string }> };
@@ -114,6 +120,20 @@ const benchGroups: ReadonlyArray<BenchGroup> = [
   ] },
 ];
 
+function formatBenchError(error: unknown): string {
+  if (typeof error === 'string') return error;
+  if (error && typeof error === 'object') {
+    const structured = error as BenchErrorShape;
+    const message = typeof structured.message === 'string' && structured.message.trim() ? structured.message.trim() : null;
+    const code = typeof structured.code === 'string' && structured.code.trim() ? structured.code.trim() : null;
+    const correlationId = typeof structured.correlationId === 'string' && structured.correlationId.trim() ? structured.correlationId.trim() : null;
+    if (message || code || correlationId) {
+      return [message ?? 'Errore non specificato', code ? `code: ${code}` : null, correlationId ? `correlationId: ${correlationId}` : null].filter(Boolean).join(' · ');
+    }
+  }
+  return 'Errore non supportato';
+}
+
 function FoundationTestBench() {
   const [results, setResults] = useState<Record<string, BenchResult>>({});
   const [running, setRunning] = useState<string | null>(null);
@@ -140,7 +160,7 @@ function FoundationTestBench() {
   return <main className="foundation-bench-shell">
     <header className="bench-header"><div><p className="eyebrow">FOUNDATION V1 · TEST BENCH</p><h1>Verifica SaaS sintetica</h1><p>Solo scenari fissi, provider-neutral e senza persistenza. Il report grafico principale resta invariato su <code>/</code>.</p></div><span className="status-chip">Synthetic-only</span></header>
     <div className="bench-notice"><strong>Decision 13 · perimetro controllato</strong><span>Nessun login reale, provider, database, dato reale o attivazione Production. I risultati vivono solo nella memoria del browser.</span></div>
-    <div className="bench-grid">{benchGroups.map((group) => <section className="bench-group" key={group.endpoint}><div className="bench-group-heading"><div><p className="eyebrow">API CLOSED-SCENARIO</p><h2>{group.title}</h2></div><code>{group.endpoint}</code></div><div className="bench-scenarios">{group.scenarios.map((scenario) => { const key = `${group.endpoint}:${scenario.id}`; const result = results[key]; return <article className="bench-card" key={scenario.id}><div className="bench-card-top"><strong>{scenario.label}</strong><span className={result?.passed ? 'pass-pill' : result ? 'fail-pill' : 'pending-pill'}>{result ? (result.passed ? 'PASS' : 'FAIL') : 'NON ESEGUITO'}</span></div><p className="bench-scenario-id">Scenario: <code>{scenario.id}</code></p><button className="button primary-button" type="button" onClick={() => void runScenario(group, scenario.id)} disabled={running !== null}>Esegui test</button>{result && <div className="bench-result"><div><span>Request</span><code>{result.request}</code></div><div><span>Expected</span><strong>{result.expected}</strong></div><div><span>Actual</span><strong>{result.actual}</strong></div><div><span>Evidence</span><pre>{JSON.stringify(result.evidence, null, 2)}</pre></div>{result.error && <small className="bench-error">{result.error}</small>}</div>}</article>; })}</div></section>)}</div>
+    <div className="bench-grid">{benchGroups.map((group) => <section className="bench-group" key={group.endpoint}><div className="bench-group-heading"><div><p className="eyebrow">API CLOSED-SCENARIO</p><h2>{group.title}</h2></div><code>{group.endpoint}</code></div><div className="bench-scenarios">{group.scenarios.map((scenario) => { const key = `${group.endpoint}:${scenario.id}`; const result = results[key]; return <article className="bench-card" key={scenario.id}><div className="bench-card-top"><strong>{scenario.label}</strong><span className={result?.passed ? 'pass-pill' : result ? 'fail-pill' : 'pending-pill'}>{result ? (result.passed ? 'PASS' : 'FAIL') : 'NON ESEGUITO'}</span></div><p className="bench-scenario-id">Scenario: <code>{scenario.id}</code></p><button className="button primary-button" type="button" onClick={() => void runScenario(group, scenario.id)} disabled={running !== null}>Esegui test</button>{result && <div className="bench-result"><div><span>Request</span><code>{result.request}</code></div><div><span>Expected</span><strong>{result.expected}</strong></div><div><span>Actual</span><strong>{result.actual}</strong></div><div><span>Evidence</span><pre>{JSON.stringify(result.evidence, null, 2)}</pre></div>{result.error !== undefined && <small className="bench-error">{formatBenchError(result.error)}</small>}</div>}</article>; })}</div></section>)}</div>
     <footer className="bench-footer">Foundation V1 · test bench sintetico · <Link href="/">Torna al report grafico</Link></footer>
   </main>;
 }
