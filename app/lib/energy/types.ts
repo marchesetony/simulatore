@@ -157,6 +157,15 @@ export interface ExtractedFieldProvenance {
   readonly reviewed: boolean;
 }
 
+export interface ExtractedValueProvenance {
+  readonly path: string;
+  readonly source: "BILL_DOCUMENT" | "MANUAL_REVIEW" | "REGULATORY_SOURCE" | "UNAVAILABLE";
+  readonly sourceReference: string;
+  readonly locator: string;
+  readonly confidence: number;
+  readonly reviewed: boolean;
+}
+
 export interface SupplierOfferReference {
   readonly supplier: string;
   readonly offerName: DeclaredText;
@@ -176,6 +185,7 @@ export interface BillContractBase extends VersionMetadata {
   readonly vector: EnergyVector;
   readonly billId: string;
   readonly customerId: string;
+  readonly customer?: CustomerIdentity;
   readonly supplyId: string;
   readonly billingPeriod: DatePeriod;
   readonly consumptionBasis: ConsumptionBasis;
@@ -183,6 +193,7 @@ export interface BillContractBase extends VersionMetadata {
   readonly offer: SupplierOfferReference;
   readonly regulatedCharges: readonly RegulatedCharge[];
   readonly fieldProvenance: readonly ExtractedFieldProvenance[];
+  readonly valueProvenance?: readonly ExtractedValueProvenance[];
   readonly reviewState: BillReviewState;
 }
 
