@@ -42,3 +42,7 @@ next-env.d.ts
 
 # local Foundation runtime documents
 /var/foundation-documents/
+
+# local CTE and market archive runtime data
+/var/cte-archive/
+/var/market-archive/

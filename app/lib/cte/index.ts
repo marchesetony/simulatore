@@ -10,3 +10,5 @@ export * from "./synthetic-fixtures.ts";
 export * from "./types.ts";
 // @ts-expect-error Node's strip-only test runner requires the explicit extension.
 export * from "./validation.ts";
+// @ts-expect-error Node's strip-only test runner requires the explicit extension.
+export * from "./archive/index.ts";
