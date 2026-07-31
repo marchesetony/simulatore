@@ -1,9 +1,120 @@
-import { NextResponse } from "next/server";
-import { documentStatus, fieldNames, LocalBillRepository, toPublicDocument, type FieldName } from "@/app/lib/foundation/real-bill";
+import {
+  assertLocalBillAccess,
+  approveDocumentVersion,
+  createManualCorrection,
+  LocalBillRepository,
+  parseBillOperation,
+  toPublicDocument,
+} from "../../../lib/foundation/real-bill";
 
-const audit = { async record(event: { readonly type: string; readonly tenantId: string; readonly documentId: string; readonly outcome: string }) { console.info("foundation-audit", { ...event }); } };
+const CORRELATION_ID = "foundation-bills";
+const DOCUMENTS_ROOT = process.env.FOUNDATION_DOCUMENTS_ROOT;
+const audit = {
+  async record(event: { readonly type: string; readonly tenantId: string; readonly documentId: string; readonly outcome: string }) {
+    console.info("foundation-audit", { ...event });
+  },
+};
 
-export async function GET(request: Request, context: { params: Promise<{ id: string }> }): Promise<Response> { const tenantId = request.headers.get("x-foundation-tenant-id"); if (!tenantId || process.env.FOUNDATION_LOCAL_DEV !== "true") return NextResponse.json({ error: "TENANT_ACCESS_DENIED" }, { status: 403 }); const { id } = await context.params; const document = await new LocalBillRepository().get(tenantId, id); return document ? NextResponse.json({ document: toPublicDocument(document) }) : NextResponse.json({ error: "DOCUMENT_NOT_FOUND" }, { status: 404 }); }
+function deny(code: string, message: string, status: number): Response {
+  return Response.json({ error: { code, message, correlationId: CORRELATION_ID } }, { status });
+}
 
-export async function PATCH(request: Request, context: { params: Promise<{ id: string }> }): Promise<Response> { const tenantId = request.headers.get("x-foundation-tenant-id"); if (!tenantId || process.env.FOUNDATION_LOCAL_DEV !== "true") return NextResponse.json({ error: "TENANT_ACCESS_DENIED" }, { status: 403 }); const { id } = await context.params; const body: unknown = await request.json(); if (!isCorrection(body)) return NextResponse.json({ error: "CORRECTION_INVALID" }, { status: 400 }); const repository = new LocalBillRepository(); const document = await repository.get(tenantId, id); if (!document) return NextResponse.json({ error: "DOCUMENT_NOT_FOUND" }, { status: 404 }); const fields = { ...document.fields, [body.field]: { value: body.value, confidence: 1, source: "manual" as const, confirmed: true } }; const updated = { ...document, fields, status: documentStatus(fields), updatedAt: new Date().toISOString() }; await repository.save(updated); await audit.record({ type: "MANUAL_REVIEW", tenantId, documentId: id, outcome: "ALLOWED" }); await audit.record({ type: "CORRECTION", tenantId, documentId: id, outcome: "ALLOWED" }); return NextResponse.json({ document: toPublicDocument(updated) }); }
-function isCorrection(value: unknown): value is { field: FieldName; value: string } { if (typeof value !== "object" || value === null) return false; const record = value as Record<string, unknown>; return typeof record.field === "string" && fieldNames.includes(record.field as FieldName) && typeof record.value === "string" && record.value.trim().length > 0 && record.value.length <= 500; }
+export async function GET(request: Request, context: { params: Promise<{ id: string }> }): Promise<Response> {
+  let tenantId: string;
+  try {
+    tenantId = assertLocalBillAccess(request.headers.get("x-foundation-tenant-id"), process.env.FOUNDATION_LOCAL_DEV);
+  } catch {
+    return deny("TENANT_ACCESS_DENIED", "Local bill review is disabled", 403);
+  }
+
+  const { id } = await context.params;
+  try {
+    const document = await new LocalBillRepository(DOCUMENTS_ROOT).get(tenantId, id);
+    return document ? Response.json({ document: toPublicDocument(document) }) : deny("DOCUMENT_NOT_FOUND", "Bill document not found", 404);
+  } catch (error) {
+    const code = error instanceof Error ? error.message : "BILL_OPERATION_FAILED";
+    return deny(code, messageFor(code), code === "METADATA_INVALID" ? 409 : 400);
+  }
+}
+
+export async function PATCH(request: Request, context: { params: Promise<{ id: string }> }): Promise<Response> {
+  let tenantId: string;
+  try {
+    tenantId = assertLocalBillAccess(request.headers.get("x-foundation-tenant-id"), process.env.FOUNDATION_LOCAL_DEV);
+  } catch {
+    return deny("TENANT_ACCESS_DENIED", "Local bill review is disabled", 403);
+  }
+
+  const { id } = await context.params;
+  let body: unknown;
+  try {
+    body = await request.json();
+  } catch {
+    return deny("BILL_OPERATION_INVALID", "Malformed request body", 400);
+  }
+
+  const repository = new LocalBillRepository(DOCUMENTS_ROOT);
+
+  try {
+    const document = await repository.get(tenantId, id);
+    if (!document) return deny("DOCUMENT_NOT_FOUND", "Bill document not found", 404);
+    const now = new Date().toISOString();
+    const operation = parseBillOperation(body);
+    if (operation?.operation === "approve") {
+      const approved = approveDocumentVersion({ document, tenantId, versionId: operation.versionId, at: now });
+      await repository.save(approved);
+      await audit.record({ type: "APPROVAL", tenantId, documentId: id, outcome: "ALLOWED" });
+      return Response.json({ document: toPublicDocument(approved) });
+    }
+    if (operation?.operation === "correct") {
+      const corrected = createManualCorrection({
+        document,
+        tenantId,
+        sourceVersionId: operation.versionId ?? document.currentVersionId,
+        field: operation.field,
+        value: operation.value,
+        at: now,
+      });
+      await repository.save(corrected);
+      await audit.record({ type: "MANUAL_REVIEW", tenantId, documentId: id, outcome: "ALLOWED" });
+      await audit.record({ type: "CORRECTION", tenantId, documentId: id, outcome: "ALLOWED" });
+      return Response.json({ document: toPublicDocument(corrected) });
+    }
+    return deny("BILL_OPERATION_INVALID", "Unsupported bill operation", 400);
+  } catch (error) {
+    const code = error instanceof Error ? error.message : "BILL_OPERATION_FAILED";
+    const status = code === "TENANT_ACCESS_DENIED" ? 403
+      : code === "DOCUMENT_VERSION_NOT_CURRENT" || code === "DOCUMENT_VERSION_STALE" || code === "DOCUMENT_VERSION_ALREADY_APPROVED" || code === "DOCUMENT_NO_CHANGES" ? 409
+      : code === "METADATA_INVALID" ? 409
+      : code === "APPROVAL_REQUIRED_FIELDS_MISSING" || code === "APPROVAL_FIELDS_UNCONFIRMED" || code === "CORRECTION_INVALID" || code === "DOCUMENT_VERSION_NOT_FOUND" ? 400
+      : 400;
+    return deny(code, messageFor(code), status);
+  }
+}
+
+function messageFor(code: string): string {
+  switch (code) {
+    case "APPROVAL_REQUIRED_FIELDS_MISSING":
+      return "Required bill fields are missing";
+    case "APPROVAL_FIELDS_UNCONFIRMED":
+      return "Required bill fields must be confirmed";
+    case "DOCUMENT_VERSION_NOT_CURRENT":
+      return "Only the current working version can be approved";
+    case "DOCUMENT_VERSION_STALE":
+      return "The requested version is stale";
+    case "DOCUMENT_VERSION_ALREADY_APPROVED":
+      return "The current version is already approved";
+    case "DOCUMENT_VERSION_NOT_FOUND":
+      return "The requested version does not exist";
+    case "DOCUMENT_NO_CHANGES":
+      return "The requested correction changes no fields";
+    case "METADATA_INVALID":
+      return "Bill metadata is invalid";
+    case "CORRECTION_INVALID":
+      return "The correction payload is invalid";
+    case "TENANT_ACCESS_DENIED":
+      return "Tenant access denied";
+    default:
+      return "Bill operation failed";
+  }
+}
