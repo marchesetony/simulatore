@@ -1,6 +1,9 @@
 import { randomUUID } from "node:crypto";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
+// @ts-expect-error Node's strip-only test runner requires the explicit extension.
+import { validateBillContract } from "../energy/validation.ts";
+import type { BillContract } from "../energy/types.ts";
 
 export type ExtractionStatus = "EXTRACTED" | "OCR_PROVIDER_REQUIRED" | "FAILED" | "REVIEW_REQUIRED";
 export type FieldName = "supplier" | "pod" | "customerName" | "billingPeriod" | "annualConsumption" | "billedConsumption" | "totalAmount";
@@ -16,6 +19,7 @@ export type BillVersion = {
   readonly fields: BillFields;
   readonly createdAt: string;
   readonly origin: "INGESTION" | "MANUAL_REVIEW";
+  readonly energyContract?: BillContract;
 };
 export type BillProvenanceEvent = {
   readonly eventId: string;
@@ -121,6 +125,15 @@ export interface BillRepository {
   save(document: BillDocument): Promise<void>;
   get(tenantId: string, id: string): Promise<BillDocument | null>;
 }
+export interface EnergyContractMapperInput {
+  readonly text: string;
+  readonly pages: number;
+  readonly tenantId: string;
+  readonly documentId: string;
+  readonly versionId: string;
+  readonly extractionSource?: "embedded-text" | "ocr";
+}
+export type EnergyContractMapper = (input: EnergyContractMapperInput) => BillContract;
 export interface AuditSink {
   record(event: { readonly type: "UPLOAD" | "VALIDATION" | "EXTRACTION" | "EXTRACTION_FAILURE" | "MANUAL_REVIEW" | "CORRECTION" | "APPROVAL"; readonly tenantId: string; readonly documentId: string; readonly outcome: "ALLOWED" | "DENIED" | "FAILED" }): Promise<void>;
 }
@@ -493,6 +506,7 @@ export async function ingestBill(input: {
   readonly extractor: TextExtractionPort;
   readonly repository: BillRepository;
   readonly audit: AuditSink;
+  readonly mapEnergyContract?: EnergyContractMapper;
 }): Promise<BillDocument> {
   const tenantId = validateTenantId(input.tenantId);
   const safeName = validatePdf(input.fileName, input.contentType, input.bytes, input.maxBytes);
@@ -504,6 +518,17 @@ export async function ingestBill(input: {
   try {
     const extractedText = await input.extractor.extract(input.bytes);
     const fields = extractBillFields(extractedText.text);
+    const energyContract = input.mapEnergyContract?.({
+      text: extractedText.text,
+      pages: extractedText.pages,
+      tenantId,
+      documentId: id,
+      versionId,
+    });
+    if (energyContract) {
+      validateBillContract(energyContract);
+      if (energyContract.tenantId !== tenantId || energyContract.billId !== id) throw new Error("EXTRACTION_METADATA_INVALID");
+    }
     const document = sanitizeDocument({
       id,
       tenantId,
@@ -514,7 +539,7 @@ export async function ingestBill(input: {
       updatedAt: now,
       currentVersionId: versionId,
       currentApprovedVersionId: null,
-      versions: [{ versionId, versionNumber: 1, supersedesVersionId: null, status: documentStatus(fields), fields, createdAt: now, origin: "INGESTION" }],
+      versions: [{ versionId, versionNumber: 1, supersedesVersionId: null, status: energyContract ? "EXTRACTED" : documentStatus(fields), fields, createdAt: now, origin: "INGESTION", ...(energyContract ? { energyContract } : {}) }],
       provenance: [{ eventId: randomUUID(), type: "INGESTION", origin: "INGESTION", tenantId, documentId: id, sourceVersionId: null, resultVersionId: versionId, field: null, previousValue: null, nextValue: null, at: now }],
       approvals: [],
     });
@@ -574,6 +599,7 @@ export function createManualCorrection(input: {
     fields,
     createdAt: input.at,
     origin: "MANUAL_REVIEW",
+    ...(source.energyContract ? { energyContract: source.energyContract } : {}),
   };
 
   return sanitizeDocument({
@@ -879,6 +905,13 @@ function parseBillVersion(value: unknown, tenantId: string, documentId: string):
   if (!isRecord(value)) throw metadataInvalid();
   if ("tenantId" in value && validateTenantId(readRequiredString(value.tenantId)) !== tenantId) throw metadataInvalid();
   if ("documentId" in value && readRequiredString(value.documentId) !== documentId) throw metadataInvalid();
+  let energyContract: BillContract | undefined;
+  if (value.energyContract !== undefined) {
+    validateBillContract(value.energyContract);
+    const candidate = value.energyContract as BillContract;
+    if (candidate.tenantId !== tenantId || candidate.billId !== documentId) throw metadataInvalid();
+    energyContract = candidate;
+  }
   return {
     versionId: readRequiredString(value.versionId),
     versionNumber: readPositiveInteger(value.versionNumber),
@@ -887,6 +920,7 @@ function parseBillVersion(value: unknown, tenantId: string, documentId: string):
     fields: parseBillFields(value.fields),
     createdAt: readTimestamp(value.createdAt),
     origin: readVersionOrigin(value.origin),
+    ...(energyContract ? { energyContract } : {}),
   };
 }
 

@@ -8,6 +8,7 @@ import type {
   DeclaredText,
   ElectricitySupply,
   ExtractedFieldProvenance,
+  ExtractedValueProvenance,
   GasSupply,
   Quantity,
   QuantityUnit,
@@ -216,6 +217,24 @@ function assertProvenance(value: unknown): asserts value is readonly ExtractedFi
   }
 }
 
+function assertValueProvenance(value: unknown): asserts value is readonly ExtractedValueProvenance[] {
+  if (!Array.isArray(value) || value.length === 0) fail("VALUE_PROVENANCE_INVALID");
+  const paths = new Set<string>();
+  for (const candidate of value as readonly unknown[]) {
+    const item = required(candidate, "VALUE_PROVENANCE_INVALID");
+    const path = nonEmpty(item.path, "VALUE_PROVENANCE_INVALID");
+    if (paths.has(path)) fail("VALUE_PROVENANCE_DUPLICATE");
+    paths.add(path);
+    enumValue(item.source, ["BILL_DOCUMENT", "MANUAL_REVIEW", "REGULATORY_SOURCE", "UNAVAILABLE"], "VALUE_PROVENANCE_INVALID");
+    nonEmpty(item.sourceReference, "VALUE_PROVENANCE_INVALID");
+    nonEmpty(item.locator, "VALUE_PROVENANCE_INVALID");
+    const confidence = finite(item.confidence, "CONFIDENCE_INVALID");
+    if (confidence < 0 || confidence > 1) fail("CONFIDENCE_INVALID");
+    if (typeof item.reviewed !== "boolean") fail("VALUE_PROVENANCE_INVALID");
+    if (item.source === "UNAVAILABLE" && confidence !== 0) fail("CONFIDENCE_INVALID");
+  }
+}
+
 function assertCharge(value: unknown): asserts value is RegulatedCharge {
   const item = required(value, "REGULATED_CHARGE_INVALID");
   nonEmpty(item.code, "REGULATED_CHARGE_INVALID");
@@ -236,6 +255,7 @@ function assertBillBase(value: unknown): Record<string, unknown> {
   const vector = enumValue(item.vector, ["EE", "GAS"], "VECTOR_INVALID");
   nonEmpty(item.billId, "BILL_ID_INVALID");
   nonEmpty(item.customerId, "BILL_CUSTOMER_ID_INVALID");
+  if (item.customer !== undefined) assertCustomer(item.customer);
   nonEmpty(item.supplyId, "BILL_SUPPLY_ID_INVALID");
   assertDatePeriod(item.billingPeriod);
   enumValue(item.consumptionBasis, ["MEASURED", "ESTIMATED", "MIXED"], "CONSUMPTION_BASIS_INVALID");
@@ -244,6 +264,7 @@ function assertBillBase(value: unknown): Record<string, unknown> {
   if (!Array.isArray(item.regulatedCharges)) fail("REGULATED_CHARGES_INVALID");
   (item.regulatedCharges as readonly unknown[]).forEach(assertCharge);
   assertProvenance(item.fieldProvenance);
+  if (item.valueProvenance !== undefined) assertValueProvenance(item.valueProvenance);
   assertReviewState(item.reviewState);
   return { ...item, vector };
 }
