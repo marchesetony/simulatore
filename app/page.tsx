@@ -69,12 +69,190 @@ export default function Home() {
   </main>;
 }
 
-type IngestedBill = { id: string; status: string; fileName: string; fields: Record<string, { value: string | null; confidence: number; source: string; confirmed: boolean }> };
+type ApiErrorShape = {
+  readonly code?: unknown;
+  readonly message?: unknown;
+  readonly correlationId?: unknown;
+};
+
+type IngestedBill = {
+  id: string;
+  status: string;
+  fileName: string;
+  currentVersionId: string;
+  currentVersionNumber: number;
+  reviewState: string;
+  currentApprovedVersionId: string | null;
+  currentApprovedVersionNumber: number | null;
+  currentApprovedAt: string | null;
+  versionCount: number;
+  approvalCount: number;
+  requiredFields: readonly string[];
+  approvalReady: boolean;
+  approvalIssues: {
+    missingFields: readonly string[];
+    unconfirmedFields: readonly string[];
+  };
+  versions: ReadonlyArray<{
+    versionId: string;
+    versionNumber: number;
+    reviewState: string;
+    approvedAt: string | null;
+  }>;
+  fields: Record<string, { value: string | null; confidence: number; source: string; confirmed: boolean }>;
+};
+
+function formatApiError(error: unknown): string {
+  if (typeof error === 'string') return error;
+  if (error && typeof error === 'object') {
+    const structured = error as ApiErrorShape;
+    const message = typeof structured.message === 'string' && structured.message.trim() ? structured.message.trim() : null;
+    const code = typeof structured.code === 'string' && structured.code.trim() ? structured.code.trim() : null;
+    const correlationId = typeof structured.correlationId === 'string' && structured.correlationId.trim() ? structured.correlationId.trim() : null;
+    if (message || code || correlationId) {
+      return [message ?? 'Errore non specificato', code ? `code: ${code}` : null, correlationId ? `correlationId: ${correlationId}` : null].filter(Boolean).join(' · ');
+    }
+  }
+  return 'Errore non supportato';
+}
+
 function BillIngestionBench() {
-  const [bill, setBill] = useState<IngestedBill | null>(null); const [error, setError] = useState<string | null>(null); const [busy, setBusy] = useState(false);
-  async function upload(event: ChangeEvent<HTMLInputElement>) { const file = event.target.files?.[0]; if (!file) return; setBusy(true); setError(null); const form = new FormData(); form.set('file', file); try { const response = await fetch('/api/bills', { method: 'POST', headers: { 'x-foundation-tenant-id': 'tenant_local-demo' }, body: form }); const body: unknown = await response.json(); if (!response.ok || typeof body !== 'object' || body === null || !('document' in body)) throw new Error(typeof body === 'object' && body !== null && 'error' in body && typeof body.error === 'string' ? body.error : 'INGESTION_FAILED'); setBill((body as { document: IngestedBill }).document); } catch (cause) { setError(cause instanceof Error ? cause.message : 'INGESTION_FAILED'); } finally { setBusy(false); event.target.value = ''; } }
-  async function correct(field: string, value: string) { if (!bill) return; const response = await fetch(`/api/bills/${bill.id}`, { method: 'PATCH', headers: { 'content-type': 'application/json', 'x-foundation-tenant-id': 'tenant_local-demo' }, body: JSON.stringify({ field, value }) }); if (!response.ok) return; const body = await response.json() as { document: IngestedBill }; setBill(body.document); }
-  return <section className="foundation-ingestion"><div className="bench-header"><div><p className="eyebrow">REAL PDF INGESTION V1 · LOCAL</p><h1>Revisione bolletta</h1><p>Carica un PDF reale in ambiente locale. Nessun confronto, calcolo o PDF viene generato.</p></div><label className="button primary-button">{busy ? 'Validazione…' : 'Seleziona PDF'}<input type="file" accept="application/pdf" onChange={upload} disabled={busy} /></label></div>{error && <div className="bench-error">Operazione negata: {error}</div>}{bill && <div className="ingestion-card"><strong>{bill.fileName}</strong><span>Stato: {bill.status}</span>{Object.entries(bill.fields).map(([name, field]) => <label className="review-field" key={name}><span>{name} · confidenza {Math.round(field.confidence * 100)}% · {field.source}</span><input value={field.value ?? ''} placeholder="Non rilevato" onChange={(event) => void correct(name, event.target.value)} /><small>{field.confirmed ? 'Confermato' : 'Richiede revisione'}</small></label>)}</div>}</section>;
+  const [bill, setBill] = useState<IngestedBill | null>(null);
+  const [drafts, setDrafts] = useState<Record<string, string>>({});
+  const [error, setError] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+
+  useEffect(() => {
+    if (!bill) {
+      setDrafts({});
+      return;
+    }
+    setDrafts(Object.fromEntries(Object.entries(bill.fields).map(([name, field]) => [name, field.value ?? ''])));
+  }, [bill]);
+
+  async function upload(event: ChangeEvent<HTMLInputElement>) {
+    const file = event.target.files?.[0];
+    if (!file) return;
+    setBusy(true);
+    setError(null);
+    setNotice(null);
+    const form = new FormData();
+    form.set('file', file);
+    try {
+      const response = await fetch('/api/bills', { method: 'POST', headers: { 'x-foundation-tenant-id': 'tenant_local-demo' }, body: form });
+      const body: unknown = await response.json();
+      if (!response.ok || typeof body !== 'object' || body === null || !('document' in body)) {
+        throw new Error(formatApiError(typeof body === 'object' && body !== null && 'error' in body ? (body as { error?: unknown }).error : 'INGESTION_FAILED'));
+      }
+      const nextBill = (body as { document: IngestedBill }).document;
+      setBill(nextBill);
+      setNotice(`Documento caricato · versione corrente v${nextBill.currentVersionNumber}`);
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : 'INGESTION_FAILED');
+    } finally {
+      setBusy(false);
+      event.target.value = '';
+    }
+  }
+
+  async function correct(field: string) {
+    if (!bill) return;
+    const value = drafts[field]?.trim() ?? '';
+    if (!value) {
+      setError(`Valore mancante per ${field}`);
+      return;
+    }
+    setBusy(true);
+    setError(null);
+    setNotice(null);
+    try {
+      const response = await fetch(`/api/bills/${bill.id}`, {
+        method: 'PATCH',
+        headers: { 'content-type': 'application/json', 'x-foundation-tenant-id': 'tenant_local-demo' },
+        body: JSON.stringify({ operation: 'correct', field, value, versionId: bill.currentVersionId }),
+      });
+      const body: unknown = await response.json();
+      if (!response.ok || typeof body !== 'object' || body === null || !('document' in body)) {
+        throw new Error(formatApiError(typeof body === 'object' && body !== null && 'error' in body ? (body as { error?: unknown }).error : 'CORRECTION_FAILED'));
+      }
+      const nextBill = (body as { document: IngestedBill }).document;
+      setBill(nextBill);
+      setNotice(`Correzione salvata · nuova versione v${nextBill.currentVersionNumber}`);
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : 'CORRECTION_FAILED');
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function approve() {
+    if (!bill) return;
+    setBusy(true);
+    setError(null);
+    setNotice(null);
+    try {
+      const response = await fetch(`/api/bills/${bill.id}`, {
+        method: 'PATCH',
+        headers: { 'content-type': 'application/json', 'x-foundation-tenant-id': 'tenant_local-demo' },
+        body: JSON.stringify({ operation: 'approve', versionId: bill.currentVersionId }),
+      });
+      const body: unknown = await response.json();
+      if (!response.ok || typeof body !== 'object' || body === null || !('document' in body)) {
+        throw new Error(formatApiError(typeof body === 'object' && body !== null && 'error' in body ? (body as { error?: unknown }).error : 'APPROVAL_FAILED'));
+      }
+      const nextBill = (body as { document: IngestedBill }).document;
+      setBill(nextBill);
+      setNotice(`Versione approvata · v${nextBill.currentVersionNumber}`);
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : 'APPROVAL_FAILED');
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return <section className="foundation-ingestion">
+    <div className="bench-header">
+      <div>
+        <p className="eyebrow">REAL PDF INGESTION V1 · LOCAL</p>
+        <h1>Revisione bolletta</h1>
+        <p>Carica un PDF reale in ambiente locale. Nessun confronto, calcolo o PDF viene generato.</p>
+      </div>
+      <label className="button primary-button">
+        {busy ? 'Validazione…' : 'Seleziona PDF'}
+        <input type="file" accept="application/pdf" onChange={upload} disabled={busy} />
+      </label>
+    </div>
+    {error && <div className="bench-error">Operazione negata: {error}</div>}
+    {notice && <div className="bench-notice"><strong>Esito locale</strong><span>{notice}</span></div>}
+    {bill && <div className="ingestion-card">
+      <strong>{bill.fileName}</strong>
+      <span>Stato estrazione: {bill.status}</span>
+      <span>Stato revisione: {bill.reviewState}</span>
+      <span>Versione corrente: v{bill.currentVersionNumber} · {bill.currentVersionId}</span>
+      <span>Versioni salvate: {bill.versionCount} · approvazioni: {bill.approvalCount}</span>
+      <span>Versione approvata corrente: {bill.currentApprovedVersionNumber ? `v${bill.currentApprovedVersionNumber}` : 'nessuna'}</span>
+      {bill.currentApprovedAt && <span>Approvata il: {bill.currentApprovedAt}</span>}
+      {!bill.approvalReady && <small>Approvazione bloccata · mancanti: {bill.approvalIssues.missingFields.join(', ') || 'nessuno'} · non confermati: {bill.approvalIssues.unconfirmedFields.join(', ') || 'nessuno'}</small>}
+      {Object.entries(bill.fields).map(([name, field]) => {
+        const draft = drafts[name] ?? '';
+        const changed = draft !== (field.value ?? '');
+        const required = bill.requiredFields.includes(name);
+        return <label className="review-field" key={`${bill.currentVersionId}:${name}`}>
+          <span>{name}{required ? ' · obbligatorio' : ''} · confidenza {Math.round(field.confidence * 100)}% · {field.source}</span>
+          <input value={draft} placeholder="Non rilevato" onChange={(event) => setDrafts((current) => ({ ...current, [name]: event.target.value }))} />
+          <small>{field.confirmed ? 'Confermato' : 'Richiede revisione'}</small>
+          <button className="button ghost-button" type="button" onClick={() => void correct(name)} disabled={busy || !draft.trim()}>
+            {changed ? 'Salva correzione' : 'Conferma valore'}
+          </button>
+        </label>;
+      })}
+      <button className="button primary-button" type="button" onClick={() => void approve()} disabled={busy || !bill.approvalReady}>
+        Approva versione locale
+      </button>
+      <small>Cronologia locale: {bill.versions.map((version) => `v${version.versionNumber} ${version.reviewState}`).join(' · ')}</small>
+    </div>}
+  </section>;
 }
 
 type BenchResult = {
@@ -85,12 +263,6 @@ type BenchResult = {
   passed: boolean;
   evidence: unknown;
   error?: unknown;
-};
-
-type BenchErrorShape = {
-  readonly code?: unknown;
-  readonly message?: unknown;
-  readonly correlationId?: unknown;
 };
 
 type BenchGroup = { title: string; endpoint: string; scenarios: ReadonlyArray<{ id: string; label: string }> };
@@ -121,17 +293,7 @@ const benchGroups: ReadonlyArray<BenchGroup> = [
 ];
 
 function formatBenchError(error: unknown): string {
-  if (typeof error === 'string') return error;
-  if (error && typeof error === 'object') {
-    const structured = error as BenchErrorShape;
-    const message = typeof structured.message === 'string' && structured.message.trim() ? structured.message.trim() : null;
-    const code = typeof structured.code === 'string' && structured.code.trim() ? structured.code.trim() : null;
-    const correlationId = typeof structured.correlationId === 'string' && structured.correlationId.trim() ? structured.correlationId.trim() : null;
-    if (message || code || correlationId) {
-      return [message ?? 'Errore non specificato', code ? `code: ${code}` : null, correlationId ? `correlationId: ${correlationId}` : null].filter(Boolean).join(' · ');
-    }
-  }
-  return 'Errore non supportato';
+  return formatApiError(error);
 }
 
 function FoundationTestBench() {
