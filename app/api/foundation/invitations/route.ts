@@ -4,6 +4,7 @@ import { CorrelationId, redactError } from "../../../lib/foundation/errors";
 import { acceptInvitation, issueInvitation, revokeInvitation } from "../../../lib/foundation/invitations";
 import { canonicalTimestamp } from "../../../lib/foundation/types";
 import type { InvitationId, TenantId } from "../../../lib/foundation/types";
+import { requireRequestAccess } from "../../../lib/auth/request";
 
 type Scenario = "valid-invitation" | "expired-invitation" | "revoked-invitation" | "replayed-invitation" | "wrong-tenant-invitation" | "malformed-request";
 const NOW = canonicalTimestamp("2027-02-15T00:00:00.000Z");
@@ -31,6 +32,7 @@ function result(scenario: string, expected: "ALLOWED" | "DENIED", actual: "ALLOW
 
 export async function POST(request: Request) {
   if (request.method !== "POST") return NextResponse.json({ error: redactError("INVITATION_DENIED", CORRELATION) }, { status: 405 });
+  try { await requireRequestAccess(request, "ADMIN"); } catch { return NextResponse.json({ error: redactError("INVITATION_DENIED", CORRELATION) }, { status: 401 }); }
   const scenario = parseScenario(request);
   if (!scenario || scenario === "malformed-request") return NextResponse.json({ scenario: scenario ?? "unknown", request: "POST /api/foundation/invitations", expected: "DENIED", actual: "DENIED", passed: scenario === "malformed-request", evidence: evidence(scenario ?? "unknown"), error: redactError("INVITATION_DENIED", CORRELATION) }, { status: 400 });
   try {

@@ -5,6 +5,8 @@ import { CorrelationId, redactError } from "../../../lib/foundation/errors";
 import { resolveTenantContext } from "../../../lib/foundation/tenants";
 import { canonicalTimestamp } from "../../../lib/foundation/types";
 import type { Identity, Membership, MembershipId, Permission, Role, TenantId, UserId } from "../../../lib/foundation/types";
+import { requireRequestAccess } from "../../../lib/auth/request";
+import { recordRuntimeAudit } from "../../../lib/persistence/audit";
 
 type RoleScenario = `${"product-owner" | "platform-owner" | "tenant-admin" | "sales-manager" | "sales-operator"}-${"allowed" | "denied"}`;
 type Scenario = RoleScenario | "malformed-request";
@@ -37,12 +39,19 @@ function evidence(scenario: string, allowed: boolean) {
 
 export async function POST(request: Request) {
   if (request.method !== "POST") return NextResponse.json({ error: redactError("AUTHORIZATION_DENIED", CORRELATION) }, { status: 405 });
+  let principal;
+  try { principal = await requireRequestAccess(request, "ADMIN"); } catch { return NextResponse.json({ error: redactError("AUTHORIZATION_DENIED", CORRELATION) }, { status: 401 }); }
   const scenario = parseScenario(request);
   if (!scenario || scenario === "malformed-request") return NextResponse.json({ scenario: scenario ?? "unknown", request: "POST /api/foundation/authorization", expected: "DENIED", actual: "DENIED", passed: scenario === "malformed-request", evidence: evidence(scenario ?? "unknown", false), error: redactError("AUTHORIZATION_DENIED", CORRELATION) }, { status: 400 });
   const selected = roleMap[scenario];
   const allowed = scenario.endsWith("-allowed");
   const membership: Membership = { id: MEMBERSHIP, userId: USER, tenantId: TENANT, role: selected.role, status: "ACTIVE", permissions: allowed ? [selected.permission] : ["tenant:read"] };
   const context = resolveTenantContext(IDENTITY, membership, TENANT);
-  const actual = authorize({ context, tenantId: TENANT, permission: selected.permission }).allowed;
+  const authorization = authorize({ context, tenantId: TENANT, permission: selected.permission });
+  if (!authorization.allowed) {
+    try { await recordRuntimeAudit({ tenantId: principal.tenantId, principal, action: "AUTHORIZATION_DENIAL", resourceType: "AUTHORIZATION", outcome: "DENIED", correlationId: "foundation-authz", metadata: { permission: selected.permission, reason: authorization.reason } }); }
+    catch { console.error("phase6-foundation-authz-audit-failure", { reason: authorization.reason }); }
+  }
+  const actual = authorization.allowed;
   return NextResponse.json({ scenario, request: `POST /api/foundation/authorization?scenario=${scenario}`, expected: allowed ? "ALLOWED" : "DENIED", actual: actual ? "ALLOWED" : "DENIED", passed: actual === allowed, evidence: evidence(scenario, actual) });
 }

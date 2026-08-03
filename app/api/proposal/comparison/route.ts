@@ -1,10 +1,13 @@
-import { jsonBody, localTenant } from "../../../lib/archive/api";
+import { jsonBody } from "../../../lib/archive/api";
+import { requestPrincipal } from "../../../lib/auth/request";
 import { proposalError } from "../../../lib/proposal/api";
 import { generateProposal } from "../../../lib/proposal/service";
+import { runtimeRepositories } from "../../../lib/persistence/adapter";
+import { recordRuntimeAudit } from "../../../lib/persistence/audit";
 
 export const runtime = "nodejs";
 
 export async function POST(request: Request): Promise<Response> {
-  try { const tenantId = localTenant(request); const body = await jsonBody(request); return Response.json({ proposal: generateProposal(body, tenantId, "COMPARISON") }); }
+  try { const principal = await requestPrincipal(request, "WRITE"); const tenantId = principal.tenantId; const body = await jsonBody(request); const proposal = generateProposal(body, tenantId, "COMPARISON"); await runtimeRepositories().proposals.put({ tenantId, recordId: proposal.proposalId, payload: { proposalId: proposal.proposalId, proposalFingerprint: proposal.proposalFingerprint, proposal }, idempotencyKey: proposal.proposalFingerprint }); await recordRuntimeAudit({ principal, action: "PROPOSAL_GENERATION", resourceType: "PROPOSAL", resourceId: proposal.proposalId, outcome: "ALLOWED", correlationId: "commercial-proposal-export-v1", metadata: { proposalFingerprint: proposal.proposalFingerprint } }); return Response.json({ proposal }); }
   catch (error) { return proposalError(error); }
 }

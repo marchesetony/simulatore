@@ -1,5 +1,5 @@
 // @ts-expect-error Node's strip-only test runner requires the explicit extension.
-import { assertLocalBillAccess, EmbeddedPdfTextExtractor, ingestBill, LocalBillRepository, LocalDocumentStorage, type AuditSink, type TextExtractionPort, validatePdf } from "../foundation/real-bill.ts";
+import { assertLocalBillAccess, EmbeddedPdfTextExtractor, ingestBill, LocalBillRepository, LocalDocumentStorage, type AuditSink, type BillRepository, type DocumentStoragePort, type TextExtractionPort, validatePdf } from "../foundation/real-bill.ts";
 // @ts-expect-error Node's strip-only test runner requires the explicit extension.
 import { classifyBillText } from "./classifier.ts";
 // @ts-expect-error Node's strip-only test runner requires the explicit extension.
@@ -39,11 +39,14 @@ export async function ingestEnergyBill(input: {
   readonly bytes: Uint8Array;
   readonly maxBytes: number;
   readonly documentsRoot?: string;
+  readonly storage?: DocumentStoragePort;
+  readonly repository?: BillRepository;
+  readonly authenticated?: boolean;
   readonly ocrProvider?: OcrProvider;
   readonly localDev?: string;
   readonly audit?: AuditSink;
 }): Promise<EnergyBillIngestionResult> {
-  const tenantId = assertLocalBillAccess(input.tenantId, input.localDev ?? process.env.FOUNDATION_LOCAL_DEV);
+  const tenantId = input.authenticated ? (/^tenant_[a-z0-9-]+$/.test(input.tenantId) ? input.tenantId : (() => { throw new Error("TENANT_ACCESS_DENIED"); })()) : assertLocalBillAccess(input.tenantId, input.localDev ?? process.env.FOUNDATION_LOCAL_DEV);
   const safeName = validatePdf(input.fileName, input.contentType, input.bytes, input.maxBytes);
   let classification: BillClassification = unknownClassification;
   let mappingError: string | null = null;
@@ -54,9 +57,9 @@ export async function ingestEnergyBill(input: {
     contentType: input.contentType,
     bytes: input.bytes,
     maxBytes: input.maxBytes,
-    storage: new LocalDocumentStorage(input.documentsRoot),
+    storage: input.storage ?? new LocalDocumentStorage(input.documentsRoot),
     extractor: hybridExtractor(input.ocrProvider, (source) => { extractionSource = source; }),
-    repository: new LocalBillRepository(input.documentsRoot),
+    repository: input.repository ?? new LocalBillRepository(input.documentsRoot),
     audit: input.audit ?? { async record() {} },
     mapEnergyContract: (mapperInput) => {
       try {
