@@ -1,3 +1,6 @@
+import { requestTenant } from "../auth/request";
+import type { AccessLevel } from "../auth/types";
+
 export const ARCHIVE_CORRELATION_ID = "cte-market-archive-v1";
 
 export function archiveError(error: unknown, fallback = "ARCHIVE_REQUEST_INVALID"): Response {
@@ -6,12 +9,7 @@ export function archiveError(error: unknown, fallback = "ARCHIVE_REQUEST_INVALID
   return Response.json({ error: { code, message: "Archive request denied", correlationId: ARCHIVE_CORRELATION_ID } }, { status });
 }
 
-export function localTenant(request: Request): string {
-  if (process.env.FOUNDATION_LOCAL_DEV !== "true") throw new Error("TENANT_ACCESS_DENIED");
-  const tenantId = request.headers.get("x-foundation-tenant-id");
-  if (!tenantId || !/^tenant_[a-z0-9-]+$/.test(tenantId)) throw new Error("TENANT_ACCESS_DENIED");
-  return tenantId;
-}
+export async function localTenant(request: Request, access?: AccessLevel): Promise<string> { return requestTenant(request, access); }
 
 export async function jsonBody(request: Request): Promise<Record<string, unknown>> {
   let value: unknown;

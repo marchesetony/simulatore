@@ -4,6 +4,7 @@ import { CorrelationId, redactError } from "../../../lib/foundation/errors";
 import { canonicalTimestamp } from "../../../lib/foundation/types";
 import type { IsoDateTime, Session, SessionId, UserId } from "../../../lib/foundation/types";
 import { validateSession } from "../../../lib/foundation/sessions";
+import { requireRequestAccess } from "../../../lib/auth/request";
 
 type Scenario = "valid-session" | "expired-session" | "revoked-session" | "rotated-session" | "malformed-request";
 const NOW = canonicalTimestamp("2027-02-15T00:00:00.000Z");
@@ -30,6 +31,7 @@ function fixture(expiresAt: IsoDateTime, revokedAt?: IsoDateTime, rotatedFrom?: 
 
 export async function POST(request: Request) {
   if (request.method !== "POST") return NextResponse.json({ error: redactError("SESSION_DENIED", CORRELATION) }, { status: 405 });
+  try { await requireRequestAccess(request, "ADMIN"); } catch { return NextResponse.json({ error: redactError("SESSION_DENIED", CORRELATION) }, { status: 401 }); }
   const scenario = parseScenario(request);
   if (!scenario || scenario === "malformed-request") return NextResponse.json({ scenario: scenario ?? "unknown", request: "POST /api/foundation/session", expected: "DENIED", actual: "DENIED", passed: scenario === "malformed-request", evidence: evidence(scenario ?? "unknown"), error: redactError("SESSION_DENIED", CORRELATION) }, { status: 400 });
   try {

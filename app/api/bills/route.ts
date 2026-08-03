@@ -1,27 +1,20 @@
-import { assertLocalBillAccess, toPublicDocument } from "../../lib/foundation/real-bill";
+import { toPublicDocument } from "../../lib/foundation/real-bill";
 import { ingestEnergyBill } from "../../lib/ingestion";
+import { requestPrincipal } from "../../lib/auth/request";
+import { runtimeRepositories } from "../../lib/persistence/adapter";
+import { recordRuntimeAudit } from "../../lib/persistence/audit";
 
 const CORRELATION_ID = "foundation-bills";
-const DOCUMENTS_ROOT = process.env.FOUNDATION_DOCUMENTS_ROOT;
-const audit = {
-  async record(event: { readonly type: string; readonly tenantId: string; readonly documentId: string; readonly outcome: string }) {
-    console.info("foundation-audit", { ...event });
-  },
-};
-
 function deny(code: string, message: string, status: number): Response {
   return Response.json({ error: { code, message, correlationId: CORRELATION_ID } }, { status });
 }
 
 export async function POST(request: Request): Promise<Response> {
-  let tenantId: string;
   try {
-    tenantId = assertLocalBillAccess(request.headers.get("x-foundation-tenant-id"), process.env.FOUNDATION_LOCAL_DEV);
-  } catch {
-    return deny("TENANT_ACCESS_DENIED", "Local bill ingestion is disabled", 403);
-  }
-
-  try {
+    const principal = await requestPrincipal(request, "WRITE");
+    const tenantId = principal.tenantId;
+    const repositories = runtimeRepositories();
+    const audit = { async record(event: { readonly type: string; readonly tenantId: string; readonly documentId: string; readonly outcome: string }) { await recordRuntimeAudit({ principal, action: `BILL_${event.type}`, resourceType: "BILL", resourceId: event.documentId, outcome: event.outcome === "ALLOWED" ? "ALLOWED" : "DENIED", correlationId: CORRELATION_ID }); } };
     const form = await request.formData();
     const file = form.get("file");
     if (!(file instanceof File)) return deny("PDF_REQUIRED", "A PDF file is required", 400);
@@ -31,7 +24,9 @@ export async function POST(request: Request): Promise<Response> {
       contentType: file.type,
       bytes: new Uint8Array(await file.arrayBuffer()),
       maxBytes: Number(process.env.FOUNDATION_MAX_PDF_BYTES ?? 10_000_000),
-      documentsRoot: DOCUMENTS_ROOT,
+      storage: repositories.documentStorage,
+      repository: repositories.billRepository,
+      authenticated: true,
       localDev: process.env.FOUNDATION_LOCAL_DEV,
       audit,
     });

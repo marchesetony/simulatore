@@ -1,35 +1,23 @@
 import {
-  assertLocalBillAccess,
   approveDocumentVersion,
   createManualCorrection,
-  LocalBillRepository,
   parseBillOperation,
   toPublicDocument,
 } from "../../../lib/foundation/real-bill";
+import { requestPrincipal } from "../../../lib/auth/request";
+import { runtimeRepositories } from "../../../lib/persistence/adapter";
+import { recordRuntimeAudit } from "../../../lib/persistence/audit";
 
 const CORRELATION_ID = "foundation-bills";
-const DOCUMENTS_ROOT = process.env.FOUNDATION_DOCUMENTS_ROOT;
-const audit = {
-  async record(event: { readonly type: string; readonly tenantId: string; readonly documentId: string; readonly outcome: string }) {
-    console.info("foundation-audit", { ...event });
-  },
-};
-
 function deny(code: string, message: string, status: number): Response {
   return Response.json({ error: { code, message, correlationId: CORRELATION_ID } }, { status });
 }
 
 export async function GET(request: Request, context: { params: Promise<{ id: string }> }): Promise<Response> {
-  let tenantId: string;
-  try {
-    tenantId = assertLocalBillAccess(request.headers.get("x-foundation-tenant-id"), process.env.FOUNDATION_LOCAL_DEV);
-  } catch {
-    return deny("TENANT_ACCESS_DENIED", "Local bill review is disabled", 403);
-  }
-
   const { id } = await context.params;
   try {
-    const document = await new LocalBillRepository(DOCUMENTS_ROOT).get(tenantId, id);
+    const tenantId = (await requestPrincipal(request, "READ")).tenantId;
+    const document = await runtimeRepositories().billRepository.get(tenantId, id);
     return document ? Response.json({ document: toPublicDocument(document) }) : deny("DOCUMENT_NOT_FOUND", "Bill document not found", 404);
   } catch (error) {
     const code = error instanceof Error ? error.message : "BILL_OPERATION_FAILED";
@@ -38,13 +26,6 @@ export async function GET(request: Request, context: { params: Promise<{ id: str
 }
 
 export async function PATCH(request: Request, context: { params: Promise<{ id: string }> }): Promise<Response> {
-  let tenantId: string;
-  try {
-    tenantId = assertLocalBillAccess(request.headers.get("x-foundation-tenant-id"), process.env.FOUNDATION_LOCAL_DEV);
-  } catch {
-    return deny("TENANT_ACCESS_DENIED", "Local bill review is disabled", 403);
-  }
-
   const { id } = await context.params;
   let body: unknown;
   try {
@@ -53,9 +34,11 @@ export async function PATCH(request: Request, context: { params: Promise<{ id: s
     return deny("BILL_OPERATION_INVALID", "Malformed request body", 400);
   }
 
-  const repository = new LocalBillRepository(DOCUMENTS_ROOT);
-
   try {
+    const principal = await requestPrincipal(request, "WRITE");
+    const tenantId = principal.tenantId;
+    const repository = runtimeRepositories().billRepository;
+    const audit = { async record(event: { readonly type: string; readonly tenantId: string; readonly documentId: string; readonly outcome: string }) { await recordRuntimeAudit({ principal, action: `BILL_${event.type}`, resourceType: "BILL", resourceId: event.documentId, outcome: event.outcome === "ALLOWED" ? "ALLOWED" : "DENIED", correlationId: CORRELATION_ID }); } };
     const document = await repository.get(tenantId, id);
     if (!document) return deny("DOCUMENT_NOT_FOUND", "Bill document not found", 404);
     const now = new Date().toISOString();

@@ -1,21 +1,23 @@
-import { jsonBody, localTenant } from "../../lib/archive/api";
+import { jsonBody } from "../../lib/archive/api";
+import { requestPrincipal } from "../../lib/auth/request";
 import { calculationError } from "../../lib/calculation/api";
 import { calculateApprovedOffer } from "../../lib/calculation/engine";
 import { parseSimulationRequest } from "../../lib/calculation/input";
-import { LocalCteArchiveRepository } from "../../lib/cte/archive/repository";
-import { LocalMarketArchiveRepository } from "../../lib/market/repository";
+import { runtimeRepositories } from "../../lib/persistence/adapter";
+import { recordRuntimeAudit } from "../../lib/persistence/audit";
 
 export const runtime = "nodejs";
-const cteRepository = new LocalCteArchiveRepository();
-const marketRepository = new LocalMarketArchiveRepository();
-
 export async function POST(request: Request): Promise<Response> {
   try {
-    const tenantId = localTenant(request);
+    const principal = await requestPrincipal(request, "WRITE");
+    const tenantId = principal.tenantId;
+    const repositories = runtimeRepositories();
     const body = await jsonBody(request);
     if (typeof body.archiveId !== "string" || body.archiveId.trim().length === 0) throw new Error("CTE_ARCHIVE_ID_REQUIRED");
     const simulation = parseSimulationRequest(body.simulation ?? body, tenantId);
-    const result = await calculateApprovedOffer(cteRepository, marketRepository, simulation, body.archiveId);
+    const result = await calculateApprovedOffer(repositories.cteArchiveRepository, repositories.marketArchiveRepository, simulation, body.archiveId);
+    await repositories.calculationResults.put({ tenantId, recordId: result.calculationId, payload: { calculationId: result.calculationId, fingerprint: result.fingerprint, result }, idempotencyKey: result.fingerprint });
+    await recordRuntimeAudit({ principal, action: "CALCULATION", resourceType: "CALCULATION", resourceId: result.calculationId, outcome: "ALLOWED", correlationId: "calculation-v1", metadata: { fingerprint: result.fingerprint } });
     return Response.json({ result });
   } catch (error) { return calculationError(error); }
 }

@@ -4,6 +4,7 @@ import { CorrelationId, redactError } from "../../../lib/foundation/errors";
 import { resolveTenantContext } from "../../../lib/foundation/tenants";
 import { canonicalTimestamp } from "../../../lib/foundation/types";
 import type { Identity, Membership, MembershipId, TenantId, UserId } from "../../../lib/foundation/types";
+import { requireRequestAccess } from "../../../lib/auth/request";
 
 type Scenario = "active-membership" | "inactive-membership" | "cross-tenant-membership" | "malformed-request";
 const USER = "user-demo" as UserId;
@@ -24,6 +25,7 @@ function evidence(scenario: string) {
 
 export async function POST(request: Request) {
   if (request.method !== "POST") return NextResponse.json({ error: redactError("TENANT_ACCESS_DENIED", CORRELATION) }, { status: 405 });
+  try { await requireRequestAccess(request, "ADMIN"); } catch { return NextResponse.json({ error: redactError("TENANT_ACCESS_DENIED", CORRELATION) }, { status: 401 }); }
   const scenario = parseScenario(request);
   if (!scenario || scenario === "malformed-request") return NextResponse.json({ scenario: scenario ?? "unknown", request: "POST /api/foundation/memberships", expected: "DENIED", actual: "DENIED", passed: scenario === "malformed-request", evidence: evidence(scenario ?? "unknown"), error: redactError("TENANT_ACCESS_DENIED", CORRELATION) }, { status: 400 });
   try {
