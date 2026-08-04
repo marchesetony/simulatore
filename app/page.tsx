@@ -3,6 +3,7 @@
 import { ChangeEvent, useEffect, useState } from 'react';
 import Link from 'next/link';
 import { useSyncExternalStore } from 'react';
+import OperationalShell from './components/OperationalShell';
 
 type ExpiryState = 'present' | 'unavailable';
 type LineItem = { item: string; quantity: string; averagePrice: string; current: string; proposed: string; difference: string };
@@ -59,6 +60,7 @@ export default function Home() {
   const expiry = expiryState === 'present' ? '31/12/2027' : 'Data di scadenza: non rilevata nel documento — verifica necessaria';
 
   if (foundationMode) return <><FoundationTestBench /><BillIngestionBench /></>;
+  if (new URLSearchParams(typeof window === 'undefined' ? '' : window.location.search).get('demo') !== '1') return <OperationalShell />;
 
   return <main className="demo-shell">
     <header className="topbar"><div><p className="eyebrow">SCHEDA DI COMPARABILITÀ · DEMO SINTETICA</p><h1>Proposta commerciale</h1><p className="subtitle">Presentazione grafica con valori fissi e fittizi. Nessun dato viene estratto o calcolato.</p></div><span className="status-chip">Solo dati sintetici</span></header>
@@ -71,7 +73,6 @@ export default function Home() {
 
 type ApiErrorShape = {
   readonly code?: unknown;
-  readonly message?: unknown;
   readonly correlationId?: unknown;
 };
 
@@ -102,18 +103,42 @@ type IngestedBill = {
   fields: Record<string, { value: string | null; confidence: number; source: string; confirmed: boolean }>;
 };
 
-function formatApiError(error: unknown): string {
-  if (typeof error === 'string') return error;
-  if (error && typeof error === 'object') {
-    const structured = error as ApiErrorShape;
-    const message = typeof structured.message === 'string' && structured.message.trim() ? structured.message.trim() : null;
-    const code = typeof structured.code === 'string' && structured.code.trim() ? structured.code.trim() : null;
-    const correlationId = typeof structured.correlationId === 'string' && structured.correlationId.trim() ? structured.correlationId.trim() : null;
-    if (message || code || correlationId) {
-      return [message ?? 'Errore non specificato', code ? `code: ${code}` : null, correlationId ? `correlationId: ${correlationId}` : null].filter(Boolean).join(' · ');
-    }
-  }
-  return 'Errore non supportato';
+const BENCH_ERROR_MESSAGES: Readonly<Record<string, string>> = {
+  AUTHENTICATION_REQUIRED: 'Autenticazione richiesta',
+  AUTHENTICATION_INVALID: 'Sessione non valida',
+  AUTH_CONFIGURATION_INVALID: 'Configurazione non disponibile',
+  AUTHORIZATION_DENIED: 'Operazione non autorizzata',
+  PDF_REQUIRED: 'Selezionare un PDF',
+  OCR_PROVIDER_REQUIRED: 'Elaborazione documento non disponibile',
+  PDF_MIME_INVALID: 'Tipo PDF non valido',
+  PDF_SIGNATURE_INVALID: 'Firma PDF non valida',
+  PDF_TOO_LARGE: 'PDF oltre il limite consentito',
+  DOCUMENT_NOT_FOUND: 'Documento non trovato',
+  BILL_OPERATION_INVALID: 'Operazione bolletta non valida',
+  CORRECTION_INVALID: 'Correzione non valida',
+  APPROVAL_REQUIRED_FIELDS_MISSING: "Mancano dati per l'approvazione",
+  APPROVAL_FIELDS_UNCONFIRMED: 'Confermare i campi richiesti',
+  BILL_OPERATION_FAILED: 'Operazione bolletta non disponibile',
+  INGESTION_FAILED: 'Caricamento bolletta non disponibile',
+  CORRECTION_FAILED: 'Correzione non disponibile',
+  APPROVAL_FAILED: 'Approvazione non disponibile',
+};
+const BENCH_CODE = /^[A-Z][A-Z0-9_]{0,80}$/;
+const BENCH_CORRELATION = /^[A-Za-z0-9._:-]{1,80}$/;
+
+function safeBenchCode(value: unknown, fallback: string): string {
+  return typeof value === 'string' && BENCH_CODE.test(value) && Object.prototype.hasOwnProperty.call(BENCH_ERROR_MESSAGES, value) ? value : fallback;
+}
+
+function safeBenchCorrelation(value: unknown): string | null {
+  return typeof value === 'string' && BENCH_CORRELATION.test(value) && !/secret|token|cookie|password|bearer|path|stack|trace|https?:/i.test(value) ? value : null;
+}
+
+function formatApiError(error: unknown, fallback = 'INGESTION_FAILED'): string {
+  const item = typeof error === 'object' && error !== null ? error as ApiErrorShape : {};
+  const code = safeBenchCode(item.code, fallback);
+  const correlationId = safeBenchCorrelation(item.correlationId);
+  return `${BENCH_ERROR_MESSAGES[code] ?? 'Operazione non disponibile'}  codice ${code}${correlationId ? `  ${correlationId}` : ''}`;
 }
 
 function BillIngestionBench() {
@@ -148,8 +173,8 @@ function BillIngestionBench() {
       const nextBill = (body as { document: IngestedBill }).document;
       setBill(nextBill);
       setNotice(`Documento caricato · versione corrente v${nextBill.currentVersionNumber}`);
-    } catch (cause) {
-      setError(cause instanceof Error ? cause.message : 'INGESTION_FAILED');
+    } catch {
+      setError(formatApiError({}, 'INGESTION_FAILED'));
     } finally {
       setBusy(false);
       event.target.value = '';
@@ -179,8 +204,8 @@ function BillIngestionBench() {
       const nextBill = (body as { document: IngestedBill }).document;
       setBill(nextBill);
       setNotice(`Correzione salvata · nuova versione v${nextBill.currentVersionNumber}`);
-    } catch (cause) {
-      setError(cause instanceof Error ? cause.message : 'CORRECTION_FAILED');
+    } catch {
+      setError(formatApiError({}, 'CORRECTION_FAILED'));
     } finally {
       setBusy(false);
     }
@@ -204,8 +229,8 @@ function BillIngestionBench() {
       const nextBill = (body as { document: IngestedBill }).document;
       setBill(nextBill);
       setNotice(`Versione approvata · v${nextBill.currentVersionNumber}`);
-    } catch (cause) {
-      setError(cause instanceof Error ? cause.message : 'APPROVAL_FAILED');
+    } catch {
+      setError(formatApiError({}, 'APPROVAL_FAILED'));
     } finally {
       setBusy(false);
     }
