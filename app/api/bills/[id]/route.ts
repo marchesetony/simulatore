@@ -9,8 +9,9 @@ import { runtimeRepositories } from "../../../lib/persistence/adapter";
 import { recordRuntimeAudit } from "../../../lib/persistence/audit";
 
 const CORRELATION_ID = "foundation-bills";
+const NO_STORE_HEADERS = { "cache-control": "no-store, private", "vary": "Cookie, Authorization", "x-content-type-options": "nosniff" };
 function deny(code: string, message: string, status: number): Response {
-  return Response.json({ error: { code, message, correlationId: CORRELATION_ID } }, { status });
+  return Response.json({ error: { code, message, correlationId: CORRELATION_ID } }, { status, headers: NO_STORE_HEADERS });
 }
 
 export async function GET(request: Request, context: { params: Promise<{ id: string }> }): Promise<Response> {
@@ -18,10 +19,10 @@ export async function GET(request: Request, context: { params: Promise<{ id: str
   try {
     const tenantId = (await requestPrincipal(request, "READ")).tenantId;
     const document = await runtimeRepositories().billRepository.get(tenantId, id);
-    return document ? Response.json({ document: toPublicDocument(document) }) : deny("DOCUMENT_NOT_FOUND", "Bill document not found", 404);
+    return document ? Response.json({ document: toPublicDocument(document) }, { headers: NO_STORE_HEADERS }) : deny("DOCUMENT_NOT_FOUND", "Bill document not found", 404);
   } catch (error) {
-    const code = error instanceof Error ? error.message : "BILL_OPERATION_FAILED";
-    return deny(code, messageFor(code), code === "METADATA_INVALID" ? 409 : 400);
+    const code = publicErrorCode(error);
+    return deny(code, messageFor(code), statusFor(code));
   }
 }
 
@@ -47,7 +48,7 @@ export async function PATCH(request: Request, context: { params: Promise<{ id: s
       const approved = approveDocumentVersion({ document, tenantId, versionId: operation.versionId, at: now });
       await repository.save(approved);
       await audit.record({ type: "APPROVAL", tenantId, documentId: id, outcome: "ALLOWED" });
-      return Response.json({ document: toPublicDocument(approved) });
+      return Response.json({ document: toPublicDocument(approved) }, { headers: NO_STORE_HEADERS });
     }
     if (operation?.operation === "correct") {
       const corrected = createManualCorrection({
@@ -61,18 +62,48 @@ export async function PATCH(request: Request, context: { params: Promise<{ id: s
       await repository.save(corrected);
       await audit.record({ type: "MANUAL_REVIEW", tenantId, documentId: id, outcome: "ALLOWED" });
       await audit.record({ type: "CORRECTION", tenantId, documentId: id, outcome: "ALLOWED" });
-      return Response.json({ document: toPublicDocument(corrected) });
+      return Response.json({ document: toPublicDocument(corrected) }, { headers: NO_STORE_HEADERS });
     }
     return deny("BILL_OPERATION_INVALID", "Unsupported bill operation", 400);
   } catch (error) {
-    const code = error instanceof Error ? error.message : "BILL_OPERATION_FAILED";
-    const status = code === "TENANT_ACCESS_DENIED" ? 403
-      : code === "DOCUMENT_VERSION_NOT_CURRENT" || code === "DOCUMENT_VERSION_STALE" || code === "DOCUMENT_VERSION_ALREADY_APPROVED" || code === "DOCUMENT_NO_CHANGES" ? 409
-      : code === "METADATA_INVALID" ? 409
-      : code === "APPROVAL_REQUIRED_FIELDS_MISSING" || code === "APPROVAL_FIELDS_UNCONFIRMED" || code === "CORRECTION_INVALID" || code === "DOCUMENT_VERSION_NOT_FOUND" ? 400
-      : 400;
-    return deny(code, messageFor(code), status);
+    const code = publicErrorCode(error);
+    return deny(code, messageFor(code), statusFor(code));
   }
+}
+
+const INTERNAL_TO_PUBLIC_CODE: Readonly<Record<string, string>> = {
+  APPROVAL_REQUIRED_FIELDS_MISSING: "APPROVAL_REQUIRED_FIELDS_MISSING",
+  APPROVAL_FIELDS_UNCONFIRMED: "APPROVAL_FIELDS_UNCONFIRMED",
+  DOCUMENT_VERSION_NOT_CURRENT: "DOCUMENT_VERSION_NOT_CURRENT",
+  DOCUMENT_VERSION_STALE: "DOCUMENT_VERSION_STALE",
+  DOCUMENT_VERSION_ALREADY_APPROVED: "DOCUMENT_VERSION_ALREADY_APPROVED",
+  DOCUMENT_VERSION_NOT_FOUND: "DOCUMENT_VERSION_NOT_FOUND",
+  DOCUMENT_NO_CHANGES: "DOCUMENT_NO_CHANGES",
+  METADATA_INVALID: "METADATA_INVALID",
+  CORRECTION_INVALID: "CORRECTION_INVALID",
+  TENANT_ACCESS_DENIED: "TENANT_ACCESS_DENIED",
+  BILL_OPERATION_INVALID: "BILL_OPERATION_INVALID",
+  DOCUMENT_NOT_FOUND: "DOCUMENT_NOT_FOUND",
+  AUTHENTICATION_REQUIRED: "AUTHENTICATION_REQUIRED",
+  AUTHENTICATION_INVALID: "AUTHENTICATION_INVALID",
+  AUTH_CONFIGURATION_INVALID: "AUTH_CONFIGURATION_INVALID",
+  AUTH_ADAPTER_UNAVAILABLE: "AUTH_ADAPTER_UNAVAILABLE",
+  AUTH_AUDIT_UNAVAILABLE: "AUTH_AUDIT_UNAVAILABLE",
+  AUTHORIZATION_DENIED: "AUTHORIZATION_DENIED",
+};
+
+function publicErrorCode(error: unknown): string {
+  const internalCode = error instanceof Error ? error.message : "";
+  return Object.prototype.hasOwnProperty.call(INTERNAL_TO_PUBLIC_CODE, internalCode) ? INTERNAL_TO_PUBLIC_CODE[internalCode] : "BILL_OPERATION_FAILED";
+}
+
+function statusFor(code: string): number {
+  if (code === "TENANT_ACCESS_DENIED" || code === "AUTHORIZATION_DENIED") return 403;
+  if (code === "AUTHENTICATION_REQUIRED" || code === "AUTHENTICATION_INVALID") return 401;
+  if (code === "AUTH_CONFIGURATION_INVALID" || code === "AUTH_ADAPTER_UNAVAILABLE" || code === "AUTH_AUDIT_UNAVAILABLE") return 503;
+  if (["DOCUMENT_NOT_FOUND"].includes(code)) return 404;
+  if (["DOCUMENT_VERSION_NOT_CURRENT", "DOCUMENT_VERSION_STALE", "DOCUMENT_VERSION_ALREADY_APPROVED", "DOCUMENT_NO_CHANGES", "METADATA_INVALID"].includes(code)) return 409;
+  return 400;
 }
 
 function messageFor(code: string): string {

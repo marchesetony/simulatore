@@ -1,0 +1,91 @@
+import assert from "node:assert/strict";
+import { readFile } from "node:fs/promises";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
+
+const root = path.resolve(fileURLToPath(new URL("..", import.meta.url)));
+const read = async (relative) => readFile(path.join(root, relative), "utf8");
+const page = await read("app/page.tsx");
+const shell = await read("app/components/OperationalShell.tsx");
+const client = await read("app/lib/ui/client.ts");
+const css = await read("app/globals.css");
+
+for (const label of ["Dashboard", "Bollette", "Archivio CTE", "Dati di mercato", "Simulazioni", "Proposte", "Stato sistema"]) assert.ok(shell.includes(label), `missing navigation label: ${label}`);
+for (const endpoint of ["/api/foundation/context", "/api/health/readiness", "/api/bills", "/api/cte/archive", "/api/market/archive", "/api/calculation", "/api/comparison", "/api/proposal", "/api/proposal/comparison", "/api/proposal/export/"]) assert.match(shell, new RegExp(endpoint.replaceAll("/", "\\/")));
+for (const format of ["json", "csv", "html"]) assert.equal(await read(`app/api/proposal/export/${format}/route.ts`).then(() => true), true);
+for (const label of ["Energia elettrica (EE)", "Gas (GAS)", "F1 (kWh)", "Consumo GAS", "Fingerprint"]) assert.ok(shell.includes(label), `missing UI contract: ${label}`);
+
+assert.match(page, /OperationalShell/);
+assert.match(page, /get\('demo'\)/);
+assert.match(page, /BENCH_ERROR_MESSAGES/); assert.match(page, /safeBenchCode/); assert.match(page, /safeBenchCorrelation/);
+assert.doesNotMatch(page, /cause\.message/); assert.doesNotMatch(page, /structured\.message/); assert.doesNotMatch(page, /dangerouslySetInnerHTML/);
+for (const sourceFile of [page, client, await read("app/components/UiStates.tsx")]) for (const artifact of ["Ã", "Â", "â", "�"]) assert.equal(sourceFile.includes(artifact), false, `encoding artifact: ${artifact}`);
+assert.match(shell, /AbortController/);
+assert.match(shell, /requestJson<VerifiedContextModel>\("\/api\/foundation\/context"/);
+assert.match(shell, /requestJson<ReadinessModel>\("\/api\/health\/readiness"/);
+assert.match(shell, /requestJson<\{ readonly documents: readonly BillDocumentModel\[\] \}>\("\/api\/bills"/);
+assert.match(shell, /`\/api\/bills\/\$\{encodeURIComponent\(id\)\}`/);
+assert.match(shell, /method: "PATCH"/);
+assert.match(shell, /operation, field/);
+assert.match(shell, /\/api\/proposal\/comparison/);
+assert.match(shell, /comparisonSource\?"\/api\/proposal\/comparison":"\/api\/proposal"/);
+assert.match(shell, /comparison,selectedCalculationId:selectedId/);
+assert.match(shell, /validateProposalResponse/);
+assert.match(shell, /selectedResult\.calculationFingerprint/);
+assert.match(shell, /expectedRanking/); assert.match(shell, /selectedResult\.rankingPosition === expectedRanking\.rank/); assert.match(shell, /selectedResult\.tieGroup === expectedRanking\.tieGroup/); assert.match(shell, /selectedResult\.rankingPosition === null/); assert.match(shell, /selectedResult\.tieGroup === null/); assert.match(shell, /comparison\?\.ranking\.find/);
+assert.match(shell, /comparison\.fingerprint/); assert.match(shell, /comparison\.results\.some/);
+assert.match(shell, /archiveId:selected\.sourceCte\.archiveId/);
+for (const mismatch of [/proposal\.tenantId\s*!==\s*tenantId/, /proposal\.vector\s*!==\s*selected\.vector/, /proposal\.calculationFingerprint\s*!==\s*selected\.fingerprint/, /(?:proposal\.)?selectedResult\.calculationId\s*!==\s*selected\.calculationId/, /(?:proposal\.)?selectedResult\.calculationFingerprint\s*!==\s*selected\.fingerprint/]) assert.match(shell, mismatch);
+assert.match(shell, /proposalFingerprint\.slice\(0, 32\)/);
+assert.doesNotMatch(shell, /fingerprint\(/);
+assert.doesNotMatch(shell, /bill\.vector/);
+for (const fieldId of ["customer-reference", "supply-reference", "f1", "f2", "f3", "smc", "cte-contract", "market-record", "proposal-customer", "proposal-supply", "proposal-notes"]) assert.match(shell, new RegExp(`id="${fieldId}-error"|id="${fieldId}"`));
+assert.match(shell, /cte:create/); assert.match(shell, /operationKey\("approve"/); assert.match(shell, /operationKey\("reject"/); assert.match(shell, /operationKey\("correction"/);
+assert.match(shell, /market:create/); assert.match(shell, /operationKey\("approve"/); assert.match(shell, /operationKey\("reject"/);
+assert.match(shell, /LoadingState/);
+assert.match(shell, /EmptyState/);
+assert.match(shell, /ErrorState/);
+assert.match(shell, /disabled=\{readonly/);
+assert.match(shell, /const canWrite = contextState === "ready"/);
+assert.match(shell, /context\.role !== \("VIEWER" satisfies UiRole\)/);
+assert.doesNotMatch(shell, /syntheticTenant|Vista ruolo/);
+assert.doesNotMatch(shell, /localStorage|sessionStorage|document\.cookie|Authorization\s*:/i);
+assert.doesNotMatch(shell, /eval\(|new Function\(/);
+assert.doesNotMatch(shell, /\.reduce\(|\.sort\(/);
+assert.doesNotMatch(shell, /rankingPosition\s*=[^=]|tieGroup\s*=[^=]/);
+assert.doesNotMatch(shell, /totalCommercialCost\.amount\s*[+*\/-]/);
+assert.match(client, /AbortSignal/);
+assert.match(client, /SAFE_CODE/);
+assert.match(client, /toUiError/);
+assert.match(shell, /pending/);
+assert.match(shell, /role="tabpanel"/);
+assert.match(shell, /aria-controls/);
+assert.match(shell, /aria-labelledby/);
+assert.match(client, /EXPORT_CONTENT_TYPE_INVALID/);
+assert.match(client, /EXPORT_FILENAME_INVALID/);
+assert.match(client, /content-disposition/);
+assert.match(css, /focus-visible/);
+assert.match(css, /a:focus-visible/);
+assert.match(css, /select:focus-visible/);
+assert.match(css, /textarea:focus-visible/);
+assert.match(css, /\.button\.compact \{ min-height:44px/);
+assert.match(css, /max-width:760px/);
+assert.match(css, /overflow-x:auto/);
+assert.match(css, /button:focus-visible/);
+
+for (const route of ["app/api/calculation/route.ts", "app/api/comparison/route.ts", "app/api/proposal/route.ts", "app/api/cte/archive/route.ts", "app/api/market/archive/route.ts"]) {
+  assert.match(await read(route), /recordRuntimeAudit/);
+}
+
+assert.match(await read("app/api/bills/route.ts"), /export async function GET/);
+assert.match(await read("app/api/bills/[id]/route.ts"), /export async function GET/);
+assert.match(await read("app/api/bills/[id]/route.ts"), /operation === "approve"|operation === "correct"/);
+const detailRoute = await read("app/api/bills/[id]/route.ts");
+assert.match(detailRoute, /NO_STORE_HEADERS/); assert.match(detailRoute, /INTERNAL_TO_PUBLIC_CODE/); assert.match(detailRoute, /BILL_OPERATION_FAILED/);
+assert.doesNotMatch(detailRoute, /const code = error instanceof Error \? error\.message/); assert.doesNotMatch(detailRoute, /return error\.message/);
+assert.match(detailRoute, /cache-control.*no-store/); assert.match(detailRoute, /vary.*Cookie, Authorization/);
+assert.match(await read("tests/bills-route.smoke.mjs"), /objectKey/);
+assert.match(await read("tests/foundation-context.smoke.mjs"), /x-foundation-role/);
+assert.doesNotMatch(shell, /localStorage|sessionStorage/);
+
+console.log("phase7 UI/E2E contract smoke: ok (static source/UI-contract smoke; no browser, DOM renderer, duplicate-click runtime, or live API integration exercised)");

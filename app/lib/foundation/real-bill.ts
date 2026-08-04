@@ -124,6 +124,7 @@ export interface TextExtractionPort {
 export interface BillRepository {
   save(document: BillDocument): Promise<void>;
   get(tenantId: string, id: string): Promise<BillDocument | null>;
+  list(tenantId: string): Promise<readonly BillDocument[]>;
 }
 export interface EnergyContractMapperInput {
   readonly text: string;
@@ -445,6 +446,15 @@ export class LocalBillRepository implements BillRepository {
     const store = await this.readStore();
     const document = store.documents.find((item) => item.id === id && item.tenantId === tenantId) ?? null;
     return document ? sanitizeDocument(document) : null;
+  }
+
+  async list(tenantId: string): Promise<readonly BillDocument[]> {
+    validateTenantId(tenantId);
+    const store = await this.readStore();
+    return store.documents
+      .filter((document) => document.tenantId === tenantId)
+      .map((document) => sanitizeDocument(document))
+      .sort((left, right) => left.createdAt.localeCompare(right.createdAt) || left.id.localeCompare(right.id));
   }
 
   private async readStore(): Promise<BillStore> {

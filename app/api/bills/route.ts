@@ -3,10 +3,77 @@ import { ingestEnergyBill } from "../../lib/ingestion";
 import { requestPrincipal } from "../../lib/auth/request";
 import { runtimeRepositories } from "../../lib/persistence/adapter";
 import { recordRuntimeAudit } from "../../lib/persistence/audit";
+import { AuthenticationError } from "../../lib/auth/errors";
 
 const CORRELATION_ID = "foundation-bills";
+const LIST_CORRELATION_ID = "foundation-bill-list";
+const MAX_BILL_LIST_RESULTS = 100;
+const noStoreHeaders = { "cache-control": "no-store, private", "vary": "Cookie, Authorization", "x-content-type-options": "nosniff" };
+const INTERNAL_TO_PUBLIC_CODE: Readonly<Record<string, string>> = {
+  AUTH_CONFIGURATION_INVALID: "AUTH_CONFIGURATION_INVALID",
+  AUTH_ADAPTER_UNAVAILABLE: "AUTH_ADAPTER_UNAVAILABLE",
+  AUTH_AUDIT_UNAVAILABLE: "AUTH_AUDIT_UNAVAILABLE",
+  AUTHENTICATION_REQUIRED: "AUTHENTICATION_REQUIRED",
+  AUTHENTICATION_EXPIRED: "AUTHENTICATION_EXPIRED",
+  AUTHENTICATION_INVALID: "AUTHENTICATION_INVALID",
+  AUTHORIZATION_DENIED: "AUTHORIZATION_DENIED",
+  TENANT_MISMATCH: "TENANT_MISMATCH",
+  ROLE_INSUFFICIENT: "ROLE_INSUFFICIENT",
+  BILL_LIST_TOO_LARGE: "BILL_LIST_TOO_LARGE",
+  METADATA_INVALID: "METADATA_INVALID",
+  BILL_VECTOR_UNKNOWN: "BILL_VECTOR_UNKNOWN",
+  OCR_PROVIDER_REQUIRED: "OCR_PROVIDER_REQUIRED",
+  PDF_REQUIRED: "PDF_REQUIRED",
+  PDF_MIME_INVALID: "PDF_MIME_INVALID",
+  PDF_SIGNATURE_INVALID: "PDF_SIGNATURE_INVALID",
+  PDF_TOO_LARGE: "PDF_TOO_LARGE",
+  EXTRACTION_REQUIRED_FIELD_MISSING: "EXTRACTION_REQUIRED_FIELD_MISSING",
+  EXTRACTION_VALUE_INVALID: "EXTRACTION_VALUE_INVALID",
+  TENANT_ACCESS_DENIED: "TENANT_ACCESS_DENIED",
+  BILL_LIST_UNAVAILABLE: "BILL_LIST_UNAVAILABLE",
+  INGESTION_FAILED: "INGESTION_FAILED",
+  BILL_OPERATION_FAILED: "BILL_OPERATION_FAILED",
+};
+
+function boundedPublicCode(internalCode: unknown, fallback: string): string {
+  return typeof internalCode === "string" && Object.prototype.hasOwnProperty.call(INTERNAL_TO_PUBLIC_CODE, internalCode) ? INTERNAL_TO_PUBLIC_CODE[internalCode] : fallback;
+}
+
+function publicCode(error: unknown, fallback: string): string {
+  const internalCode = error instanceof AuthenticationError ? error.code : error instanceof Error ? error.message : null;
+  return boundedPublicCode(internalCode, fallback);
+}
+
+function publicStatus(code: string): number {
+  if (["AUTH_CONFIGURATION_INVALID", "AUTH_ADAPTER_UNAVAILABLE", "AUTH_AUDIT_UNAVAILABLE", "BILL_LIST_TOO_LARGE", "METADATA_INVALID"].includes(code)) return 503;
+  if (["AUTHENTICATION_REQUIRED", "AUTHENTICATION_EXPIRED", "AUTHENTICATION_INVALID"].includes(code)) return 401;
+  if (["AUTHORIZATION_DENIED", "TENANT_MISMATCH", "ROLE_INSUFFICIENT", "TENANT_ACCESS_DENIED"].includes(code)) return 403;
+  if (code === "OCR_PROVIDER_REQUIRED") return 422;
+  return 400;
+}
+
 function deny(code: string, message: string, status: number): Response {
-  return Response.json({ error: { code, message, correlationId: CORRELATION_ID } }, { status });
+  return Response.json({ error: { code, message, correlationId: CORRELATION_ID } }, { status, headers: noStoreHeaders });
+}
+
+function listError(error: unknown): Response {
+  const code = publicCode(error, "BILL_LIST_UNAVAILABLE");
+  return Response.json({ error: { code, message: "Elenco bollette non disponibile", correlationId: LIST_CORRELATION_ID } }, { status: publicStatus(code), headers: noStoreHeaders });
+}
+
+export async function GET(request: Request): Promise<Response> {
+  void request;
+  try {
+    const principal = await requestPrincipal(request, "READ");
+    const documents = await runtimeRepositories().billRepository.list(principal.tenantId);
+    if (documents.length > MAX_BILL_LIST_RESULTS) throw new Error("BILL_LIST_TOO_LARGE");
+    const publicDocuments = documents
+      .map(toPublicDocument)
+      .sort((left, right) => left.createdAt.localeCompare(right.createdAt) || left.id.localeCompare(right.id));
+    return Response.json({ documents: publicDocuments }, { headers: noStoreHeaders });
+  } catch (error) {
+    return listError(error);
+  }
 }
 
 export async function POST(request: Request): Promise<Response> {
@@ -31,13 +98,13 @@ export async function POST(request: Request): Promise<Response> {
       audit,
     });
     if (result.errorCode) {
-      const status = result.errorCode === "OCR_PROVIDER_REQUIRED" ? 422 : 400;
-      return deny(result.errorCode, messageFor(result.errorCode), status);
+      const code = boundedPublicCode(result.errorCode, "BILL_OPERATION_FAILED");
+      return deny(code, messageFor(code), publicStatus(code));
     }
-    return Response.json({ document: toPublicDocument(result.document), energyBill: result.contract }, { status: 201 });
+    return Response.json({ document: toPublicDocument(result.document), energyBill: result.contract }, { status: 201, headers: noStoreHeaders });
   } catch (error) {
-    const code = error instanceof Error ? error.message : "INGESTION_FAILED";
-    return deny(code, messageFor(code), code === "TENANT_ACCESS_DENIED" ? 403 : 400);
+    const code = publicCode(error, "INGESTION_FAILED");
+    return deny(code, messageFor(code), publicStatus(code));
   }
 }
 

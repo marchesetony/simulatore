@@ -57,7 +57,7 @@ function isProductionStorageAdapter(adapter: unknown): adapter is ProductionStor
   const item = adapter as Record<string, unknown>;
   return hasMethods(item.cteArchiveRepository, ["get", "list", "save"])
     && hasMethods(item.marketArchiveRepository, ["get", "list", "save"])
-    && hasMethods(item.billRepository, ["get", "save"])
+    && hasMethods(item.billRepository, ["get", "list", "save"])
     && hasMethods(item.documentStorage, ["store", "read"])
     && ["billIngestionMetadata", "normalizedBillSnapshots", "cteArchives", "marketDataArchives", "calculationResults", "comparisonResults", "proposals", "exports", "auditEvents"].every((name) => hasMethods(item[name], ["get", "list", "put", "append"]));
 }
