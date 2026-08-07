@@ -11,7 +11,7 @@ import { LocalMarketArchiveRepository } from "../market/repository.ts";
 import { getRuntimeConfig } from "../auth/config.ts";
 // @ts-expect-error Node's strip-only test runner requires the explicit extension.
 import { LocalFilesystemAdapter } from "./local.ts";
-import type { AuditEventRepository, CalculationResultRepository, CommercialProposalRepository, ComparisonResultRepository, ExportMetadataRepository, BillIngestionMetadata, NormalizedBillSnapshot, TenantRecordRepository } from "./types";
+import type { AuditEventRepository, CalculationResultRepository, CommercialProposalRepository, ComparisonResultRepository, DeletableTenantRecordRepository, ExportMetadataRepository, BillIngestionMetadata, NormalizedBillSnapshot, TenantRecordRepository } from "./types";
 
 export interface ProductionStorageAdapter {
   readonly kind: "provider";
@@ -21,7 +21,7 @@ export interface ProductionStorageAdapter {
   readonly documentStorage: DocumentStoragePort;
   readonly billIngestionMetadata: TenantRecordRepository<BillIngestionMetadata>;
   readonly normalizedBillSnapshots: TenantRecordRepository<NormalizedBillSnapshot>;
-  readonly cteArchives: TenantRecordRepository<unknown>;
+  readonly cteArchives: DeletableTenantRecordRepository<unknown>;
   readonly marketDataArchives: TenantRecordRepository<unknown>;
   readonly calculationResults: CalculationResultRepository;
   readonly comparisonResults: ComparisonResultRepository;
@@ -37,7 +37,7 @@ export interface RuntimeRepositories {
   readonly documentStorage: DocumentStoragePort;
   readonly billIngestionMetadata: TenantRecordRepository<BillIngestionMetadata>;
   readonly normalizedBillSnapshots: TenantRecordRepository<NormalizedBillSnapshot>;
-  readonly cteArchives: TenantRecordRepository<unknown>;
+  readonly cteArchives: DeletableTenantRecordRepository<unknown>;
   readonly marketDataArchives: TenantRecordRepository<unknown>;
   readonly calculationResults: CalculationResultRepository;
   readonly comparisonResults: ComparisonResultRepository;
@@ -58,8 +58,9 @@ function isProductionStorageAdapter(adapter: unknown): adapter is ProductionStor
   return hasMethods(item.cteArchiveRepository, ["get", "list", "save"])
     && hasMethods(item.marketArchiveRepository, ["get", "list", "save"])
     && hasMethods(item.billRepository, ["get", "list", "save"])
-    && hasMethods(item.documentStorage, ["store", "read"])
-    && ["billIngestionMetadata", "normalizedBillSnapshots", "cteArchives", "marketDataArchives", "calculationResults", "comparisonResults", "proposals", "exports", "auditEvents"].every((name) => hasMethods(item[name], ["get", "list", "put", "append"]));
+    && hasMethods(item.documentStorage, ["store", "read", "remove"])
+    && hasMethods(item.cteArchives, ["get", "list", "put", "append", "delete"])
+    && ["billIngestionMetadata", "normalizedBillSnapshots", "marketDataArchives", "calculationResults", "comparisonResults", "proposals", "exports", "auditEvents"].every((name) => hasMethods(item[name], ["get", "list", "put", "append"]));
 }
 
 export function registerProductionStorageAdapter(adapter: ProductionStorageAdapter): void {

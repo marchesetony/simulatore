@@ -20,11 +20,21 @@ export interface PutRecordInput<TPayload> {
   readonly now?: string;
 }
 
+export interface DeleteRecordInput {
+  readonly recordId: string;
+  readonly tenantId: string;
+  readonly expectedVersion?: number;
+}
+
 export interface TenantRecordRepository<TPayload> {
   get(tenantId: string, recordId: string): Promise<TenantRecord<TPayload> | null>;
   list(tenantId: string): Promise<readonly TenantRecord<TPayload>[]>;
   put(input: PutRecordInput<TPayload>): Promise<TenantRecord<TPayload>>;
   append(input: PutRecordInput<TPayload>): Promise<TenantRecord<TPayload>>;
+}
+
+export interface DeletableTenantRecordRepository<TPayload> extends TenantRecordRepository<TPayload> {
+  delete(input: DeleteRecordInput): Promise<void>;
 }
 
 export interface UnscopedRecord<TPayload = unknown> {

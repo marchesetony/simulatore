@@ -1,7 +1,8 @@
 import type { CteContract } from "../types";
 
 export type CteArchiveStatus = "DRAFT" | "REVIEWED" | "APPROVED" | "EXPIRED" | "REJECTED";
-export type CteArchiveEventType = "CREATED" | "CORRECTED" | "REVIEWED" | "APPROVED" | "REJECTED" | "EXPIRED";
+export type CteArchiveEventType = "CREATED" | "CORRECTED" | "REVIEWED" | "APPROVED" | "REJECTED" | "EXPIRED" | "COMMERCIAL_BLOCKED" | "COMMERCIAL_REACTIVATED" | "COMMERCIAL_DELETED";
+export type CteCommercialStatus = "ACTIVE" | "BLOCKED" | "DELETED";
 
 export interface CteArchiveVersion {
   readonly versionId: string;
@@ -48,6 +49,14 @@ export interface CteArchiveRecord {
   readonly versions: readonly CteArchiveVersion[];
   readonly approvals: readonly CteArchiveApproval[];
   readonly history: readonly CteArchiveHistoryEvent[];
+  readonly commercialStatus?: CteCommercialStatus;
+  readonly blockedAt?: string | null;
+  readonly blockedBy?: string | null;
+  readonly blockReason?: string | null;
+  readonly reactivatedAt?: string | null;
+  readonly reactivatedBy?: string | null;
+  readonly deletedAt?: string | null;
+  readonly deletedBy?: string | null;
 }
 
 export interface CteArchiveRepository {

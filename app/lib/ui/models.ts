@@ -43,6 +43,131 @@ export interface CteArchiveModel {
   readonly history: readonly Record<string, unknown>[];
 }
 
+export interface CteApprovedArchiveSummaryModel {
+  readonly archiveId: string;
+  readonly vector: UiVector;
+  readonly offerName: string;
+  readonly supplierName: string;
+  readonly validity: { readonly periodStart: string; readonly periodEnd: string };
+  readonly status: "APPROVED";
+  readonly commercialStatus: "ACTIVE" | "BLOCKED";
+}
+
+export interface CteApprovedPriceModel {
+  readonly amount: number;
+  readonly currency: "EUR";
+  readonly unit: string;
+  readonly taxTreatment: string;
+}
+
+export type CteApprovedDeclaredModel = { readonly status: "DECLARED"; readonly component: CteApprovedFeeModel } | { readonly status: "NOT_DECLARED"; readonly reason: string };
+export interface CteApprovedFeeModel extends CteApprovedPriceModel { readonly label: string; }
+export interface CteApprovedContractModel {
+  readonly vector: UiVector;
+  readonly supplier: { readonly name: string; readonly supplierId: string };
+  readonly offer: { readonly name: string; readonly code: string };
+  readonly validity: { readonly periodStart: string; readonly periodEnd: string };
+  readonly expiry: Record<string, unknown>;
+  readonly currency: "EUR";
+  readonly taxTreatment: string;
+  readonly eligibility: { readonly customerTypes: readonly string[]; readonly voltageLevels?: readonly string[] };
+  readonly pricing: { readonly mode: string; readonly reference: string; readonly spread: CteApprovedPriceModel | CteApprovedDeclaredModel; readonly fixedPrice?: CteApprovedPriceModel };
+  readonly commercialTerms: {
+    readonly fixedFees: readonly CteApprovedFeeModel[];
+    readonly variableFees: readonly CteApprovedFeeModel[];
+    readonly imbalance: CteApprovedDeclaredModel;
+    readonly oneOffFees: readonly CteApprovedFeeModel[];
+    readonly commercialDiscounts: readonly CteApprovedFeeModel[];
+  };
+  readonly reviewFields?: readonly CteReviewFieldModel[];
+  readonly notFoundFields?: readonly CteReviewFieldModel[];
+  readonly sources?: readonly CteReviewSourceModel[];
+  readonly approvedAt?: string;
+  readonly approvedVersion?: string;
+  readonly documentType?: "CTE" | "UNKNOWN";
+  readonly documentSize?: number;
+}
+
+export interface CteApprovedArchiveDetailModel {
+  readonly archiveId: string;
+  readonly status: "APPROVED";
+  readonly commercialStatus: "ACTIVE" | "BLOCKED";
+  readonly blockedAt: string | null;
+  readonly blockedBy: string | null;
+  readonly blockReason: string | null;
+  readonly contract: CteApprovedContractModel;
+}
+
+export type CteIngestionStatus = "UPLOADED" | "OCR_PROCESSING" | "EXTRACTION_PROCESSING" | "REVIEW_REQUIRED" | "PROVIDER_NOT_CONFIGURED" | "FAILED" | "APPROVED";
+export type CteExtractionFieldStatus = "CONFIRMED" | "UNCERTAIN" | "NOT_FOUND" | "CORRECTED";
+export interface CteExtractionFieldModel {
+  readonly path: string;
+  readonly value: string | number | null;
+  readonly confidence: number;
+  readonly sourcePage: number | null;
+  readonly sourceText: string | null;
+  readonly status: CteExtractionFieldStatus;
+}
+export interface CteReviewFieldModel {
+  readonly fieldKey: string;
+  readonly label: string;
+  readonly normalizedValue: string | number | readonly string[] | null;
+  readonly required: boolean;
+  readonly unit?: string;
+  readonly periodicity?: string;
+  readonly description?: string;
+  readonly status: CteExtractionFieldStatus;
+  readonly confidence: number;
+  readonly sourcePage: number | null;
+  readonly sourceText: string | null;
+  readonly sourceTextComplete: string | null;
+  readonly sourceRef?: number;
+  readonly conditions?: readonly string[];
+  readonly notes?: readonly string[];
+}
+export interface CteReviewSourceModel {
+  readonly sourceRef: number;
+  readonly sourcePage: number | null;
+  readonly sourceText: string;
+  readonly sourceTextComplete: string;
+}
+export interface CteApprovalBlockerModel {
+  readonly code: string;
+  readonly fieldKey?: string;
+  readonly label: string;
+  readonly required: true;
+}
+export interface CteApprovalGateModel {
+  readonly approvalReady: boolean;
+  readonly blockers: readonly CteApprovalBlockerModel[];
+  readonly optionalNotFound: readonly string[];
+}
+export interface CteIngestionModel {
+  readonly ingestionId: string;
+  readonly documentId: string;
+  readonly fileName: string;
+  readonly offerName: string | null;
+  readonly supplierName: string | null;
+  readonly contentType: "application/pdf" | "image/jpeg" | "image/png";
+  readonly size: number;
+  readonly createdAt: string;
+  readonly updatedAt: string;
+  readonly status: CteIngestionStatus;
+  readonly documentType: "CTE" | "UNKNOWN";
+  readonly vector: UiVector | "UNKNOWN";
+  readonly currency: string | null;
+  readonly fields: readonly CteExtractionFieldModel[];
+  readonly reviewFields: readonly CteReviewFieldModel[];
+  readonly notFoundFields: readonly CteReviewFieldModel[];
+  readonly sources: readonly CteReviewSourceModel[];
+  readonly approvalGate: CteApprovalGateModel;
+  readonly extractionNotes: readonly string[];
+  readonly candidatePreview: Record<string, unknown> | null;
+  readonly corrections: readonly { readonly version: number; readonly fieldPath: string; readonly previousValue: string | number | null; readonly nextValue: string | number; readonly actor: string; readonly correctedAt: string }[];
+  readonly errorCode: string | null;
+  readonly approvedArchiveId: string | null;
+}
+
 export interface MarketArchiveModel {
   readonly archiveId: string;
   readonly tenantId: string;
