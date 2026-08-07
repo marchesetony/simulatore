@@ -1,7 +1,7 @@
 import type { CteContract } from "../types";
 // @ts-expect-error Node's strip-only test runner requires the explicit extension.
 import { validateCteContract } from "../validation.ts";
-import type { CteArchiveApproval, CteArchiveHistoryEvent, CteArchiveRecord, CteArchiveStatus } from "./types";
+import type { CteArchiveApproval, CteArchiveHistoryEvent, CteArchiveRecord, CteArchiveStatus, CteCommercialStatus } from "./types";
 
 export class CteArchiveValidationError extends Error {
   readonly code: string;
@@ -19,6 +19,9 @@ const dateTime = (value: unknown, code: string): string => {
 };
 const positiveInteger = (value: unknown, code: string): number => typeof value === "number" && Number.isInteger(value) && value > 0 ? value : fail(code);
 const statusValues: readonly CteArchiveStatus[] = ["DRAFT", "REVIEWED", "APPROVED", "EXPIRED", "REJECTED"];
+const commercialStatusValues: readonly CteCommercialStatus[] = ["ACTIVE", "BLOCKED", "DELETED"];
+const nullableDateTime = (value: unknown, code: string): string | null => value === undefined || value === null ? null : dateTime(value, code);
+const nullableActor = (value: unknown, code: string): string | null => value === undefined || value === null ? null : nonEmpty(value, code);
 
 export function assertTenantId(tenantId: unknown): asserts tenantId is string {
   if (typeof tenantId !== "string" || !/^tenant_[a-z0-9-]+$/.test(tenantId)) fail("TENANT_ACCESS_DENIED");
@@ -111,10 +114,11 @@ export function validateStoredCteArchive(value: unknown): CteArchiveRecord {
   const history: readonly CteArchiveHistoryEvent[] = rawHistory.map((candidate: unknown) => {
     if (typeof candidate !== "object" || candidate === null || Array.isArray(candidate)) fail("ARCHIVE_HISTORY_INVALID");
     const event = candidate as Record<string, unknown>;
-    if (!["CREATED", "CORRECTED", "REVIEWED", "APPROVED", "REJECTED", "EXPIRED"].includes(event.type as string)) fail("ARCHIVE_HISTORY_INVALID");
+    if (!["CREATED", "CORRECTED", "REVIEWED", "APPROVED", "REJECTED", "EXPIRED", "COMMERCIAL_BLOCKED", "COMMERCIAL_REACTIVATED", "COMMERCIAL_DELETED"].includes(event.type as string)) fail("ARCHIVE_HISTORY_INVALID");
     if (event.tenantId !== item.tenantId || event.cteId !== cteId) fail("ARCHIVE_HISTORY_INVALID");
     if (!ids.has(event.versionId as string)) fail("ARCHIVE_HISTORY_INVALID");
     return { eventId: nonEmpty(event.eventId, "ARCHIVE_HISTORY_INVALID"), type: event.type as CteArchiveHistoryEvent["type"], tenantId: item.tenantId as string, cteId, versionId: event.versionId as string, versionNumber: positiveInteger(event.versionNumber, "ARCHIVE_HISTORY_INVALID"), at: dateTime(event.at, "ARCHIVE_HISTORY_INVALID"), actor: nonEmpty(event.actor, "ARCHIVE_HISTORY_INVALID"), reason: event.reason === null ? null : nonEmpty(event.reason, "ARCHIVE_HISTORY_INVALID"), sourceVersionId: event.sourceVersionId === null ? null : nonEmpty(event.sourceVersionId, "ARCHIVE_HISTORY_INVALID") };
   });
-  return { archiveId, tenantId: item.tenantId as string, cteId, vector: item.vector as "EE" | "GAS", createdAt: dateTime(item.createdAt, "ARCHIVE_METADATA_INVALID"), updatedAt: dateTime(item.updatedAt, "ARCHIVE_METADATA_INVALID"), currentWorkingVersionId, currentApprovedVersionId, versions: parsedVersions, approvals: parsedApprovals, history };
+  const commercialStatus = item.commercialStatus === undefined ? "ACTIVE" : commercialStatusValues.includes(item.commercialStatus as CteCommercialStatus) ? item.commercialStatus as CteCommercialStatus : fail("COMMERCIAL_STATUS_INVALID");
+  return { archiveId, tenantId: item.tenantId as string, cteId, vector: item.vector as "EE" | "GAS", createdAt: dateTime(item.createdAt, "ARCHIVE_METADATA_INVALID"), updatedAt: dateTime(item.updatedAt, "ARCHIVE_METADATA_INVALID"), currentWorkingVersionId, currentApprovedVersionId, versions: parsedVersions, approvals: parsedApprovals, history, commercialStatus, blockedAt: nullableDateTime(item.blockedAt, "COMMERCIAL_METADATA_INVALID"), blockedBy: nullableActor(item.blockedBy, "COMMERCIAL_METADATA_INVALID"), blockReason: nullableActor(item.blockReason, "COMMERCIAL_METADATA_INVALID"), reactivatedAt: nullableDateTime(item.reactivatedAt, "COMMERCIAL_METADATA_INVALID"), reactivatedBy: nullableActor(item.reactivatedBy, "COMMERCIAL_METADATA_INVALID"), deletedAt: nullableDateTime(item.deletedAt, "COMMERCIAL_METADATA_INVALID"), deletedBy: nullableActor(item.deletedBy, "COMMERCIAL_METADATA_INVALID") };
 }

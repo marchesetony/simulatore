@@ -7,19 +7,20 @@ const root = path.resolve(fileURLToPath(new URL("..", import.meta.url)));
 const read = async (relative) => readFile(path.join(root, relative), "utf8");
 const page = await read("app/page.tsx");
 const shell = await read("app/components/OperationalShell.tsx");
+const cte = await read("app/components/CteIngestionPanel.tsx");
 const client = await read("app/lib/ui/client.ts");
 const css = await read("app/globals.css");
 
 for (const label of ["Dashboard", "Bollette", "Archivio CTE", "Dati di mercato", "Simulazioni", "Proposte", "Stato sistema"]) assert.ok(shell.includes(label), `missing navigation label: ${label}`);
-for (const endpoint of ["/api/foundation/context", "/api/health/readiness", "/api/bills", "/api/cte/archive", "/api/market/archive", "/api/calculation", "/api/comparison", "/api/proposal", "/api/proposal/comparison", "/api/proposal/export/"]) assert.match(shell, new RegExp(endpoint.replaceAll("/", "\\/")));
+for (const endpoint of ["/api/foundation/context", "/api/health/readiness", "/api/bills", "/api/cte/archive", "/api/cte/ingestion", "/api/market/archive", "/api/calculation", "/api/comparison", "/api/proposal", "/api/proposal/comparison", "/api/proposal/export/"]) assert.match(shell + cte, new RegExp(endpoint.replaceAll("/", "\\/")));
 for (const format of ["json", "csv", "html"]) assert.equal(await read(`app/api/proposal/export/${format}/route.ts`).then(() => true), true);
-for (const label of ["Energia elettrica (EE)", "Gas (GAS)", "F1 (kWh)", "Consumo GAS", "Fingerprint"]) assert.ok(shell.includes(label), `missing UI contract: ${label}`);
+for (const label of ["Energia elettrica (EE)", "Gas (GAS)", "F1 (kWh)", "Consumo GAS", "Fingerprint", "Carica CTE", "Seleziona documento", "Provider Anthropic non configurato", "Pagina", "Non trovato", "Salva correzione", "Approva CTE"]) assert.ok((shell + cte).includes(label), `missing UI contract: ${label}`);
 
 assert.match(page, /OperationalShell/);
 assert.match(page, /get\('demo'\)/);
 assert.match(page, /BENCH_ERROR_MESSAGES/); assert.match(page, /safeBenchCode/); assert.match(page, /safeBenchCorrelation/);
 assert.doesNotMatch(page, /cause\.message/); assert.doesNotMatch(page, /structured\.message/); assert.doesNotMatch(page, /dangerouslySetInnerHTML/);
-for (const sourceFile of [page, client, await read("app/components/UiStates.tsx")]) for (const artifact of ["Ã", "Â", "â", "�"]) assert.equal(sourceFile.includes(artifact), false, `encoding artifact: ${artifact}`);
+for (const sourceFile of [page, client, await read("app/components/UiStates.tsx")]) for (const artifact of [String.fromCharCode(0xC3), String.fromCharCode(0xC2), String.fromCharCode(0xE2), "\uFFFD"]) assert.equal(sourceFile.includes(artifact), false, "encoding artifact: " + artifact);
 assert.match(shell, /AbortController/);
 assert.match(shell, /requestJson<VerifiedContextModel>\("\/api\/foundation\/context"/);
 assert.match(shell, /requestJson<ReadinessModel>\("\/api\/health\/readiness"/);
@@ -39,7 +40,12 @@ for (const mismatch of [/proposal\.tenantId\s*!==\s*tenantId/, /proposal\.vector
 assert.match(shell, /proposalFingerprint\.slice\(0, 32\)/);
 assert.doesNotMatch(shell, /fingerprint\(/);
 assert.doesNotMatch(shell, /bill\.vector/);
-for (const fieldId of ["customer-reference", "supply-reference", "f1", "f2", "f3", "smc", "cte-contract", "market-record", "proposal-customer", "proposal-supply", "proposal-notes"]) assert.match(shell, new RegExp(`id="${fieldId}-error"|id="${fieldId}"`));
+for (const field of ["documentType", "vector", "supplier.name", "offer.name", "validity.periodStart", "pricing.reference", "pricing.spread.amount", "commercialTerms.fixedFees"]) assert.match(cte, new RegExp(field.replaceAll(".", "\\.")));
+assert.match(cte, /requestForm<\{ readonly ingestion: CteIngestionModel \}>\("\/api\/cte\/ingestion"/);
+assert.match(cte, /FormData/); assert.match(cte, /x-idempotency-key/); assert.match(cte, /pendingRef\.current\.has\("cte:upload"\)/);
+assert.match(cte, /\/review/); assert.match(cte, /\/approve/); assert.match(cte, /await load\(\)/); assert.match(cte, /candidatePreview/); assert.match(cte, /sourcePage/); assert.match(cte, /sourceText/); assert.match(cte, /confidence/);
+assert.doesNotMatch(cte, /textarea/); assert.doesNotMatch(cte, /calculate|savings|fingerprint/i);
+assert.match(shell, /CteIngestionPanel/); assert.doesNotMatch(shell, /section === "cte" \? <CtePanel/);
 assert.match(shell, /cte:create/); assert.match(shell, /operationKey\("approve"/); assert.match(shell, /operationKey\("reject"/); assert.match(shell, /operationKey\("correction"/);
 assert.match(shell, /market:create/); assert.match(shell, /operationKey\("approve"/); assert.match(shell, /operationKey\("reject"/);
 assert.match(shell, /LoadingState/);

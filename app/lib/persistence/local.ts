@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
-import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
+import { mkdir, readFile, rename, unlink, writeFile } from "node:fs/promises";
 import path from "node:path";
-import type { PutRecordInput, TenantRecord, TenantRecordRepository, UnscopedAppendRepository, UnscopedRecord } from "./types";
+import type { DeleteRecordInput, PutRecordInput, TenantRecord, TenantRecordRepository, UnscopedAppendRepository, UnscopedRecord } from "./types";
 // @ts-expect-error Node's strip-only test runner requires the explicit extension.
 import { PERSISTENCE_SCHEMA_VERSION } from "./types.ts";
 
@@ -68,6 +68,14 @@ export class LocalFilesystemRepository<TPayload> implements TenantRecordReposito
   }
   async put(input: PutRecordInput<TPayload>): Promise<TenantRecord<TPayload>> { return this.exclusive(this.file(input.tenantId, input.recordId), () => this.putUnlocked(input)); }
   async append(input: PutRecordInput<TPayload>): Promise<TenantRecord<TPayload>> { return this.exclusive(this.file(input.tenantId, input.recordId), async () => { if (await this.read(input.tenantId, input.recordId)) fail("PERSISTENCE_APPEND_ONLY_CONFLICT"); return this.putUnlocked(input); }); }
+  async delete(input: DeleteRecordInput): Promise<void> {
+    return this.exclusive(this.file(input.tenantId, input.recordId), async () => {
+      const existing = await this.read(input.tenantId, input.recordId);
+      if (!existing) fail("PERSISTENCE_RECORD_NOT_FOUND");
+      if (input.expectedVersion !== undefined && existing.version !== input.expectedVersion) fail("PERSISTENCE_VERSION_CONFLICT");
+      await unlink(this.file(input.tenantId, input.recordId));
+    });
+  }
   async appendUnscoped(input: Omit<PutRecordInput<TPayload>, "tenantId">): Promise<UnscopedRecord<TPayload>> {
     const file = this.unscopedFile(input.recordId);
     return this.exclusive(file, async () => {

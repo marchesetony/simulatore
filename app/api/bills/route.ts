@@ -4,6 +4,7 @@ import { requestPrincipal } from "../../lib/auth/request";
 import { runtimeRepositories } from "../../lib/persistence/adapter";
 import { recordRuntimeAudit } from "../../lib/persistence/audit";
 import { AuthenticationError } from "../../lib/auth/errors";
+import { createAnthropicBillOcrProvider } from "../../lib/cte/anthropic";
 
 const CORRELATION_ID = "foundation-bills";
 const LIST_CORRELATION_ID = "foundation-bill-list";
@@ -81,6 +82,8 @@ export async function POST(request: Request): Promise<Response> {
     const principal = await requestPrincipal(request, "WRITE");
     const tenantId = principal.tenantId;
     const repositories = runtimeRepositories();
+    let ocrProvider;
+    try { ocrProvider = createAnthropicBillOcrProvider(); } catch { ocrProvider = undefined; }
     const audit = { async record(event: { readonly type: string; readonly tenantId: string; readonly documentId: string; readonly outcome: string }) { await recordRuntimeAudit({ principal, action: `BILL_${event.type}`, resourceType: "BILL", resourceId: event.documentId, outcome: event.outcome === "ALLOWED" ? "ALLOWED" : "DENIED", correlationId: CORRELATION_ID }); } };
     const form = await request.formData();
     const file = form.get("file");
@@ -96,6 +99,7 @@ export async function POST(request: Request): Promise<Response> {
       authenticated: true,
       localDev: process.env.FOUNDATION_LOCAL_DEV,
       audit,
+      ocrProvider,
     });
     if (result.errorCode) {
       const code = boundedPublicCode(result.errorCode, "BILL_OPERATION_FAILED");

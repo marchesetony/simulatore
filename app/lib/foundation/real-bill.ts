@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { mkdir, readFile, unlink, writeFile } from "node:fs/promises";
 import path from "node:path";
 // @ts-expect-error Node's strip-only test runner requires the explicit extension.
 import { validateBillContract } from "../energy/validation.ts";
@@ -117,6 +117,7 @@ type MetadataRecord = Record<string, unknown>;
 export interface DocumentStoragePort {
   store(tenantId: string, id: string, bytes: Uint8Array): Promise<string>;
   read(objectKey: string): Promise<Uint8Array>;
+  remove(objectKey: string): Promise<void>;
 }
 export interface TextExtractionPort {
   extract(bytes: Uint8Array): Promise<{ readonly text: string; readonly pages: number }>;
@@ -423,6 +424,13 @@ export class LocalDocumentStorage implements DocumentStoragePort {
 
   async read(objectKey: string): Promise<Uint8Array> {
     return new Uint8Array(await readFile(objectKey));
+  }
+
+  async remove(objectKey: string): Promise<void> {
+    await unlink(objectKey).catch((error: unknown) => {
+      if (error instanceof Error && "code" in error && error.code === "ENOENT") return;
+      throw error;
+    });
   }
 }
 

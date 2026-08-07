@@ -18,6 +18,8 @@ const exclusionMessages: Readonly<Record<CalculationExclusionCode, string>> = {
   TENANT_MISMATCH: "The offer belongs to another tenant",
   VECTOR_MISMATCH: "The offer vector does not match the simulation vector",
   CTE_NOT_APPROVED: "No approved current CTE version is available",
+  CTE_COMMERCIAL_BLOCKED: "The CTE is commercially blocked",
+  CTE_COMMERCIAL_DELETED: "The CTE is commercially deleted",
   CTE_EXPIRED: "The approved CTE version is expired",
   CTE_VALIDITY_MISMATCH: "The approved CTE validity does not cover the simulation",
   CUSTOMER_NOT_ELIGIBLE: "The customer category is not eligible for the offer",

@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import type { CteArchiveRecord, CteArchiveVersion } from "../cte/archive/types";
 // @ts-expect-error Node's strip-only test runner requires the explicit extension.
-import { currentApprovedCteVersion } from "../cte/archive/service.ts";
+import { commercialStatusOf, currentApprovedCteVersion } from "../cte/archive/service.ts";
 // @ts-expect-error Node's strip-only test runner requires the explicit extension.
 import { toCalculationReadyOffer, assertCalculationReadyFees } from "../cte/calculation-ready.ts";
 import type { CalculationReadyOffer, CteDeclaredComponent, CteFeeComponent, ElectricityPricing, GasPricing } from "../cte/types";
@@ -146,7 +146,7 @@ function addGasEnergy(target: ComponentDraft[], request: GasSimulationRequest, o
   return effectiveTotal;
 }
 
-function readyVersion(record: CteArchiveRecord): CteArchiveVersion { const version = currentApprovedCteVersion(record); if (version === null || version.status !== "APPROVED" || version.contract.approval.status !== "APPROVED") return fail("CTE_NOT_APPROVED"); return version; }
+function readyVersion(record: CteArchiveRecord): CteArchiveVersion { const commercialStatus = commercialStatusOf(record); if (commercialStatus === "BLOCKED") return fail("CTE_COMMERCIAL_BLOCKED"); if (commercialStatus === "DELETED") return fail("CTE_COMMERCIAL_DELETED"); const version = currentApprovedCteVersion(record); if (version === null || version.status !== "APPROVED" || version.contract.approval.status !== "APPROVED") return fail("CTE_NOT_APPROVED"); return version; }
 
 export interface EligibleOffer {
   readonly record: CteArchiveRecord;
@@ -173,6 +173,16 @@ export async function prepareApprovedOffer(cteRepository: CteArchiveRepository, 
   if (offer.imbalance.status === "NOT_DECLARED" && offer.imbalance.reason === "NOT_PROVIDED") fail("IMBALANCE_UNAVAILABLE");
   const indexed = offer.pricing.mode === "INDEXED"; const markets = await marketForMonths(marketRepository, request, indexed);
   return { record, version, offer, markets };
+}
+
+export async function assertCommerciallyActive(cteRepository: CteArchiveRepository, tenantId: string, archiveId: string, versionId: string): Promise<void> {
+  const record = await cteRepository.get(tenantId, archiveId);
+  if (record === null) return fail("CTE_NOT_FOUND");
+  const commercialStatus = commercialStatusOf(record);
+  if (commercialStatus === "BLOCKED") return fail("CTE_COMMERCIAL_BLOCKED");
+  if (commercialStatus === "DELETED") return fail("CTE_COMMERCIAL_DELETED");
+  const version = currentApprovedCteVersion(record);
+  if (version === null || version.versionId !== versionId || version.status !== "APPROVED" || version.contract.approval.status !== "APPROVED") return fail("CTE_NOT_APPROVED");
 }
 
 export async function calculatePreparedOffer(request: SimulationRequest, prepared: EligibleOffer): Promise<CalculationResult> {

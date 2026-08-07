@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState, type ChangeEvent, type FormEvent, type ReactNode } from "react";
 import { EmptyState, ErrorState, FormField, LoadingState } from "./UiStates";
+import CteIngestionPanel from "./CteIngestionPanel";
 import { downloadExport, requestForm, requestJson, toUiError } from "../lib/ui/client";
 import { formatEuro, formatNumber, statusLabel } from "../lib/ui/format";
 import type { BillDocumentModel, CalculationModel, ComparisonModel, CteArchiveModel, MarketArchiveModel, ProposalModel, ReadinessModel, SimulationDraft, UiRole, UiVector, VerifiedContextModel } from "../lib/ui/models";
@@ -40,8 +41,277 @@ function BillsPanel({ readonly }: { readonly readonly: boolean }) {
 
 function BillDetail({ bill, readonly, pending, field, value, fieldError, onField, onValue, onAction }: { readonly bill: BillDocumentModel; readonly readonly: boolean; readonly pending: "upload" | "approve" | "correct" | null; readonly field: string; readonly value: string; readonly fieldError?: string; readonly onField: (value: string) => void; readonly onValue: (value: string) => void; readonly onAction: (operation: "approve" | "correct") => Promise<void> }) { return <div className="data-list"><DataLine label="Identificativo" value={bill.id} /><DataLine label="Filename" value={bill.fileName} /><DataLine label="Classificazione / vettore" value="Non disponibile" /><DataLine label="Stato" value={<StatusBadge value={bill.status} />} /><DataLine label="Revisione" value={statusLabel(bill.reviewState)} /><DataLine label="Versione" value={bill.currentVersionNumber} /><DataLine label="Pronto per approvazione" value={bill.approvalReady ? "S" : "No"} /><div className="provenance-list"><strong>Valori normalizzati e provenienza</strong>{Object.entries(bill.fields).length ? Object.entries(bill.fields).map(([name, item]) => <div key={name}><span>{name}</span><span>{item.value ?? "Non disponibile"}  {item.source}  {formatNumber(item.confidence)}{item.confirmed ? "" : "  da confermare"}</span></div>) : <span>Nessun valore disponibile.</span>}</div><div className="button-row"><button className="button primary" type="button" disabled={readonly || pending !== null || !bill.approvalReady} onClick={() => void onAction("approve")}>{pending === "approve" ? "Approvazione" : "Approva"}</button></div><FormField id="bill-correction-field" label="Campo da correggere" error={fieldError}><input id="bill-correction-field" value={field} onChange={(event) => onField(event.target.value)} disabled={readonly || pending !== null} /></FormField><FormField id="bill-correction-value" label="Valore corretto" hint="Validazione autorevole del server."><input id="bill-correction-value" value={value} onChange={(event) => onValue(event.target.value)} disabled={readonly || pending !== null} /></FormField><button className="button secondary" type="button" disabled={readonly || pending !== null} onClick={() => void onAction("correct")}>{pending === "correct" ? "Invio" : "Invia correzione"}</button><p className="muted">Campi non disponibili: Non disponibile. Azioni reject non supportate dal route esistente.</p></div>; }
 
-function CtePanel({ readonly }: { readonly readonly: boolean }) { const [vector,setVector]=useState<UiVector>("EE"); const [json,setJson]=useState('{"vector":"EE"}'); const pendingRef=useRef<Set<string>>(new Set()); const [pending,setPending]=useState<ReadonlySet<string>>(new Set()); const [error,setError]=useState<string>(); const [fieldErrors,setFieldErrors]=useState<Readonly<Record<string,string>>>({}); const [
-message,setMessage]=useState<string>(); const [records,setRecords]=useState<readonly CteArchiveModel[]>([]); const load=useCallback(async()=>{try{const result=await requestJson<{readonly records:readonly CteArchiveModel[]}>("/api/cte/archive");setRecords(result.records);}catch(cause){setError(uiError(cause));}},[]); useEffect(()=>{void load();},[load]); const operationKey=(kind:"create"|"approve"|"reject"|"correction",record?:CteArchiveModel)=>kind==="create"?"cte:create":`cte:${kind}:${record?.archiveId??"missing"}`; const busy=(key:string)=>pending.has(key); const recordBusy=(id:string)=>[...pending].some((key)=>key.endsWith(`:${id}`)); async function action(kind:"create"|"approve"|"reject"|"correction",record?:CteArchiveModel){const key=operationKey(kind,record);if(readonly||busy(key)||(record!==undefined&&recordBusy(record.archiveId)))return;let contract:Record<string,unknown>|undefined;if(kind==="create"||kind==="correction"){try{contract=parseObject(json);}catch{setFieldErrors({cteContract:"Inserire un oggetto JSON valido."});return;}} pendingRef.current.add(key);setPending(new Set(pendingRef.current));setError(undefined);setFieldErrors({});try{const body=kind==="create"?{contract}:kind==="approve"?{versionId:record?.currentWorkingVersionId,decisionId:`decision_ui_${record?.archiveId}`}:kind==="reject"?{versionId:record?.currentWorkingVersionId,reason:"Decisione operativa"}:{expectedVersionId:record?.currentWorkingVersionId,contract,reason:"Correzione operativa"};const path=kind==="create"?"/api/cte/archive":`/api/cte/archive/${record?.archiveId}/${kind}`;await requestJson(path,{method:"POST",body:JSON.stringify(body)});await load();setMessage("Operazione CTE inviata al server.");}catch(cause){setError(uiError(cause));}finally{pendingRef.current.delete(key);setPending(new Set(pendingRef.current));}} return <div className="content-stack"><SectionHeader eyebrow="CONTRATTI E OFFERTE" title="Archivio CTE" detail="EE e GAS restano separati; lifecycle e eligibility sono server-side."/><VectorTabs idPrefix="cte" value={vector} onChange={(next)=>{setVector(next);setJson(`{"vector":"${next}"}`);setFieldErrors({});}}/><div id="cte-panel" role="tabpanel" aria-labelledby={`cte-${vector.toLowerCase()}-tab`} tabIndex={0}><Card><h3>Record {vector}</h3>{records.filter((record)=>record.vector===vector).map((record)=><div className="data-line" key={record.archiveId}><span>{record.cteId} {record.currentWorkingVersionId}</span><span className="button-row"><button className="button compact" type="button" disabled={readonly||busy(operationKey("approve",record))||recordBusy(record.archiveId)} onClick={()=>void action("approve",record)}>Approva</button><button className="button compact danger" type="button" disabled={readonly||busy(operationKey("reject",record))||recordBusy(record.archiveId)} onClick={()=>void action("reject",record)}>Rifiuta</button><button className="button compact secondary" type="button" disabled={readonly||busy(operationKey("correction",record))||recordBusy(record.archiveId)} onClick={()=>void action("correction",record)}>Correggi</button></span></div>)}{!records.some((record)=>record.vector===vector)?<EmptyState title={`Nessun CTE ${vector}`} detail="Nessun record restituito dal server."/>:null}</Card><Card><form onSubmit={(event)=>{event.preventDefault();void action("create");}}><div className="card-heading"><h3>Crea CTE {vector}</h3><button className="button primary" type="submit" disabled={readonly||busy("cte:create")}>{busy("cte:create")?"Invio":"Invia"}</button></div><FormField id="cte-contract" label={`Contratto CTE ${vector}`} error={fieldErrors.cteContract}><textarea id="cte-contract" value={json} onChange={(event)=>{setJson(event.target.value);setFieldErrors({});}} rows={8}/></FormField>{error?<ErrorState message={error}/>:null}{message?<p className="inline-success" role="status">{message}</p>:null}</form></Card></div></div>; }
+type CteDraft = {
+  readonly vector: UiVector;
+  readonly recordId: string;
+  readonly cteId: string;
+  readonly supplierId: string;
+  readonly supplierName: string;
+  readonly offerId: string;
+  readonly offerName: string;
+  readonly offerCode: string;
+  readonly periodStart: string;
+  readonly periodEnd: string;
+  readonly expiryDate: string;
+  readonly customerType: "RESIDENTIAL" | "NON_RESIDENTIAL" | "";
+  readonly voltageLevel: "LV" | "MV" | "HV" | "EHV" | "";
+  readonly pricingMode: "INDEXED" | "FIXED";
+  readonly taxTreatment: "INCLUDED" | "EXCLUDED" | "NOT_APPLICABLE";
+  readonly spread: string;
+  readonly fixedPrice: string;
+  readonly fixedMonthlyFee: string;
+  readonly variableFee: string;
+  readonly imbalanceStatus: "DECLARED" | "NOT_DECLARED";
+  readonly imbalanceAmount: string;
+};
+
+function initialCteDraft(vector: UiVector): CteDraft {
+  const suffix = vector.toLowerCase();
+  return {
+    vector, recordId: "cte-manuale-" + suffix, cteId: "cte-manuale-" + suffix,
+    supplierId: "supplier-manuale-" + suffix, supplierName: "",
+    offerId: "offer-manuale-" + suffix, offerName: "", offerCode: "",
+    periodStart: "", periodEnd: "", expiryDate: "",
+    customerType: "NON_RESIDENTIAL", voltageLevel: vector === "EE" ? "LV" : "",
+    pricingMode: "INDEXED", taxTreatment: "EXCLUDED", spread: "",
+    fixedPrice: "", fixedMonthlyFee: "", variableFee: "",
+    imbalanceStatus: "NOT_DECLARED", imbalanceAmount: "",
+  };
+}
+
+function validateCteDraft(draft: CteDraft): Readonly<Record<string, string>> {
+  const errors: Record<string, string> = {};
+  const required = (key: keyof CteDraft, message: string) => {
+    if (typeof draft[key] !== "string" || !String(draft[key]).trim()) errors[String(key)] = message;
+  };
+  const numberField = (key: keyof CteDraft, message: string) => {
+    const value = String(draft[key]).trim();
+    if (!value || !Number.isFinite(Number(value)) || Number(value) < 0) errors[String(key)] = message;
+  };
+  const dateField = (key: keyof CteDraft) => {
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(String(draft[key]))) errors[String(key)] = "Inserire una data valida.";
+  };
+  required("recordId", "Inserire l'identificativo del record.");
+  required("cteId", "Inserire l'identificativo CTE.");
+  required("supplierId", "Inserire l'identificativo del fornitore.");
+  required("supplierName", "Inserire il nome del fornitore.");
+  required("offerId", "Inserire l'identificativo dell'offerta.");
+  required("offerName", "Inserire il nome dell'offerta.");
+  required("offerCode", "Inserire il codice dell'offerta.");
+  dateField("periodStart"); dateField("periodEnd"); dateField("expiryDate");
+  required("customerType", "Selezionare il tipo cliente.");
+  if (draft.vector === "EE") required("voltageLevel", "Selezionare il livello di tensione.");
+  numberField("fixedMonthlyFee", "Inserire un importo mensile valido.");
+  numberField("variableFee", "Inserire un importo variabile valido.");
+  if (draft.pricingMode === "INDEXED") numberField("spread", "Inserire uno spread valido.");
+  else numberField("fixedPrice", "Inserire un prezzo fisso valido.");
+  if (draft.imbalanceStatus === "DECLARED") numberField("imbalanceAmount", "Inserire l'importo di sbilanciamento.");
+  return errors;
+}
+
+/* Legacy manual CTE contract builder retained only as commented historical code; OCR ingestion is the operational path.
+function cteContractFromDraft(draft: CteDraft, tenantId: string): Record<string, unknown> {
+  const taxTreatment = draft.taxTreatment;
+  const priceUnit = "SERVER_AUTHORITATIVE";
+  const feeUnit = priceUnit;
+  const fee = (feeId: string, label: string, amount: string, unit: string) => ({
+    feeId, label, amount: Number(amount), currency: "EUR", unit, taxTreatment,
+  });
+  const imbalance = draft.imbalanceStatus === "DECLARED"
+    ? { status: "DECLARED", component: fee("imbalance-" + draft.vector.toLowerCase(), "Sbilanciamento", draft.imbalanceAmount, feeUnit) }
+    : { status: "NOT_DECLARED", reason: "NOT_PROVIDED" };
+  const pricing = draft.pricingMode === "INDEXED"
+    ? { mode: "INDEXED", reference: draft.vector === "EE" ? "PUN" : "PSV", spread: { amount: Number(draft.spread), currency: "EUR", unit: priceUnit, taxTreatment } }
+    : { mode: "FIXED", reference: "NONE", fixedPrice: { amount: Number(draft.fixedPrice), currency: "EUR", unit: priceUnit, taxTreatment }, spread: { status: "NOT_DECLARED", reason: "NOT_PROVIDED" } };
+  const eligibility = draft.vector === "EE"
+    ? { customerTypes: [draft.customerType], voltageLevels: [draft.voltageLevel] }
+    : { customerTypes: [draft.customerType] };
+  return {
+    schemaVersion: 1, recordId: draft.recordId.trim(), version: "1", parentVersionId: null,
+    tenantId, approval: { status: "DRAFT", reason: "IMPORTED_FOR_REVIEW" },
+    recordType: "CTE", cteId: draft.cteId.trim(), vector: draft.vector,
+    supplier: { supplierId: draft.supplierId.trim(), name: draft.supplierName.trim() },
+    offer: { offerId: draft.offerId.trim(), name: draft.offerName.trim(), code: draft.offerCode.trim() },
+    validity: { periodStart: draft.periodStart, periodEnd: draft.periodEnd },
+    expiry: { status: "EXPIRES_ON", date: draft.expiryDate },
+    currency: "EUR", taxTreatment, eligibility, pricing,
+    commercialTerms: {
+      fixedFees: [fee("fixed-monthly-" + draft.vector.toLowerCase(), "Quota fissa mensile", draft.fixedMonthlyFee, "EUR_PER_MONTH")],
+      variableFees: [fee("variable-" + draft.vector.toLowerCase(), "Quota variabile", draft.variableFee, feeUnit)],
+      imbalance, oneOffFees: [], commercialDiscounts: [],
+    },
+  };
+}
+
+}
+*/
+
+function cteContractFromDraft(_draft: CteDraft, _tenantId: string): Record<string, unknown> {
+  void _draft;
+  void _tenantId;
+  throw new Error("CTE_MANUAL_FLOW_REMOVED");
+}
+
+function focusCteError(errors: Readonly<Record<string, string>>): void {
+  const first = Object.keys(errors).find((key) => key !== "form");
+  if (!first) return;
+  requestAnimationFrame(() => {
+    const control = document.getElementById("cte-" + first);
+    if (control instanceof HTMLElement) {
+      control.focus();
+      control.scrollIntoView({ behavior: "smooth", block: "center" });
+    }
+  });
+}
+
+function CtePanel({ readonly, tenantId }: { readonly readonly: boolean; readonly tenantId: string | null }) {
+  const [vector, setVector] = useState<UiVector>("EE");
+  const [draft, setDraft] = useState<CteDraft>(() => initialCteDraft("EE"));
+  const pendingRef = useRef<Set<string>>(new Set());
+  const [pending, setPending] = useState<ReadonlySet<string>>(new Set());
+  const [error, setError] = useState<string>();
+  const [fieldErrors, setFieldErrors] = useState<Readonly<Record<string, string>>>({});
+  const [message, setMessage] = useState<string>();
+  const [records, setRecords] = useState<readonly CteArchiveModel[]>([]);
+  const load = useCallback(async () => {
+    try {
+      const result = await requestJson<{ readonly records: readonly CteArchiveModel[] }>("/api/cte/archive");
+      setRecords(result.records);
+    } catch (cause) {
+      setError(uiError(cause));
+    }
+  }, []);
+  useEffect(() => { void load(); }, [load]);
+  const operationKey = (kind: "create" | "approve" | "reject" | "correction", record?: CteArchiveModel) =>
+    kind === "create" ? "cte:create" : "cte:" + kind + ":" + String(record?.archiveId ?? "missing");
+  const busy = (key: string) => pending.has(key);
+  const recordBusy = (id: string) => [...pending].some((key) => key.endsWith(":" + id));
+
+  function updateDraft<K extends keyof CteDraft>(key: K, value: CteDraft[K]): void {
+    setDraft((current) => ({ ...current, [key]: value }));
+    setFieldErrors((current) => { const next = { ...current }; delete next[String(key)]; delete next.form; return next; });
+    setError(undefined);
+    setMessage(undefined);
+  }
+
+  function invalidDraft(): Readonly<Record<string, string>> {
+    const errors = validateCteDraft(draft);
+    if (Object.keys(errors).length > 0) {
+      const withForm = { ...errors, form: "Correggere i campi evidenziati prima dell'invio." };
+      setFieldErrors(withForm);
+      focusCteError(withForm);
+    }
+    return errors;
+  }
+
+  async function action(kind: "approve" | "reject" | "correction", record: CteArchiveModel): Promise<void> {
+    const key = operationKey(kind, record);
+    if (readonly || !tenantId || busy(key) || recordBusy(record.archiveId)) return;
+    let contract: Record<string, unknown> | undefined;
+    if (kind === "correction") {
+      const errors = invalidDraft();
+      if (Object.keys(errors).length > 0) return;
+      contract = cteContractFromDraft(draft, tenantId);
+    }
+    pendingRef.current.add(key);
+    setPending(new Set(pendingRef.current));
+    setError(undefined); setMessage(undefined); setFieldErrors({});
+    try {
+      const body = kind === "approve"
+        ? { versionId: record.currentWorkingVersionId, decisionId: "decision_ui_" + record.archiveId }
+        : kind === "reject"
+          ? { versionId: record.currentWorkingVersionId, reason: "Decisione operativa" }
+          : { expectedVersionId: record.currentWorkingVersionId, contract, reason: "Correzione operativa" };
+      await requestJson("/api/cte/archive/" + record.archiveId + "/" + kind, { method: "POST", body: JSON.stringify(body) });
+      await load();
+      setMessage("Operazione CTE inviata al server.");
+    } catch (cause) {
+      setError(uiError(cause));
+    } finally {
+      pendingRef.current.delete(key);
+      setPending(new Set(pendingRef.current));
+    }
+  }
+
+  async function submitCreate(event: FormEvent<HTMLFormElement>): Promise<void> {
+    event.preventDefault();
+    if (readonly || !tenantId || busy("cte:create") || pendingRef.current.has("cte:create")) {
+      if (readonly) setError("Operazione non disponibile: contesto autenticato e readiness richiesti.");
+      return;
+    }
+    const errors = invalidDraft();
+    if (Object.keys(errors).length > 0) return;
+    pendingRef.current.add("cte:create");
+    setPending(new Set(pendingRef.current));
+    setError(undefined); setMessage(undefined); setFieldErrors({});
+    try {
+      await requestJson("/api/cte/archive", { method: "POST", body: JSON.stringify({ contract: cteContractFromDraft(draft, tenantId) }) });
+      await load();
+      setMessage("CTE creato e lista aggiornata.");
+    } catch (cause) {
+      setError(uiError(cause));
+    } finally {
+      pendingRef.current.delete("cte:create");
+      setPending(new Set(pendingRef.current));
+    }
+  }
+
+  const preview = tenantId ? cteContractFromDraft(draft, tenantId) : null;
+  return <div className="content-stack">
+    <SectionHeader eyebrow="CONTRATTI E OFFERTE" title="Archivio CTE" detail="EE e GAS restano separati; lifecycle e eligibility sono server-side." />
+    <VectorTabs idPrefix="cte" value={vector} onChange={(next) => { setVector(next); setDraft(initialCteDraft(next)); setFieldErrors({}); setError(undefined); setMessage(undefined); }} />
+    <div id="cte-panel" role="tabpanel" aria-labelledby={"cte-" + vector.toLowerCase() + "-tab"} tabIndex={0}>
+      <Card><h3>Record {vector}</h3>
+        {records.filter((record) => record.vector === vector).map((record) => <div className="data-line" key={record.archiveId}><span>{record.cteId} {record.currentWorkingVersionId}</span><span className="button-row">
+          <button className="button compact" type="button" disabled={readonly || busy(operationKey("approve", record)) || recordBusy(record.archiveId)} onClick={() => void action("approve", record)}>Approva</button>
+          <button className="button compact danger" type="button" disabled={readonly || busy(operationKey("reject", record)) || recordBusy(record.archiveId)} onClick={() => void action("reject", record)}>Rifiuta</button>
+          <button className="button compact secondary" type="button" disabled={readonly || busy(operationKey("correction", record)) || recordBusy(record.archiveId)} onClick={() => void action("correction", record)}>Correggi</button>
+        </span></div>)}
+        {!records.some((record) => record.vector === vector) ? <EmptyState title={"Nessun CTE " + vector} detail="Nessun record restituito dal server." /> : null}
+      </Card>
+      <Card className="cte-create-card">
+        {message ? <p className="inline-success cte-submit-status" role="status" aria-live="polite">{message}</p> : null}
+        {readonly ? <p className="warning-text" role="status">Inserimento disabilitato finché contesto autenticato e readiness non sono verificati.</p> : null}
+        <form onSubmit={(event) => { void submitCreate(event); }}>
+          <div className="card-heading">
+            <div><h3>Crea CTE {vector}</h3><p>Compilare i campi leggibili; il server valida il contratto completo.</p></div>
+            <button className="button primary" type="submit" disabled={readonly || busy("cte:create")} aria-busy={busy("cte:create")}>{busy("cte:create") ? "Invio…" : "Invia"}</button>
+          </div>
+          {fieldErrors.form ? <p className="form-submit-error" role="alert">{fieldErrors.form}</p> : null}
+          {error ? <ErrorState message={error} /> : null}
+          <fieldset className="fieldset"><legend>Identificativi contratto</legend><div className="form-grid">
+            <FormField id="cte-recordId" label="Identificativo record" error={fieldErrors.recordId}><input id="cte-recordId" value={draft.recordId} onChange={(event) => updateDraft("recordId", event.target.value)} required /></FormField>
+            <FormField id="cte-cteId" label="Identificativo CTE" error={fieldErrors.cteId}><input id="cte-cteId" value={draft.cteId} onChange={(event) => updateDraft("cteId", event.target.value)} required /></FormField>
+            <FormField id="cte-supplierId" label="ID fornitore" error={fieldErrors.supplierId}><input id="cte-supplierId" value={draft.supplierId} onChange={(event) => updateDraft("supplierId", event.target.value)} required /></FormField>
+            <FormField id="cte-offerId" label="ID offerta" error={fieldErrors.offerId}><input id="cte-offerId" value={draft.offerId} onChange={(event) => updateDraft("offerId", event.target.value)} required /></FormField>
+          </div></fieldset>
+          <fieldset className="fieldset"><legend>Offerta</legend><div className="form-grid">
+            <FormField id="cte-supplierName" label="Nome fornitore" error={fieldErrors.supplierName}><input id="cte-supplierName" value={draft.supplierName} onChange={(event) => updateDraft("supplierName", event.target.value)} required /></FormField>
+            <FormField id="cte-offerName" label="Nome offerta" error={fieldErrors.offerName}><input id="cte-offerName" value={draft.offerName} onChange={(event) => updateDraft("offerName", event.target.value)} required /></FormField>
+            <FormField id="cte-offerCode" label="Codice offerta" error={fieldErrors.offerCode}><input id="cte-offerCode" value={draft.offerCode} onChange={(event) => updateDraft("offerCode", event.target.value)} required /></FormField>
+            <FormField id="cte-periodStart" label="Validità inizio" error={fieldErrors.periodStart}><input id="cte-periodStart" type="date" value={draft.periodStart} onChange={(event) => updateDraft("periodStart", event.target.value)} required /></FormField>
+            <FormField id="cte-periodEnd" label="Validità fine" error={fieldErrors.periodEnd}><input id="cte-periodEnd" type="date" value={draft.periodEnd} onChange={(event) => updateDraft("periodEnd", event.target.value)} required /></FormField>
+            <FormField id="cte-expiryDate" label="Scadenza dichiarata" error={fieldErrors.expiryDate}><input id="cte-expiryDate" type="date" value={draft.expiryDate} onChange={(event) => updateDraft("expiryDate", event.target.value)} required /></FormField>
+            <FormField id="cte-customerType" label="Tipo cliente" error={fieldErrors.customerType}><select id="cte-customerType" value={draft.customerType} onChange={(event) => updateDraft("customerType", event.target.value as CteDraft["customerType"])}><option value="">Selezionare</option><option value="NON_RESIDENTIAL">Non residenziale</option><option value="RESIDENTIAL">Residenziale</option></select></FormField>
+            {vector === "EE" ? <FormField id="cte-voltageLevel" label="Livello tensione" error={fieldErrors.voltageLevel}><select id="cte-voltageLevel" value={draft.voltageLevel} onChange={(event) => updateDraft("voltageLevel", event.target.value as CteDraft["voltageLevel"])}><option value="">Selezionare</option><option value="LV">LV</option><option value="MV">MV</option><option value="HV">HV</option><option value="EHV">EHV</option></select></FormField> : null}
+          </div></fieldset>
+          <fieldset className="fieldset"><legend>Prezzi e componenti dichiarate</legend><div className="form-grid">
+            <FormField id="cte-pricingMode" label="Modalità prezzo" error={fieldErrors.pricingMode}><select id="cte-pricingMode" value={draft.pricingMode} onChange={(event) => updateDraft("pricingMode", event.target.value as CteDraft["pricingMode"])}><option value="INDEXED">Indicizzato</option><option value="FIXED">Fisso</option></select></FormField>
+            <FormField id="cte-reference" label="Riferimento indice"><input id="cte-reference" value={vector === "EE" ? "PUN" : "PSV"} readOnly aria-readonly="true" /></FormField>
+            <FormField id="cte-spread" label={vector === "EE" ? "Spread EUR/kWh" : "Spread EUR/Smc"} hint={draft.pricingMode === "INDEXED" ? (vector === "EE" ? "Riferimento PUN" : "Riferimento PSV") : "Non applicabile per prezzo fisso"} error={fieldErrors.spread}><input id="cte-spread" type="number" min="0" step="any" value={draft.spread} onChange={(event) => updateDraft("spread", event.target.value)} disabled={draft.pricingMode !== "INDEXED"} /></FormField>
+            {draft.pricingMode === "FIXED" ? <FormField id="cte-fixedPrice" label={vector === "EE" ? "Prezzo fisso EUR/kWh" : "Prezzo fisso EUR/Smc"} error={fieldErrors.fixedPrice}><input id="cte-fixedPrice" type="number" min="0" step="any" value={draft.fixedPrice} onChange={(event) => updateDraft("fixedPrice", event.target.value)} required /></FormField> : null}
+            <FormField id="cte-fixedMonthlyFee" label="Quota fissa mensile EUR" error={fieldErrors.fixedMonthlyFee}><input id="cte-fixedMonthlyFee" type="number" min="0" step="any" value={draft.fixedMonthlyFee} onChange={(event) => updateDraft("fixedMonthlyFee", event.target.value)} required /></FormField>
+            <FormField id="cte-variableFee" label={vector === "EE" ? "Quota variabile EUR/kWh" : "Quota variabile EUR/Smc"} error={fieldErrors.variableFee}><input id="cte-variableFee" type="number" min="0" step="any" value={draft.variableFee} onChange={(event) => updateDraft("variableFee", event.target.value)} required /></FormField>
+            <FormField id="cte-imbalanceStatus" label="Sbilanciamento" error={fieldErrors.imbalanceStatus}><select id="cte-imbalanceStatus" value={draft.imbalanceStatus} onChange={(event) => updateDraft("imbalanceStatus", event.target.value as CteDraft["imbalanceStatus"])}><option value="NOT_DECLARED">Non dichiarato</option><option value="DECLARED">Dichiarato</option></select></FormField>
+            {draft.imbalanceStatus === "DECLARED" ? <FormField id="cte-imbalanceAmount" label={vector === "EE" ? "Importo sbilanciamento EUR/kWh" : "Importo sbilanciamento EUR/Smc"} error={fieldErrors.imbalanceAmount}><input id="cte-imbalanceAmount" type="number" min="0" step="any" value={draft.imbalanceAmount} onChange={(event) => updateDraft("imbalanceAmount", event.target.value)} required /></FormField> : null}
+            <FormField id="cte-taxTreatment" label="Trattamento fiscale" error={fieldErrors.taxTreatment}><select id="cte-taxTreatment" value={draft.taxTreatment} onChange={(event) => updateDraft("taxTreatment", event.target.value as CteDraft["taxTreatment"])}><option value="EXCLUDED">Escluso</option><option value="INCLUDED">Incluso</option><option value="NOT_APPLICABLE">Non applicabile</option></select></FormField>
+          </div><p className="muted">Riferimento energia: {vector === "EE" ? "PUN" : "PSV"}. Il riferimento opposto non è presente nel contratto.</p></fieldset>
+          <details><summary>Anteprima JSON di sola lettura</summary><pre className="safe-pre">{preview ? JSON.stringify(preview, null, 2) : "Anteprima disponibile dopo la verifica del contesto."}</pre></details>
+        </form>
+      </Card>
+    </div>
+  </div>;
+}
 
 function MarketPanel({ readonly }: { readonly readonly: boolean }) { const [vector,setVector]=useState<UiVector>("EE"); const [json,setJson]=useState('{"vector":"EE","index":"PUN"}'); const pendingRef=useRef<Set<string>>(new Set()); const [pending,setPending]=useState<ReadonlySet<string>>(new Set()); const [records,setRecords]=useState<readonly MarketArchiveModel[]>([]); const [error,setError]=useState<string>(); const [fieldErrors,setFieldErrors]=useState<Readonly<Record<string,string>>>({}); const [message,setMessage]=useState<string>(); const load=useCallback(async()=>{try{const result=await requestJson<{readonly records:readonly MarketArchiveModel[]}>("/api/market/archive");setRecords(result.records);}catch(cause){setError(uiError(cause));}},[]); useEffect(()=>{void load();},[load]); const operationKey=(kind:"create"|"approve"|"reject",record?:MarketArchiveModel)=>kind==="create"?"market:create":"market:"+kind+":"+String(record?.archiveId??"missing"); const busy=(key:string)=>pending.has(key); const recordBusy=(id:string)=>[...pending].some((key)=>key.endsWith(":"+id)); async function action(kind:"create"|"approve"|"reject",record?:MarketArchiveModel){const key=operationKey(kind,record);if(readonly||busy(key)||(record!==undefined&&recordBusy(record.archiveId)))return;let value:Record<string,unknown>|undefined;if(kind==="create"){try{value=parseObject(json);}catch{setFieldErrors({marketRecord:"Inserire un oggetto JSON valido."});return;}} pendingRef.current.add(key);setPending(new Set(pendingRef.current));setError(undefined);setFieldErrors({});try{const body=kind==="create"?{record:value}:kind==="approve"?{decisionId:"decision_ui_"+String(record?.archiveId)}:{reason:"Decisione operativa"};const path=kind==="create"?"/api/market/archive":"/api/market/archive/"+String(record?.archiveId)+"/"+kind;await requestJson(path,{method:"POST",body:JSON.stringify(body)});await load();setMessage("Operazione mercato inviata al server.");}catch(cause){setError(uiError(cause));}finally{pendingRef.current.delete(key);setPending(new Set(pendingRef.current));}} const index=vector==="EE"?"PUN":"PSV"; return <div className="content-stack"><SectionHeader eyebrow="DATI AUTORITATIVI" title="Dati di mercato" detail="PUN solo EE; PSV solo GAS. I dati mancanti non sono sostituiti."/><VectorTabs idPrefix="market" value={vector} onChange={(next)=>{setVector(next);setJson(JSON.stringify({vector:next,index:next==="EE"?"PUN":"PSV"}));setFieldErrors({});}}/><div id="market-panel" role="tabpanel" aria-labelledby={"market-"+vector.toLowerCase()+"-tab"} tabIndex={0}><Card><h3>Record {index}</h3>{records.filter((record)=>record.vector===vector&&record.index===index).map((record)=><div className="data-line" key={record.archiveId}><span>{record.month} v{String(record.record.version??"Non disponibile")}</span><span className="button-row"><button className="button compact" type="button" disabled={readonly||busy(operationKey("approve",record))||recordBusy(record.archiveId)} onClick={()=>void action("approve",record)}>Approva</button><button className="button compact danger" type="button" disabled={readonly||busy(operationKey("reject",record))||recordBusy(record.archiveId)} onClick={()=>void action("reject",record)}>Rifiuta</button></span></div>)}{!records.some((record)=>record.vector===vector&&record.index===index)?<EmptyState title={"Nessun record "+index} detail="Il server non ha restituito dati per questo vettore."/>:null}</Card><Card><form onSubmit={(event)=>{event.preventDefault();void action("create");}}><div className="card-heading"><h3>Crea record {index}</h3><button className="button primary" type="submit" disabled={readonly||busy("market:create")}>{busy("market:create")?"Invio":"Invia"}</button></div><FormField id="market-record" label={"Record mercato "+index} error={fieldErrors.marketRecord}><textarea id="market-record" value={json} onChange={(event)=>{setJson(event.target.value);setFieldErrors({});}} rows={8}/></FormField>{error?<ErrorState message={error}/>:null}{message?<p className="inline-success" role="status">{message}</p>:null}</form></Card></div></div>; }
 
@@ -62,10 +332,12 @@ function ProposalsPanel({ calculation, comparison, selectedId, draft, tenantId, 
 
 function SystemPanel({ context, readiness, onReload }: { readonly context: VerifiedContextModel | null; readonly readiness: ReadinessModel | null; readonly onReload: () => void }) { return <div className="content-stack"><SectionHeader eyebrow="OPERATIONS" title="Stato sistema" detail="Readiness e contesto verificato, senza segreti o internals." action={<button className="button secondary" type="button" onClick={onReload}>Aggiorna stato</button>} /><Card><div className="data-list"><DataLine label="Autenticazione" value={context?.authenticated ? "Autenticata" : "Non autenticata"} /><DataLine label="Ruolo" value={context?.role ?? "Non disponibile"} /><DataLine label="Tenant" value={context?.tenantId ?? "Non disponibile"} /><DataLine label="Runtime" value={readiness?.runtimeMode ?? "Non disponibile"} /><DataLine label="Readiness" value={readiness?.readiness ? "Pronta" : "Bloccata"} /></div></Card></div>; }
 
+void CtePanel;
+
 export default function OperationalShell() {
   const [section, setSection] = useState<SectionId>("dashboard"); const [context, setContext] = useState<VerifiedContextModel | null>(null); const [contextState, setContextState] = useState<LoadState>("loading"); const [readiness, setReadiness] = useState<ReadinessModel | null>(null); const [readinessState, setReadinessState] = useState<LoadState>("loading"); const [calculation, setCalculation] = useState<CalculationModel | null>(null); const [comparison, setComparison] = useState<ComparisonModel | null>(null); const [selectedId, setSelectedId] = useState<string | null>(null); const [draft, setDraft] = useState<SimulationDraft | null>(null);
   const loadContext = useCallback(async (signal?: AbortSignal) => { setContextState("loading"); try { const result = await requestJson<VerifiedContextModel>("/api/foundation/context", {}, signal); if (!result.authenticated || !result.role || !result.tenantId) throw new Error("CONTEXT_INVALID"); setContext(result); setContextState("ready"); } catch { if (!signal?.aborted) { setContext(null); setContextState("error"); } } }, []); const loadReadiness = useCallback(async (signal?: AbortSignal) => { setReadinessState("loading"); try { setReadiness(await requestJson<ReadinessModel>("/api/health/readiness", {}, signal)); setReadinessState("ready"); } catch { if (!signal?.aborted) setReadinessState("error"); } }, []); useEffect(() => { const controller = new AbortController(); void loadContext(controller.signal); void loadReadiness(controller.signal); return () => controller.abort(); }, [loadContext, loadReadiness]);
   const canWrite = contextState === "ready" && readinessState === "ready" && Boolean(context?.authenticated && context.role && context.role !== ("VIEWER" satisfies UiRole) && context.readiness.readiness && readiness?.readiness); const readonly = !canWrite; const tenantId = context?.tenantId ?? null;
   function onCalculation(result: CalculationModel, value: SimulationDraft) { setCalculation(result); setComparison(null); setSelectedId(result.calculationId); setDraft(value); } function onComparison(result: ComparisonModel, value: SimulationDraft) { setComparison(result); setCalculation(null); setSelectedId(result.ranking[0]?.calculationId ?? null); setDraft(value); }
-  return <div className="operational-app"><a className="skip-link" href="#main-content">Vai al contenuto</a><header className="app-header"><div className="brand-lockup"><div className="brand-mark" aria-hidden="true">E</div><div><p className="eyebrow">FOUNDATION V1  OPERATIONS</p><h1>Energia Operativa</h1></div></div><div className="header-context"><span className="mode-pill">{context?.authSource === "LOCAL_SYNTHETIC" ? "Locale sintetico esplicito" : context?.runtimeMode === "production" ? "Production" : "Contesto non disponibile"}</span><span className="mode-pill">{context?.role ?? "Sola lettura"}</span></div></header><div className="app-layout"><aside className="app-sidebar"><nav aria-label="Navigazione principale"><p className="nav-title">Aree operative</p>{sections.map((item) => <button key={item.id} className={section === item.id ? "nav-item active" : "nav-item"} type="button" onClick={() => setSection(item.id)} aria-current={section === item.id ? "page" : undefined}><span className="nav-icon" aria-hidden="true">{item.short}</span><span>{item.label}</span></button>)}</nav><div className="sidebar-note"><strong>{readonly ? "Vista sola lettura" : "Azioni operative"}</strong><span>Ruoli, tenant e permessi restano server-authoritative.</span></div></aside><main id="main-content" className="app-main" tabIndex={-1}>{section === "dashboard" ? <DashboardPanel context={context} readiness={readiness} readinessState={readinessState} /> : null}{section === "bills" ? <BillsPanel readonly={readonly} /> : null}{section === "cte" ? <CtePanel readonly={readonly} /> : null}{section === "market" ? <MarketPanel readonly={readonly} /> : null}{section === "simulations" ? <><SimulationPanel tenantId={tenantId} readonly={readonly} onCalculation={onCalculation} onComparison={onComparison} /><ResultCards calculation={calculation} comparison={comparison} selectedId={selectedId} onSelect={setSelectedId} /></> : null}{section === "proposals" ? <ProposalsPanel calculation={calculation} comparison={comparison} selectedId={selectedId} draft={draft} tenantId={tenantId} readonly={readonly} /> : null}{section === "system" ? <SystemPanel context={context} readiness={readiness} onReload={() => { void loadContext(); void loadReadiness(); }} /> : null}</main></div><footer className="app-footer"><span>Dati authoritative o esplicitamente non disponibili</span><span>Nessun token o segreto persistito nel browser</span></footer></div>;
+  return <div className="operational-app"><a className="skip-link" href="#main-content">Vai al contenuto</a><header className="app-header"><div className="brand-lockup"><div className="brand-mark" aria-hidden="true">E</div><div><p className="eyebrow">FOUNDATION V1  OPERATIONS</p><h1>Energia Operativa</h1></div></div><div className="header-context"><span className="mode-pill">{context?.authSource === "LOCAL_SYNTHETIC" ? "Locale sintetico esplicito" : context?.runtimeMode === "production" ? "Production" : "Contesto non disponibile"}</span><span className="mode-pill">{context?.role ?? "Sola lettura"}</span></div></header><div className="app-layout"><aside className="app-sidebar"><nav aria-label="Navigazione principale"><p className="nav-title">Aree operative</p>{sections.map((item) => <button key={item.id} className={section === item.id ? "nav-item active" : "nav-item"} type="button" onClick={() => setSection(item.id)} aria-current={section === item.id ? "page" : undefined}><span className="nav-icon" aria-hidden="true">{item.short}</span><span>{item.label}</span></button>)}</nav><div className="sidebar-note"><strong>{readonly ? "Vista sola lettura" : "Azioni operative"}</strong><span>Ruoli, tenant e permessi restano server-authoritative.</span></div></aside><main id="main-content" className="app-main" tabIndex={-1}>{section === "dashboard" ? <DashboardPanel context={context} readiness={readiness} readinessState={readinessState} /> : null}{section === "bills" ? <BillsPanel readonly={readonly} /> : null}{section === "cte" ? <CteIngestionPanel readonly={readonly} /> : null}{section === "market" ? <MarketPanel readonly={readonly} /> : null}{section === "simulations" ? <><SimulationPanel tenantId={tenantId} readonly={readonly} onCalculation={onCalculation} onComparison={onComparison} /><ResultCards calculation={calculation} comparison={comparison} selectedId={selectedId} onSelect={setSelectedId} /></> : null}{section === "proposals" ? <ProposalsPanel calculation={calculation} comparison={comparison} selectedId={selectedId} draft={draft} tenantId={tenantId} readonly={readonly} /> : null}{section === "system" ? <SystemPanel context={context} readiness={readiness} onReload={() => { void loadContext(); void loadReadiness(); }} /> : null}</main></div><footer className="app-footer"><span>Dati authoritative o esplicitamente non disponibili</span><span>Nessun token o segreto persistito nel browser</span></footer></div>;
 }

@@ -5,7 +5,7 @@ export const ARCHIVE_CORRELATION_ID = "cte-market-archive-v1";
 
 export function archiveError(error: unknown, fallback = "ARCHIVE_REQUEST_INVALID"): Response {
   const code = error instanceof Error && /^[A-Z0-9_:-]+$/.test(error.message) ? error.message : fallback;
-  const status = code === "TENANT_ACCESS_DENIED" ? 403 : code.endsWith("NOT_FOUND") ? 404 : code.includes("ALREADY") || code.includes("DUPLICATE") || code.includes("OVERLAP") ? 409 : 400;
+  const status = code === "TENANT_ACCESS_DENIED" ? 403 : code.endsWith("NOT_FOUND") ? 404 : code.includes("ALREADY") || code.includes("DUPLICATE") || code.includes("OVERLAP") || code.startsWith("CTE_COMMERCIAL_") || code === "CTE_NOT_APPROVED" ? 409 : 400;
   return Response.json({ error: { code, message: "Archive request denied", correlationId: ARCHIVE_CORRELATION_ID } }, { status });
 }
 

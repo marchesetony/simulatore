@@ -40,6 +40,24 @@ const messages: Readonly<Record<string, string>> = {
   DOCUMENT_VERSION_ALREADY_APPROVED: "La versione è già approvata",
   DOCUMENT_NO_CHANGES: "La correzione non contiene modifiche",
   METADATA_INVALID: "Metadati documento non validi",
+  CTE_OCR_PROVIDER_NOT_CONFIGURED: "Provider Anthropic non configurato",
+  ANTHROPIC_API_KEY_MISSING: "Configurazione Anthropic incompleta: chiave server mancante",
+  ANTHROPIC_MODEL_MISSING: "Configurazione Anthropic incompleta: modello server mancante",
+  ANTHROPIC_CTE_MAX_TOKENS_INVALID: "Configurazione server Anthropic non valida",
+  CTE_OCR_PROVIDER_AUTH_FAILED: "Autenticazione del provider Anthropic non riuscita",
+  CTE_OCR_PROVIDER_RATE_LIMITED: "Provider Anthropic temporaneamente limitato",
+  CTE_OCR_PROVIDER_TIMEOUT: "Il provider Anthropic non ha risposto in tempo",
+  CTE_OCR_PROVIDER_FAILED: "Elaborazione Anthropic non disponibile",
+  CTE_OCR_RESPONSE_INVALID: "Risposta Anthropic non valida",
+  CTE_OCR_TOOL_USE_MISSING: "Estrazione Anthropic mancante",
+  CTE_OCR_OUTPUT_TRUNCATED: "Risposta Anthropic troncata prima dell’estrazione completa",
+  CTE_OCR_PROVIDER_REFUSAL: "Il provider Anthropic ha rifiutato l’estrazione",
+  CTE_OCR_PROVIDER_RESPONSE_UNKNOWN: "Risposta Anthropic non riconosciuta",
+  CTE_OCR_NO_USABLE_EVIDENCE: "Nessuna evidenza estraibile sufficiente",
+  CTE_EXTRACTION_SCHEMA_INVALID: "Schema di estrazione non valido",
+  CTE_EXTRACTION_CONTRACT_INVALID: "Contratto estratto non valido",
+  CTE_VECTOR_FIELD_MIXED: "Campi EE/GAS incompatibili",
+  CTE_APPROVAL_BLOCKED: "Approvazione non disponibile: completare i campi obbligatori e la revisione",
   PROPOSAL_RESPONSE_INVALID: "Risposta proposta non valida",
   CALCULATION_RESPONSE_INVALID: "Risposta calcolo non valida",
   COMPARISON_RESPONSE_INVALID: "Risposta confronto non valida",
@@ -81,8 +99,8 @@ export async function requestJson<T>(path: string, init: RequestInit = {}, signa
   return body as T;
 }
 
-export async function requestForm<T>(path: string, form: FormData, signal?: AbortSignal): Promise<T> {
-  const response = await fetch(path, { method: "POST", body: form, signal, credentials: "same-origin" });
+export async function requestForm<T>(path: string, form: FormData, signal?: AbortSignal, headers: HeadersInit = {}): Promise<T> {
+  const response = await fetch(path, { method: "POST", body: form, signal, credentials: "same-origin", headers });
   const body: unknown = await response.json().catch(() => null);
   if (!response.ok) {
     const errorBody = typeof body === "object" && body !== null && "error" in body ? (body as { readonly error?: unknown }).error : body;

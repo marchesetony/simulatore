@@ -1,11 +1,32 @@
 import { randomUUID } from "node:crypto";
 import type { CteContract } from "../types";
+import type { CteApprovedSnapshot } from "../approved-snapshot";
 // @ts-expect-error Node's strip-only test runner requires the explicit extension.
 import { assertCalculationReadyFees, toCalculationReadyOffer } from "../calculation-ready.ts";
-import type { CteArchiveApproval, CteArchiveRecord, CteArchiveStatus, CteArchiveVersion, CorrectCteArchiveInput, CreateCteArchiveInput } from "./types";
+import type { CteArchiveApproval, CteArchiveRecord, CteArchiveStatus, CteArchiveVersion, CteCommercialStatus, CorrectCteArchiveInput, CreateCteArchiveInput } from "./types";
 import type { CteArchiveRepository } from "./types";
 // @ts-expect-error Node's strip-only test runner requires the explicit extension.
 import { assertApprovalReady, assertArchiveContract, assertTenantId, intervalsOverlap } from "./validation.ts";
+
+export interface PublicCteApprovedArchiveSummary {
+  readonly archiveId: string;
+  readonly vector: "EE" | "GAS";
+  readonly offerName: string;
+  readonly supplierName: string;
+  readonly validity: { readonly periodStart: string; readonly periodEnd: string };
+  readonly status: "APPROVED";
+  readonly commercialStatus: Exclude<CteCommercialStatus, "DELETED">;
+}
+
+export interface PublicCteApprovedArchiveDetail {
+  readonly archiveId: string;
+  readonly status: "APPROVED";
+  readonly commercialStatus: Exclude<CteCommercialStatus, "DELETED">;
+  readonly blockedAt: string | null;
+  readonly blockedBy: string | null;
+  readonly blockReason: string | null;
+  readonly contract: Record<string, unknown>;
+}
 
 const nowValue = (value?: string): string => {
   const result = value ?? new Date().toISOString();
@@ -38,6 +59,75 @@ function sortVersions(versions: readonly CteArchiveVersion[]): readonly CteArchi
 function currentApproved(record: CteArchiveRecord): CteArchiveVersion | null {
   const candidates = record.versions.filter((version) => version.status === "APPROVED");
   return [...candidates].sort((left, right) => right.versionNumber - left.versionNumber || right.versionId.localeCompare(left.versionId))[0] ?? null;
+}
+
+function approvedVersionForPublic(record: CteArchiveRecord): CteArchiveVersion | null {
+  if (!record.currentApprovedVersionId) return null;
+  const version = record.versions.find((candidate) => candidate.versionId === record.currentApprovedVersionId) ?? null;
+  return version?.status === "APPROVED" && version.contract.approval.status === "APPROVED" ? version : null;
+}
+
+export function commercialStatusOf(record: CteArchiveRecord): CteCommercialStatus { return record.commercialStatus ?? "ACTIVE"; }
+function approvedLifecycleVersion(record: CteArchiveRecord): CteArchiveVersion {
+  const version = approvedVersionForPublic(record);
+  if (!version) throw new Error("CTE_NOT_APPROVED");
+  return version;
+}
+function commercialReason(value: string): string {
+  if (typeof value !== "string" || !value.trim()) throw new Error("COMMERCIAL_REASON_REQUIRED");
+  return value.trim();
+}
+
+function publicPrice(value: { readonly amount: number; readonly currency: "EUR"; readonly unit: string; readonly taxTreatment: string }): Record<string, unknown> {
+  return { amount: value.amount, currency: value.currency, unit: value.unit, taxTreatment: value.taxTreatment };
+}
+
+function publicFee(value: { readonly label: string; readonly amount: number; readonly currency: "EUR"; readonly unit: string; readonly taxTreatment: string }): Record<string, unknown> {
+  return { label: value.label, ...publicPrice(value) };
+}
+
+function publicDeclared(value: CteContract["commercialTerms"]["imbalance"]): Record<string, unknown> {
+  return value.status === "DECLARED" ? { status: value.status, component: publicFee(value.component) } : { status: value.status, reason: value.reason };
+}
+
+function publicContract(contract: CteContract, snapshot?: CteApprovedSnapshot): Record<string, unknown> {
+  const pricing = contract.pricing.mode === "INDEXED"
+    ? { mode: contract.pricing.mode, reference: contract.pricing.reference, spread: publicPrice(contract.pricing.spread) }
+    : { mode: contract.pricing.mode, reference: contract.pricing.reference, fixedPrice: publicPrice(contract.pricing.fixedPrice), spread: publicDeclared(contract.pricing.spread) };
+  return {
+    vector: contract.vector,
+    supplier: { name: contract.supplier.name, supplierId: contract.supplier.supplierId },
+    offer: { name: contract.offer.name, code: contract.offer.code },
+    validity: { periodStart: contract.validity.periodStart, periodEnd: contract.validity.periodEnd },
+    expiry: contract.expiry,
+    currency: contract.currency,
+    taxTreatment: contract.taxTreatment,
+    eligibility: contract.vector === "EE" ? { customerTypes: contract.eligibility.customerTypes, voltageLevels: contract.eligibility.voltageLevels } : { customerTypes: contract.eligibility.customerTypes },
+    pricing,
+    commercialTerms: {
+      fixedFees: contract.commercialTerms.fixedFees.map(publicFee),
+      variableFees: contract.commercialTerms.variableFees.map(publicFee),
+      imbalance: publicDeclared(contract.commercialTerms.imbalance),
+      oneOffFees: contract.commercialTerms.oneOffFees.map(publicFee),
+      commercialDiscounts: contract.commercialTerms.commercialDiscounts.map(publicFee),
+    },
+    ...(snapshot ? { reviewFields: snapshot.reviewFields, notFoundFields: snapshot.notFoundFields, sources: snapshot.sources, approvedAt: snapshot.approvedAt, approvedVersion: snapshot.approvedVersion } : {}),
+    ...(snapshot ? { documentType: snapshot.documentType, documentSize: snapshot.documentSize } : {}),
+  };
+}
+
+export function toPublicCteApprovedArchiveSummary(record: CteArchiveRecord): PublicCteApprovedArchiveSummary | null {
+  const approved = approvedVersionForPublic(record);
+  if (!approved) return null;
+  const commercialStatus = commercialStatusOf(record);
+  if (commercialStatus === "DELETED") return null;
+  return { archiveId: record.archiveId, vector: record.vector, offerName: approved.contract.offer.name, supplierName: approved.contract.supplier.name, validity: approved.contract.validity, status: "APPROVED", commercialStatus };
+}
+
+export function toPublicCteApprovedArchiveDetail(record: CteArchiveRecord, snapshot?: CteApprovedSnapshot): PublicCteApprovedArchiveDetail | null {
+  const approved = approvedVersionForPublic(record);
+  const commercialStatus = commercialStatusOf(record);
+  return approved && commercialStatus !== "DELETED" ? { archiveId: record.archiveId, status: "APPROVED", commercialStatus, blockedAt: record.blockedAt ?? null, blockedBy: record.blockedBy ?? null, blockReason: record.blockReason ?? null, contract: publicContract(approved.contract, snapshot) } : null;
 }
 
 function sameOffer(left: CteContract, right: CteContract): boolean {
@@ -78,6 +168,7 @@ export async function createCteArchive(repository: CteArchiveRepository, input: 
     currentApprovedVersionId: version.status === "APPROVED" ? versionId : null,
     versions: [version], approvals: version.status === "APPROVED" ? [approvalFor(version, actor, now, "APPROVED", null)] : [],
     history: [event({ archiveId, tenantId: input.tenantId, cteId: input.contract.cteId, vector: input.contract.vector, createdAt: now, updatedAt: now, currentWorkingVersionId: versionId, currentApprovedVersionId: version.status === "APPROVED" ? versionId : null, versions: [version], approvals: [], history: [] }, "CREATED", version, now, actor, null, null)],
+    commercialStatus: "ACTIVE", blockedAt: null, blockedBy: null, blockReason: null, reactivatedAt: null, reactivatedBy: null, deletedAt: null, deletedBy: null,
   };
   await repository.save(record);
   return structuredClone(record);
@@ -145,6 +236,51 @@ export async function approveCteArchive(repository: CteArchiveRepository, tenant
   if (overlap) throw new Error("CTE_APPROVED_VALIDITY_OVERLAP");
   const approval = approvalFor(approvedVersion, actor, when, "APPROVED", record.approvals.at(-1)?.approvalId ?? null);
   const next: CteArchiveRecord = { ...record, updatedAt: when, currentApprovedVersionId: approvedVersion.versionId, versions: sortVersions(versions), approvals: [...record.approvals, approval], history: [...record.history, ...(previous ? [event(record, "EXPIRED", previous, when, actor, "SUPERSEDED_BY_APPROVAL", null)] : []), event(record, "APPROVED", approvedVersion, when, actor, null, source.supersedesVersionId)] };
+  await repository.save(next);
+  return structuredClone(next);
+}
+
+export async function blockCteArchive(repository: CteArchiveRepository, tenantId: string, archiveId: string, actorValueInput: string, reason: string, at?: string): Promise<CteArchiveRecord> {
+  assertTenantId(tenantId);
+  const record = await repository.get(tenantId, archiveId);
+  if (!record) throw new Error("CTE_ARCHIVE_NOT_FOUND");
+  const currentStatus = commercialStatusOf(record);
+  if (currentStatus === "DELETED") throw new Error("CTE_COMMERCIAL_DELETED_IMMUTABLE");
+  if (currentStatus === "BLOCKED") return structuredClone(record);
+  const approved = approvedLifecycleVersion(record);
+  const actor = actorValue(actorValueInput);
+  const blockReason = commercialReason(reason);
+  const when = nowValue(at);
+  const next: CteArchiveRecord = { ...record, updatedAt: when, commercialStatus: "BLOCKED", blockedAt: when, blockedBy: actor, blockReason, history: [...record.history, event(record, "COMMERCIAL_BLOCKED", approved, when, actor, blockReason, null)] };
+  await repository.save(next);
+  return structuredClone(next);
+}
+
+export async function reactivateCteArchive(repository: CteArchiveRepository, tenantId: string, archiveId: string, actorValueInput: string, at?: string): Promise<CteArchiveRecord> {
+  assertTenantId(tenantId);
+  const record = await repository.get(tenantId, archiveId);
+  if (!record) throw new Error("CTE_ARCHIVE_NOT_FOUND");
+  const currentStatus = commercialStatusOf(record);
+  if (currentStatus === "DELETED") throw new Error("CTE_COMMERCIAL_DELETED_IMMUTABLE");
+  if (currentStatus === "ACTIVE") return structuredClone(record);
+  const approved = approvedLifecycleVersion(record);
+  const actor = actorValue(actorValueInput);
+  const when = nowValue(at);
+  const next: CteArchiveRecord = { ...record, updatedAt: when, commercialStatus: "ACTIVE", reactivatedAt: when, reactivatedBy: actor, history: [...record.history, event(record, "COMMERCIAL_REACTIVATED", approved, when, actor, record.blockReason ?? null, null)] };
+  await repository.save(next);
+  return structuredClone(next);
+}
+
+export async function deleteCteArchive(repository: CteArchiveRepository, tenantId: string, archiveId: string, actorValueInput: string, at?: string): Promise<CteArchiveRecord> {
+  assertTenantId(tenantId);
+  const record = await repository.get(tenantId, archiveId);
+  if (!record) throw new Error("CTE_ARCHIVE_NOT_FOUND");
+  const currentStatus = commercialStatusOf(record);
+  if (currentStatus === "DELETED") return structuredClone(record);
+  const approved = approvedLifecycleVersion(record);
+  const actor = actorValue(actorValueInput);
+  const when = nowValue(at);
+  const next: CteArchiveRecord = { ...record, updatedAt: when, commercialStatus: "DELETED", deletedAt: when, deletedBy: actor, history: [...record.history, event(record, "COMMERCIAL_DELETED", approved, when, actor, record.blockReason ?? null, null)] };
   await repository.save(next);
   return structuredClone(next);
 }
