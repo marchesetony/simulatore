@@ -74,7 +74,7 @@ export interface DatePeriod {
 }
 
 export interface CustomerIdentity {
-  readonly customerId: string;
+  readonly customerId?: string;
   readonly customerType: CustomerType;
   readonly name: DeclaredText;
   readonly taxIdentifiers: readonly TaxIdentifier[];
@@ -86,8 +86,8 @@ export type TaxIdentifier = {
 };
 
 export interface MeterAndSupplyIdentifiers {
-  readonly supplyId: string;
-  readonly meterId: string;
+  readonly supplyId?: string;
+  readonly meterId?: string;
 }
 
 export type VoltageLevel = "LV" | "MV" | "HV" | "EHV";
@@ -184,11 +184,11 @@ export interface BillContractBase extends VersionMetadata {
   readonly recordType: "BILL";
   readonly vector: EnergyVector;
   readonly billId: string;
-  readonly customerId: string;
+  readonly customerId?: string;
   readonly customer?: CustomerIdentity;
-  readonly supplyId: string;
+  readonly supplyId?: string;
   readonly billingPeriod: DatePeriod;
-  readonly consumptionBasis: ConsumptionBasis;
+  readonly consumptionBasis?: ConsumptionBasis;
   readonly currentSupplier: string;
   readonly offer: SupplierOfferReference;
   readonly regulatedCharges: readonly RegulatedCharge[];

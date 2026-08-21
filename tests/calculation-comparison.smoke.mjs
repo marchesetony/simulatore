@@ -101,6 +101,13 @@ try {
   assert.throws(() => parseSimulationRequest({ ...eeRequest(), vector: "GAS", voltageLevel: undefined, consumption: { basis: "PERIOD", unit: "KWH", f1: 1, f2: 0, f3: 0 } }, tenant), /UNIT_MISMATCH|CONSUMPTION_INVALID/);
   await assert.rejects(() => calculateApprovedOffer(cteRepository, marketRepository, eeRequest(), indexedGas.archiveId), /VECTOR_MISMATCH/);
   await assert.rejects(() => calculateApprovedOffer(cteRepository, new LocalMarketArchiveRepository(path.join(root, "missing-market")), indexedEeRequest, indexedEe.archiveId), /MARKET_DATA_MISSING/);
+  const incompleteMarketRepository = new LocalMarketArchiveRepository(path.join(root, "incomplete-market"));
+  const incompleteMarket = pun("2026-03", "pun-incomplete");
+  delete incompleteMarket.f3;
+  await addMarket(incompleteMarketRepository, incompleteMarket);
+  const incompleteRequest = eeRequest({ supplyPeriod: { periodStart: "2026-03-01", periodEnd: "2026-04-01" } });
+  await assert.rejects(() => calculateApprovedOffer(cteRepository, incompleteMarketRepository, incompleteRequest, indexedEe.archiveId), /MARKET_VALUES_MISSING/);
+  console.log("CALCULATION_MISSING_BANDS_FAIL_CLOSED=PASS");
   assert.throws(() => gasRequest({ consumption: { basis: "PERIOD", unit: "SMC", smc: 100, correctionCoefficient: { required: true } } }), /CORRECTION_COEFFICIENT_REQUIRED/);
   assert.throws(() => eeRequest({ consumption: { basis: "PERIOD", unit: "KWH", f1: 0.1, f2: 0.2, f3: 0.3, monthlyProfile: [{ month: "2026-01", f1: 0.1, f2: 0.2, f3: 0.2 }] } }), /PROFILE_TOTAL_MISMATCH/);
 

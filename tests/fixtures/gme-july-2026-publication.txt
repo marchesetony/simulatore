@@ -1,0 +1,6 @@
+Prezzo medio per fasce (EUR/MWh)
+F1 F2 F3
+Luglio 2026
+(253 ore) 154,20
+(179 ore) 169,38
+(312 ore) 152,26

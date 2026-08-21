@@ -13,6 +13,7 @@ import {
   extractBillFields,
   ingestBill,
   parseBillOperation,
+  retryBill,
   reviewStateFor,
   toPublicDocument,
   validatePdf,
@@ -22,7 +23,7 @@ const pdf = new Uint8Array(Buffer.from("%PDF-1.7\n(Supplier: Aurora) Tj (POD: IT
 const fullText = "Supplier: Aurora; POD: IT001; Customer: Cliente Demo; Periodo: Jan 2027; Consumo annuo: 100; Consumo fatturato: 10; Totale da pagare: 20";
 const auditEvents = [];
 const audit = { async record(event) { auditEvents.push(event); } };
-const testBaseTime = Date.now();
+const testBaseTime = Date.now() + 60_000;
 const testTime = (offsetMs) => new Date(testBaseTime + offsetMs).toISOString();
 
 function createExtractor(text = fullText) {
@@ -539,10 +540,54 @@ try {
     const legacyBefore = await readFile(legacyFile, "utf8");
     const legacyRepo = new LocalBillRepository(legacySandbox.root);
     const legacyDocument = await legacyRepo.get("tenant_alpha", "legacy-doc");
+    const legacyList = await legacyRepo.list("tenant_alpha");
     assert.equal(legacyDocument.currentApprovedVersionId, null);
     assert.equal(legacyDocument.versions.length, 1);
+    assert.equal(legacyList.length, 1);
+    assert.equal(legacyDocument.provenance.length, 1);
+    assert.equal(legacyDocument.provenance[0].type, "INGESTION");
+    assert.equal(legacyDocument.provenance[0].origin, "INGESTION");
+    assert.equal(legacyDocument.provenance[0].versionNumber, 1);
+    assert.equal(legacyDocument.provenance[0].resultVersionId, legacyDocument.versions[0].versionId);
+    const legacyEventId = legacyDocument.provenance[0].eventId;
+    const legacyReadAgain = await legacyRepo.get("tenant_alpha", "legacy-doc");
+    assert.equal(legacyReadAgain.provenance.length, 1);
+    assert.equal(legacyReadAgain.provenance[0].eventId, legacyEventId);
     assert.equal(toPublicDocument(legacyDocument).reviewState, "WORKING");
     assert.equal(await readFile(legacyFile, "utf8"), legacyBefore);
+
+    const fakeProvider = { async extract() { return { text: fullText, pages: 1 }; } };
+    const retried = await retryBill({
+      document: legacyDocument,
+      tenantId: "tenant_alpha",
+      storage: { async read() { return pdf; } },
+      repository: legacyRepo,
+      audit,
+      extractor: fakeProvider,
+    });
+    assert.equal(retried.versions.length, 2);
+    assert.equal(retried.provenance.length, 2);
+    assert.equal(new Set(retried.provenance.map((event) => event.eventId)).size, 2);
+    assert.equal(retried.provenance.filter((event) => event.type === "INGESTION").length, 2);
+    assert.equal(retried.provenance.filter((event) => event.versionNumber === 1)[0].eventId, legacyEventId);
+    const retryEvent = retried.provenance.find((event) => event.resultVersionId === retried.versions[1].versionId);
+    assert.equal(retryEvent.type, "INGESTION");
+    assert.equal(retryEvent.sourceVersionId, null);
+
+    const rereadAfterRetry = await legacyRepo.get("tenant_alpha", "legacy-doc");
+    assert.equal(rereadAfterRetry.versions.length, 2);
+    assert.equal(rereadAfterRetry.provenance.length, 2);
+    assert.equal(new Set(rereadAfterRetry.provenance.map((event) => event.eventId)).size, 2);
+
+    await legacyRepo.save(rereadAfterRetry);
+    const rereadAfterSecondSave = await legacyRepo.get("tenant_alpha", "legacy-doc");
+    assert.equal(rereadAfterSecondSave.versions.length, 2);
+    assert.equal(rereadAfterSecondSave.provenance.length, 2);
+    assert.equal(new Set(rereadAfterSecondSave.provenance.map((event) => event.eventId)).size, 2);
+    const persistedLegacy = JSON.parse(await readFile(legacyFile, "utf8"));
+    assert.equal(persistedLegacy.schemaVersion, 1);
+    assert.equal(persistedLegacy.documents[0].versions.length, 2);
+    assert.equal(persistedLegacy.documents[0].provenance.length, 2);
   } finally {
     await legacySandbox.cleanup();
   }
@@ -570,6 +615,9 @@ try {
   const multiField = await new LocalBillRepository(multiFieldSandbox.root).get("tenant_alpha", "doc-1");
   assert.equal(multiField.versions.length, 2);
   assert.equal(multiField.provenance.length, 3);
+  const multiFieldAgain = await new LocalBillRepository(multiFieldSandbox.root).get("tenant_alpha", "doc-1");
+  assert.deepEqual(multiFieldAgain, multiField);
+  assert.equal(multiFieldAgain.provenance.length, 3);
 } finally {
   await multiFieldSandbox.cleanup();
 }

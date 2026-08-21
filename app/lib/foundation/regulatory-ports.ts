@@ -7,6 +7,7 @@ import type {
   RegulatoryEntityType,
   RegulatoryRuleVersion,
   ReviewDecision,
+  RegulatoryValueRecord,
   TariffBandCalendar,
   VersionStateRecord,
 } from "./regulatory-types";
@@ -58,7 +59,12 @@ export interface VersionStatePort {
   getVersionState(tenantId: string, subjectType: RegulatoryEntityType, recordId: string): Promise<VersionStateRecord | null>;
 }
 
-export interface RegulatoryRepository extends OfficialSourceRegistry, RegulatoryDocumentIngestor, MarketDataIngestor, ManualApprovalPort, EvidenceReferenceStore, VersionStatePort {
+export interface RegulatoryValueStore {
+  saveRegulatoryValue(value: RegulatoryValueRecord): Promise<"CREATED" | "REUSED" | "CONFLICT">;
+  getRegulatoryValues(tenantId: string, componentCode?: RegulatoryValueRecord["componentCode"]): Promise<readonly RegulatoryValueRecord[]>;
+}
+
+export interface RegulatoryRepository extends OfficialSourceRegistry, RegulatoryDocumentIngestor, MarketDataIngestor, ManualApprovalPort, EvidenceReferenceStore, VersionStatePort, RegulatoryValueStore {
   getDocument(tenantId: string, id: string): Promise<RegulatoryDocument | null>;
   getCurrentSource(tenantId: string, id: string): Promise<OfficialSource | null>;
   getDocumentVersion(tenantId: string, id: string): Promise<RegulatoryDocument | null>;

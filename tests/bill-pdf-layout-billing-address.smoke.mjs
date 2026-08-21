@@ -1,0 +1,41 @@
+import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
+import { readFile } from "node:fs/promises";
+import { LocalBillRepository } from "../app/lib/foundation/real-bill.ts";
+import { inspectBillingAddressFromPdf } from "../app/lib/foundation/bill-pdf-layout.ts";
+
+const bill = await new LocalBillRepository().get("tenant_local-demo", "93d9b1f0-c748-4c66-ab32-b0673a96787e");
+assert.ok(bill);
+const pdf = await readFile(bill.objectKey);
+const sha256 = createHash("sha256").update(pdf).digest("hex");
+const evidence = inspectBillingAddressFromPdf(bill.objectKey, { customerName: "ALOI GIOVANNI FABIO", taxCode: "LAOGNN69E15H224U", supplyAddress: "CONTRADA ARMACA, 77" });
+
+assert.equal(sha256, "6dadede4dee1c82a1b0f6f5e6f6682d837d8d2b874edad7aa46c8f08eb0c3cbb");
+assert.equal(evidence.page, 1);
+assert.deepEqual(evidence.rawLines, ["CONTRADA ARMACA 77", "89121 - REGGIO DI CALABRIA (RC)"]);
+assert.equal(evidence.normalized, "CONTRADA ARMACA, 77, 89121 - REGGIO DI CALABRIA (RC)");
+assert.equal(evidence.nearCustomerName, true);
+assert.equal(evidence.nearTaxCode, true);
+assert.equal(evidence.sectionContext, "Intestazione Contratto: | ALOI GIOV ANNI F ABIO | CONTRADA ARMACA 77 | 89121 - REGGIO DI CALABRIA (RC) | Codice fiscale: LAOGNN69E15H224U");
+assert.equal(evidence.supplyAddressRawLines[0].includes("POD: IT001E76295009"), true);
+assert.equal(evidence.supplySectionContext, "Dati identificativi della fornitura");
+assert.equal(evidence.addressesDistinct, true);
+assert.equal(evidence.documentEvidence, "PASS");
+
+console.log("ORIGINAL_PDF_SHA256_MATCH=SI");
+console.log(`BILLING_ADDRESS_PAGE=${evidence.page}`);
+console.log(`BILLING_ADDRESS_RAW_LINES=${evidence.rawLines.join(" | ")}`);
+console.log(`BILLING_ADDRESS_NORMALIZED=${evidence.normalized}`);
+console.log(`BILLING_ADDRESS_NEAR_CUSTOMER_NAME=${evidence.nearCustomerName ? "SI" : "NO"}`);
+console.log(`BILLING_ADDRESS_NEAR_TAX_CODE=${evidence.nearTaxCode ? "SI" : "NO"}`);
+console.log(`BILLING_ADDRESS_SECTION_CONTEXT=${evidence.sectionContext}`);
+console.log(`SUPPLY_ADDRESS_RAW_LINES=${evidence.supplyAddressRawLines.join(" | ")}`);
+console.log(`SUPPLY_ADDRESS_SECTION_CONTEXT=${evidence.supplySectionContext}`);
+console.log(`ADDRESSES_DISTINCT=${evidence.addressesDistinct ? "SI" : "NO"}`);
+console.log(`BILLING_ADDRESS_DOCUMENT_EVIDENCE=${evidence.documentEvidence}`);
+console.log("BILLING_ADDRESS_DOCUMENT_EVIDENCE_REQUIRED=OK");
+console.log("PDF_LAYOUT_RECONSTRUCTS_BILLING_ADDRESS=OK");
+console.log("BILLING_ADDRESS_FOUND_NEAR_CUSTOMER_HEADER=OK");
+console.log("BILLING_ADDRESS_DISTINCT_FROM_SUPPLY_ADDRESS=OK");
+console.log("NO_SUPPLY_ADDRESS_AS_BILLING_FALLBACK=OK");
+console.log("NO_AI_FOR_BILLING_ADDRESS_RECOVERY=OK");

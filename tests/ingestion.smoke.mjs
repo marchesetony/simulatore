@@ -37,6 +37,20 @@ assert.equal(classifyBillText(gasText).vector, "GAS");
 assert.equal(classifyBillText("Supplier: only").vector, "UNKNOWN");
 assert.equal(classifyBillText("EE bill; PDR: 12345678901234; GAS; POD: IT001E12345678").vector, "UNKNOWN");
 
+const realEeAnonymizedText = [
+  "Luce; Fornitura di Energia elettrica; POD IT001E12345678; 241,73 kWh; Potenza impegnata 3,0 kW; F1 F2 F3; energia attiva",
+  "ELIOS LUCE E GAS; energia elettrica/gas naturale; Gas naturale 68,38; bonus sociali elettrico e gas",
+].join("\n");
+assert.equal(classifyBillText(realEeAnonymizedText).vector, "EE");
+assert.equal(classifyBillText("POD IT001E12345678; 241,73 kWh; GAS").vector, "EE");
+assert.equal(classifyBillText("P O D : I T 0 0 1 E 1 2 3 4 5 6 7 8; 241,73 k Wh").vector, "EE");
+assert.equal(classifyBillText("P D R : 1 2 3 4 5 6 7 8 9 0 1 2 3 4; 75 S Mc").vector, "GAS");
+assert.equal(classifyBillText("PDR 12345678901234; 75 Smc; energia elettrica/gas naturale").vector, "GAS");
+assert.equal(classifyBillText("POD IT001E12345678; PDR 12345678901234").vector, "UNKNOWN");
+assert.equal(classifyBillText("energia elettrica e gas").vector, "UNKNOWN");
+assert.equal(classifyBillText("fornitura energia elettrica; 241,73 kWh").vector, "EE");
+assert.equal(classifyBillText("fornitura di gas naturale; 75 Smc").vector, "GAS");
+
 const mappedEe = mapTextToEnergyBill({ text: eeText, pages: 1, tenantId: "tenant_alpha", billId: "bill-ee", versionId: "version-ee" });
 assert.equal(mappedEe.contract.vector, "EE");
 assert.equal(mappedEe.contract.consumption.total.value, 175);
@@ -94,8 +108,8 @@ try {
     maxBytes: 100_000,
     documentsRoot: root,
   });
-  assert.equal(scanned.status, "OCR_PROVIDER_REQUIRED");
-  assert.equal(scanned.errorCode, "OCR_PROVIDER_REQUIRED");
+  assert.equal(scanned.status, "FAILED");
+  assert.equal(scanned.errorCode, "BILL_OCR_PROVIDER_NOT_CONFIGURED");
   assert.equal(scanned.contract, null);
 
   const scannedWithInjectedProvider = await ingestEnergyBill({

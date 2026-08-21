@@ -1,7 +1,8 @@
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import { getConfiguredCteOcrProvider, normalizeProviderExtraction } from "../app/lib/cte/ingestion.ts";
-import { createAnthropicBillOcrProvider, ANTHROPIC_BILL_TOOL_NAME, ANTHROPIC_CTE_SYSTEM_PROMPT, ANTHROPIC_TOOL_NAME } from "../app/lib/cte/anthropic.ts";
+import { createAnthropicBillOcrProvider, ANTHROPIC_BILL_DEFAULT_TIMEOUT_MS, ANTHROPIC_BILL_MAX_TIMEOUT_MS, ANTHROPIC_BILL_MIN_TIMEOUT_MS, ANTHROPIC_BILL_TOOL_NAME, ANTHROPIC_CTE_SYSTEM_PROMPT, ANTHROPIC_TOOL_NAME } from "../app/lib/cte/anthropic.ts";
+import { billOcrErrorCode, billOcrPublicError } from "../app/lib/ingestion/errors.ts";
 
 const env = { CTE_OCR_PROVIDER: "anthropic", ANTHROPIC_API_KEY: "unit-test-key-only", ANTHROPIC_MODEL: "unit-test-model", ANTHROPIC_BASE_URL: "https://api.anthropic.com" };
 const pdf = new Uint8Array(Buffer.from("%PDF-1.7 untrusted document instructions"));
@@ -12,7 +13,12 @@ const validInput = { schemaVersion: 1, documentType: "CTE", vector: "EE", fields
 let lastRequest;
 const mockedFetch = async (_url, init) => { lastRequest = { url: String(_url), init }; return Response.json({ stop_reason: "tool_use", usage: { input_tokens: 123, output_tokens: 456 }, content: [{ type: "text", text: "prelude ignored" }, { type: "tool_use", name: ANTHROPIC_TOOL_NAME, input: validInput }] }); };
 const provider = getConfiguredCteOcrProvider(env, mockedFetch);
+let observedCteTimeout;
+const originalCteSetTimeout = globalThis.setTimeout;
+globalThis.setTimeout = (callback, delay, ...args) => { observedCteTimeout = delay; return originalCteSetTimeout(callback, delay, ...args); };
 const extracted = await provider.extract({ bytes: pdf, contentType: "application/pdf", fileName: "contract.pdf" });
+globalThis.setTimeout = originalCteSetTimeout;
+assert.equal(observedCteTimeout, 60000);
 const { providerDiagnostics, ...extractedPayload } = extracted;
 assert.deepEqual(extractedPayload, validInput);
 assert.deepEqual(providerDiagnostics, { model: "unit-test-model", httpStatus: 200, stopReason: "tool_use", inputTokens: 123, outputTokens: 456, contentBlockTypes: ["text", "tool_use"], toolName: ANTHROPIC_TOOL_NAME, internalErrorCode: null });
@@ -47,11 +53,85 @@ assert.equal(pngBody.messages[0].content[0].type, "image");
 assert.equal(pngBody.messages[0].content[0].source.media_type, "image/png");
 
 const billProvider = createAnthropicBillOcrProvider(env, async (_url, init) => { lastRequest = { url: String(_url), init }; return Response.json({ stop_reason: "tool_use", content: [{ type: "tool_use", name: ANTHROPIC_BILL_TOOL_NAME, input: { text: "supplier: evidence", pages: 1 } }] }); });
+const originalSetTimeout = globalThis.setTimeout;
+let observedBillTimeout;
+globalThis.setTimeout = (callback, delay, ...args) => { observedBillTimeout = delay; return originalSetTimeout(callback, delay, ...args); };
 const billResult = await billProvider.extract({ bytes: pdf, contentType: "application/pdf" });
+globalThis.setTimeout = originalSetTimeout;
 assert.deepEqual(billResult, { text: "supplier: evidence", pages: 1 });
+assert.equal(ANTHROPIC_BILL_DEFAULT_TIMEOUT_MS, 300000);
+assert.equal(observedBillTimeout, 300000);
 const billBody = JSON.parse(lastRequest.init.body);
+assert.equal(billBody.max_tokens, 65536);
 assert.equal(billBody.tool_choice.name, ANTHROPIC_BILL_TOOL_NAME);
+assert.equal(billBody.tools[0].strict, true);
+assert.deepEqual(Object.keys(billBody.tools[0].input_schema.properties.text), ["type"]);
+assert.deepEqual(Object.keys(billBody.tools[0].input_schema.properties.pages), ["type"]);
+assert.equal(billBody.tools[0].input_schema.additionalProperties, false);
+assert.deepEqual(billBody.tools[0].input_schema.required, ["text", "pages"]);
 assert.equal(billBody.messages[0].content[0].type, "document");
+
+const billResponseProvider = (input, stopReason = "tool_use") => createAnthropicBillOcrProvider(env, async () => Response.json({ stop_reason: stopReason, content: [{ type: "tool_use", name: ANTHROPIC_BILL_TOOL_NAME, input }] }));
+for (const input of [
+  { text: "", pages: 1 },
+  { text: "x".repeat(300001), pages: 1 },
+  { text: "x", pages: 0 },
+  { text: "x", pages: 10001 },
+  { text: "x", pages: 1.5 },
+]) {
+  await assert.rejects(() => billResponseProvider(input).extract({ bytes: pdf, contentType: "application/pdf" }), /BILL_OCR_RESPONSE_INVALID/);
+}
+await assert.doesNotReject(() => billResponseProvider({ text: "valid evidence", pages: 10000 }).extract({ bytes: pdf, contentType: "application/pdf" }));
+await assert.rejects(() => billResponseProvider({ text: "valid evidence", pages: 1 }, "max_tokens").extract({ bytes: pdf, contentType: "application/pdf" }), /BILL_OCR_OUTPUT_TRUNCATED/);
+
+const billOverrideProvider = createAnthropicBillOcrProvider({ ...env, ANTHROPIC_BILL_MAX_TOKENS: "8192" }, async (_url, init) => { lastRequest = { url: String(_url), init }; return Response.json({ stop_reason: "tool_use", content: [{ type: "tool_use", name: ANTHROPIC_BILL_TOOL_NAME, input: { text: "supplier: evidence", pages: 1 } }] }); });
+await billOverrideProvider.extract({ bytes: pdf, contentType: "application/pdf" });
+assert.equal(JSON.parse(lastRequest.init.body).max_tokens, 8192);
+let observedConfiguredBillTimeout;
+const configuredBillProvider = createAnthropicBillOcrProvider({ ...env, ANTHROPIC_BILL_TIMEOUT_MS: "180000" }, async (_url, init) => { lastRequest = { url: String(_url), init }; return Response.json({ stop_reason: "tool_use", content: [{ type: "tool_use", name: ANTHROPIC_BILL_TOOL_NAME, input: { text: "supplier: evidence", pages: 1 } }] }); });
+const originalConfiguredSetTimeout = globalThis.setTimeout;
+globalThis.setTimeout = (callback, delay, ...args) => { observedConfiguredBillTimeout = delay; return originalConfiguredSetTimeout(callback, delay, ...args); };
+await configuredBillProvider.extract({ bytes: pdf, contentType: "application/pdf" });
+globalThis.setTimeout = originalConfiguredSetTimeout;
+assert.equal(observedConfiguredBillTimeout, 180000);
+assert.equal(ANTHROPIC_BILL_MIN_TIMEOUT_MS, 60000);
+assert.equal(ANTHROPIC_BILL_MAX_TIMEOUT_MS, 600000);
+for (const value of ["59999", "600001", "not-a-number", "180000.5"]) {
+  assert.throws(() => createAnthropicBillOcrProvider({ ...env, ANTHROPIC_BILL_TIMEOUT_MS: value }, mockedFetch), /BILL_OCR_PROVIDER_CONFIGURATION_INVALID/);
+}
+for (const value of ["8191", "128001", "not-a-number", "8192.5", ""]) {
+  assert.throws(() => createAnthropicBillOcrProvider({ ...env, ANTHROPIC_BILL_MAX_TOKENS: value }, mockedFetch), /BILL_OCR_PROVIDER_CONFIGURATION_INVALID/);
+}
+assert.equal(billOcrErrorCode(new Error("ANTHROPIC_BILL_MAX_TOKENS_INVALID")), "BILL_OCR_PROVIDER_CONFIGURATION_INVALID");
+
+const cteWithBillOnlyOverride = getConfiguredCteOcrProvider({ ...env, ANTHROPIC_BILL_MAX_TOKENS: "8192" }, mockedFetch);
+await cteWithBillOnlyOverride.extract({ bytes: pdf, contentType: "application/pdf", fileName: "contract.pdf" });
+assert.equal(JSON.parse(lastRequest.init.body).max_tokens, 65536);
+
+const billErrorProvider = (bodyOrResponse, fetcher = async () => bodyOrResponse instanceof Response ? bodyOrResponse : Response.json(bodyOrResponse)) => createAnthropicBillOcrProvider(env, fetcher);
+const billValidTool = { type: "tool_use", name: ANTHROPIC_BILL_TOOL_NAME, input: { text: "x", pages: 1 } };
+const diagnosticLines = [];
+const previousConsoleError = console.error;
+console.error = (...args) => diagnosticLines.push(args.join(" "));
+try {
+  const responseForStatus = (status) => new Response(JSON.stringify({ type: "error", error: { type: "api_error", message: "raw upstream secret" }, request_id: "req_bill_fake" }), { status, headers: { "content-type": "application/json", "request-id": "req_bill_fake" } });
+  for (const [status, code] of [[400, "BILL_OCR_REQUEST_INVALID"], [401, "BILL_OCR_PROVIDER_AUTH_FAILED"], [402, "BILL_OCR_BILLING_ERROR"], [404, "BILL_OCR_NOT_FOUND"], [413, "BILL_OCR_REQUEST_TOO_LARGE"], [429, "BILL_OCR_PROVIDER_RATE_LIMITED"], [500, "BILL_OCR_PROVIDER_UNAVAILABLE"], [529, "BILL_OCR_PROVIDER_UNAVAILABLE"]]) {
+    await assert.rejects(() => billErrorProvider(responseForStatus(status)).extract({ bytes: pdf, contentType: "application/pdf" }), new RegExp(code));
+    assert.equal(diagnosticLines.at(-1).includes(`code=${code}`), true);
+    assert.doesNotMatch(diagnosticLines.at(-1), /raw upstream secret|unit-test-key-only/);
+  }
+  await assert.rejects(() => billErrorProvider({}, async () => { throw new Error("dns raw secret"); }).extract({ bytes: pdf, contentType: "application/pdf" }), /BILL_OCR_NETWORK_ERROR/);
+  await assert.rejects(() => billErrorProvider({}, async () => { throw new DOMException("timeout", "AbortError"); }).extract({ bytes: pdf, contentType: "application/pdf" }), /BILL_OCR_PROVIDER_TIMEOUT/);
+  await assert.rejects(() => billErrorProvider({ stop_reason: "max_tokens", content: [] }).extract({ bytes: pdf, contentType: "application/pdf" }), /BILL_OCR_OUTPUT_TRUNCATED/);
+  await assert.rejects(() => billErrorProvider({ stop_reason: "pause_turn", content: [] }).extract({ bytes: pdf, contentType: "application/pdf" }), /BILL_OCR_RESPONSE_INVALID/);
+  await assert.rejects(() => billErrorProvider({ stop_reason: "tool_use", content: [] }).extract({ bytes: pdf, contentType: "application/pdf" }), /BILL_OCR_RESPONSE_INVALID/);
+  await assert.rejects(() => billErrorProvider({ stop_reason: "tool_use", content: [billValidTool, billValidTool] }).extract({ bytes: pdf, contentType: "application/pdf" }), /BILL_OCR_RESPONSE_INVALID/);
+  const routeError = billOcrPublicError("BILL_OCR_BILLING_ERROR");
+  assert.deepEqual(routeError, { code: "BILL_OCR_BILLING_ERROR", message: "Il servizio di lettura non è disponibile per un problema di credito o fatturazione.", status: 502 });
+  assert.ok(diagnosticLines.length >= 13);
+} finally {
+  console.error = previousConsoleError;
+}
 
 const overrideEnv = { ...env, ANTHROPIC_CTE_MAX_TOKENS: "8192" };
 const overrideProvider = getConfiguredCteOcrProvider(overrideEnv, mockedFetch);
@@ -61,10 +141,10 @@ for (const value of ["8191", "128001", "not-a-number", ""]) {
   assert.throws(() => getConfiguredCteOcrProvider({ ...env, ANTHROPIC_CTE_MAX_TOKENS: value }, mockedFetch), /ANTHROPIC_CTE_MAX_TOKENS_INVALID/);
 }
 
-assert.throws(() => getConfiguredCteOcrProvider({}, mockedFetch), /CTE_OCR_PROVIDER_NOT_CONFIGURED/);
-assert.throws(() => getConfiguredCteOcrProvider({ CTE_OCR_PROVIDER: "anthropic", ANTHROPIC_MODEL: "unit-test-model" }, mockedFetch), /ANTHROPIC_API_KEY_MISSING/);
-assert.throws(() => getConfiguredCteOcrProvider({ CTE_OCR_PROVIDER: "anthropic", ANTHROPIC_API_KEY: "unit-test-key-only" }, mockedFetch), /ANTHROPIC_MODEL_MISSING/);
-assert.throws(() => getConfiguredCteOcrProvider({ CTE_OCR_PROVIDER: "anthropic", ANTHROPIC_API_KEY: "unit-test-key-only", ANTHROPIC_MODEL: "unit-test-model", ANTHROPIC_BASE_URL: "http://not-https" }, mockedFetch), /CTE_OCR_PROVIDER_NOT_CONFIGURED/);
+assert.throws(() => createAnthropicBillOcrProvider({}, mockedFetch), /BILL_OCR_PROVIDER_NOT_CONFIGURED/);
+assert.throws(() => createAnthropicBillOcrProvider({ CTE_OCR_PROVIDER: "anthropic", ANTHROPIC_MODEL: "unit-test-model" }, mockedFetch), /BILL_OCR_PROVIDER_CONFIGURATION_INVALID/);
+assert.throws(() => createAnthropicBillOcrProvider({ CTE_OCR_PROVIDER: "anthropic", ANTHROPIC_API_KEY: "unit-test-key-only" }, mockedFetch), /BILL_OCR_PROVIDER_CONFIGURATION_INVALID/);
+assert.throws(() => createAnthropicBillOcrProvider({ CTE_OCR_PROVIDER: "anthropic", ANTHROPIC_API_KEY: "unit-test-key-only", ANTHROPIC_MODEL: "unit-test-model", ANTHROPIC_BASE_URL: "http://not-https" }, mockedFetch), /BILL_OCR_PROVIDER_CONFIGURATION_INVALID/);
 
 const missingToolProvider = getConfiguredCteOcrProvider(env, async () => Response.json({ stop_reason: "end_turn", content: [{ type: "text", text: "ignore tool" }] }));
 await assert.rejects(() => missingToolProvider.extract({ bytes: pdf, contentType: "application/pdf", fileName: "contract.pdf" }), /CTE_OCR_TOOL_USE_MISSING/);

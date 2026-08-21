@@ -10,11 +10,14 @@ import type {
   RegulatoryEntityType,
   RegulatoryDocument,
   RegulatoryRuleVersion,
+  RegulatoryValueRecord,
   ReviewDecision,
   VersionStateRecord,
 } from "./regulatory-types";
 // @ts-expect-error Node's strip-only test runner requires the explicit extension.
 import { checksumFor, deterministicId, isRegulatoryEntityType, nextVersion as bumpVersion, overlaps, validateApprovedEntityProvenance, validateChecksum, validateEvidenceReference, validateInterval, validatePoints, validateReviewDecision, validateSeries, validateSource, validateTenantId } from "./regulatory-validation.ts";
+// @ts-expect-error Node's strip-only test runner requires the explicit extension.
+import { referenceDomainForComponent } from "./regulatory-domains.ts";
 
 type Store = {
   readonly revision: number;
@@ -26,6 +29,7 @@ type Store = {
   readonly evidence: EvidenceReference[];
   readonly reviews: ReviewDecision[];
   readonly versionStates: VersionStateRecord[];
+  readonly regulatoryValues: RegulatoryValueRecord[];
 };
 
 type EntityMap = {
@@ -38,7 +42,7 @@ type EntityMap = {
 
 type CollectionKey = "sources" | "documents" | "rules" | "series" | "points";
 
-const emptyStore = (): Store => ({ revision: 0, sources: [], documents: [], rules: [], series: [], points: [], evidence: [], reviews: [], versionStates: [] });
+const emptyStore = (): Store => ({ revision: 0, sources: [], documents: [], rules: [], series: [], points: [], evidence: [], reviews: [], versionStates: [], regulatoryValues: [] });
 
 const collectionKeyFor = (subjectType: RegulatoryEntityType): CollectionKey => {
   switch (subjectType) {
@@ -109,6 +113,7 @@ export class LocalRegulatoryRepository implements RegulatoryRepository {
       evidence: candidate.evidence as EvidenceReference[],
       reviews: candidate.reviews as ReviewDecision[],
       versionStates: candidate.versionStates as VersionStateRecord[],
+      regulatoryValues: Array.isArray(candidate.regulatoryValues) ? candidate.regulatoryValues as RegulatoryValueRecord[] : [],
     };
   }
 
@@ -129,7 +134,16 @@ export class LocalRegulatoryRepository implements RegulatoryRepository {
       const key = `${state.tenantId}|${state.subjectType}|${state.subjectId}`;
       stateGroups.set(key, (stateGroups.get(key) ?? 0) + (state.state === "CURRENT" ? 1 : 0));
     }
+    for (const value of store.regulatoryValues) this.validateRegulatoryValue(value);
     for (const currentCount of stateGroups.values()) if (currentCount !== 1) throw new Error("REPOSITORY_SCHEMA_INVALID");
+  }
+
+  private validateRegulatoryValue(value: RegulatoryValueRecord): void {
+    if (value.tenantId.trim() === "" || !["ARERA", "TERNA"].includes(value.authority) || value.vector !== "EE" || !value.id.trim() || !value.identityKey.trim() || !value.officialIdentifier.trim() || !/^https:\/\//.test(value.sourceReference) || !Number.isFinite(Date.parse(value.publicationDate)) || !Number.isFinite(Date.parse(value.retrievedAt)) || !Number.isFinite(Date.parse(value.effectiveFrom)) || (value.effectiveTo !== null && !Number.isFinite(Date.parse(value.effectiveTo))) || !Number.isFinite(value.originalValue) || !Number.isFinite(value.normalizedValue) || !value.originalUnit.trim() || !value.normalizedUnit.trim() || !value.applicationBasis.trim() || !/^[a-f0-9]{64}$/.test(value.sourceSha256) || !Array.isArray(value.conversionProvenance) || !value.checksum.trim()) throw new Error("REGULATORY_VALUE_INVALID");
+    const payload = { ...value } as Record<string, unknown>;
+    delete payload.checksum;
+    if (checksumFor(payload) !== value.checksum.toLowerCase()) throw new Error("CHECKSUM_MISMATCH");
+    if (value.effectiveTo !== null && Date.parse(value.effectiveFrom) >= Date.parse(value.effectiveTo)) throw new Error("EFFECTIVE_INTERVAL_INVALID");
   }
 
   private async lock(): Promise<() => Promise<void>> {
@@ -502,5 +516,22 @@ export class LocalRegulatoryRepository implements RegulatoryRepository {
   async getVersionState(tenantId: string, subjectType: RegulatoryEntityType, recordId: string): Promise<VersionStateRecord | null> {
     validateTenantId(tenantId);
     return this.stateForRecord(await this.read(), tenantId, subjectType, recordId);
+  }
+
+  async saveRegulatoryValue(value: RegulatoryValueRecord): Promise<"CREATED" | "REUSED" | "CONFLICT"> {
+    this.validateRegulatoryValue(value);
+    const store = await this.read();
+    const existing = store.regulatoryValues.find((item) => item.tenantId === value.tenantId && item.identityKey === value.identityKey);
+    if (existing) {
+      if (existing.normalizedValue !== value.normalizedValue || existing.normalizedUnit !== value.normalizedUnit || existing.originalValue !== value.originalValue || existing.originalUnit !== value.originalUnit) return "CONFLICT";
+      return "REUSED";
+    }
+    await this.write({ ...store, regulatoryValues: [...store.regulatoryValues, value] }, store.revision);
+    return "CREATED";
+  }
+
+  async getRegulatoryValues(tenantId: string, componentCode?: RegulatoryValueRecord["componentCode"]): Promise<readonly RegulatoryValueRecord[]> {
+    validateTenantId(tenantId);
+    return (await this.read()).regulatoryValues.filter((item) => item.tenantId === tenantId && (componentCode === undefined || item.componentCode === componentCode)).map((item) => item.referenceDomain ? item : { ...item, referenceDomain: referenceDomainForComponent(item.componentCode) ?? undefined }).sort((left, right) => Date.parse(left.effectiveFrom) - Date.parse(right.effectiveFrom));
   }
 }

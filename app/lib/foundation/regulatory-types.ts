@@ -10,6 +10,58 @@ export type CustomerCategory = "DOMESTIC" | "NON_DOMESTIC" | "CONDOMINIUM" | "BU
 export type ComponentType = "TRANSPORT" | "DISTRIBUTION" | "METERING" | "SYSTEM_CHARGES" | "DISPATCHING" | "LOSSES" | "TAX" | "EXCISE" | "OTHER_REGULATED";
 export type RegulatoryEntityType = "OfficialSource" | "RegulatoryDocument" | "RegulatoryRuleVersion" | "MarketDataSeries" | "MarketDataPoint";
 export type VersionState = "CURRENT" | "SUPERSEDED";
+export type RegulatoryValueSourceType = "OFFICIAL_WEB_PAGE" | "OFFICIAL_PROVVEDIMENTO" | "OFFICIAL_ATTACHMENT";
+export type RegulatoryValueVector = "EE" | "GAS";
+export type RegulatoryReferenceDomain = "NETWORK" | "SYSTEM_CHARGES" | "DISPATCHING" | "CAPACITY_MARKET" | "MARKET_INDEX" | "TAX" | "CONTRACT";
+export type RegulatoryCustomerScope = "DOMESTIC_BT" | "DOMESTIC_RESIDENT_BT" | "DOMESTIC_NON_RESIDENT_BT" | "NON_DOMESTIC_BT" | "ALL_ELECTRICITY";
+export type RegulatoryValueComponentCode =
+  | "S1_TOTAL" | "S1_MEASURE" | "S2_POWER" | "S3_ENERGY_TRANSMISSION"
+  | "NETWORK_FIXED" | "METERING_FIXED" | "NETWORK_POWER" | "NETWORK_ENERGY" | "TRANSMISSION_ENERGY"
+  | "ASOS" | "ARIM" | "UC3" | "UC6"
+  | "DISPATCHING" | "DISPATCHING_TOTAL" | "DISPATCHING_UPLIFT"
+  | "DISPATCHING_UPLIFT_ATT_MSDMB" | "DISPATCHING_UPLIFT_ATT_DED" | "DISPATCHING_UPLIFT_RUPL"
+  | "DISPATCHING_ESSENTIAL_UNITS" | "DISPATCHING_ESSENTIAL_UNITS_ORDINARY" | "DISPATCHING_ESSENTIAL_UNITS_REINTEGRATION"
+  | "DISPATCHING_TERNA_OPERATION" | "DISPATCHING_EXTRAORDINARY_MODULATION"
+  | "DISPATCHING_WIND_COMPENSATION" | "DISPATCHING_OTHER_ITEMS"
+  | "CAPACITY_MARKET" | "CAPACITY_MARKET_PEAK" | "CAPACITY_MARKET_OFF_PEAK"
+  | "NETWORK_ENERGY_TOTAL" | "NETWORK_FIXED_TOTAL" | "NETWORK_POWER_TOTAL"
+  | "SYSTEM_CHARGES_ENERGY_TOTAL" | "SYSTEM_CHARGES_FIXED_TOTAL" | "SYSTEM_CHARGES_POWER_TOTAL";
+
+export interface RegulatoryValueRecord extends TenantScoped {
+  readonly id: string;
+  readonly identityKey: string;
+  readonly version: string;
+  readonly parentVersionId: string | null;
+  readonly authority: "ARERA" | "TERNA";
+  readonly publishedBy?: OfficialInstitution;
+  readonly calculatedBy?: OfficialInstitution;
+  readonly officialName?: string;
+  readonly sourceType: RegulatoryValueSourceType;
+  readonly sourceReference: string;
+  readonly officialIdentifier: string;
+  readonly publicationDate: string;
+  readonly retrievedAt: string;
+  readonly effectiveFrom: string;
+  readonly effectiveTo: string | null;
+  readonly vector: RegulatoryValueVector;
+  readonly customerScope: RegulatoryCustomerScope;
+  readonly componentCode: RegulatoryValueComponentCode;
+  /** Semantic functional domain; authority is deliberately independent. */
+  readonly referenceDomain?: RegulatoryReferenceDomain;
+  readonly originalValue: number;
+  readonly originalUnit: string;
+  readonly normalizedValue: number;
+  readonly normalizedUnit: string;
+  readonly applicationBasis: string;
+  readonly contractPassThroughRequired?: boolean;
+  readonly sourceSha256: string;
+  readonly carriedForwardFrom?: string | null;
+  readonly confirmationSource?: string | null;
+  readonly approvalStatus: ApprovalStatus;
+  readonly reviewStatus: ReviewStatus;
+  readonly conversionProvenance: readonly string[];
+  readonly checksum: string;
+}
 
 export interface TenantScoped {
   readonly tenantId: string;

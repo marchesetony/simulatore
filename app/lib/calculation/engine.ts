@@ -125,7 +125,11 @@ function addElectricityEnergy(target: ComponentDraft[], request: ElectricitySimu
     const marketRecord = market.record;
     if (marketRecord.vector !== "EE") fail("MARKET_DATA_INVALID");
     const electricityRecord = marketRecord as ElectricityMonthlyPunRecord;
-    const rates = [electricityRecord.f1.value, electricityRecord.f2.value, electricityRecord.f3.value];
+    const f1 = electricityRecord.f1;
+    const f2 = electricityRecord.f2;
+    const f3 = electricityRecord.f3;
+    if (!f1 || !f2 || !f3) fail("MARKET_VALUES_MISSING");
+    const rates = [f1!.value, f2!.value, f3!.value];
     values.forEach((quantity, index) => target.push({ componentId: `energy:${market.month}:f${index + 1}`, category: "ENERGY", label: `Energia EE indicizzata F${index + 1} ${market.month}`, sign: "CHARGE", value: multiply(add(divide(fromNumber(rates[index]), fromNumber(1000)), fromNumber(pricing.spread.amount)), fromNumber(quantity)), formulaId: "EE_PUN_MWH_TO_KWH_PLUS_SPREAD", formulaInputs: { month: market.month, band: `F${index + 1}`, quantityKwh: quantity, punEurPerMwh: rates[index], mwhToKwh: 1000, spreadPerKwh: pricing.spread.amount, marketRecordId: marketRecord.recordId, marketVersion: marketRecord.version, taxTreatment: pricing.spread.taxTreatment } }));
   });
 }

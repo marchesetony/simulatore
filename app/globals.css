@@ -151,6 +151,134 @@ button:focus-visible,a:focus-visible,input:focus-visible,select:focus-visible,te
 @media (max-width:420px) {
   .ui-card:has(.cte-review-compact),.ui-card:has(.cte-approval-gate) { padding:14px; }
 }
+.bill-audit-detail { display:grid; gap:14px; min-width:0; max-width:100%; overflow-x:clip; }
+.bill-audit-document-header { display:flex; align-items:flex-end; justify-content:space-between; gap:20px; padding:4px 2px 12px; border-bottom:1px solid var(--line); }
+.bill-audit-document-header h3 { margin:3px 0 0; color:var(--navy); font-size:1.05rem; overflow-wrap:anywhere; }
+.bill-audit-document-meta { display:grid; grid-template-columns:minmax(160px,1.15fr) minmax(150px,.95fr) minmax(280px,2fr) minmax(140px,.85fr); gap:12px 16px; width:100%; min-width:0; }
+.bill-audit-clean-header { display:grid; gap:12px; align-items:start; }
+.bill-audit-clean-header { min-width:0; }
+.bill-audit-clean-header > div:first-child { display:grid; gap:2px; }
+.bill-audit-header-secondary { display:flex; gap:12px; color:var(--muted); font-size:10px; }
+.bill-audit-receipt-extras { display:flex; flex-wrap:wrap; gap:8px 16px; margin-top:12px; padding-top:10px; border-top:1px solid #e8edf2; color:var(--muted); font-size:11px; }
+.bill-audit-receipt-extras span { white-space:nowrap; }
+.bill-audit-document-meta div { display:grid; gap:3px; }
+.bill-audit-document-meta span,.bill-audit-card-heading span,.bill-audit-data-row>span,.bill-audit-reference span,.bill-audit-capacity span,.bill-audit-price-hero>span,.bill-audit-subheading>span,.bill-audit-status-grid span,.bill-audit-anomaly-count span { color:var(--muted); font-size:10px; }
+.bill-audit-document-meta strong { min-width:0; color:var(--ink); font-size:12px; overflow-wrap:anywhere; }
+.bill-audit-document-meta div:nth-child(4) strong { white-space:nowrap; overflow-wrap:normal; }
+.bill-audit-header-actions { display:flex; justify-content:flex-end; flex-wrap:wrap; gap:8px; }
+.bill-audit-top-grid,.bill-audit-grid { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:14px; align-items:start; }
+.bill-audit-card { min-width:0; padding:16px; border:1px solid #d8e2eb; border-radius:13px; background:#fff; box-shadow:0 1px 2px rgba(15,23,42,.04); }
+.bill-audit-wide { grid-column:1 / -1; }
+.bill-audit-card-heading { display:flex; align-items:center; justify-content:space-between; gap:10px; margin-bottom:12px; }
+.bill-audit-card-heading h3,.bill-audit-missing h3,.bill-audit-review-actions h3 { margin:0; color:var(--navy); font-size:.78rem; letter-spacing:.07em; }
+.bill-audit-data-list { display:grid; gap:0; }
+.bill-audit-data-row { display:grid; grid-template-columns:minmax(0,1fr) auto; gap:8px 16px; align-items:baseline; padding:8px 0; border-bottom:1px solid #edf1f5; font-size:12px; }
+.bill-audit-data-row:last-child { border-bottom:0; padding-bottom:0; }
+.bill-audit-data-row:first-child { padding-top:0; }
+.bill-audit-data-row strong { color:var(--ink); text-align:right; overflow-wrap:anywhere; }
+.bill-audit-data-row small { grid-column:2; color:var(--muted); font-size:10px; text-align:right; }
+.bill-audit-unit { color:var(--muted); font-weight:600; white-space:nowrap; }
+.bill-audit-muted { color:var(--muted); font-weight:500; }
+.bill-audit-badge { display:inline-flex; max-width:100%; padding:4px 7px; border:0; font-size:10px; line-height:1.2; white-space:normal; }
+.bill-audit-badge.positive { color:#12664f; background:#e6f5ee; }.bill-audit-badge.warning { color:#795b20; background:#fff4d6; }.bill-audit-badge.neutral { color:#526273; background:#edf2f6; }
+.bill-audit-summary { background:linear-gradient(135deg,#f7fbfc 0%,#fff 72%); }
+.bill-audit-summary-main { display:flex; justify-content:space-between; gap:24px; }
+.bill-audit-summary-main>div:first-child { min-width:0; }
+.bill-audit-overline { display:block; margin-bottom:4px; color:var(--muted); font-size:10px; text-transform:uppercase; letter-spacing:.08em; }
+.bill-audit-summary-main strong { display:block; color:#0f5d70; font-size:1.35rem; letter-spacing:.02em; }
+.bill-audit-summary-main p { max-width:720px; margin:8px 0 0; color:var(--muted); font-size:12px; line-height:1.5; }
+.bill-audit-verification-summary .bill-audit-data-list { grid-template-columns:repeat(3,minmax(0,1fr)); gap:8px; margin-top:14px; }
+.bill-audit-verification-summary .bill-audit-data-row { grid-template-columns:1fr; min-width:0; padding:10px; border:1px solid #e8edf2; border-radius:9px; background:#fbfcfe; }
+.bill-audit-verification-summary .bill-audit-data-row strong { text-align:left; font-size:1.05rem; }
+.bill-audit-subsection-title { margin:18px 0 8px; color:var(--navy); font-size:.72rem; letter-spacing:.07em; }
+.bill-audit-regulated-table-wrap { width:100%; max-width:100%; min-width:0; overflow-x:hidden; }
+.bill-audit-regulated-summary-table { width:100%; min-width:0; table-layout:fixed; }
+.bill-audit-regulated-summary-table th,.bill-audit-regulated-summary-table td { min-width:0; white-space:normal; overflow-wrap:anywhere; word-break:normal; vertical-align:top; }
+.bill-audit-regulated-summary-table th:nth-child(1) { width:24%; }.bill-audit-regulated-summary-table th:nth-child(2) { width:20%; }.bill-audit-regulated-summary-table th:nth-child(3) { width:20%; }.bill-audit-regulated-summary-table th:nth-child(4) { width:18%; }.bill-audit-regulated-summary-table th:nth-child(5) { width:18%; }
+.bill-audit-verified-difference { display:grid; gap:7px; margin-top:14px; padding:12px 14px; border:1px solid #ead9ad; border-radius:10px; background:#fffaf0; color:var(--ink); font-size:12px; }
+.bill-audit-verified-difference>div { display:flex; flex-wrap:wrap; gap:8px 18px; color:var(--muted); }
+.bill-audit-verified-difference>b { color:#795b20; font-size:11px; letter-spacing:.02em; }
+.bill-audit-verified-difference p,.bill-audit-verified-difference small { margin:0; color:var(--muted); font-size:11px; line-height:1.45; }
+.bill-audit-anomaly-count { display:grid; flex:0 0 150px; align-content:center; gap:3px; padding:10px 14px; border-left:1px solid var(--line); }
+.bill-audit-anomaly-count strong { color:var(--navy); font-size:1.8rem; line-height:1; }
+.bill-audit-anomaly-message { display:grid; gap:3px; margin-top:14px; padding:10px 12px; border:1px solid #d7e9e1; border-radius:9px; color:#2e5f51; background:#f4fbf7; font-size:11px; }
+.bill-audit-anomaly-message strong { font-size:10px; letter-spacing:.06em; }
+.bill-audit-status-grid { display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:8px; }
+.bill-audit-status-grid>div { display:grid; gap:7px; min-width:0; padding:10px; border:1px solid #e8edf2; border-radius:9px; background:#fbfcfe; }
+.bill-audit-price { border-color:#b9dce3; background:#fbfeff; }
+.bill-audit-offer { border-color:#b9dce3; background:#fbfeff; }
+.bill-audit-offer .bill-audit-data-list { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); column-gap:24px; }
+.bill-audit-price-bands { display:grid; gap:5px; min-width:150px; }
+.bill-audit-price-bands>span { display:flex; justify-content:space-between; gap:18px; font-weight:600; }
+.bill-audit-price-bands b { color:var(--muted); font-weight:600; }
+.bill-audit-price-bands em { color:var(--muted); font-style:normal; font-weight:600; white-space:nowrap; }
+.bill-audit-pass-through-status { display:block; margin-top:3px; color:var(--muted); font-size:10px; font-weight:500; line-height:1.3; }
+.bill-audit-benchmark { display:grid; gap:4px; margin-top:14px; padding:10px 12px; border-top:1px solid #dceef1; color:var(--muted); font-size:10px; }
+.bill-audit-benchmark strong { color:var(--ink); font-size:11px; font-weight:600; }
+.bill-audit-cost-summary { background:#fff; }
+.bill-audit-cost-summary .bill-audit-data-row:nth-last-child(-n+2) { font-weight:800; border-top:1px solid #d8e2eb; }
+.bill-audit-detail-stack { display:grid; gap:14px; }
+.bill-audit-compact-detail { gap:10px; }
+.bill-audit-compact-summary { padding:14px; }
+.bill-audit-compact-summary .bill-audit-data-list { grid-template-columns:repeat(6,minmax(0,1fr)); gap:7px; }
+.bill-audit-compact-summary .bill-audit-data-row { grid-template-columns:1fr; min-width:0; padding:8px 9px; border:1px solid #e8edf2; border-radius:8px; background:#fbfcfe; }
+.bill-audit-compact-summary .bill-audit-data-row strong { text-align:left; font-size:1rem; }
+.bill-audit-compact-group,.bill-audit-technical-provenance { border:1px solid #d8e2eb; border-radius:10px; background:#fff; }
+.bill-audit-compact-group>summary,.bill-audit-technical-provenance>summary { padding:11px 13px; color:var(--navy); font-size:.72rem; font-weight:800; letter-spacing:.06em; cursor:pointer; }
+.bill-audit-compact-group[open]>summary,.bill-audit-technical-provenance[open]>summary { border-bottom:1px solid #e8edf2; }
+.bill-audit-compact-group>.bill-audit-table-wrap { padding:0 12px 10px; }
+.bill-audit-compact-group-table { min-width:520px; }
+.bill-audit-inline-disclosure { margin-top:5px; }
+.bill-audit-inline-disclosure>summary { color:var(--muted); font-size:10px; font-weight:600; cursor:pointer; }
+.bill-audit-inline-disclosure[open] { padding:8px; border:1px solid #e8edf2; border-radius:8px; background:#fbfcfe; }
+.bill-audit-pass-through-detail .bill-audit-data-row { padding:5px 0; font-size:10px; }
+.bill-audit-pass-through-detail .bill-audit-data-row:last-child { padding-bottom:0; }
+.bill-audit-technical-provenance { padding:0 12px 12px; }
+.bill-audit-technical-provenance[open]>summary { margin:0 -12px 12px; }
+.bill-audit-technical-provenance .bill-audit-detail-stack { gap:10px; }
+.bill-audit-price-hero { display:flex; align-items:baseline; justify-content:space-between; gap:12px; padding-bottom:14px; border-bottom:1px solid #dceef1; }
+.bill-audit-price-hero>strong { color:#0e6f83; font-size:1.8rem; letter-spacing:.01em; }
+.bill-audit-price-hero small,.bill-audit-gme-grid small { color:var(--muted); font-size:.72rem; font-weight:600; }
+.bill-audit-price-reference { padding-top:14px; }
+.bill-audit-subheading { display:flex; align-items:center; justify-content:space-between; gap:10px; margin-bottom:9px; }
+.bill-audit-gme-grid { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:8px; }
+.bill-audit-gme-grid>div { display:grid; gap:5px; padding:10px; border:1px solid #d9edf0; border-radius:9px; background:#fff; }
+.bill-audit-gme-grid strong { color:var(--ink); font-size:1.1rem; }
+.bill-audit-contract-note { display:flex; align-items:center; gap:10px; flex-wrap:wrap; margin-top:14px; padding:10px 12px; border-radius:9px; background:#f4f7fa; font-size:11px; }
+.bill-audit-contract-note strong { color:var(--navy); }.bill-audit-contract-note span { flex:1 1 300px; color:var(--muted); }
+.bill-audit-intro,.bill-audit-collapsible-intro { margin:0 0 12px; color:var(--muted); font-size:11px; line-height:1.45; }
+.bill-audit-table-wrap { width:100%; overflow:auto; }
+.bill-audit-table { width:100%; min-width:650px; border-collapse:collapse; font-size:11px; }
+.bill-audit-table th,.bill-audit-table td { padding:9px 8px; border-bottom:1px solid #e8edf2; text-align:left; vertical-align:top; overflow-wrap:anywhere; }
+.bill-audit-table thead th { color:var(--muted); background:#f5f8fa; font-size:10px; font-weight:700; }
+.bill-audit-table tbody th { color:var(--ink); font-weight:700; }
+.bill-audit-table tbody th small,.bill-audit-table td small { display:block; margin-top:4px; color:var(--muted); font-size:9px; font-weight:500; }
+.bill-audit-secondary-value { display:block; margin-top:4px; color:var(--muted); font-size:9px; }
+.bill-audit-reference-grid { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:10px; }
+.bill-audit-reference { display:grid; gap:12px; min-width:0; padding:12px; border:1px solid #e8edf2; border-radius:10px; background:#fbfcfe; }
+.bill-audit-reference>div:first-child { display:grid; gap:5px; }.bill-audit-reference strong,.bill-audit-capacity strong { color:var(--ink); font-size:1.05rem; }
+.bill-audit-reference-meta { display:flex; align-items:center; justify-content:space-between; gap:8px; flex-wrap:wrap; color:var(--muted); font-size:10px; }
+.bill-audit-capacity { display:grid; grid-template-columns:2fr 1.2fr .7fr 1fr; gap:12px; align-items:start; }
+.bill-audit-capacity>div { display:grid; gap:5px; min-width:0; }
+.bill-audit-note { margin:12px 0 0; padding:10px 12px; border-radius:9px; color:var(--muted); background:#f7f9fb; font-size:11px; line-height:1.45; }
+.bill-audit-note strong { display:block; margin-bottom:3px; color:var(--navy); }
+.bill-audit-missing { padding:15px 17px; border:1px solid #ead9a8; border-radius:13px; background:#fffcf2; }
+.bill-audit-missing ul { display:grid; gap:5px; margin:10px 0 0; padding-left:18px; color:#5c5137; font-size:11px; line-height:1.45; }
+.bill-audit-missing p { margin:10px 0 0; color:var(--muted); font-size:10px; }
+.bill-audit-collapsible { padding:13px 15px; border:1px solid #d8e2eb; border-radius:13px; background:#fff; }
+.bill-audit-collapsible>summary { cursor:pointer; color:var(--teal); font-size:11px; font-weight:800; letter-spacing:.06em; }
+.bill-audit-collapsible[open]>summary { margin-bottom:12px; }
+.bill-audit-technical-table { min-width:1100px; font-size:10px; }.bill-audit-technical-note { margin:10px 0 0; color:var(--muted); font-size:10px; }
+.bill-audit-provenance-list { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:8px; }
+.bill-audit-provenance-list>div { display:grid; gap:4px; padding:9px; border:1px solid #e8edf2; border-radius:9px; background:#fbfcfe; }
+.bill-audit-provenance-list span { color:var(--muted); font-size:10px; }.bill-audit-provenance-list strong { color:var(--ink); font-size:11px; overflow-wrap:anywhere; }.bill-audit-provenance-list small { color:var(--muted); font-size:9px; }
+.bill-audit-review-actions { display:grid; gap:12px; padding-top:4px; }
+@media (max-width:900px) { .bill-audit-document-meta { grid-template-columns:repeat(3,minmax(0,1fr)); }.bill-audit-status-grid { grid-template-columns:repeat(2,minmax(0,1fr)); }.bill-audit-capacity { grid-template-columns:repeat(2,minmax(0,1fr)); }.bill-audit-capacity>div:last-child { align-self:center; } }
+@media (max-width:900px) { .bill-audit-compact-summary .bill-audit-data-list { grid-template-columns:repeat(3,minmax(0,1fr)); } }
+@media (max-width:760px) { .bill-audit-document-header { display:grid; gap:12px; }.bill-audit-document-meta { min-width:0; grid-template-columns:1fr; gap:8px; }.bill-audit-top-grid,.bill-audit-grid,.bill-audit-reference-grid { grid-template-columns:1fr; }.bill-audit-offer .bill-audit-data-list,.bill-audit-verification-summary .bill-audit-data-list,.bill-audit-compact-summary .bill-audit-data-list { grid-template-columns:1fr; }.bill-audit-summary-main { display:grid; gap:14px; }.bill-audit-anomaly-count { border-top:1px solid var(--line); border-left:0; padding:10px 0 0; }.bill-audit-gme-grid { grid-template-columns:1fr; }.bill-audit-capacity { grid-template-columns:1fr; }.bill-audit-provenance-list { grid-template-columns:1fr; } }
+@media (max-width:760px) { .bill-audit-regulated-summary-table,.bill-audit-compact-group-table { min-width:0; table-layout:fixed; font-size:10px; }.bill-audit-regulated-summary-table th:nth-child(1),.bill-audit-regulated-summary-table th:nth-child(2),.bill-audit-regulated-summary-table th:nth-child(3),.bill-audit-regulated-summary-table th:nth-child(4),.bill-audit-regulated-summary-table th:nth-child(5) { width:auto; }.bill-audit-regulated-summary-table th,.bill-audit-regulated-summary-table td { padding:7px 5px; }.bill-audit-regulated-summary-table .bill-audit-inline-disclosure[open] { position:relative; z-index:1; }.bill-audit-regulated-table-wrap { overflow-x:hidden; } }
+@media (max-width:760px) { .bill-audit-regulated-summary-table { display:block; }.bill-audit-regulated-summary-table thead { display:none; }.bill-audit-regulated-summary-table tbody { display:grid; gap:9px; }.bill-audit-regulated-summary-table tr { display:grid; grid-template-columns:1fr 1fr; border:1px solid var(--line); border-radius:9px; overflow:hidden; }.bill-audit-regulated-summary-table tbody th { grid-column:1 / -1; background:#f5f8fa; }.bill-audit-regulated-summary-table tbody th,.bill-audit-regulated-summary-table td { width:auto !important; border:0; }.bill-audit-regulated-summary-table td::before { display:block; margin-bottom:3px; color:var(--muted); font-size:9px; font-weight:700; }.bill-audit-regulated-summary-table td:nth-child(2)::before { content:"Bolletta"; }.bill-audit-regulated-summary-table td:nth-child(3)::before { content:"Ufficiale"; }.bill-audit-regulated-summary-table td:nth-child(4)::before { content:"Differenza"; }.bill-audit-regulated-summary-table td:nth-child(5)::before { content:"Esito"; } }
+@media (max-width:420px) { .bill-audit-card { padding:13px; }.bill-audit-document-meta { grid-template-columns:1fr; }.bill-audit-status-grid { grid-template-columns:1fr; }.bill-audit-price-hero { display:grid; gap:5px; }.bill-audit-price-hero>strong { font-size:1.55rem; } }
 .cte-approved-status { display:grid; gap:4px; }
 .cte-approved-status span { color:var(--muted); font-size:.88rem; }
 .cte-approved-archive-row { text-align:left; align-items:center; }
@@ -223,3 +351,42 @@ button:focus-visible,a:focus-visible,input:focus-visible,select:focus-visible,te
   .cte-review-group { padding:12px 14px; }
   .cte-spread-item { width:100%; }
 }
+ .bill-review-shell { padding:14px; }
+ .bill-review-compact { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:8px; align-items:start; }
+ .bill-review-compact > .card-heading,.bill-review-compact > .bill-review-pun,.bill-review-compact > .muted,.bill-review-compact > .bill-review-provenance,.bill-review-compact > .bill-review-actions-section,.bill-review-compact > .inline-success { grid-column:1 / -1; }
+ .bill-review-section { min-width:0; min-height:0; padding:10px 12px; border-radius:10px; }
+ .bill-review-section h3 { margin:0 0 5px; color:var(--navy); font-size:.78rem; letter-spacing:.02em; }
+ .bill-review-row { padding:5px 0; font-size:11px; }
+ .bill-review-row strong { max-width:72%; }
+ .bill-review-row-value { display:inline-flex; align-items:center; justify-content:flex-end; flex-wrap:wrap; gap:4px; }
+ .bill-review-field-status { padding:2px 5px; font-size:8px; }
+ .bill-review-field-status.invalid,.bill-review-field-status.needs_review { color:#8c2d2d; background:#fde6e6; }
+ .bill-review-field-status.not_found { color:#74551b; background:#fff1c9; }
+ .bill-review-provenance { grid-column:1 / -1; padding:8px 10px; border:1px solid var(--line); border-radius:9px; background:#fff; color:var(--muted); font-size:11px; }
+ .bill-review-provenance summary { cursor:pointer; color:var(--teal); font-weight:800; }
+ .bill-review-provenance > p { margin:8px 0 0; }
+ .bill-review-actions-section .button-row { margin:0; }
+ .bill-review-compact > .button.danger { justify-self:start; }
+@media (max-width:760px) {
+  .bill-review-compact { grid-template-columns:1fr; }
+  .bill-review-compact > .card-heading,.bill-review-compact > .bill-review-pun,.bill-review-compact > .muted,.bill-review-compact > .bill-review-provenance,.bill-review-compact > .bill-review-actions-section,.bill-review-compact > .inline-success { grid-column:auto; }
+}
+.bill-review-audit-summary { grid-column:1 / -1; padding:16px; border:1px solid #c7dde5; border-radius:12px; background:#fff; }
+.bill-review-audit-heading { display:flex; align-items:flex-start; justify-content:space-between; gap:18px; }
+.bill-review-audit-heading h3 { margin:0 0 8px; color:var(--navy); font-size:.82rem; }
+.bill-review-audit-heading > div:last-child { display:grid; gap:2px; min-width:130px; padding:9px 12px; border-radius:9px; background:#f3f7fb; text-align:right; }
+.bill-review-audit-heading > div:last-child span,.bill-review-audit-heading > div:last-child small { color:var(--muted); font-size:10px; }
+.bill-review-audit-heading > div:last-child strong { color:var(--navy); font-size:1.25rem; }
+.bill-review-audit-status { display:block; color:#68758a; font-size:1.15rem; }
+.bill-review-audit-status.regular { color:#12664f; }.bill-review-audit-status.anomalies_found { color:#8c2d2d; }.bill-review-audit-status.incomplete,.bill-review-audit-status.attention { color:var(--amber); }
+.bill-review-audit-disclaimer { margin:10px 0 14px; color:var(--muted); font-size:12px; line-height:1.5; }
+.bill-review-source-grid { display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:8px; }
+.bill-review-source-grid > div { display:grid; gap:3px; min-width:0; padding:9px; border:1px solid var(--line); border-radius:9px; background:#fbfcfe; }
+.bill-review-source-grid span,.bill-review-source-grid small { color:var(--muted); font-size:10px; }.bill-review-source-grid strong { color:var(--navy); font-size:11px; overflow-wrap:anywhere; }
+.bill-review-label { color:var(--muted); font-size:9px; letter-spacing:.08em; }.bill-review-unit { color:var(--muted); font-weight:600; white-space:nowrap; }
+.bill-review-price { grid-column:1 / -1; }.bill-review-price .bill-review-pun { margin-top:12px; }.bill-review-price .bill-review-pun h3 { color:var(--teal); }
+.bill-review-table { overflow:hidden; }.bill-review-table table { width:100%; min-width:0; table-layout:fixed; border-collapse:collapse; font-size:11px; }.bill-review-table th,.bill-review-table td { min-width:0; padding:8px 7px; border:1px solid var(--line); text-align:left; vertical-align:top; overflow-wrap:anywhere; word-break:break-word; }.bill-review-table th { color:var(--muted); background:#f3f7fb; }.bill-review-table tbody th { color:var(--ink); font-weight:700; }.bill-review-table th:nth-child(1) { width:35%; }.bill-review-table th:nth-child(2),.bill-review-table th:nth-child(3) { width:16%; }.bill-review-table th:nth-child(4) { width:33%; }
+.bill-review-reason { display:block; margin-top:6px; color:var(--muted); font-size:10px; line-height:1.4; }.bill-review-note { margin:10px 0 0; padding:9px 10px; border-radius:8px; color:var(--muted); background:#fbfcfe; font-size:11px; line-height:1.45; }.bill-review-note strong { display:block; margin-bottom:3px; color:var(--amber); }
+.bill-review-collapsible { grid-column:1 / -1; padding:12px 14px; border:1px solid var(--line); border-radius:12px; background:#fff; }.bill-review-collapsible > summary { cursor:pointer; color:var(--teal); font-size:12px; font-weight:800; }.bill-review-collapsible .bill-review-table { margin-top:12px; }
+@media (max-width:760px) { .bill-review-source-grid { grid-template-columns:repeat(2,minmax(0,1fr)); }.bill-review-audit-heading { display:block; }.bill-review-audit-heading > div:last-child { margin-top:12px; text-align:left; }.bill-review-table table { table-layout:auto; }.bill-review-regulated .bill-review-table table { display:block; }.bill-review-regulated .bill-review-table thead { display:none; }.bill-review-regulated .bill-review-table tbody { display:grid; gap:9px; }.bill-review-regulated .bill-review-table tr { display:grid; grid-template-columns:1fr 1fr; border:1px solid var(--line); border-radius:9px; overflow:hidden; }.bill-review-regulated .bill-review-table th,.bill-review-regulated .bill-review-table td { width:auto !important; border:0; }.bill-review-regulated .bill-review-table tbody th { grid-column:1 / -1; background:#f3f7fb; }.bill-review-regulated .bill-review-table td::before { display:block; margin-bottom:3px; color:var(--muted); font-size:9px; font-weight:700; }.bill-review-regulated .bill-review-table td:nth-child(2)::before { content:"Addebitato"; }.bill-review-regulated .bill-review-table td:nth-child(3)::before { content:"Valore atteso"; }.bill-review-regulated .bill-review-table td:nth-child(4)::before { content:"Esito"; } }
+@media (max-width:420px) { .bill-review-source-grid { grid-template-columns:1fr; }.bill-review-audit-summary { padding:13px; } }
