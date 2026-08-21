@@ -121,27 +121,28 @@ function assertTaxIdentifier(value: unknown): asserts value is TaxIdentifier {
   if (!/^[A-Z0-9 .-]{5,32}$/i.test(identifier)) fail("TAX_IDENTIFIER_INVALID");
 }
 
-function assertCustomer(value: unknown): asserts value is CustomerIdentity {
+function assertCustomer(value: unknown, requireTaxIdentifiers = true, requireCustomerId = true): asserts value is CustomerIdentity {
   const item = required(value, "CUSTOMER_INVALID");
-  nonEmpty(item.customerId, "CUSTOMER_INVALID");
+  if (requireCustomerId || item.customerId !== undefined) nonEmpty(item.customerId, "CUSTOMER_INVALID");
   enumValue(item.customerType, ["RESIDENTIAL", "NON_RESIDENTIAL"], "CUSTOMER_TYPE_INVALID");
   assertDeclaredText(item.name, "CUSTOMER_NAME_INVALID");
-  if (!Array.isArray(item.taxIdentifiers) || item.taxIdentifiers.length === 0) fail("TAX_IDENTIFIER_MISSING");
+  if (!Array.isArray(item.taxIdentifiers)) fail("TAX_IDENTIFIER_INVALID");
   const candidates = item.taxIdentifiers as readonly unknown[];
+  if (requireTaxIdentifiers && candidates.length === 0) fail("TAX_IDENTIFIER_MISSING");
   candidates.forEach(assertTaxIdentifier);
   const identifiers = candidates as readonly TaxIdentifier[];
   if (new Set(identifiers.map((identifier) => `${identifier.kind}:${identifier.value.toUpperCase()}`)).size !== identifiers.length) fail("TAX_IDENTIFIER_DUPLICATE");
 }
 
-function assertMeterAndSupply(value: unknown): void {
+function assertMeterAndSupply(value: unknown, allowUnavailableIdentifiers = false): void {
   const item = required(value, "SUPPLY_INVALID");
-  nonEmpty(item.supplyId, "SUPPLY_ID_INVALID");
-  nonEmpty(item.meterId, "METER_ID_INVALID");
+  if (!allowUnavailableIdentifiers || item.supplyId !== undefined) nonEmpty(item.supplyId, "SUPPLY_ID_INVALID");
+  if (!allowUnavailableIdentifiers || item.meterId !== undefined) nonEmpty(item.meterId, "METER_ID_INVALID");
 }
 
-export function assertElectricitySupply(value: unknown): asserts value is ElectricitySupply {
+export function assertElectricitySupply(value: unknown, allowUnavailableIdentifiers = false): asserts value is ElectricitySupply {
   const item = required(value, "SUPPLY_INVALID");
-  assertMeterAndSupply(item);
+  assertMeterAndSupply(item, allowUnavailableIdentifiers);
   if (item.vector !== "EE") fail("VECTOR_MISMATCH");
   const pod = nonEmpty(item.pod, "POD_INVALID");
   if (!/^IT[A-Z0-9]{6,30}$/i.test(pod)) fail("POD_INVALID");
@@ -149,18 +150,18 @@ export function assertElectricitySupply(value: unknown): asserts value is Electr
   if (Object.prototype.hasOwnProperty.call(item, "pdr")) fail("EE_SCHEMA_MIXED");
 }
 
-export function assertGasSupply(value: unknown): asserts value is GasSupply {
+export function assertGasSupply(value: unknown, allowUnavailableIdentifiers = false): asserts value is GasSupply {
   const item = required(value, "SUPPLY_INVALID");
-  assertMeterAndSupply(item);
+  assertMeterAndSupply(item, allowUnavailableIdentifiers);
   if (item.vector !== "GAS") fail("VECTOR_MISMATCH");
   const pdr = nonEmpty(item.pdr, "PDR_INVALID");
   if (!/^\d{14}$/.test(pdr)) fail("PDR_INVALID");
   if (Object.prototype.hasOwnProperty.call(item, "pod") || Object.prototype.hasOwnProperty.call(item, "voltageLevel")) fail("GAS_SCHEMA_MIXED");
 }
 
-export function assertSupply(value: unknown, vector: "EE" | "GAS"): asserts value is Supply {
-  if (vector === "EE") assertElectricitySupply(value);
-  else assertGasSupply(value);
+export function assertSupply(value: unknown, vector: "EE" | "GAS", allowUnavailableIdentifiers = false): asserts value is Supply {
+  if (vector === "EE") assertElectricitySupply(value, allowUnavailableIdentifiers);
+  else assertGasSupply(value, allowUnavailableIdentifiers);
 }
 
 function assertConsumptionPeriods(value: unknown, vector: "EE" | "GAS"): void {
@@ -254,11 +255,10 @@ function assertBillBase(value: unknown): Record<string, unknown> {
   if (item.recordType !== "BILL") fail("RECORD_TYPE_INVALID");
   const vector = enumValue(item.vector, ["EE", "GAS"], "VECTOR_INVALID");
   nonEmpty(item.billId, "BILL_ID_INVALID");
-  nonEmpty(item.customerId, "BILL_CUSTOMER_ID_INVALID");
-  if (item.customer !== undefined) assertCustomer(item.customer);
-  nonEmpty(item.supplyId, "BILL_SUPPLY_ID_INVALID");
+  if (item.customer !== undefined) assertCustomer(item.customer, false, false);
+  if (item.customerId !== undefined) nonEmpty(item.customerId, "BILL_CUSTOMER_ID_INVALID");
   assertDatePeriod(item.billingPeriod);
-  enumValue(item.consumptionBasis, ["MEASURED", "ESTIMATED", "MIXED"], "CONSUMPTION_BASIS_INVALID");
+  if (item.consumptionBasis !== undefined) enumValue(item.consumptionBasis, ["MEASURED", "ESTIMATED", "MIXED"], "CONSUMPTION_BASIS_INVALID");
   nonEmpty(item.currentSupplier, "SUPPLIER_INVALID");
   assertSupplierOffer(item.offer);
   if (!Array.isArray(item.regulatedCharges)) fail("REGULATED_CHARGES_INVALID");
@@ -296,11 +296,11 @@ function assertGasBillConsumption(value: unknown): void {
 export function validateBillContract(value: unknown): asserts value is BillContract {
   const item = assertBillBase(value);
   if (item.vector === "EE") {
-    assertElectricitySupply(item.supply);
+    assertElectricitySupply(item.supply, true);
     assertElectricityBillConsumption(item.consumption);
     if (isRecord(item.supply) && Object.prototype.hasOwnProperty.call(item.supply, "pdr")) fail("EE_SCHEMA_MIXED");
   } else {
-    assertGasSupply(item.supply);
+    assertGasSupply(item.supply, true);
     assertGasBillConsumption(item.consumption);
     if (isRecord(item.supply) && Object.prototype.hasOwnProperty.call(item.supply, "voltageLevel")) fail("GAS_SCHEMA_MIXED");
   }

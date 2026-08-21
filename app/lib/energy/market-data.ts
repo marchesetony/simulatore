@@ -6,6 +6,8 @@ export type MarketDataSource = {
   readonly sourceId: string;
   readonly name: string;
   readonly url: string;
+  readonly authority?: "GME";
+  readonly sourceType?: "OFFICIAL";
 };
 
 export type MarketRate = {
@@ -16,7 +18,7 @@ export type MarketRate = {
 
 export interface MonthlyMarketDataBase extends VersionMetadata {
   readonly recordType: "MONTHLY_MARKET_DATA";
-  readonly publicationDate: string;
+  readonly publicationDate: string | null;
   readonly effectiveFrom: string;
   readonly effectiveTo: string | null;
   readonly source: MarketDataSource;
@@ -26,9 +28,10 @@ export interface ElectricityMonthlyPunRecord extends MonthlyMarketDataBase {
   readonly vector: "EE";
   readonly index: "PUN";
   readonly month: string;
-  readonly f1: MarketRate;
-  readonly f2: MarketRate;
-  readonly f3: MarketRate;
+  readonly f1?: MarketRate;
+  readonly f2?: MarketRate;
+  readonly f3?: MarketRate;
+  readonly monthly?: MarketRate;
 }
 
 export interface GasMonthlyPsvRecord extends MonthlyMarketDataBase {
@@ -62,6 +65,8 @@ function assertSource(value: unknown): asserts value is MarketDataSource {
   nonEmpty(item.name, "MARKET_SOURCE_INVALID");
   const url = nonEmpty(item.url, "MARKET_SOURCE_INVALID");
   if (!/^https:\/\//.test(url)) fail("MARKET_SOURCE_INVALID");
+  if (item.authority !== undefined && item.authority !== "GME") fail("MARKET_SOURCE_INVALID");
+  if (item.sourceType !== undefined && item.sourceType !== "OFFICIAL") fail("MARKET_SOURCE_INVALID");
 }
 
 function assertRate(value: unknown, unit: MarketRate["unit"]): asserts value is MarketRate {
@@ -74,7 +79,7 @@ function assertBase(value: unknown): Record<string, unknown> {
   assertVersionMetadata(value);
   const item = value as unknown as Record<string, unknown>;
   if (item.recordType !== "MONTHLY_MARKET_DATA") fail("RECORD_TYPE_INVALID");
-  dateOnly(item.publicationDate, "PUBLICATION_DATE_INVALID");
+  if (item.publicationDate !== null) dateOnly(item.publicationDate, "PUBLICATION_DATE_INVALID");
   assertEffectivePeriod({ effectiveFrom: item.effectiveFrom, effectiveTo: item.effectiveTo });
   assertSource(item.source);
   return item;
@@ -89,9 +94,11 @@ export function validateElectricityMonthlyPun(value: unknown): asserts value is 
   if (item.vector !== "EE" || item.index !== "PUN") fail("MARKET_VECTOR_INDEX_MISMATCH");
   if (Object.prototype.hasOwnProperty.call(item, "value")) fail("EE_SCHEMA_MIXED");
   const marketMonth = month(item.month);
-  assertRate(item.f1, "EUR_PER_MWH");
-  assertRate(item.f2, "EUR_PER_MWH");
-  assertRate(item.f3, "EUR_PER_MWH");
+  if (item.f1 !== undefined) assertRate(item.f1, "EUR_PER_MWH");
+  if (item.f2 !== undefined) assertRate(item.f2, "EUR_PER_MWH");
+  if (item.f3 !== undefined) assertRate(item.f3, "EUR_PER_MWH");
+  if (item.monthly !== undefined) assertRate(item.monthly, "EUR_PER_MWH");
+  if (item.f1 === undefined && item.f2 === undefined && item.f3 === undefined && item.monthly === undefined) fail("MARKET_VALUES_MISSING");
   assertApproval(item.approval as ApprovalMetadata);
   if (item.effectiveFrom !== `${marketMonth}-01` || item.effectiveTo !== nextMonth(marketMonth)) fail("MARKET_PERIOD_MISMATCH");
 }

@@ -11,17 +11,17 @@ import type {
   Quantity,
 } from "../energy/types.ts";
 // @ts-expect-error Node's strip-only test runner requires the explicit extension.
-import { BillIngestionError } from "./errors.ts";
+import { BillIngestionError, type BillExtractionField } from "./errors.ts";
 // @ts-expect-error Node's strip-only test runner requires the explicit extension.
 import { classifyBillText } from "./classifier.ts";
 import type { BillClassification } from "./types.ts";
 
 const PROVENANCE_FIELDS: readonly BillFieldName[] = ["billingPeriod", "customer", "supply", "consumption", "supplier", "offer", "regulatedCharges"];
 const LABELS = [
-  "customer id", "id cliente", "customer type", "tipo cliente", "customer", "cliente", "intestatario", "customer name", "nome cliente",
+  "customer id", "id cliente", "codice cliente", "customer type", "tipo cliente", "tipologia cliente", "customer", "cliente", "intestatario", "customer name", "nome cliente",
   "vat number", "partita iva", "p iva", "tax code", "codice fiscale", "supply id", "id fornitura", "meter id", "matricola contatore",
-  "pod", "pdr", "voltage level", "livello tensione", "billing period", "periodo fatturazione", "periodo", "consumption basis", "tipo consumo",
-  "supplier", "fornitore", "offer name", "nome offerta", "offer code", "codice offerta", "f1", "f2", "f3", "total kwh", "totale kwh",
+  "pod", "pdr", "voltage level", "livello tensione", "tensione di alimentazione", "billing period", "periodo fatturazione", "periodo", "consumption basis", "tipo consumo",
+  "supplier", "fornitore", "offer name", "nome offerta", "offerta commerciale", "offer code", "codice offerta", "f1", "f2", "f3", "total kwh", "totale kwh",
   "billed kwh", "consumo fatturato", "kwh", "smc", "gas consumption", "consumo gas", "correction coefficient", "coefficiente di conversione",
   "coefficiente", "tax number", "identificativo fiscale",
 ] as const;
@@ -30,31 +30,133 @@ const unavailableText = (reason: "NOT_EXTRACTED" | "NOT_PROVIDED" | "UNREADABLE"
 const unavailableNumber = (reason: "NOT_EXTRACTED" | "NOT_PROVIDED" | "UNREADABLE" = "NOT_EXTRACTED"): DeclaredNumber => ({ status: "UNAVAILABLE", reason });
 const unavailableQuantity = <U extends "KWH" | "SMC">(unit: U, reason: "NOT_EXTRACTED" | "NOT_PROVIDED" | "UNREADABLE" = "NOT_EXTRACTED"): Quantity<U> => ({ unit, status: "UNAVAILABLE", reason });
 
-function required(value: string | null): string {
-  if (!value) throw new BillIngestionError("EXTRACTION_REQUIRED_FIELD_MISSING");
+function required(value: string | null, field?: BillExtractionField): string {
+  if (!value) throw new BillIngestionError("EXTRACTION_REQUIRED_FIELD_MISSING", field);
   return value;
 }
 
 function escape(value: string): string { return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"); }
 
 function readLabel(text: string, aliases: readonly string[]): string | null {
-  const aliasPattern = aliases.map(escape).join("|");
-  const labelPattern = LABELS.map(escape).join("|");
-  const pattern = new RegExp(`(?:^|[;|\\n])\\s*(?:${aliasPattern})\\s*[:=]\\s*([^;|\\n]+)`
-    + `|(?:^|\\s)(?:${aliasPattern})\\s*[:=]\\s*(.*?)(?=\\s+(?:${labelPattern})\\s*[:=]|[;|\\n]|$)`, "i");
-  const match = text.replace(/\r/g, "").match(pattern);
+  const aliasPattern = aliases.map(escape).sort((left, right) => right.length - left.length).join("|");
+  const labelPattern = LABELS.map(escape).sort((left, right) => right.length - left.length).join("|");
+  const source = text.normalize("NFKC").replace(/\r\n?/g, "\n");
+  const linePattern = new RegExp(`(?:^|\\n)\\s*(?:${aliasPattern})(?![A-Za-z])\\s*(?::|=)\\s*([^\\n;|]+)`
+    + `|(?:^|\\n)\\s*(?:${aliasPattern})(?![A-Za-z])\\s*\\n\\s*([^\\n;|]+)`, "i");
+  const lineMatch = source.match(linePattern);
+  if (lineMatch) return (lineMatch[1] ?? lineMatch[2] ?? "").trim() || null;
+  const normalizedText = source.replace(/\n/g, " ").replace(/\s+/g, " ").trim();
+  const inlinePattern = new RegExp(`(?:^|[;|])\\s*(?:${aliasPattern})(?![A-Za-z])\\s*[:=]\\s*([^;|]+)`
+    + `|(?:^|\\s)(?:${aliasPattern})(?![A-Za-z])\\s*[:=]\\s*(.*?)(?=\\s+(?:${labelPattern})(?![A-Za-z])\\s*[:=]|[;|]|$)`, "i");
+  const match = normalizedText.match(inlinePattern);
   return (match?.[1] ?? match?.[2] ?? "").trim() || null;
 }
 
-function parseNumber(raw: string | null): number | null {
+function readSupplyReference(text: string, alias: "pod" | "pdr"): string | null {
+  const value = readLabel(text, [alias]);
+  if (value) return value;
+  const normalizedText = text.normalize("NFKC").replace(/\r\n?/g, " ").replace(/\s+/g, " ").trim();
+  const pattern = alias === "pod"
+    ? new RegExp(`\\bP\\s*O\\s*D\\s*[:=#-]?\\s*(IT[A-Z0-9]{6,30})(?=$|[^0-9A-Z])`, "i")
+    : /\bP\s*D\s*R\s*[:=#-]?\s*((?:\d\s*){14})(?=$|[^0-9])/i;
+  return normalizedText.match(pattern)?.[1]?.replace(/\s+/g, "").trim() || null;
+}
+
+function localizedNumberTokens(value: string): string[] {
+  return value.match(/(?<![\w])(?:\d{1,3}(?:\.\d{3})+(?:,\d+)?|\d+(?:[.,]\d+)?)/g) ?? [];
+}
+
+function readConsumptionBand(text: string, band: "f1" | "f2" | "f3"): string | null {
+  const lines = text.normalize("NFKC").replace(/\r\n?/g, "\n").split("\n").map((line) => line.trim()).filter(Boolean);
+  const bandPattern = new RegExp(`\\b${band}\\b`, "i");
+  const excluded = (line: string): boolean => /pun|\u20ac\s*\/\s*kwh|prezzo|formula commerciale|box dell.?offerta|potenza/i.test(line);
+  const valueAfterBand = (line: string, mode: "first" | "last"): string | null => {
+    if (excluded(line)) return null;
+    const match = bandPattern.exec(line);
+    if (!match) return null;
+    const tokens = localizedNumberTokens(line.slice(match.index + match[0].length));
+    if (tokens.length === 0) return "__INVALID_NUMBER__";
+    return mode === "first" ? tokens[0] : tokens[tokens.length - 1];
+  };
+  const billedIndex = lines.findIndex((line) => /consumi\s+fatturati/i.test(line));
+  if (billedIndex >= 0) {
+    for (const line of lines.slice(billedIndex + 1)) {
+      if (!/quarto[- ]?oraria/i.test(line)) continue;
+      const value = valueAfterBand(line, "first");
+      if (value !== null) return value;
+    }
+  }
+  const summaryIndex = lines.findIndex((line) => /riepilogo\s+consumi/i.test(line));
+  if (summaryIndex >= 0) {
+    const end = billedIndex > summaryIndex ? billedIndex : lines.length;
+    for (const line of lines.slice(summaryIndex + 1, end)) {
+      const value = valueAfterBand(line, "last");
+      if (value !== null) return value;
+    }
+  }
+  for (const line of lines) {
+    if (excluded(line) || !new RegExp(`^\\s*${band}\\b`, "i").test(line)) continue;
+    const value = valueAfterBand(line, "last");
+    if (value !== null) return value;
+  }
+  for (const line of lines) {
+    if (excluded(line) || !new RegExp(`\\b${band}\\s*[:=]`, "i").test(line)) continue;
+    const value = valueAfterBand(line, "first");
+    if (value !== null) return value;
+  }
+  return null;
+}
+
+function readCustomerId(text: string): string | null {
+  const labeled = readLabel(text, ["customer id", "id cliente"]);
+  if (labeled) return labeled;
+  const lines = text.normalize("NFKC").replace(/\r\n?/g, "\n").split("\n");
+  for (let index = 0; index < lines.length; index += 1) {
+    const match = lines[index].match(/^\s*codice cliente\s*(?::|=)?\s*(.*)$/i);
+    if (!match) continue;
+    if (match[1].trim()) return match[1].trim();
+    for (const next of lines.slice(index + 1)) {
+      const value = next.trim();
+      if (value) return value;
+    }
+  }
+  return null;
+}
+
+function readSupplier(text: string): string | null {
+  const labeled = readLabel(text, ["supplier", "fornitore"]);
+  if (labeled) return labeled;
+  const normalizedText = text.normalize("NFKC").replace(/\r\n?/g, "\n");
+  const companyLine = /(?:^|\n)\s*(?:\[\d+\]\s*)?([A-ZÀ-ÖØ-Ý0-9][A-ZÀ-ÖØ-Ý0-9 &'.,-]{1,118}?\s+(?:S\.?\s*R\.?\s*L\.?|S\.?\s*P\.?\s*A\.?|S\.?\s*A\.?\s*S\.?|S\.?\s*N\.?\s*C\.?)\s*)(?:-\s+[^\n;]+)?$/im;
+  return normalizedText.match(companyLine)?.[1]?.trim() || null;
+}
+
+function readCustomerName(text: string): string | null {
+  const labeled = readLabel(text, ["customer name", "nome cliente", "customer", "cliente", "intestatario"]);
+  if (labeled) return labeled;
+  const lines = text.normalize("NFKC").replace(/\r\n?/g, "\n").split("\n").map((line) => line.trim()).filter(Boolean);
+  const sectionIndex = lines.findIndex((line) => /^(?:dati cliente|customer data)$/i.test(line));
+  if (sectionIndex < 0) return null;
+  for (const line of lines.slice(sectionIndex + 1, sectionIndex + 6)) {
+    if (/^(?:codice cliente|customer id|id cliente|codice fiscale|partita iva)\b/i.test(line)) continue;
+    if (/^(?:via|viale|piazza|corso)\b/i.test(line)) continue;
+    if (/^(?:dati|fornitura|periodo|consumo|totale|pod|pdr)\b/i.test(line)) break;
+    if (!/^\[?\d[\d .-]*\]?$/.test(line)) return line;
+  }
+  return null;
+}
+
+function parseNumber(raw: string | null, field?: BillExtractionField): number | null {
   if (!raw) return null;
   const candidate = raw.replace(/[^0-9,.-]/g, "").trim();
-  if (!candidate) throw new BillIngestionError("EXTRACTION_VALUE_INVALID");
+  if (!candidate) throw new BillIngestionError("EXTRACTION_VALUE_INVALID", field);
   const normalized = candidate.includes(",")
     ? candidate.replace(/\./g, "").replace(",", ".")
-    : candidate.replace(/,(?=\d{3}(?:\D|$))/g, "");
+    : /^\d{1,3}(?:\.\d{3})+$/.test(candidate)
+      ? candidate.replace(/\./g, "")
+      : candidate.replace(/,(?=\d{3}(?:\D|$))/g, "");
   const value = Number(normalized);
-  if (!Number.isFinite(value) || value < 0) throw new BillIngestionError("EXTRACTION_VALUE_INVALID");
+  if (!Number.isFinite(value) || value < 0) throw new BillIngestionError("EXTRACTION_VALUE_INVALID", field);
   return value;
 }
 
@@ -77,8 +179,8 @@ function declaredText(raw: string | null): DeclaredText {
   return raw ? { status: "KNOWN", value: raw } : unavailableText("NOT_PROVIDED");
 }
 
-function quantity<U extends "KWH" | "SMC">(unit: U, raw: string | null): Quantity<U> {
-  const value = parseNumber(raw);
+function quantity<U extends "KWH" | "SMC">(unit: U, raw: string | null, field?: BillExtractionField): Quantity<U> {
+  const value = parseNumber(raw, field);
   return value === null ? unavailableQuantity(unit) : { unit, status: "KNOWN", value };
 }
 
@@ -123,17 +225,29 @@ function fieldProvenance(
 
 function parseCustomerType(raw: string | null): "RESIDENTIAL" | "NON_RESIDENTIAL" {
   if (!raw) throw new BillIngestionError("EXTRACTION_REQUIRED_FIELD_MISSING");
-  if (/non[-_ ]?residential|business|azienda|impresa/i.test(raw)) return "NON_RESIDENTIAL";
-  if (/residential|domestic|privat/i.test(raw)) return "RESIDENTIAL";
-  throw new BillIngestionError("EXTRACTION_VALUE_INVALID");
+  if (/non\s*residente|non[-_ ]?residential|business|azienda|impresa/i.test(raw)) return "NON_RESIDENTIAL";
+  if (/residente|residential|domestic|privat/i.test(raw)) return "RESIDENTIAL";
+  throw new BillIngestionError("EXTRACTION_VALUE_INVALID", "customerType");
 }
 
-function parseConsumptionBasis(raw: string | null): "MEASURED" | "ESTIMATED" | "MIXED" {
-  if (!raw) throw new BillIngestionError("EXTRACTION_REQUIRED_FIELD_MISSING");
+function parseConsumptionBasis(raw: string | null): "MEASURED" | "ESTIMATED" | "MIXED" | null {
+  if (!raw) return null;
   if (/measured|misurat/i.test(raw)) return "MEASURED";
   if (/estimated|stimat/i.test(raw)) return "ESTIMATED";
   if (/mixed|misto/i.test(raw)) return "MIXED";
-  throw new BillIngestionError("EXTRACTION_VALUE_INVALID");
+  throw new BillIngestionError("EXTRACTION_VALUE_INVALID", "consumptionBasis");
+}
+
+function parseVoltageLevel(raw: string | null): "LV" | "MV" | "HV" | "EHV" {
+  if (!raw) throw new BillIngestionError("EXTRACTION_REQUIRED_FIELD_MISSING");
+  const normalized = raw.toUpperCase().replace(/\s/g, "");
+  if (normalized === "LV" || normalized === "MV" || normalized === "HV" || normalized === "EHV") return normalized;
+  if (/\b(?:bassa|low)\s+tensione\b|\bBT\b/i.test(raw)) return "LV";
+  if (/\b(?:media|medium)\s+tensione\b|\bMT\b/i.test(raw)) return "MV";
+  if (/\b(?:alta|high)\s+tensione\b|\bAT\b/i.test(raw)) return "HV";
+  const volts = parseNumber(raw, "voltageLevel");
+  if (volts !== null && volts > 0 && volts <= 1_000) return "LV";
+  throw new BillIngestionError("EXTRACTION_VALUE_INVALID", "voltageLevel");
 }
 
 export function mapTextToEnergyBill(input: {
@@ -148,47 +262,43 @@ export function mapTextToEnergyBill(input: {
   if (classification.vector === "UNKNOWN") throw new BillIngestionError("BILL_VECTOR_UNKNOWN");
   const vector = classification.vector;
 
-  const customerId = required(readLabel(input.text, ["customer id", "id cliente"]));
-  const customerName = readLabel(input.text, ["customer name", "nome cliente", "customer", "cliente", "intestatario"]);
-  const customerType = parseCustomerType(readLabel(input.text, ["customer type", "tipo cliente"]));
+  const customerId = readCustomerId(input.text);
+  const customerName = readCustomerName(input.text);
+  const customerType = parseCustomerType(readLabel(input.text, ["customer type", "tipo cliente", "tipologia cliente"]));
   const vatNumber = readLabel(input.text, ["vat number", "partita iva", "p iva", "vat"]);
   const taxCode = readLabel(input.text, ["tax code", "codice fiscale"]);
-  if (!vatNumber && !taxCode) throw new BillIngestionError("EXTRACTION_REQUIRED_FIELD_MISSING");
   const taxIdentifiers = [
     ...(vatNumber ? [{ kind: "VAT_NUMBER" as const, value: vatNumber }] : []),
     ...(taxCode ? [{ kind: "TAX_CODE" as const, value: taxCode }] : []),
   ];
-  const supplyId = required(readLabel(input.text, ["supply id", "id fornitura"]));
-  const meterId = required(readLabel(input.text, ["meter id", "matricola contatore"]));
-  const periodRaw = readLabel(input.text, ["billing period", "periodo fatturazione", "periodo"]);
+  const supplyId = readLabel(input.text, ["supply id", "id fornitura"]);
+  const meterId = readLabel(input.text, ["meter id", "matricola contatore"]);
+  const periodRaw = readLabel(input.text, ["billing period", "periodo fatturato", "periodo fatturazione", "periodo"]);
   const billingPeriod = parsePeriod(periodRaw);
-  if (!billingPeriod) throw new BillIngestionError("EXTRACTION_VALUE_INVALID");
-  const supplier = required(readLabel(input.text, ["supplier", "fornitore"]));
-  const offerNameRaw = readLabel(input.text, ["offer name", "nome offerta"]);
+  if (!billingPeriod) throw new BillIngestionError("EXTRACTION_VALUE_INVALID", "billingPeriod");
+  const supplier = required(readSupplier(input.text), "supplier");
+  const offerNameRaw = readLabel(input.text, ["offer name", "nome offerta", "offerta commerciale"]);
   const offerCodeRaw = readLabel(input.text, ["offer code", "codice offerta"]);
   const consumptionBasis = parseConsumptionBasis(readLabel(input.text, ["consumption basis", "tipo consumo"]));
 
   const podOrPdr = vector === "EE"
-    ? required(readLabel(input.text, ["pod"]))
-    : required(readLabel(input.text, ["pdr"]));
+    ? required(readSupplyReference(input.text, "pod"), "pod")
+    : required(readSupplyReference(input.text, "pdr"), "pdr");
   const supply: ElectricitySupply | GasSupply = vector === "EE"
     ? {
       vector: "EE" as const,
-      supplyId,
-      meterId,
+      ...(supplyId ? { supplyId } : {}),
+      ...(meterId ? { meterId } : {}),
       pod: podOrPdr,
       voltageLevel: ((): "LV" | "MV" | "HV" | "EHV" => {
-        const raw = required(readLabel(input.text, ["voltage level", "livello tensione"]));
-        const normalized = raw.toUpperCase().replace(/\s/g, "");
-        if (normalized !== "LV" && normalized !== "MV" && normalized !== "HV" && normalized !== "EHV") throw new BillIngestionError("EXTRACTION_VALUE_INVALID");
-        return normalized;
+        return parseVoltageLevel(readLabel(input.text, ["voltage level", "livello tensione", "tensione di alimentazione"]));
       })(),
     }
-    : { vector: "GAS" as const, supplyId, meterId, pdr: podOrPdr };
+    : { vector: "GAS" as const, ...(supplyId ? { supplyId } : {}), ...(meterId ? { meterId } : {}), pdr: podOrPdr };
 
-  const f1Raw = readLabel(input.text, ["f1"]);
-  const f2Raw = readLabel(input.text, ["f2"]);
-  const f3Raw = readLabel(input.text, ["f3"]);
+  const f1Raw = vector === "EE" ? readConsumptionBand(input.text, "f1") : null;
+  const f2Raw = vector === "EE" ? readConsumptionBand(input.text, "f2") : null;
+  const f3Raw = vector === "EE" ? readConsumptionBand(input.text, "f3") : null;
   const totalRaw = vector === "EE" ? readLabel(input.text, ["total kwh", "totale kwh", "billed kwh", "consumo fatturato"]) : null;
   const smcRaw = vector === "GAS" ? readLabel(input.text, ["smc", "gas consumption", "consumo gas"]) : null;
   const coefficientRaw = vector === "GAS" ? readLabel(input.text, ["correction coefficient", "coefficiente di conversione", "coefficiente"]) : null;
@@ -229,15 +339,15 @@ export function mapTextToEnergyBill(input: {
     recordType: "BILL",
     vector: "EE",
     billId: input.billId,
-    customerId,
-    supplyId,
+    ...(customerId ? { customerId } : {}),
+    ...(supplyId ? { supplyId } : {}),
     supply: supply as ElectricitySupply,
     billingPeriod,
-    consumptionBasis,
+    ...(consumptionBasis ? { consumptionBasis } : {}),
     currentSupplier: supplier,
-    customer: { customerId, customerType, name: declaredText(customerName), taxIdentifiers },
+    customer: { ...(customerId ? { customerId } : {}), customerType, name: declaredText(customerName), taxIdentifiers },
     offer: { supplier, offerName: declaredText(offerNameRaw), offerCode: declaredText(offerCodeRaw) },
-    consumption: { vector: "EE", f1: quantity("KWH", f1Raw), f2: quantity("KWH", f2Raw), f3: quantity("KWH", f3Raw), total: quantity("KWH", totalRaw) },
+    consumption: { vector: "EE", f1: quantity("KWH", f1Raw, "f1"), f2: quantity("KWH", f2Raw, "f2"), f3: quantity("KWH", f3Raw, "f3"), total: quantity("KWH", totalRaw, "billedConsumption") },
     regulatedCharges: [],
     fieldProvenance: fieldProvenance(input.billId, extractionSource, [
       { field: "billingPeriod", raw: periodRaw, confidence: 0.9, locator: "billing-period" },
@@ -260,15 +370,15 @@ export function mapTextToEnergyBill(input: {
     recordType: "BILL",
     vector: "GAS",
     billId: input.billId,
-    customerId,
-    supplyId,
+    ...(customerId ? { customerId } : {}),
+    ...(supplyId ? { supplyId } : {}),
     supply: supply as GasSupply,
     billingPeriod,
-    consumptionBasis,
+    ...(consumptionBasis ? { consumptionBasis } : {}),
     currentSupplier: supplier,
-    customer: { customerId, customerType, name: declaredText(customerName), taxIdentifiers },
+    customer: { ...(customerId ? { customerId } : {}), customerType, name: declaredText(customerName), taxIdentifiers },
     offer: { supplier, offerName: declaredText(offerNameRaw), offerCode: declaredText(offerCodeRaw) },
-    consumption: { vector: "GAS", smc: quantity("SMC", smcRaw), correctionCoefficient: parseNumber(coefficientRaw) === null ? unavailableNumber("NOT_PROVIDED") : { status: "KNOWN", value: parseNumber(coefficientRaw) as number } },
+    consumption: { vector: "GAS", smc: quantity("SMC", smcRaw, "smc"), correctionCoefficient: parseNumber(coefficientRaw, "correctionCoefficient") === null ? unavailableNumber("NOT_PROVIDED") : { status: "KNOWN", value: parseNumber(coefficientRaw, "correctionCoefficient") as number } },
     regulatedCharges: [],
     fieldProvenance: fieldProvenance(input.billId, extractionSource, [
       { field: "billingPeriod", raw: periodRaw, confidence: 0.9, locator: "billing-period" },

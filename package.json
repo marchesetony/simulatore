@@ -6,9 +6,17 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "eslint"
+    "lint": "eslint",
+    "test:bill-economic-components": "node --experimental-strip-types tests/bill-economic-components.smoke.mjs",
+    "test:bill-receipt-complete": "node --experimental-strip-types tests/bill-receipt-complete.smoke.mjs",
+    "test:bill-period-display": "node --experimental-strip-types tests/bill-period-display.smoke.mjs",
+    "test:bill-ui-synthesis": "node --experimental-strip-types tests/bill-ui-synthesis.smoke.mjs",
+    "bill:gme-invoice-period-import": "git diff --check && npx tsc --noEmit && npm run lint && node --experimental-strip-types tests/gme-pun-source.smoke.mjs && node --experimental-strip-types tests/bill-gme-invoice-period-import.smoke.mjs && node --experimental-strip-types tests/bill-pun-header.smoke.mjs && node --experimental-strip-types tests/bill-review-data-completeness.smoke.mjs && node scripts/bill-gme-invoice-period-import.mjs --preflight-passed",
+    "test:bill-anthropic-schema-probe": "node --experimental-strip-types scripts/bill-schema-probe.mjs",
+    "test:bill-anthropic-two-stage-probe": "node --experimental-strip-types scripts/bill-anthropic-two-stage-probe.mjs"
   },
   "dependencies": {
+    "@anthropic-ai/sdk": "^0.117.1",
     "next": "16.2.4",
     "react": "19.2.4",
     "react-dom": "19.2.4"

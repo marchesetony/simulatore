@@ -29,3 +29,22 @@ export function statusLabel(value: string | null | undefined): string {
 export function safeText(value: unknown, fallback = "Non disponibile"): string {
   return typeof value === "string" && value.trim() ? value : fallback;
 }
+
+export function formatDisplayDate(value: string | null | undefined): string {
+  if (!value) return "";
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value);
+  return match ? `${match[3]}/${match[2]}/${match[1]}` : value;
+}
+
+export function formatInclusivePeriodEnd(endExclusive: string | null | undefined): string | null {
+  if (!endExclusive) return null;
+  const date = new Date(`${endExclusive}T00:00:00Z`);
+  if (!Number.isFinite(date.getTime())) return endExclusive;
+  date.setUTCDate(date.getUTCDate() - 1);
+  return date.toISOString().slice(0, 10);
+}
+
+export function formatBillDisplayPeriod(start: string | null | undefined, endExclusive: string | null | undefined): string {
+  const inclusiveEnd = formatInclusivePeriodEnd(endExclusive);
+  return start && inclusiveEnd ? `${formatDisplayDate(start)} – ${formatDisplayDate(inclusiveEnd)}` : "";
+}

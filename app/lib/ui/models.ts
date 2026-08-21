@@ -191,6 +191,22 @@ export interface BillDocumentModel {
   readonly versionCount: number;
   readonly approvalReady: boolean;
   readonly fields: Readonly<Record<string, { readonly value: string | null; readonly confidence: number; readonly source: string; readonly confirmed: boolean }>>;
+  readonly normalized: import("../foundation/real-bill").PublicBillProfile | null;
+  readonly structuredBill: import("../ingestion/structured-bill").StructuredBillExtraction | null;
+  readonly resolvedVector: "EE" | "GAS" | "UNKNOWN";
+  readonly invoicePunReferences: import("../market/pun-reference").OfficialPunModel;
+  readonly regulatoryAudit: import("../foundation/bill-regulatory-audit").BillRegulatoryAuditDTO | null;
+  readonly analystReview: import("../foundation/bill-analyst-review").BillAnalystReviewDTO;
+}
+
+export interface ApprovedBillSummaryModel {
+  readonly id: string;
+  readonly title: string;
+  readonly supplier: string | null;
+  readonly supplyReference: string | null;
+  readonly period: { readonly periodStart: string | null; readonly periodEnd: string | null };
+  readonly vector: UiVector;
+  readonly status: "APPROVED";
 }
 
 export interface CalculationMoneyModel {
@@ -254,11 +270,11 @@ export interface SimulationDraft {
   readonly calculationDate: string;
   readonly periodStart: string;
   readonly periodEnd: string;
-  readonly customerCategory: "RESIDENTIAL" | "NON_RESIDENTIAL";
-  readonly taxTreatment: "INCLUDED" | "EXCLUDED" | "NOT_APPLICABLE";
+  readonly customerCategory: "RESIDENTIAL" | "NON_RESIDENTIAL" | "";
+  readonly taxTreatment: "INCLUDED" | "EXCLUDED" | "NOT_APPLICABLE" | "";
   readonly customerReference: string;
   readonly supplyReference: string;
-  readonly voltageLevel: "LV" | "MV" | "HV" | "EHV";
+  readonly voltageLevel: "LV" | "MV" | "HV" | "EHV" | "";
   readonly f1: string;
   readonly f2: string;
   readonly f3: string;

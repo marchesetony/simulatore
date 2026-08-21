@@ -1,10 +1,12 @@
-import { toPublicDocument } from "../../lib/foundation/real-bill";
-import { ingestEnergyBill } from "../../lib/ingestion";
+import { toPublicBillSummary, toPublicDocument } from "../../lib/foundation/real-bill";
+import { billErrorHttpStatus, billErrorUserMessage, billOcrHttpStatus, billOcrUserMessage, ingestEnergyBill } from "../../lib/ingestion";
 import { requestPrincipal } from "../../lib/auth/request";
 import { runtimeRepositories } from "../../lib/persistence/adapter";
 import { recordRuntimeAudit } from "../../lib/persistence/audit";
 import { AuthenticationError } from "../../lib/auth/errors";
-import { createAnthropicBillOcrProvider } from "../../lib/cte/anthropic";
+import { createAnthropicTwoStageBillSdkAdapter } from "../../lib/ingestion/anthropic-bill-sdk";
+// createAnthropicBillSdkAdapter remains the legacy compatibility adapter; Bill routes use two-stage.
+import { attachOfficialPun } from "../../lib/market/pun-reference";
 
 const CORRELATION_ID = "foundation-bills";
 const LIST_CORRELATION_ID = "foundation-bill-list";
@@ -23,7 +25,28 @@ const INTERNAL_TO_PUBLIC_CODE: Readonly<Record<string, string>> = {
   BILL_LIST_TOO_LARGE: "BILL_LIST_TOO_LARGE",
   METADATA_INVALID: "METADATA_INVALID",
   BILL_VECTOR_UNKNOWN: "BILL_VECTOR_UNKNOWN",
+  BILL_EXTRACTION_REQUIRED_FIELD_MISSING: "BILL_EXTRACTION_REQUIRED_FIELD_MISSING",
+  BILL_EXTRACTION_VALUE_INVALID: "BILL_EXTRACTION_VALUE_INVALID",
+  BILL_CONTRACT_VALIDATION_FAILED: "BILL_CONTRACT_VALIDATION_FAILED",
+  BILL_METADATA_INVALID: "BILL_METADATA_INVALID",
+  BILL_MAPPING_FAILED: "BILL_MAPPING_FAILED",
+  BILL_RETRY_FAILED: "BILL_RETRY_FAILED",
   OCR_PROVIDER_REQUIRED: "OCR_PROVIDER_REQUIRED",
+  BILL_OCR_PROVIDER_NOT_CONFIGURED: "BILL_OCR_PROVIDER_NOT_CONFIGURED",
+  BILL_OCR_PROVIDER_CONFIGURATION_INVALID: "BILL_OCR_PROVIDER_CONFIGURATION_INVALID",
+  BILL_OCR_PROVIDER_AUTH_FAILED: "BILL_OCR_PROVIDER_AUTH_FAILED",
+  BILL_OCR_REQUEST_INVALID: "BILL_OCR_REQUEST_INVALID",
+  BILL_OCR_BILLING_ERROR: "BILL_OCR_BILLING_ERROR",
+  BILL_OCR_NOT_FOUND: "BILL_OCR_NOT_FOUND",
+  BILL_OCR_REQUEST_TOO_LARGE: "BILL_OCR_REQUEST_TOO_LARGE",
+  BILL_OCR_PROVIDER_RATE_LIMITED: "BILL_OCR_PROVIDER_RATE_LIMITED",
+  BILL_OCR_PROVIDER_UNAVAILABLE: "BILL_OCR_PROVIDER_UNAVAILABLE",
+  BILL_OCR_NETWORK_ERROR: "BILL_OCR_NETWORK_ERROR",
+  BILL_OCR_PROVIDER_TIMEOUT: "BILL_OCR_PROVIDER_TIMEOUT",
+  BILL_OCR_OUTPUT_TRUNCATED: "BILL_OCR_OUTPUT_TRUNCATED",
+  BILL_OCR_PROVIDER_REFUSAL: "BILL_OCR_PROVIDER_REFUSAL",
+  BILL_OCR_RESPONSE_INVALID: "BILL_OCR_RESPONSE_INVALID",
+  BILL_OCR_PROVIDER_FAILED: "BILL_OCR_PROVIDER_FAILED",
   PDF_REQUIRED: "PDF_REQUIRED",
   PDF_MIME_INVALID: "PDF_MIME_INVALID",
   PDF_SIGNATURE_INVALID: "PDF_SIGNATURE_INVALID",
@@ -50,6 +73,8 @@ function publicStatus(code: string): number {
   if (["AUTHENTICATION_REQUIRED", "AUTHENTICATION_EXPIRED", "AUTHENTICATION_INVALID"].includes(code)) return 401;
   if (["AUTHORIZATION_DENIED", "TENANT_MISMATCH", "ROLE_INSUFFICIENT", "TENANT_ACCESS_DENIED"].includes(code)) return 403;
   if (code === "OCR_PROVIDER_REQUIRED") return 422;
+  if (code.startsWith("BILL_OCR_")) return billOcrHttpStatus(code);
+  if (["BILL_VECTOR_UNKNOWN", "BILL_EXTRACTION_REQUIRED_FIELD_MISSING", "BILL_EXTRACTION_VALUE_INVALID", "BILL_CONTRACT_VALIDATION_FAILED", "BILL_METADATA_INVALID", "BILL_MAPPING_FAILED", "BILL_RETRY_FAILED"].includes(code)) return billErrorHttpStatus(code);
   return 400;
 }
 
@@ -63,13 +88,12 @@ function listError(error: unknown): Response {
 }
 
 export async function GET(request: Request): Promise<Response> {
-  void request;
   try {
     const principal = await requestPrincipal(request, "READ");
     const documents = await runtimeRepositories().billRepository.list(principal.tenantId);
     if (documents.length > MAX_BILL_LIST_RESULTS) throw new Error("BILL_LIST_TOO_LARGE");
-    const publicDocuments = documents
-      .map(toPublicDocument)
+    const approvedView = new URL(request.url).searchParams.get("view") === "approved";
+    const publicDocuments = (approvedView ? documents.filter((document) => document.currentApprovedVersionId !== null).map(toPublicBillSummary).filter((document): document is NonNullable<typeof document> => document !== null) : documents.filter((document) => document.currentApprovedVersionId === null).map(toPublicDocument))
       .sort((left, right) => left.createdAt.localeCompare(right.createdAt) || left.id.localeCompare(right.id));
     return Response.json({ documents: publicDocuments }, { headers: noStoreHeaders });
   } catch (error) {
@@ -82,8 +106,6 @@ export async function POST(request: Request): Promise<Response> {
     const principal = await requestPrincipal(request, "WRITE");
     const tenantId = principal.tenantId;
     const repositories = runtimeRepositories();
-    let ocrProvider;
-    try { ocrProvider = createAnthropicBillOcrProvider(); } catch { ocrProvider = undefined; }
     const audit = { async record(event: { readonly type: string; readonly tenantId: string; readonly documentId: string; readonly outcome: string }) { await recordRuntimeAudit({ principal, action: `BILL_${event.type}`, resourceType: "BILL", resourceId: event.documentId, outcome: event.outcome === "ALLOWED" ? "ALLOWED" : "DENIED", correlationId: CORRELATION_ID }); } };
     const form = await request.formData();
     const file = form.get("file");
@@ -99,13 +121,13 @@ export async function POST(request: Request): Promise<Response> {
       authenticated: true,
       localDev: process.env.FOUNDATION_LOCAL_DEV,
       audit,
-      ocrProvider,
+      structuredProviderFactory: () => createAnthropicTwoStageBillSdkAdapter(),
     });
     if (result.errorCode) {
       const code = boundedPublicCode(result.errorCode, "BILL_OPERATION_FAILED");
-      return deny(code, messageFor(code), publicStatus(code));
+      return Response.json({ error: { code, message: messageFor(code), correlationId: CORRELATION_ID }, document: await attachOfficialPun(toPublicDocument(result.document), repositories.marketArchiveRepository), status: result.status, errorCode: code }, { status: publicStatus(code), headers: noStoreHeaders });
     }
-    return Response.json({ document: toPublicDocument(result.document), energyBill: result.contract }, { status: 201, headers: noStoreHeaders });
+    return Response.json({ document: await attachOfficialPun(toPublicDocument(result.document), repositories.marketArchiveRepository), energyBill: result.contract }, { status: 201, headers: noStoreHeaders });
   } catch (error) {
     const code = publicCode(error, "INGESTION_FAILED");
     return deny(code, messageFor(code), publicStatus(code));
@@ -113,8 +135,15 @@ export async function POST(request: Request): Promise<Response> {
 }
 
 function messageFor(code: string): string {
+  if (code.startsWith("BILL_OCR_")) return billOcrUserMessage(code);
   switch (code) {
-    case "BILL_VECTOR_UNKNOWN": return "Bill vector could not be classified";
+    case "BILL_VECTOR_UNKNOWN":
+    case "BILL_EXTRACTION_REQUIRED_FIELD_MISSING":
+    case "BILL_EXTRACTION_VALUE_INVALID":
+    case "BILL_CONTRACT_VALIDATION_FAILED":
+    case "BILL_METADATA_INVALID":
+    case "BILL_MAPPING_FAILED":
+    case "BILL_RETRY_FAILED": return billErrorUserMessage(code);
     case "OCR_PROVIDER_REQUIRED": return "OCR provider is required for this PDF";
     case "PDF_MIME_INVALID": return "PDF media type is invalid";
     case "PDF_SIGNATURE_INVALID": return "PDF signature is invalid";

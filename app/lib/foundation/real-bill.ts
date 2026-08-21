@@ -2,14 +2,30 @@ import { randomUUID } from "node:crypto";
 import { mkdir, readFile, unlink, writeFile } from "node:fs/promises";
 import path from "node:path";
 // @ts-expect-error Node's strip-only test runner requires the explicit extension.
+import { atomicWriteJson } from "../archive/atomic.ts";
+// @ts-expect-error Node's strip-only test runner requires the explicit extension.
 import { validateBillContract } from "../energy/validation.ts";
 import type { BillContract } from "../energy/types.ts";
+// @ts-expect-error Node's strip-only test runner requires the explicit extension.
+import { billErrorCode, billErrorField, isBillErrorCode, BillIngestionError, type BillErrorCode, type BillExtractionField } from "../ingestion/errors.ts";
+// @ts-expect-error Next runtime resolves explicit TypeScript extensions.
+import { structuredBillContract, structuredBillFields, validateStructuredBillExtraction, type StructuredBillExtraction, type StructuredBillExtractionProvider, type StructuredBillField } from "../ingestion/structured-bill.ts";
+// @ts-expect-error Next runtime resolves explicit TypeScript extensions.
+import { resolveBillVectorFromEvidence, type ResolvedBillVector } from "../ingestion/vector-resolution.ts";
+import type { OfficialPunModel } from "../market/pun-reference";
+import type { BillRegulatoryAuditDTO } from "./bill-regulatory-audit";
+// @ts-expect-error Node's strip-only test runner requires the explicit extension.
+import { resolveBillingAddressFromPdf } from "./bill-pdf-layout.ts";
+// @ts-expect-error Node's strip-only test runner requires the explicit extension.
+import { mergeBillCoreAndAnalyst, stripBillAnalystData, type BillAnalystWireExtraction } from "../ingestion/bill-two-stage.ts";
+// @ts-expect-error Node's strip-only test runner requires the explicit extension.
+import { buildBillAnalystReview, type BillAnalystReviewDTO } from "./bill-analyst-review.ts";
 
 export type ExtractionStatus = "EXTRACTED" | "OCR_PROVIDER_REQUIRED" | "FAILED" | "REVIEW_REQUIRED";
 export type FieldName = "supplier" | "pod" | "customerName" | "billingPeriod" | "annualConsumption" | "billedConsumption" | "totalAmount";
 export type FieldValue = string | null;
 export type ReviewState = "WORKING" | "WORKING_AFTER_APPROVAL" | "WORKING_SUPERSEDED" | "APPROVED_CURRENT" | "APPROVED_SUPERSEDED";
-export type ExtractedField = { readonly value: FieldValue; readonly confidence: number; readonly source: "embedded-text" | "manual" | "unavailable"; readonly confirmed: boolean };
+export type ExtractedField = { readonly value: FieldValue; readonly confidence: number; readonly source: "embedded-text" | "document-ai" | "manual" | "unavailable"; readonly confirmed: boolean };
 export type BillFields = Record<FieldName, ExtractedField>;
 export type BillVersion = {
   readonly versionId: string;
@@ -19,7 +35,10 @@ export type BillVersion = {
   readonly fields: BillFields;
   readonly createdAt: string;
   readonly origin: "INGESTION" | "MANUAL_REVIEW";
+  readonly errorCode?: BillErrorCode;
+  readonly errorField?: BillExtractionField;
   readonly energyContract?: BillContract;
+  readonly structuredBill?: StructuredBillExtraction;
 };
 export type BillProvenanceEvent = {
   readonly eventId: string;
@@ -68,6 +87,18 @@ export type PublicBillVersion = {
   readonly reviewState: ReviewState;
   readonly approvedAt: string | null;
 };
+export type PublicBillProfile = {
+  readonly vector: "EE" | "GAS";
+  readonly customer: { readonly reference: string | null; readonly name: string | null; readonly customerType: "RESIDENTIAL" | "NON_RESIDENTIAL" | null; readonly taxIdentifiers: readonly { readonly kind: "VAT_NUMBER" | "TAX_CODE"; readonly value: string }[] };
+  readonly supply: { readonly reference: string | null; readonly voltageLevel?: "LV" | "MV" | "HV" | "EHV" };
+  readonly billingPeriod: { readonly periodStart: string | null; readonly periodEnd: string | null };
+  readonly currentSupplier: string | null;
+  readonly offer: { readonly name: string | null; readonly code: string | null };
+  readonly consumption: { readonly f1?: number | null; readonly f2?: number | null; readonly f3?: number | null; readonly total?: number | null; readonly smc?: number | null; readonly correctionCoefficient?: number | null };
+  readonly amounts: readonly { readonly label: string; readonly value: string }[];
+  readonly missing: readonly string[];
+  readonly provenance: readonly { readonly label: string; readonly source: string; readonly confidence: number; readonly reviewed: boolean }[];
+};
 export type PublicBillDocument = {
   readonly id: string;
   readonly tenantId: string;
@@ -92,6 +123,12 @@ export type PublicBillDocument = {
     readonly unconfirmedFields: readonly FieldName[];
   };
   readonly versions: readonly PublicBillVersion[];
+  readonly normalized: PublicBillProfile | null;
+  readonly structuredBill: StructuredBillExtraction | null;
+  readonly resolvedVector: ResolvedBillVector;
+  readonly invoicePunReferences: OfficialPunModel;
+  readonly regulatoryAudit: BillRegulatoryAuditDTO | null;
+  readonly analystReview: BillAnalystReviewDTO;
 };
 type BillStore = {
   readonly schemaVersion: 1;
@@ -126,6 +163,7 @@ export interface BillRepository {
   save(document: BillDocument): Promise<void>;
   get(tenantId: string, id: string): Promise<BillDocument | null>;
   list(tenantId: string): Promise<readonly BillDocument[]>;
+  delete?(tenantId: string, id: string): Promise<void>;
 }
 export interface EnergyContractMapperInput {
   readonly text: string;
@@ -143,7 +181,7 @@ export interface AuditSink {
 export const fieldNames: readonly FieldName[] = ["supplier", "pod", "customerName", "billingPeriod", "annualConsumption", "billedConsumption", "totalAmount"];
 export const requiredFieldNames: readonly FieldName[] = fieldNames;
 const extractionStatuses: readonly ExtractionStatus[] = ["EXTRACTED", "OCR_PROVIDER_REQUIRED", "FAILED", "REVIEW_REQUIRED"];
-const fieldSources: readonly ExtractedField["source"][] = ["embedded-text", "manual", "unavailable"];
+const fieldSources: readonly ExtractedField["source"][] = ["embedded-text", "document-ai", "manual", "unavailable"];
 const versionOrigins: readonly BillVersion["origin"][] = ["INGESTION", "MANUAL_REVIEW"];
 const provenanceTypes: readonly BillProvenanceEvent["type"][] = ["INGESTION", "MANUAL_REVIEW", "APPROVAL"];
 const provenanceOrigins: readonly BillProvenanceEvent["origin"][] = ["INGESTION", "MANUAL_REVIEW", "LOCAL_APPROVAL"];
@@ -271,6 +309,19 @@ function readOptionalFieldName(value: unknown): FieldName | null {
   return readFieldName(value);
 }
 
+function readOptionalBillErrorCode(value: unknown): BillErrorCode | undefined {
+  if (value === undefined) return undefined;
+  if (!isBillErrorCode(value)) throw metadataInvalid();
+  return value;
+}
+
+function readOptionalBillErrorField(value: unknown): BillExtractionField | undefined {
+  if (value === undefined) return undefined;
+  const fields: readonly BillExtractionField[] = ["customerType", "billingPeriod", "consumptionBasis", "voltageLevel", "supplier", "pod", "pdr", "f1", "f2", "f3", "billedConsumption", "smc", "correctionCoefficient"];
+  if (typeof value !== "string" || !fields.includes(value as BillExtractionField)) throw metadataInvalid();
+  return value as BillExtractionField;
+}
+
 function assertUniqueIds(values: readonly string[]): void {
   const seen = new Set<string>();
   for (const value of values) {
@@ -373,10 +424,16 @@ export function approvalValidation(document: BillDocument, versionId: string): A
 }
 
 export function toPublicDocument(document: BillDocument): PublicBillDocument {
-  const working = currentVersion(document);
+  return toPublicDocumentVersion(document, document.currentVersionId);
+}
+
+export function toPublicDocumentVersion(document: BillDocument, versionId: string): PublicBillDocument {
+  const working = document.versions.find((item) => item.versionId === versionId);
+  if (!working) throw new Error("DOCUMENT_VERSION_NOT_FOUND");
   const approved = approvedVersion(document);
   const issues = approvalValidation(document, working.versionId);
-  return {
+  const resolvedVector: ResolvedBillVector = working.energyContract?.vector ?? (working.structuredBill ? resolveBillVectorFromEvidence(working.structuredBill).vector : "UNKNOWN");
+  const publicDocument = {
     id: document.id,
     tenantId: document.tenantId,
     fileName: document.fileName,
@@ -404,7 +461,55 @@ export function toPublicDocument(document: BillDocument): PublicBillDocument {
         reviewState: reviewStateFor(document, version.versionId),
         approvedAt: approvalRecordFor(document, version.versionId)?.approvedAt ?? null,
       })),
+    normalized: working.energyContract ? publicBillProfile(working.energyContract, working.fields) : null,
+    structuredBill: working.structuredBill ?? null,
+    resolvedVector,
+    invoicePunReferences: [],
+    regulatoryAudit: null,
   };
+  const analystReview = buildBillAnalystReview(publicDocument);
+  const billingAddress = resolveBillingAddressFromPdf(document.objectKey, { customerName: analystReview.customer.name.value, taxCode: analystReview.customer.taxIdentifier.value, supplyAddress: analystReview.supply.address.value });
+  return { ...publicDocument, analystReview: billingAddress ? { ...analystReview, receipt: { ...analystReview.receipt, billingAddress: { value: billingAddress, raw: billingAddress, status: "FOUND" } } } : analystReview };
+}
+
+export function toPublicApprovedDocument(document: BillDocument): PublicBillDocument | null {
+  return document.currentApprovedVersionId ? toPublicDocumentVersion(document, document.currentApprovedVersionId) : null;
+}
+
+export function toPublicBillSummary(document: BillDocument): { readonly id: string; readonly title: string; readonly supplier: string | null; readonly supplyReference: string | null; readonly period: { readonly periodStart: string | null; readonly periodEnd: string | null }; readonly vector: "EE" | "GAS"; readonly status: "APPROVED"; readonly createdAt: string } | null {
+  const approved = toPublicApprovedDocument(document);
+  if (!approved) return null;
+  const profile = approved.normalized;
+  return { id: document.id, title: profile?.customer.name ?? document.fileName, supplier: profile?.currentSupplier ?? null, supplyReference: profile?.supply.reference ?? null, period: profile?.billingPeriod ?? { periodStart: null, periodEnd: null }, vector: profile?.vector ?? "EE", status: "APPROVED", createdAt: document.createdAt };
+}
+
+function publicBillProfile(contract: BillContract, fields: BillFields): PublicBillProfile {
+  const text = (value: { readonly status: string; readonly value?: string }): string | null => value.status === "KNOWN" ? value.value ?? null : null;
+  const number = (value: { readonly status: string; readonly value?: number }): number | null => value.status === "KNOWN" ? value.value ?? null : null;
+  const profile = {
+    vector: contract.vector,
+    customer: { reference: contract.customer?.customerId ?? contract.customerId ?? null, name: contract.customer ? text(contract.customer.name) : fields.customerName.value, customerType: contract.customer?.customerType ?? null, taxIdentifiers: contract.customer?.taxIdentifiers ?? [] },
+    supply: { reference: contract.vector === "EE" ? contract.supply.pod : contract.supply.pdr, ...(contract.vector === "EE" ? { voltageLevel: contract.supply.voltageLevel } : {}) },
+    billingPeriod: { periodStart: contract.billingPeriod.periodStart, periodEnd: contract.billingPeriod.periodEnd },
+    currentSupplier: contract.currentSupplier ?? null,
+    offer: { name: text(contract.offer.offerName), code: text(contract.offer.offerCode) },
+    consumption: contract.vector === "EE" ? { f1: number(contract.consumption.f1), f2: number(contract.consumption.f2), f3: number(contract.consumption.f3), total: number(contract.consumption.total) } : { smc: number(contract.consumption.smc), correctionCoefficient: number(contract.consumption.correctionCoefficient) },
+    amounts: [
+      ...(fields.billedConsumption.value ? [{ label: "Consumo fatturato", value: fields.billedConsumption.value }] : []),
+      ...(fields.totalAmount.value ? [{ label: "Totale bolletta", value: fields.totalAmount.value }] : []),
+    ],
+    missing: [
+      ...(contract.customer?.name.status !== "KNOWN" && !fields.customerName.value ? ["Nome cliente"] : []),
+      ...(contract.vector === "EE" && contract.consumption.f1.status !== "KNOWN" ? ["Consumo F1"] : []),
+      ...(contract.vector === "EE" && contract.consumption.f2.status !== "KNOWN" ? ["Consumo F2"] : []),
+      ...(contract.vector === "EE" && contract.consumption.f3.status !== "KNOWN" ? ["Consumo F3"] : []),
+      ...(contract.vector === "GAS" && contract.consumption.smc.status !== "KNOWN" ? ["Consumo Smc"] : []),
+      ...(contract.vector === "GAS" && contract.consumption.correctionCoefficient.status !== "KNOWN" ? ["Coefficiente di correzione"] : []),
+      ...(fields.totalAmount.value ? [] : ["Totale bolletta"]),
+    ],
+    provenance: (contract.valueProvenance ?? contract.fieldProvenance.map((item) => ({ path: item.field, source: item.source, confidence: item.confidence, reviewed: item.reviewed }))).map((item) => ({ label: item.path, source: item.source, confidence: item.confidence, reviewed: item.reviewed })),
+  } satisfies PublicBillProfile;
+  return profile;
 }
 
 export class LocalDocumentStorage implements DocumentStoragePort {
@@ -446,7 +551,7 @@ export class LocalBillRepository implements BillRepository {
     await mkdir(rootDir, { recursive: true });
     const store = await this.readStore();
     const documents = [...store.documents.filter((item) => !(item.id === document.id && item.tenantId === document.tenantId)), validateStoredDocument(document)];
-    await writeFile(this.file, JSON.stringify({ schemaVersion: 1, documents }, null, 2), "utf8");
+    await atomicWriteJson(this.file, { schemaVersion: 1, documents });
   }
 
   async get(tenantId: string, id: string): Promise<BillDocument | null> {
@@ -465,9 +570,16 @@ export class LocalBillRepository implements BillRepository {
       .sort((left, right) => left.createdAt.localeCompare(right.createdAt) || left.id.localeCompare(right.id));
   }
 
+  async delete(tenantId: string, id: string): Promise<void> {
+    validateTenantId(tenantId);
+    const store = await this.readStore();
+    await writeFile(this.file, JSON.stringify({ schemaVersion: 1, documents: store.documents.filter((document) => !(document.tenantId === tenantId && document.id === id)) }, null, 2), "utf8");
+  }
+
   private async readStore(): Promise<BillStore> {
     try {
-      const parsed = JSON.parse(await readFile(this.file, "utf8")) as unknown;
+      const raw = await readFile(this.file, "utf8");
+      const parsed = JSON.parse(raw.replace(/^\uFEFF/, "")) as unknown;
       return normalizeStore(parsed);
     } catch (error) {
       if (error instanceof Error && "code" in error && error.code === "ENOENT") return { schemaVersion: 1, documents: [] };
@@ -497,20 +609,54 @@ export function validatePdf(fileName: string, contentType: string, bytes: Uint8A
   return fileName.replace(/[^\w .-]/g, "_");
 }
 
+export function validateBillDocument(fileName: string, contentType: string, bytes: Uint8Array, maxBytes: number): string {
+  if (contentType === "application/pdf") return validatePdf(fileName, contentType, bytes, maxBytes);
+  if (!Number.isInteger(maxBytes) || maxBytes <= 0) throw new Error("PDF_LIMIT_INVALID");
+  if (bytes.length === 0) throw new Error("PDF_EMPTY");
+  if (bytes.length > maxBytes) throw new Error("PDF_TOO_LARGE");
+  const signature = contentType === "image/jpeg" ? bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff : contentType === "image/png" ? Buffer.from(bytes.slice(0, 8)).equals(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a])) : false;
+  if (!signature) throw new Error("PDF_SIGNATURE_INVALID");
+  const extension = contentType === "image/jpeg" ? /\.(?:jpe?g)$/i : /\.png$/i;
+  if (!extension.test(fileName) || !/^[\w .-]{1,120}\.(?:jpe?g|png)$/i.test(fileName)) throw new Error("PDF_FILENAME_INVALID");
+  return fileName.replace(/[^\w .-]/g, "_");
+}
+
 function extracted(value: string | null, confidence: number): ExtractedField {
   return { value, confidence, source: value ? "embedded-text" : "unavailable", confirmed: false };
 }
 
+function normalizeLocalizedNumberText(value: string | null): string | null {
+  if (!value) return null;
+  return value.replace(/(?<![\w])\d{1,3}(?:\.\d{3})+(?:,\d+)?|(?<![\w])\d+(?:,\d+)?/, (candidate) => {
+    if (candidate.includes(",")) return candidate.replace(/\./g, "").replace(",", ".");
+    return /^\d{1,3}(?:\.\d{3})+$/.test(candidate) ? candidate.replace(/\./g, "") : candidate;
+  });
+}
+
 export function extractBillFields(text: string): BillFields {
   const result = emptyFields();
-  const match = (pattern: RegExp): string | null => text.match(pattern)?.[1]?.trim() || null;
-  result.supplier = extracted(match(/(?:fornitore|supplier)\s*[:\-]\s*([^\n;]+)/i), 0.9);
-  result.pod = extracted(match(/(?:POD|PDR)\s*[:\-]\s*([A-Z0-9]+)/i), 0.95);
-  result.customerName = extracted(match(/(?:cliente|customer|intestatario)\s*[:\-]\s*([^\n;]+)/i), 0.85);
-  result.billingPeriod = extracted(match(/(?:periodo|billing period)\s*[:\-]\s*([^\n;]+)/i), 0.8);
-  result.annualConsumption = extracted(match(/(?:consumo annuo|annual consumption)\s*[:\-]\s*([^\n;]+)/i), 0.8);
-  result.billedConsumption = extracted(match(/(?:consumo fatturato|billed consumption)\s*[:\-]\s*([^\n;]+)/i), 0.9);
-  result.totalAmount = extracted(match(/(?:totale da pagare|total amount)\s*[:\-]\s*([^\n;]+)/i), 0.9);
+  const normalized = text.normalize("NFKC").replace(/\r\n?/g, "\n");
+  const match = (pattern: RegExp): string | null => normalized.match(pattern)?.[1]?.trim() || null;
+  const companyLine = /(?:^|\n)\s*(?:\[\d+\]\s*)?([A-ZÀ-ÖØ-Ý0-9][A-ZÀ-ÖØ-Ý0-9 &'.,-]{1,118}?\s+(?:S\.?\s*R\.?\s*L\.?|S\.?\s*P\.?\s*A\.?|S\.?\s*A\.?\s*S\.?|S\.?\s*N\.?\s*C\.?)\s*)(?:-\s+[^\n;]+)?$/im;
+  const customerSection = ((): string | null => {
+    const lines = normalized.split("\n").map((line) => line.trim()).filter(Boolean);
+    const sectionIndex = lines.findIndex((line) => /^(?:dati cliente|customer data)$/i.test(line));
+    if (sectionIndex < 0) return null;
+    for (const line of lines.slice(sectionIndex + 1, sectionIndex + 6)) {
+      if (/^(?:codice cliente|customer id|id cliente|codice fiscale|partita iva)\b/i.test(line)) continue;
+      if (/^(?:via|viale|piazza|corso)\b/i.test(line)) continue;
+      if (/^(?:dati|fornitura|periodo|consumo|totale|pod|pdr)\b/i.test(line)) break;
+      if (!/^\[?\d[\d .-]*\]?$/.test(line)) return line;
+    }
+    return null;
+  })();
+  result.supplier = extracted(match(/(?:fornitore|supplier)\s*[:\-]\s*([^\n;]+)/i) ?? match(companyLine), 0.9);
+  result.pod = extracted(match(/\b(?:POD|PDR)\s*[:\-]?\s*([A-Z0-9]+)/i), 0.95);
+  result.customerName = extracted(match(/(?:cliente|customer|intestatario)\s*[:\-]\s*([^\n;]+)/i) ?? customerSection, 0.85);
+  result.billingPeriod = extracted(match(/(?:periodo fatturato|periodo fatturazione|periodo|billing period)\s*[:\-]\s*([^\n;]+)/i), 0.8);
+  result.annualConsumption = extracted(normalizeLocalizedNumberText(match(/(?:consumo annuo aggiornato|consumo annuo|annual consumption)\s*[:\-]?\s*([^\n;]+)/i)), 0.8);
+  result.billedConsumption = extracted(normalizeLocalizedNumberText(match(/(?:consumo fatturato|billed consumption)\s*[:\-]\s*([^\n;]+)/i)), 0.9);
+  result.totalAmount = extracted(normalizeLocalizedNumberText(match(/(?:totale da pagare|total amount)\s*[:\-]?\s*([^\n;]+)/i)), 0.9);
   return result;
 }
 
@@ -521,28 +667,35 @@ export async function ingestBill(input: {
   readonly bytes: Uint8Array;
   readonly maxBytes: number;
   readonly storage: DocumentStoragePort;
-  readonly extractor: TextExtractionPort;
+  readonly extractor?: TextExtractionPort;
+  readonly structuredExtractor?: StructuredBillExtractionProvider;
   readonly repository: BillRepository;
   readonly audit: AuditSink;
+  readonly onExtractionError?: (error: unknown) => string | null;
   readonly mapEnergyContract?: EnergyContractMapper;
 }): Promise<BillDocument> {
   const tenantId = validateTenantId(input.tenantId);
-  const safeName = validatePdf(input.fileName, input.contentType, input.bytes, input.maxBytes);
+  const safeName = input.structuredExtractor ? validateBillDocument(input.fileName, input.contentType, input.bytes, input.maxBytes) : validatePdf(input.fileName, input.contentType, input.bytes, input.maxBytes);
   const id = randomUUID();
   await input.audit.record({ type: "VALIDATION", tenantId, documentId: id, outcome: "ALLOWED" });
   const objectKey = await input.storage.store(tenantId, id, input.bytes);
   const now = new Date().toISOString();
   const versionId = randomUUID();
   try {
-    const extractedText = await input.extractor.extract(input.bytes);
-    const fields = extractBillFields(extractedText.text);
-    const energyContract = input.mapEnergyContract?.({
-      text: extractedText.text,
-      pages: extractedText.pages,
-      tenantId,
-      documentId: id,
-      versionId,
-    });
+    let fields: BillFields;
+    let energyContract: BillContract | undefined;
+    let structuredBill: StructuredBillExtraction | undefined;
+    if (input.structuredExtractor) {
+      structuredBill = await input.structuredExtractor.extract({ bytes: input.bytes, contentType: input.contentType });
+      validateStructuredBillExtraction(structuredBill);
+      fields = structuredBillFields(structuredBill);
+      energyContract = structuredBillContract({ extraction: structuredBill, tenantId, billId: id, versionId }) ?? undefined;
+    } else {
+      if (!input.extractor) throw new BillIngestionError("BILL_MAPPING_FAILED");
+      const extractedText = await input.extractor.extract(input.bytes);
+      fields = extractBillFields(extractedText.text);
+      energyContract = input.mapEnergyContract?.({ text: extractedText.text, pages: extractedText.pages, tenantId, documentId: id, versionId });
+    }
     if (energyContract) {
       validateBillContract(energyContract);
       if (energyContract.tenantId !== tenantId || energyContract.billId !== id) throw new Error("EXTRACTION_METADATA_INVALID");
@@ -557,7 +710,7 @@ export async function ingestBill(input: {
       updatedAt: now,
       currentVersionId: versionId,
       currentApprovedVersionId: null,
-      versions: [{ versionId, versionNumber: 1, supersedesVersionId: null, status: energyContract ? "EXTRACTED" : documentStatus(fields), fields, createdAt: now, origin: "INGESTION", ...(energyContract ? { energyContract } : {}) }],
+      versions: [{ versionId, versionNumber: 1, supersedesVersionId: null, status: input.structuredExtractor ? "REVIEW_REQUIRED" : energyContract ? "EXTRACTED" : documentStatus(fields), fields, createdAt: now, origin: "INGESTION", ...(energyContract ? { energyContract } : {}), ...(structuredBill ? { structuredBill } : {}) }],
       provenance: [{ eventId: randomUUID(), type: "INGESTION", origin: "INGESTION", tenantId, documentId: id, sourceVersionId: null, resultVersionId: versionId, field: null, previousValue: null, nextValue: null, at: now }],
       approvals: [],
     });
@@ -566,7 +719,10 @@ export async function ingestBill(input: {
     await input.audit.record({ type: "EXTRACTION", tenantId, documentId: id, outcome: "ALLOWED" });
     return document;
   } catch (error) {
+    const errorCode = input.onExtractionError?.(error) ?? billErrorCode(error);
+    const errorField = billErrorField(error);
     const status: ExtractionStatus = error instanceof Error && error.message === "OCR_PROVIDER_REQUIRED" ? "OCR_PROVIDER_REQUIRED" : "FAILED";
+    if (errorField) console.error(`[BILL_EXTRACTION_DIAG] code=${errorCode} field=${errorField}`);
     const document = sanitizeDocument({
       id,
       tenantId,
@@ -577,7 +733,7 @@ export async function ingestBill(input: {
       updatedAt: now,
       currentVersionId: versionId,
       currentApprovedVersionId: null,
-      versions: [{ versionId, versionNumber: 1, supersedesVersionId: null, status, fields: emptyFields(), createdAt: now, origin: "INGESTION" }],
+      versions: [{ versionId, versionNumber: 1, supersedesVersionId: null, status, fields: emptyFields(), createdAt: now, origin: "INGESTION", ...(status === "FAILED" && errorCode && isBillErrorCode(errorCode) ? { errorCode, ...(errorField ? { errorField } : {}) } : {}) }],
       provenance: [{ eventId: randomUUID(), type: "INGESTION", origin: "INGESTION", tenantId, documentId: id, sourceVersionId: null, resultVersionId: versionId, field: null, previousValue: null, nextValue: null, at: now }],
       approvals: [],
     });
@@ -586,6 +742,94 @@ export async function ingestBill(input: {
     await input.audit.record({ type: "EXTRACTION_FAILURE", tenantId, documentId: id, outcome: "FAILED" });
     return document;
   }
+}
+
+export async function retryBill(input: {
+  readonly document: BillDocument;
+  readonly tenantId: string;
+  readonly storage: DocumentStoragePort;
+  readonly extractor?: TextExtractionPort;
+  readonly structuredExtractor?: StructuredBillExtractionProvider;
+  readonly repository: BillRepository;
+  readonly audit: AuditSink;
+  readonly onExtractionError?: (error: unknown) => string | null;
+  readonly mapEnergyContract?: EnergyContractMapper;
+}): Promise<BillDocument> {
+  const tenantId = validateTenantId(input.tenantId);
+  if (input.document.tenantId !== tenantId) throw new Error("TENANT_ACCESS_DENIED");
+  if (input.document.currentApprovedVersionId !== null) throw new Error("BILL_APPROVED_RETRY_FORBIDDEN");
+  const bytes = await input.storage.read(input.document.objectKey);
+  const now = new Date().toISOString();
+  const versionId = randomUUID();
+  const source = currentVersion(input.document);
+  try {
+    let fields: BillFields;
+    let energyContract: BillContract | undefined;
+    let structuredBill: StructuredBillExtraction | undefined;
+    if (input.structuredExtractor) {
+      const contentType = /\.png$/i.test(input.document.fileName) ? "image/png" : /\.(?:jpe?g)$/i.test(input.document.fileName) ? "image/jpeg" : "application/pdf";
+      structuredBill = await input.structuredExtractor.extract({ bytes, contentType });
+      validateStructuredBillExtraction(structuredBill);
+      fields = structuredBillFields(structuredBill);
+      energyContract = structuredBillContract({ extraction: structuredBill, tenantId, billId: input.document.id, versionId }) ?? undefined;
+    } else {
+      if (!input.extractor) throw new BillIngestionError("BILL_MAPPING_FAILED");
+      const extractedText = await input.extractor.extract(bytes);
+      fields = extractBillFields(extractedText.text);
+      energyContract = input.mapEnergyContract?.({ text: extractedText.text, pages: extractedText.pages, tenantId, documentId: input.document.id, versionId });
+    }
+    if (energyContract) {
+      validateBillContract(energyContract);
+      if (energyContract.tenantId !== tenantId || energyContract.billId !== input.document.id) throw new Error("EXTRACTION_METADATA_INVALID");
+    }
+    const next = sanitizeDocument({ ...input.document, updatedAt: now, currentVersionId: versionId, versions: [...input.document.versions, { versionId, versionNumber: source.versionNumber + 1, supersedesVersionId: source.versionId, status: input.structuredExtractor ? "REVIEW_REQUIRED" : energyContract ? "EXTRACTED" : documentStatus(fields), fields, createdAt: now, origin: "INGESTION", ...(energyContract ? { energyContract } : {}), ...(structuredBill ? { structuredBill } : {}) }], provenance: [...input.document.provenance, { eventId: randomUUID(), type: "INGESTION", origin: "INGESTION", tenantId, documentId: input.document.id, sourceVersionId: null, resultVersionId: versionId, field: null, previousValue: null, nextValue: null, at: now }] });
+    await input.repository.save(next);
+    await input.audit.record({ type: "EXTRACTION", tenantId, documentId: input.document.id, outcome: "ALLOWED" });
+    return next;
+  } catch (error) {
+    const errorCode = input.onExtractionError?.(error) ?? billErrorCode(error);
+    const errorField = billErrorField(error);
+    const status: ExtractionStatus = error instanceof Error && error.message === "OCR_PROVIDER_REQUIRED" ? "OCR_PROVIDER_REQUIRED" : "FAILED";
+    if (errorField) console.error(`[BILL_EXTRACTION_DIAG] code=${errorCode} field=${errorField}`);
+    const next = sanitizeDocument({ ...input.document, updatedAt: now, currentVersionId: versionId, versions: [...input.document.versions, { versionId, versionNumber: source.versionNumber + 1, supersedesVersionId: source.versionId, status, fields: emptyFields(), createdAt: now, origin: "INGESTION", ...(status === "FAILED" && errorCode && isBillErrorCode(errorCode) ? { errorCode, ...(errorField ? { errorField } : {}) } : {}) }], provenance: [...input.document.provenance, { eventId: randomUUID(), type: "INGESTION", origin: "INGESTION", tenantId, documentId: input.document.id, sourceVersionId: null, resultVersionId: versionId, field: null, previousValue: null, nextValue: null, at: now }] });
+    await input.repository.save(next);
+    await input.audit.record({ type: "EXTRACTION_FAILURE", tenantId, documentId: input.document.id, outcome: "FAILED" });
+    return next;
+  }
+}
+
+function correctedEnergyContract(contract: BillContract, field: FieldName, value: string, versionId: string): BillContract {
+  const base = { ...contract, recordId: `${contract.billId}::energy::${versionId}`, version: "1", parentVersionId: null, reviewState: "NEEDS_REVIEW" as const };
+  if (field === "supplier") return { ...base, currentSupplier: value, offer: { ...contract.offer, supplier: value } };
+  if (field === "customerName" && contract.customer) return { ...base, customer: { ...contract.customer, name: { status: "KNOWN", value } } };
+  if (field === "pod") return contract.vector === "EE" ? { ...base, vector: "EE" as const, supply: { ...contract.supply, pod: value } } as BillContract : { ...base, vector: "GAS" as const, supply: { ...contract.supply, pdr: value } } as BillContract;
+  if (field === "billingPeriod") {
+    const dates = [...value.matchAll(/\d{4}-\d{2}-\d{2}/g)].map((match) => match[0]);
+    if (dates.length >= 2) return { ...base, billingPeriod: { periodStart: dates[0], periodEnd: dates[1] } };
+  }
+  return base;
+}
+
+function correctedStructuredBill(extraction: StructuredBillExtraction, field: FieldName, value: string): StructuredBillExtraction {
+  const human = <T>(current: StructuredBillField<T>, next: T): StructuredBillField<T> => ({ ...current, value: next, status: "FOUND", confidence: 1, source: "HUMAN_CORRECTION" });
+  if (field === "supplier") return { ...extraction, supplier: human(extraction.supplier, value) };
+  if (field === "customerName") return { ...extraction, customerName: human(extraction.customerName, value) };
+  if (field === "pod") {
+    const resolvedVector = resolveBillVectorFromEvidence(extraction).vector;
+    return resolvedVector === "GAS" ? { ...extraction, pdr: human(extraction.pdr, value) } : { ...extraction, pod: human(extraction.pod, value) };
+  }
+  if (field === "billingPeriod") {
+    const dates = [...value.matchAll(/\d{4}-\d{2}-\d{2}/g)].map((match) => match[0]);
+    if (dates.length >= 2) return { ...extraction, billingPeriod: human(extraction.billingPeriod, { from: dates[0], to: dates[1] }) };
+  }
+  const number = value.replace(/\./g, "").replace(",", ".");
+  const parsed = Number(number);
+  if (Number.isFinite(parsed)) {
+    if (field === "annualConsumption") return { ...extraction, annualConsumption: human(extraction.annualConsumption, parsed) };
+    if (field === "billedConsumption") return { ...extraction, billedConsumption: human(extraction.billedConsumption, parsed) };
+    if (field === "totalAmount") return { ...extraction, totalAmount: human(extraction.totalAmount, parsed) };
+  }
+  return extraction;
 }
 
 export function createManualCorrection(input: {
@@ -617,7 +861,8 @@ export function createManualCorrection(input: {
     fields,
     createdAt: input.at,
     origin: "MANUAL_REVIEW",
-    ...(source.energyContract ? { energyContract: source.energyContract } : {}),
+    ...(source.energyContract ? { energyContract: correctedEnergyContract(source.energyContract, input.field, value, versionId) } : {}),
+    ...(source.structuredBill ? { structuredBill: correctedStructuredBill(source.structuredBill, input.field, value) } : {}),
   };
 
   return sanitizeDocument({
@@ -655,7 +900,7 @@ export function approveDocumentVersion(input: {
   const version = input.document.versions.find((item) => item.versionId === input.versionId);
   if (!version) throw new Error("DOCUMENT_VERSION_NOT_FOUND");
   if (input.document.currentVersionId !== input.versionId) throw new Error("DOCUMENT_VERSION_NOT_CURRENT");
-  if (input.document.currentApprovedVersionId === input.versionId) throw new Error("DOCUMENT_VERSION_ALREADY_APPROVED");
+  if (input.document.currentApprovedVersionId === input.versionId) return sanitizeDocument(input.document);
   const issues = approvalValidation(input.document, input.versionId);
   if (issues.missingFields.length > 0) throw new Error("APPROVAL_REQUIRED_FIELDS_MISSING");
   if (issues.unconfirmedFields.length > 0) throw new Error("APPROVAL_FIELDS_UNCONFIRMED");
@@ -730,6 +975,103 @@ function normalizeLegacyDocuments(value: readonly unknown[]): readonly BillDocum
   return legacyDocuments;
 }
 
+/**
+ * Creates a new immutable INGESTION version from the current valid CORE and a
+ * fresh Analyst result. The old Analyst arrays are intentionally discarded:
+ * an Analyst Refresh is a replacement, not an append operation.
+ */
+export function createAnalystRefreshVersion(input: {
+  readonly document: BillDocument;
+  readonly tenantId: string;
+  readonly sourceVersionId: string;
+  readonly analyst: BillAnalystWireExtraction;
+  readonly at: string;
+}): BillDocument {
+  validateTenantId(input.tenantId);
+  if (input.document.tenantId !== input.tenantId) throw new Error("TENANT_ACCESS_DENIED");
+  if (input.document.currentVersionId !== input.sourceVersionId) throw new Error("DOCUMENT_VERSION_STALE");
+
+  const previous = currentVersion(input.document);
+  if (!previous.structuredBill) throw new Error("ANALYST_REFRESH_CORE_REQUIRED");
+  validateStructuredBillExtraction(previous.structuredBill);
+
+  const currentCore: StructuredBillExtraction = stripBillAnalystData(previous.structuredBill);
+  const newStructuredBill = mergeBillCoreAndAnalyst(currentCore, input.analyst, { analystExtractionStatus: "EXTRACTED" });
+
+  const versionId = randomUUID();
+  const energyContract = structuredBillContract({ extraction: newStructuredBill, tenantId: input.tenantId, billId: input.document.id, versionId });
+  if (previous.energyContract && !energyContract) throw new Error("ANALYST_REFRESH_CORE_INVALID");
+  const fields = structuredBillFields(newStructuredBill);
+  const nextVersion: BillVersion = {
+    versionId,
+    versionNumber: previous.versionNumber + 1,
+    supersedesVersionId: previous.versionId,
+    status: "REVIEW_REQUIRED",
+    fields,
+    createdAt: input.at,
+    origin: "INGESTION",
+    ...(energyContract ? { energyContract } : {}),
+    structuredBill: newStructuredBill,
+  };
+
+  return sanitizeDocument({
+    ...input.document,
+    updatedAt: input.at,
+    currentVersionId: versionId,
+    versions: [...input.document.versions, nextVersion],
+    provenance: [
+      ...input.document.provenance,
+      {
+        eventId: randomUUID(),
+        type: "INGESTION",
+        origin: "INGESTION",
+        tenantId: input.tenantId,
+        documentId: input.document.id,
+        sourceVersionId: null,
+        resultVersionId: versionId,
+        field: null,
+        previousValue: null,
+        nextValue: null,
+        at: input.at,
+      },
+    ],
+  });
+}
+
+function legacyIngestionEventId(documentId: string, versionId: string): string {
+  return `legacy-ingestion:${documentId}:${versionId}`;
+}
+
+function ensureIngestionProvenance(
+  documentId: string,
+  tenantId: string,
+  versions: readonly BillVersion[],
+  provenance: readonly BillProvenanceEvent[],
+): readonly BillProvenanceEvent[] {
+  const ingestionResultVersionIds = new Set(
+    provenance
+      .filter((event) => event.type === "INGESTION")
+      .map((event) => event.resultVersionId),
+  );
+  const missingEvents = versions
+    .filter((version) => version.origin === "INGESTION" && !ingestionResultVersionIds.has(version.versionId))
+    .map((version) => ({
+      eventId: legacyIngestionEventId(documentId, version.versionId),
+      type: "INGESTION" as const,
+      origin: "INGESTION" as const,
+      tenantId,
+      documentId,
+      sourceVersionId: null,
+      resultVersionId: version.versionId,
+      versionNumber: version.versionNumber,
+      field: null,
+      previousValue: null,
+      nextValue: null,
+      at: version.createdAt,
+    }));
+  return [...provenance, ...missingEvents];
+}
+
 function normalizeLegacyDocument(value: unknown): BillDocument {
   if (!isRecord(value)) throw metadataInvalid();
   if ("versions" in value || "provenance" in value || "approvals" in value || "currentVersionId" in value || "currentApprovedVersionId" in value) {
@@ -738,28 +1080,36 @@ function normalizeLegacyDocument(value: unknown): BillDocument {
   const legacy = value as LegacyBillDocument;
   const createdAt = typeof legacy.createdAt === "string" && legacy.createdAt.trim().length > 0 ? legacy.createdAt : new Date(0).toISOString();
   const updatedAt = typeof legacy.updatedAt === "string" && legacy.updatedAt.trim().length > 0 ? legacy.updatedAt : createdAt;
+  const documentId = readRequiredString(legacy.id);
+  const tenantId = validateTenantId(readRequiredString(legacy.tenantId));
+  const normalizedVersion: BillVersion = {
+    versionId: `${documentId}::v1`,
+    versionNumber: 1,
+    supersedesVersionId: null,
+    status: readExtractionStatus(legacy.status),
+    fields: parseBillFields(legacy.fields),
+    createdAt: updatedAt,
+    origin: "INGESTION",
+  };
   return validateStoredDocument({
-    id: readRequiredString(legacy.id),
-    tenantId: validateTenantId(readRequiredString(legacy.tenantId)),
+    id: documentId,
+    tenantId,
     fileName: readRequiredString(legacy.fileName),
     objectKey: readRequiredString(legacy.objectKey),
     size: readNonNegativeNumber(legacy.size),
     createdAt,
     updatedAt,
-    currentVersionId: `${readRequiredString(legacy.id)}::v1`,
+    currentVersionId: normalizedVersion.versionId,
     currentApprovedVersionId: null,
-    versions: [{
-      versionId: `${readRequiredString(legacy.id)}::v1`,
-      versionNumber: 1,
-      supersedesVersionId: null,
-      status: readExtractionStatus(legacy.status),
-      fields: parseBillFields(legacy.fields),
-      createdAt: updatedAt,
-      origin: "INGESTION",
-    }],
-    provenance: [],
+    versions: [normalizedVersion],
+    provenance: ensureIngestionProvenance(
+      documentId,
+      tenantId,
+      [normalizedVersion],
+      [],
+    ),
     approvals: [],
-  }, true);
+  });
 }
 
 function validateVersionChain(versions: readonly BillVersion[], currentVersionId: string): void {
@@ -810,8 +1160,8 @@ function validateProvenance(
     if (event.versionNumber !== undefined && event.versionNumber !== result.versionNumber) throw metadataInvalid();
 
     if (event.type === "INGESTION") {
-      if (event.origin !== "INGESTION" || event.sourceVersionId !== null || result.origin !== "INGESTION" || result.versionNumber !== 1
-        || result.supersedesVersionId !== null || event.field !== null || event.previousValue !== null || event.nextValue !== null) throw metadataInvalid();
+      if (event.origin !== "INGESTION" || event.sourceVersionId !== null || result.origin !== "INGESTION"
+        || event.field !== null || event.previousValue !== null || event.nextValue !== null) throw metadataInvalid();
       ingestionEvents += 1;
       continue;
     }
@@ -834,7 +1184,7 @@ function validateProvenance(
       || event.previousValue !== null || event.nextValue !== null) throw metadataInvalid();
   }
 
-  if (ingestionEvents !== 1) throw metadataInvalid();
+  if (ingestionEvents !== versions.filter((version) => version.origin === "INGESTION").length) throw metadataInvalid();
   for (const version of versions) {
     if (version.origin === "INGESTION") {
       if (provenance.filter((event) => event.type === "INGESTION" && event.resultVersionId === version.versionId).length !== 1) throw metadataInvalid();
@@ -930,6 +1280,13 @@ function parseBillVersion(value: unknown, tenantId: string, documentId: string):
     if (candidate.tenantId !== tenantId || candidate.billId !== documentId) throw metadataInvalid();
     energyContract = candidate;
   }
+  let structuredBill: StructuredBillExtraction | undefined;
+  if (value.structuredBill !== undefined) {
+    validateStructuredBillExtraction(value.structuredBill);
+    structuredBill = value.structuredBill;
+  }
+  const errorCode = readOptionalBillErrorCode(value.errorCode);
+  const errorField = readOptionalBillErrorField(value.errorField);
   return {
     versionId: readRequiredString(value.versionId),
     versionNumber: readPositiveInteger(value.versionNumber),
@@ -938,7 +1295,10 @@ function parseBillVersion(value: unknown, tenantId: string, documentId: string):
     fields: parseBillFields(value.fields),
     createdAt: readTimestamp(value.createdAt),
     origin: readVersionOrigin(value.origin),
+    ...(errorCode ? { errorCode } : {}),
+    ...(errorField ? { errorField } : {}),
     ...(energyContract ? { energyContract } : {}),
+    ...(structuredBill ? { structuredBill } : {}),
   };
 }
 
