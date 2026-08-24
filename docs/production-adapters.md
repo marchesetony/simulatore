@@ -16,10 +16,12 @@ FOUNDATION_LOCAL_DEV=false
 AUTH_ADAPTER=server-session
 PERSISTENCE_ADAPTER=provider
 SUPABASE_URL=https://<project>.supabase.co
-SUPABASE_SERVICE_ROLE_KEY=<secret>
+SUPABASE_SECRET_KEY=sb_secret_<key>
 SUPABASE_PUBLISHABLE_KEY=sb_publishable_<key>
 SUPABASE_STORAGE_BUCKET=bill-documents
 ```
+
+`SUPABASE_SECRET_KEY` is a server-only `sb_secret_...` key for provider persistence and the manual admin bootstrap. `SUPABASE_PUBLISHABLE_KEY` is the low-privilege key used by the server-side Supabase Auth client for email/password verification. Neither key is copied into the application cookie or returned to the browser; the legacy service-role environment variable is not part of this contract.
 
 Optional safe defaults:
 

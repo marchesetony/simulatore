@@ -25,7 +25,7 @@ export function bootstrapProductionRuntime(env: NodeJS.ProcessEnv = process.env)
   const provider = readProductionProviderConfig(env);
   if (!provider.valid) return { runtimeMode: "production", providerConfigured: false, authRegistered: productionSessionAdapterConfigured(), persistenceRegistered: productionStorageAdapterConfigured(), missing: provider.missing };
 
-  const key = `${provider.config.supabaseUrl}|${provider.config.storageBucket}|${provider.config.sessionCookieName}|${provider.config.publishableKey}`;
+  const key = `${provider.config.supabaseUrl}|${provider.config.secretKey}|${provider.config.storageBucket}|${provider.config.sessionCookieName}|${provider.config.publishableKey}`;
   if (registeredProviderKey !== key || !productionSessionAdapterConfigured() || !productionStorageAdapterConfigured()) {
     const adapters = createProductionAdapters(provider.config);
     registerProductionSessionAdapter(adapters.auth);

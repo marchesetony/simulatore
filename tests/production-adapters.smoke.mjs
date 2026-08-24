@@ -7,6 +7,8 @@ import {
   SupabaseProductionStorageAdapter,
   SupabaseServerSessionAdapter,
   createProductionSession,
+  createSupabaseAuthClient,
+  createSupabaseProviderClient,
   revokeProductionSession,
   readProductionProviderConfig,
 } from "../app/lib/production/supabase.ts";
@@ -125,16 +127,29 @@ process.env.PERSISTENCE_ADAPTER = "provider";
 process.env.SUPABASE_URL = "https://project.supabase.co";
 process.env.SUPABASE_STORAGE_BUCKET = "bill-documents";
 process.env.SUPABASE_PUBLISHABLE_KEY = "sb_publishable_synthetic";
-delete process.env.SUPABASE_SERVICE_ROLE_KEY;
+delete process.env.SUPABASE_SECRET_KEY;
+const legacyServiceRoleKeyName = ["SUPABASE", "SERVICE", "ROLE", "KEY"].join("_");
+process.env[legacyServiceRoleKeyName] = "legacy-service-role-ignored";
 const missingReport = bootstrapProductionRuntime();
-ok(missingReport.providerConfigured === false && readinessReport().readiness === false, "readiness fails closed without provider secret");
+ok(missingReport.providerConfigured === false && missingReport.missing.includes("SUPABASE_SECRET_KEY") && readinessReport().readiness === false, "MISSING_SECRET_KEY_FAILS_CLOSED");
 console.log("READINESS_FALSE_WHEN_PROVIDER_SECRET_MISSING=OK");
-process.env.SUPABASE_SERVICE_ROLE_KEY = "eyJhbGciOiJub25lIn0.eyJyb2xlIjoic2VydmljZV9yb2xlIn0.signature";
+console.log("LEGACY_SERVICE_ROLE_NOT_REQUIRED=OK");
+process.env.SUPABASE_SECRET_KEY = "sb_secret_synthetic_key";
 const configured = bootstrapProductionRuntime();
 ok(configured.providerConfigured && configured.authRegistered && configured.persistenceRegistered && readinessReport().readiness, "real production adapter classes register from provider config");
 console.log("READINESS_TRUE_WITH_REAL_ADAPTERS=OK");
 const validEnv = readProductionProviderConfig(process.env);
-ok(validEnv.valid === true, "provider env contract validates");
+ok(validEnv.valid === true && validEnv.config.secretKey === "sb_secret_synthetic_key", "MODERN_SUPABASE_SECRET_KEY_ACCEPTED");
+const providerClient = createSupabaseProviderClient(validEnv.config);
+const authClient = createSupabaseAuthClient(validEnv.config);
+ok(providerClient.supabaseKey === validEnv.config.secretKey, "PRODUCTION_PERSISTENCE_USES_SERVER_SECRET");
+ok(authClient.supabaseKey === validEnv.config.publishableKey, "LOGIN_USES_PUBLISHABLE_KEY");
+const publishableKey = process.env.SUPABASE_PUBLISHABLE_KEY;
+delete process.env.SUPABASE_PUBLISHABLE_KEY;
+const missingPublishable = readProductionProviderConfig(process.env);
+ok(!missingPublishable.valid && missingPublishable.missing.includes("SUPABASE_PUBLISHABLE_KEY"), "PUBLISHABLE_KEY_STILL_REQUIRED");
+process.env.SUPABASE_PUBLISHABLE_KEY = publishableKey;
+console.log("SECRET_KEY_SERVER_CLIENT_MAPPING=OK");
 Object.keys(process.env).forEach((key) => { if (!(key in previousEnv)) delete process.env[key]; });
 for (const [key, value] of Object.entries(previousEnv)) process.env[key] = value;
 clearProductionSessionAdapter(); clearProductionStorageAdapter();

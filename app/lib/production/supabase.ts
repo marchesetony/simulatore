@@ -53,7 +53,7 @@ type QueryResult<T> = PromiseLike<{ readonly data: T; readonly error: ProviderEr
 
 export type ProductionProviderConfig = {
   readonly supabaseUrl: string;
-  readonly serviceRoleKey: string;
+  readonly secretKey: string;
   readonly publishableKey: string;
   readonly storageBucket: string;
   readonly sessionCookieName: string;
@@ -64,25 +64,14 @@ export type ProductionProviderConfigResult =
   | { readonly valid: true; readonly config: ProductionProviderConfig }
   | { readonly valid: false; readonly missing: readonly string[] };
 
-function isServiceRoleJwt(value: string): boolean {
-  const parts = value.split(".");
-  if (parts.length !== 3) return false;
-  try {
-    const payload = JSON.parse(Buffer.from(parts[1], "base64url").toString("utf8")) as { readonly role?: unknown };
-    return payload.role === "service_role";
-  } catch {
-    return false;
-  }
-}
-
 export function readProductionProviderConfig(env: NodeJS.ProcessEnv = process.env): ProductionProviderConfigResult {
   const missing: string[] = [];
   const supabaseUrl = env.SUPABASE_URL?.trim();
-  const serviceRoleKey = env.SUPABASE_SERVICE_ROLE_KEY?.trim();
+  const secretKey = env.SUPABASE_SECRET_KEY?.trim();
   const publishableKey = env.SUPABASE_PUBLISHABLE_KEY?.trim();
   const storageBucket = env.SUPABASE_STORAGE_BUCKET?.trim();
   if (!supabaseUrl || !/^https:\/\/[-a-z0-9]+\.supabase\.co$/i.test(supabaseUrl)) missing.push("SUPABASE_URL");
-  if (!serviceRoleKey || !isServiceRoleJwt(serviceRoleKey)) missing.push("SUPABASE_SERVICE_ROLE_KEY");
+  if (!secretKey || !/^sb_secret_[A-Za-z0-9_-]{8,4096}$/.test(secretKey)) missing.push("SUPABASE_SECRET_KEY");
   if (!publishableKey || publishableKey.length > 4096) missing.push("SUPABASE_PUBLISHABLE_KEY");
   if (!storageBucket || !/^[a-z0-9][a-z0-9._-]{1,62}$/.test(storageBucket)) missing.push("SUPABASE_STORAGE_BUCKET");
   const cookieName = env.PRODUCTION_SESSION_COOKIE_NAME?.trim() || "__Host-simulatore_session";
@@ -91,11 +80,11 @@ export function readProductionProviderConfig(env: NodeJS.ProcessEnv = process.en
   const maxAge = configuredMaxAge === undefined ? 28_800 : Number(configuredMaxAge);
   if (!Number.isSafeInteger(maxAge) || maxAge < 900 || maxAge > 2_592_000) missing.push("PRODUCTION_SESSION_MAX_AGE_SECONDS");
   if (missing.length > 0) return { valid: false, missing: [...new Set(missing)] };
-  return { valid: true, config: { supabaseUrl: supabaseUrl!, serviceRoleKey: serviceRoleKey!, publishableKey: publishableKey!, storageBucket: storageBucket!, sessionCookieName: cookieName, sessionMaxAgeSeconds: maxAge } };
+  return { valid: true, config: { supabaseUrl: supabaseUrl!, secretKey: secretKey!, publishableKey: publishableKey!, storageBucket: storageBucket!, sessionCookieName: cookieName, sessionMaxAgeSeconds: maxAge } };
 }
 
 export function createSupabaseProviderClient(config: ProductionProviderConfig): ProviderClient {
-  return createClient(config.supabaseUrl, config.serviceRoleKey, {
+  return createClient(config.supabaseUrl, config.secretKey, {
     auth: { autoRefreshToken: false, persistSession: false, detectSessionInUrl: false },
     global: { headers: { "x-application-name": "simulatore-production" } },
   });
