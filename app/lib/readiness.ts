@@ -4,6 +4,8 @@ import { readRuntimeConfig } from "./auth/config.ts";
 import { productionSessionAdapterConfigured } from "./auth/adapter.ts";
 // @ts-expect-error Node's strip-only test runner requires the explicit extension.
 import { productionStorageAdapterConfigured } from "./persistence/adapter.ts";
+// @ts-expect-error Node's strip-only test runner requires the explicit extension.
+import { bootstrapProductionRuntime } from "./production/bootstrap.ts";
 
 export interface ReadinessReport {
   readonly application: "running";
@@ -16,6 +18,7 @@ export interface ReadinessReport {
 }
 
 export function readinessReport(now = new Date()): ReadinessReport {
+  bootstrapProductionRuntime();
   const config = readRuntimeConfig();
   if (!config.valid) return { application: "running", runtimeMode: "invalid", authAdapterConfigured: false, persistenceAdapterConfigured: false, readiness: false, schemaCompatibility: true, timestamp: now.toISOString() };
   const authConfigured = config.config.runtimeMode === "local" || productionSessionAdapterConfigured();

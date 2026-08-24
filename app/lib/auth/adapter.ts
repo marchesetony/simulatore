@@ -10,7 +10,7 @@ const safeFailureCategories = ["AUTH_CONFIGURATION_INVALID", "AUTH_ADAPTER_UNAVA
 type SafeFailureCategory = typeof safeFailureCategories[number];
 
 export interface ServerSessionAdapter {
-  resolve(request: Request): AuthenticatedPrincipal | null;
+  resolve(request: Request): AuthenticatedPrincipal | null | Promise<AuthenticatedPrincipal | null>;
 }
 
 let productionAdapter: ServerSessionAdapter | null = null;
@@ -49,9 +49,12 @@ export async function resolvePrincipal(request: Request, now = new Date()): Prom
     const config = getRuntimeConfig();
     if (config.runtimeMode === "local") principal = Object.freeze({ userId: "user_local-dev", tenantId: config.localTenantId, role: config.localRole, sessionId: "session_local-dev", issuedAt: "2020-01-01T00:00:00.000Z", expiresAt: "2099-01-01T00:00:00.000Z", source: "LOCAL_SYNTHETIC" });
     else {
+      // @ts-expect-error Node's strip-only test runner requires the explicit extension.
+      const { bootstrapProductionRuntime } = await import("../production/bootstrap.ts");
+      bootstrapProductionRuntime();
       if (!productionAdapter) authFail("AUTH_ADAPTER_UNAVAILABLE");
       let resolved: AuthenticatedPrincipal | null;
-      try { resolved = productionAdapter.resolve(request); } catch { authFail("AUTHENTICATION_INVALID"); }
+      try { resolved = await productionAdapter.resolve(request); } catch { authFail("AUTHENTICATION_INVALID"); }
       if (!resolved) authFail("AUTHENTICATION_REQUIRED");
       principal = assertPrincipal(resolved, now);
     }

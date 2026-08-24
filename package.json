@@ -13,10 +13,13 @@
     "test:bill-ui-synthesis": "node --experimental-strip-types tests/bill-ui-synthesis.smoke.mjs",
     "bill:gme-invoice-period-import": "git diff --check && npx tsc --noEmit && npm run lint && node --experimental-strip-types tests/gme-pun-source.smoke.mjs && node --experimental-strip-types tests/bill-gme-invoice-period-import.smoke.mjs && node --experimental-strip-types tests/bill-pun-header.smoke.mjs && node --experimental-strip-types tests/bill-review-data-completeness.smoke.mjs && node scripts/bill-gme-invoice-period-import.mjs --preflight-passed",
     "test:bill-anthropic-schema-probe": "node --experimental-strip-types scripts/bill-schema-probe.mjs",
-    "test:bill-anthropic-two-stage-probe": "node --experimental-strip-types scripts/bill-anthropic-two-stage-probe.mjs"
+    "test:bill-anthropic-two-stage-probe": "node --experimental-strip-types scripts/bill-anthropic-two-stage-probe.mjs",
+    "test:production-adapters": "node --experimental-strip-types tests/production-adapters.smoke.mjs",
+    "production:bootstrap-admin": "node --experimental-strip-types scripts/bootstrap-production-admin.mjs"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.117.1",
+    "@supabase/supabase-js": "^2.112.3",
     "next": "16.2.4",
     "react": "19.2.4",
     "react-dom": "19.2.4"

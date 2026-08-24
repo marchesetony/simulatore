@@ -4,6 +4,7 @@ import { ChangeEvent, useEffect, useState } from 'react';
 import Link from 'next/link';
 import { useSyncExternalStore } from 'react';
 import OperationalShell from './components/OperationalShell';
+import ProductionAuthGate from './components/ProductionAuthGate';
 
 type ExpiryState = 'present' | 'unavailable';
 type LineItem = { item: string; quantity: string; averagePrice: string; current: string; proposed: string; difference: string };
@@ -38,7 +39,7 @@ const details = [
   ['Nome offerta', fixture.proposedOffer], ['Fornitore', fixture.seller], ['Codice offerta', fixture.offerCode], ['Prezzo', fixture.priceType], ['Fascia', fixture.tariff], ['Indice e formula', `${fixture.index} · ${fixture.formula}`], ['Spread', fixture.spread], ['Quota commerciale fissa', fixture.fixedCharge], ['Durata condizioni economiche', fixture.conditionDuration], ['Offerta valida fino al', fixture.offerValidity], ['Durata/scadenza contratto', fixture.contractExpiry], ['Frequenza fatturazione', fixture.billing], ['Metodo di pagamento', fixture.payment], ['Penali recesso anticipato', fixture.penalties], ['Sconti, bonus e servizi', `${fixture.discounts} · ${fixture.services}`]
 ];
 
-export default function Home() {
+function HomeContent() {
   const [logoUrl, setLogoUrl] = useState<string | null>(null);
   const [companyName, setCompanyName] = useState('');
   const [expiryState, setExpiryState] = useState<ExpiryState>('present');
@@ -69,6 +70,10 @@ export default function Home() {
     <section className="print-preview" aria-label="Anteprima A4 di stampa"><div className="print-toolbar"><div><p className="eyebrow">ANTEPRIMA A4</p><h2>Documento pronto per la revisione grafica</h2></div><span>Solo layout di stampa · nessun PDF generato</span></div><PrintReport logoUrl={logoUrl} expiry={expiry} companyName={companyName} /></section>
     <footer className="footer-note">Foundation V1 · package grafico · synthetic presentation only</footer>
   </main>;
+}
+
+export default function Home() {
+  return <ProductionAuthGate><HomeContent /></ProductionAuthGate>;
 }
 
 type ApiErrorShape = {

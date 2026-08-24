@@ -1212,7 +1212,7 @@ function validateProvenance(
   }
 }
 
-function validateStoredDocument(value: unknown, allowLegacyEmptyProvenance = false): BillDocument {
+export function validateStoredDocument(value: unknown, allowLegacyEmptyProvenance = false): BillDocument {
   if (!isRecord(value)) throw metadataInvalid();
   const documentId = readRequiredString(value.id);
   const tenantId = validateTenantId(readRequiredString(value.tenantId));
