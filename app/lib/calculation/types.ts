@@ -11,6 +11,7 @@ export interface SimulationPeriod {
 
 export interface SourceBillReference {
   readonly billId: string;
+  /** Compatibility field: canonical BillVersion.versionId, never versionNumber. */
   readonly version: string;
 }
 
