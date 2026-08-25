@@ -1,4 +1,4 @@
-import type { CustomerType, TaxInclusionState, VoltageLevel } from "../energy/types";
+import type { CustomerResidency, CustomerType, TaxInclusionState, VoltageLevel } from "../energy/types";
 
 export const CALCULATION_SCHEMA_VERSION = 1 as const;
 export const CALCULATION_ENGINE_VERSION = "1" as const;
@@ -27,7 +27,7 @@ export interface SimulationRequestBase {
   readonly calculationDate: string;
   readonly supplyPeriod: SimulationPeriod;
   readonly customerCategory: CustomerType;
-  readonly residency?: CustomerType;
+  readonly residency?: CustomerResidency;
   readonly currency: "EUR";
   readonly taxTreatment: TaxInclusionState;
   readonly sourceBill?: SourceBillReference;

@@ -1,4 +1,4 @@
-import type { CustomerType, TaxInclusionState, VoltageLevel } from "../energy/types";
+import type { CustomerResidency, CustomerType, TaxInclusionState, VoltageLevel } from "../energy/types";
 import type { ElectricityMonthlyProfile, ElectricitySimulationRequest, GasMonthlyProfile, GasSimulationRequest, SimulationRequest } from "./types";
 // @ts-expect-error Node's strip-only test runner requires the explicit extension.
 import { add, equals, fromNumber, zero } from "./decimal.ts";
@@ -31,7 +31,10 @@ function assertPeriod(value: unknown): { readonly periodStart: string; readonly 
   if (!periodStart.endsWith("-01") || !periodEnd.endsWith("-01") || periodStart >= periodEnd) fail("SUPPLY_PERIOD_INVALID");
   return { periodStart, periodEnd };
 }
-function assertNoTrustedOutcome(value: Record<string, unknown>): void { if (Object.prototype.hasOwnProperty.call(value, "approval") || Object.prototype.hasOwnProperty.call(value, "approved") || Object.prototype.hasOwnProperty.call(value, "trustedPrice")) fail("TRUSTED_OUTCOME_FORBIDDEN"); }
+function assertNoTrustedOutcome(value: Record<string, unknown>): void {
+  const forbidden = ["approval", "approved", "trustedPrice", "customerScope", "regulatoryCustomerScope", "contractedPowerKw", "availablePowerKw", "trustedSupplyContext"];
+  if (forbidden.some((key) => Object.prototype.hasOwnProperty.call(value, key))) fail("TRUSTED_OUTCOME_FORBIDDEN");
+}
 
 type CommonInput = {
   readonly schemaVersion: 1;
@@ -39,7 +42,7 @@ type CommonInput = {
   readonly calculationDate: string;
   readonly supplyPeriod: { readonly periodStart: string; readonly periodEnd: string };
   readonly customerCategory: CustomerType;
-  readonly residency?: CustomerType;
+  readonly residency?: CustomerResidency;
   readonly currency: "EUR";
   readonly taxTreatment: TaxInclusionState;
   readonly sourceBill?: { readonly billId: string; readonly version: string };
@@ -54,8 +57,8 @@ function assertCommon(value: Record<string, unknown>): CommonInput {
   const calculationDate = dateOnly(value.calculationDate, "CALCULATION_DATE_INVALID");
   const supplyPeriod = assertPeriod(value.supplyPeriod);
   const customerCategory = enumValue(value.customerCategory, ["RESIDENTIAL", "NON_RESIDENTIAL"], "CUSTOMER_CATEGORY_INVALID");
-  const residency = value.residency === undefined ? undefined : enumValue(value.residency, ["RESIDENTIAL", "NON_RESIDENTIAL"], "RESIDENCY_INVALID");
-  if (residency !== undefined && residency !== customerCategory) fail("RESIDENCY_MISMATCH");
+  const residency = value.residency === undefined ? undefined : enumValue(value.residency, ["RESIDENT", "NON_RESIDENT"], "RESIDENCY_INVALID") as CustomerResidency;
+  if (residency !== undefined && customerCategory !== "RESIDENTIAL") fail("RESIDENCY_MISMATCH");
   if (value.currency !== "EUR") fail("CURRENCY_INVALID");
   const taxTreatment = enumValue(value.taxTreatment, ["INCLUDED", "EXCLUDED", "NOT_APPLICABLE"], "TAX_TREATMENT_INVALID");
   let sourceBill: CommonInput["sourceBill"];
