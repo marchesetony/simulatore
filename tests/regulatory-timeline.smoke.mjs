@@ -31,6 +31,20 @@ function regulatoryRecord({
   approvalStatus = "APPROVED",
   reviewStatus = "APPROVED",
   normalizedValue = 11,
+  sourceType = "OFFICIAL_ATTACHMENT",
+  sourceReference = "https://official.example/timeline-fixture",
+  officialIdentifier = `OFFICIAL-${id}`,
+  publicationDate = "2026-06-01",
+  retrievedAt = "2026-06-02T00:00:00Z",
+  sourceSha256 = "a".repeat(64),
+  conversionProvenance = ["deterministic-test-fixture"],
+  publishedBy,
+  calculatedBy,
+  officialName,
+  referenceDomain,
+  contractPassThroughRequired,
+  carriedForwardFrom,
+  confirmationSource,
 } = {}) {
   const base = {
     tenantId,
@@ -39,11 +53,11 @@ function regulatoryRecord({
     version: "1",
     parentVersionId: null,
     authority: "ARERA",
-    sourceType: "OFFICIAL_ATTACHMENT",
-    sourceReference: "https://official.example/timeline-fixture",
-    officialIdentifier: `OFFICIAL-${id}`,
-    publicationDate: "2026-06-01",
-    retrievedAt: "2026-06-02T00:00:00Z",
+    sourceType,
+    sourceReference,
+    officialIdentifier,
+    publicationDate,
+    retrievedAt,
     effectiveFrom,
     effectiveTo,
     vector: "EE",
@@ -54,10 +68,17 @@ function regulatoryRecord({
     normalizedValue,
     normalizedUnit: "TEST_UNIT",
     applicationBasis: "timeline fixture only",
-    sourceSha256: "a".repeat(64),
-    conversionProvenance: ["deterministic-test-fixture"],
+    sourceSha256,
+    conversionProvenance,
     approvalStatus,
     reviewStatus,
+    ...(publishedBy === undefined ? {} : { publishedBy }),
+    ...(calculatedBy === undefined ? {} : { calculatedBy }),
+    ...(officialName === undefined ? {} : { officialName }),
+    ...(referenceDomain === undefined ? {} : { referenceDomain }),
+    ...(contractPassThroughRequired === undefined ? {} : { contractPassThroughRequired }),
+    ...(carriedForwardFrom === undefined ? {} : { carriedForwardFrom }),
+    ...(confirmationSource === undefined ? {} : { confirmationSource }),
   };
   return { ...base, checksum: checksumFor(base) };
 }
@@ -87,7 +108,65 @@ function directBridgeWith(records) {
   return { async list() { return records; } };
 }
 
-const singleBridge = await bridgeWith([regulatoryRecord({ effectiveFrom: "2026-06-01", effectiveTo: null })]);
+const requiredProvenanceFields = [
+  "regulatoryRecordId",
+  "regulatoryVersion",
+  "authority",
+  "sourceType",
+  "sourceReference",
+  "officialIdentifier",
+  "publicationDate",
+  "retrievedAt",
+  "effectiveFrom",
+  "effectiveTo",
+  "componentCode",
+  "customerScope",
+  "normalizedValue",
+  "normalizedUnit",
+  "applicationBasis",
+  "sourceSha256",
+  "conversionProvenance",
+  "checksum",
+];
+const optionalProvenanceFields = [
+  "publishedBy",
+  "calculatedBy",
+  "officialName",
+  "referenceDomain",
+  "contractPassThroughRequired",
+  "carriedForwardFrom",
+  "confirmationSource",
+];
+function assertSegmentPreservesRecord(segment, record) {
+  const expectedBySegmentField = {
+    regulatoryRecordId: record.id,
+    regulatoryVersion: record.version,
+    authority: record.authority,
+    sourceType: record.sourceType,
+    sourceReference: record.sourceReference,
+    officialIdentifier: record.officialIdentifier,
+    publicationDate: record.publicationDate,
+    retrievedAt: record.retrievedAt,
+    effectiveFrom: record.effectiveFrom,
+    effectiveTo: record.effectiveTo,
+    componentCode: record.componentCode,
+    customerScope: record.customerScope,
+    normalizedValue: record.normalizedValue,
+    normalizedUnit: record.normalizedUnit,
+    applicationBasis: record.applicationBasis,
+    sourceSha256: record.sourceSha256,
+    conversionProvenance: record.conversionProvenance,
+    checksum: record.checksum,
+  };
+  for (const field of requiredProvenanceFields) assert.deepEqual(segment[field], expectedBySegmentField[field], `${field} is preserved`);
+  for (const field of optionalProvenanceFields) {
+    assert.equal(Object.hasOwn(segment, field), Object.hasOwn(record, field), `${field} presence is preserved`);
+    if (Object.hasOwn(record, field)) assert.deepEqual(segment[field], record[field], `${field} is preserved`);
+  }
+}
+
+const singleRecord = regulatoryRecord({ effectiveFrom: "2026-06-01", effectiveTo: null });
+const singleBridge = await bridgeWith([singleRecord]);
 let observedQuery;
 const observedBridge = { async list(tenantId, query) { observedQuery = { tenantId, query }; return singleBridge.list(tenantId, query); } };
 const single = await resolveRegulatoryTimeline(observedBridge, request());
@@ -99,6 +178,10 @@ assert.deepEqual(single.segments[0], {
   regulatoryRecordId: "reg-1",
   regulatoryVersion: "1",
   authority: "ARERA",
+  sourceType: "OFFICIAL_ATTACHMENT",
+  sourceReference: "https://official.example/timeline-fixture",
+  publicationDate: "2026-06-01",
+  retrievedAt: "2026-06-02T00:00:00Z",
   componentCode: "NETWORK_ENERGY",
   customerScope: "DOMESTIC_RESIDENT_BT",
   normalizedValue: 11,
@@ -107,8 +190,29 @@ assert.deepEqual(single.segments[0], {
   effectiveFrom: "2026-06-01",
   effectiveTo: null,
   officialIdentifier: "OFFICIAL-reg-1",
-  checksum: regulatoryRecord({ effectiveFrom: "2026-06-01", effectiveTo: null }).checksum,
+  sourceSha256: "a".repeat(64),
+  conversionProvenance: ["deterministic-test-fixture"],
+  checksum: singleRecord.checksum,
 });
+assertSegmentPreservesRecord(single.segments[0], singleRecord);
+
+const fullProvenanceRecord = regulatoryRecord({
+  id: "full-provenance",
+  effectiveFrom: "2026-07-01",
+  effectiveTo: "2026-09-01",
+  sourceReference: "https://official.example/full-provenance",
+  sourceSha256: "b".repeat(64),
+  conversionProvenance: ["source-preserved", "unit-preserved"],
+  publishedBy: "ARERA",
+  calculatedBy: "TERNA",
+  officialName: "Deterministic timeline fixture",
+  referenceDomain: "NETWORK",
+  contractPassThroughRequired: false,
+  carriedForwardFrom: null,
+  confirmationSource: "https://official.example/full-provenance-confirmation",
+});
+const fullProvenance = await resolveRegulatoryTimeline(directBridgeWith([fullProvenanceRecord]), request());
+assertSegmentPreservesRecord(fullProvenance.segments[0], fullProvenanceRecord);
 
 const originalTimezone = process.env.TZ;
 try {
@@ -153,8 +257,8 @@ await assertCode(() => resolveRegulatoryTimeline(singleBridge, request({ periodS
 await assertCode(() => resolveRegulatoryTimeline(singleBridge, request({ periodStart: "2026-10-01", periodEnd: "2026-09-01" })), "REGULATORY_TIMELINE_PERIOD_INVALID");
 
 const consecutive = await resolveRegulatoryTimeline(await bridgeWith([
-  regulatoryRecord({ id: "reg-july", effectiveFrom: "2026-07-01", effectiveTo: "2026-08-01", normalizedValue: 11 }),
-  regulatoryRecord({ id: "reg-august", effectiveFrom: "2026-08-01", effectiveTo: "2026-09-01", normalizedValue: 22 }),
+  regulatoryRecord({ id: "reg-july", effectiveFrom: "2026-07-01", effectiveTo: "2026-08-01", normalizedValue: 11, sourceReference: "https://official.example/july", sourceSha256: "c".repeat(64), conversionProvenance: ["july-source"] }),
+  regulatoryRecord({ id: "reg-august", effectiveFrom: "2026-08-01", effectiveTo: "2026-09-01", normalizedValue: 22, sourceReference: "https://official.example/august", sourceSha256: "d".repeat(64), conversionProvenance: ["august-source"] }),
 ]), request());
 assert.equal(consecutive.segments.length, 2);
 assert.equal(consecutive.segments[0].segmentStart, "2026-07-01T00:00:00.000Z");
@@ -163,6 +267,10 @@ assert.equal(consecutive.segments[1].segmentStart, "2026-08-01T00:00:00.000Z");
 assert.equal(consecutive.segments[1].segmentEnd, "2026-09-01T00:00:00.000Z");
 assert.equal(consecutive.segments[0].normalizedValue, 11);
 assert.equal(consecutive.segments[1].normalizedValue, 22);
+assert.equal(consecutive.segments[0].sourceReference, "https://official.example/july");
+assert.equal(consecutive.segments[1].sourceReference, "https://official.example/august");
+assert.notEqual(consecutive.segments[0].sourceSha256, consecutive.segments[1].sourceSha256);
+assert.notDeepEqual(consecutive.segments[0].conversionProvenance, consecutive.segments[1].conversionProvenance);
 
 const previousBoundary = await resolveRegulatoryTimeline(await bridgeWith([
   regulatoryRecord({ id: "reg-before", effectiveFrom: "2026-06-01", effectiveTo: "2026-07-01" }),
@@ -176,14 +284,17 @@ const nextBoundary = await resolveRegulatoryTimeline(await bridgeWith([
 ]), request());
 assert.deepEqual(nextBoundary.segments.map((segment) => segment.regulatoryRecordId), ["reg-period"]);
 
-const clipped = await resolveRegulatoryTimeline(await bridgeWith([
-  regulatoryRecord({ id: "reg-clipped-first", effectiveFrom: "2026-06-01", effectiveTo: "2026-08-01" }),
-  regulatoryRecord({ id: "reg-clipped-last", effectiveFrom: "2026-08-01", effectiveTo: "2026-10-01", normalizedValue: 22 }),
-]), request());
+const clippedFirstRecord = regulatoryRecord({ id: "reg-clipped-first", effectiveFrom: "2026-06-01", effectiveTo: "2026-08-01" });
+const clippedLastRecord = regulatoryRecord({ id: "reg-clipped-last", effectiveFrom: "2026-08-01", effectiveTo: "2026-10-01", normalizedValue: 22 });
+const clipped = await resolveRegulatoryTimeline(await bridgeWith([clippedFirstRecord, clippedLastRecord]), request());
 assert.equal(clipped.segments[0].segmentStart, "2026-07-01T00:00:00.000Z");
 assert.equal(clipped.segments[0].segmentEnd, "2026-08-01T00:00:00.000Z");
 assert.equal(clipped.segments[1].segmentStart, "2026-08-01T00:00:00.000Z");
 assert.equal(clipped.segments[1].segmentEnd, "2026-09-01T00:00:00.000Z");
+assert.equal(clipped.segments[0].effectiveFrom, clippedFirstRecord.effectiveFrom);
+assert.equal(clipped.segments[0].effectiveTo, clippedFirstRecord.effectiveTo);
+assert.equal(clipped.segments[1].effectiveFrom, clippedLastRecord.effectiveFrom);
+assert.equal(clipped.segments[1].effectiveTo, clippedLastRecord.effectiveTo);
 
 for (const [records, code] of [
   [[regulatoryRecord({ id: "gap-start", effectiveFrom: "2026-08-01", effectiveTo: "2026-09-01" })], "REGULATORY_TIMELINE_GAP"],

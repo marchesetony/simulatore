@@ -15,6 +15,10 @@ export interface RegulatoryTimelineSegment {
   readonly regulatoryRecordId: string;
   readonly regulatoryVersion: string;
   readonly authority: RegulatoryValueRecord["authority"];
+  readonly sourceType: RegulatoryValueRecord["sourceType"];
+  readonly sourceReference: RegulatoryValueRecord["sourceReference"];
+  readonly publicationDate: RegulatoryValueRecord["publicationDate"];
+  readonly retrievedAt: RegulatoryValueRecord["retrievedAt"];
   readonly componentCode: RegulatoryValueComponentCode;
   readonly customerScope: RegulatoryCustomerScope;
   readonly normalizedValue: number;
@@ -23,7 +27,16 @@ export interface RegulatoryTimelineSegment {
   readonly effectiveFrom: string;
   readonly effectiveTo: string | null;
   readonly officialIdentifier: string;
+  readonly sourceSha256: RegulatoryValueRecord["sourceSha256"];
+  readonly conversionProvenance: RegulatoryValueRecord["conversionProvenance"];
   readonly checksum: string;
+  readonly publishedBy?: RegulatoryValueRecord["publishedBy"];
+  readonly calculatedBy?: RegulatoryValueRecord["calculatedBy"];
+  readonly officialName?: RegulatoryValueRecord["officialName"];
+  readonly referenceDomain?: RegulatoryValueRecord["referenceDomain"];
+  readonly contractPassThroughRequired?: RegulatoryValueRecord["contractPassThroughRequired"];
+  readonly carriedForwardFrom?: RegulatoryValueRecord["carriedForwardFrom"];
+  readonly confirmationSource?: RegulatoryValueRecord["confirmationSource"];
 }
 
 export interface RegulatoryTimeline {
@@ -134,6 +147,10 @@ function segmentFrom(record: RegulatoryValueRecord, segmentStart: number, segmen
     regulatoryRecordId: record.id,
     regulatoryVersion: record.version,
     authority: record.authority,
+    sourceType: record.sourceType,
+    sourceReference: record.sourceReference,
+    publicationDate: record.publicationDate,
+    retrievedAt: record.retrievedAt,
     componentCode: record.componentCode,
     customerScope: record.customerScope,
     normalizedValue: record.normalizedValue,
@@ -142,7 +159,16 @@ function segmentFrom(record: RegulatoryValueRecord, segmentStart: number, segmen
     effectiveFrom: record.effectiveFrom,
     effectiveTo: record.effectiveTo,
     officialIdentifier: record.officialIdentifier,
+    sourceSha256: record.sourceSha256,
+    conversionProvenance: [...record.conversionProvenance],
     checksum: record.checksum,
+    ...(record.publishedBy === undefined ? {} : { publishedBy: record.publishedBy }),
+    ...(record.calculatedBy === undefined ? {} : { calculatedBy: record.calculatedBy }),
+    ...(record.officialName === undefined ? {} : { officialName: record.officialName }),
+    ...(record.referenceDomain === undefined ? {} : { referenceDomain: record.referenceDomain }),
+    ...(record.contractPassThroughRequired === undefined ? {} : { contractPassThroughRequired: record.contractPassThroughRequired }),
+    ...(record.carriedForwardFrom === undefined ? {} : { carriedForwardFrom: record.carriedForwardFrom }),
+    ...(record.confirmationSource === undefined ? {} : { confirmationSource: record.confirmationSource }),
   };
 }
 
