@@ -6,6 +6,7 @@ import type { TenantRecord, TenantRecordRepository } from "./persistence/types.t
 export interface RegulatoryValueQuery {
   readonly componentCode?: RegulatoryValueRecord["componentCode"];
   readonly customerScope?: RegulatoryValueRecord["customerScope"];
+  readonly normalizedUnit?: RegulatoryValueRecord["normalizedUnit"];
   readonly effectiveAt?: string;
 }
 
@@ -89,6 +90,7 @@ export class ProductionRegulatoryPersistenceBridge {
       const candidate = value as RegulatoryValueRecord;
       if (query.componentCode !== undefined && candidate.componentCode !== query.componentCode) return [];
       if (query.customerScope !== undefined && candidate.customerScope !== query.customerScope) return [];
+      if (query.normalizedUnit !== undefined && candidate.normalizedUnit !== query.normalizedUnit) return [];
       assertRecordShape(candidate, tenantId);
       if (query.effectiveAt !== undefined && !isApplicable(candidate, query.effectiveAt)) return [];
       return [candidate];

@@ -31,6 +31,7 @@ function regulatoryRecord({
   approvalStatus = "APPROVED",
   reviewStatus = "APPROVED",
   normalizedValue = 11,
+  normalizedUnit = "TEST_UNIT",
   sourceType = "OFFICIAL_ATTACHMENT",
   sourceReference = "https://official.example/timeline-fixture",
   officialIdentifier = `OFFICIAL-${id}`,
@@ -66,7 +67,7 @@ function regulatoryRecord({
     originalValue: normalizedValue,
     originalUnit: "TEST_UNIT",
     normalizedValue,
-    normalizedUnit: "TEST_UNIT",
+    normalizedUnit,
     applicationBasis: "timeline fixture only",
     sourceSha256,
     conversionProvenance,
@@ -94,6 +95,7 @@ function request(overrides = {}) {
     tenantId: tenantA,
     componentCode: "NETWORK_ENERGY",
     customerScope: "DOMESTIC_RESIDENT_BT",
+    normalizedUnit: "TEST_UNIT",
     periodStart: "2026-07-01",
     periodEnd: "2026-09-01",
     ...overrides,
@@ -170,7 +172,7 @@ const singleBridge = await bridgeWith([singleRecord]);
 let observedQuery;
 const observedBridge = { async list(tenantId, query) { observedQuery = { tenantId, query }; return singleBridge.list(tenantId, query); } };
 const single = await resolveRegulatoryTimeline(observedBridge, request());
-assert.deepEqual(observedQuery, { tenantId: tenantA, query: { componentCode: "NETWORK_ENERGY", customerScope: "DOMESTIC_RESIDENT_BT" } });
+assert.deepEqual(observedQuery, { tenantId: tenantA, query: { componentCode: "NETWORK_ENERGY", customerScope: "DOMESTIC_RESIDENT_BT", normalizedUnit: "TEST_UNIT" } });
 assert.equal(single.segments.length, 1);
 assert.deepEqual(single.segments[0], {
   segmentStart: "2026-07-01T00:00:00.000Z",
@@ -195,6 +197,41 @@ assert.deepEqual(single.segments[0], {
   checksum: singleRecord.checksum,
 });
 assertSegmentPreservesRecord(single.segments[0], singleRecord);
+
+const uc6EnergyRecord = regulatoryRecord({
+  id: "uc6-energy",
+  componentCode: "UC6",
+  normalizedUnit: "EUR/KWH",
+  effectiveFrom: "2026-07-01",
+  effectiveTo: "2026-09-01",
+});
+const uc6PowerRecord = regulatoryRecord({
+  id: "uc6-power",
+  componentCode: "UC6",
+  normalizedUnit: "EUR/KW/YEAR",
+  effectiveFrom: "2026-07-01",
+  effectiveTo: "2026-09-01",
+});
+const uc6BasisBridge = await bridgeWith([uc6EnergyRecord, uc6PowerRecord]);
+const uc6EnergyTimeline = await resolveRegulatoryTimeline(uc6BasisBridge, request({ componentCode: "UC6", normalizedUnit: "EUR/KWH" }));
+assert.equal(uc6EnergyTimeline.normalizedUnit, "EUR/KWH");
+assert.deepEqual(uc6EnergyTimeline.segments.map((segment) => segment.regulatoryRecordId), ["uc6-energy"]);
+const uc6PowerTimeline = await resolveRegulatoryTimeline(uc6BasisBridge, request({ componentCode: "UC6", normalizedUnit: "EUR/KW/YEAR" }));
+assert.equal(uc6PowerTimeline.normalizedUnit, "EUR/KW/YEAR");
+assert.deepEqual(uc6PowerTimeline.segments.map((segment) => segment.regulatoryRecordId), ["uc6-power"]);
+
+await assertCode(async () => resolveRegulatoryTimeline(await bridgeWith([uc6PowerRecord]), request({ componentCode: "UC6", normalizedUnit: "EUR/KWH" })), "REGULATORY_TIMELINE_GAP");
+
+const uc6EnergyOverlapBridge = await bridgeWith([
+  regulatoryRecord({ id: "uc6-energy-overlap-a", componentCode: "UC6", normalizedUnit: "EUR/KWH", effectiveFrom: "2026-07-01", effectiveTo: "2026-09-01" }),
+  regulatoryRecord({ id: "uc6-energy-overlap-b", componentCode: "UC6", normalizedUnit: "EUR/KWH", effectiveFrom: "2026-08-01", effectiveTo: "2026-10-01", normalizedValue: 22 }),
+]);
+await assertCode(() => resolveRegulatoryTimeline(uc6EnergyOverlapBridge, request({ componentCode: "UC6", normalizedUnit: "EUR/KWH" })), "REGULATORY_TIMELINE_OVERLAP");
+const uc6PowerOverlapBridge = await bridgeWith([
+  regulatoryRecord({ id: "uc6-power-overlap-a", componentCode: "UC6", normalizedUnit: "EUR/KW/YEAR", effectiveFrom: "2026-07-01", effectiveTo: "2026-09-01" }),
+  regulatoryRecord({ id: "uc6-power-overlap-b", componentCode: "UC6", normalizedUnit: "EUR/KW/YEAR", effectiveFrom: "2026-08-01", effectiveTo: "2026-10-01", normalizedValue: 22 }),
+]);
+await assertCode(() => resolveRegulatoryTimeline(uc6PowerOverlapBridge, request({ componentCode: "UC6", normalizedUnit: "EUR/KW/YEAR" })), "REGULATORY_TIMELINE_OVERLAP");
 
 const fullProvenanceRecord = regulatoryRecord({
   id: "full-provenance",

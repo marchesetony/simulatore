@@ -17,8 +17,8 @@ class MemoryRepository {
   }
 }
 
-function value({ tenantId = "tenant_a", id = "reg-1", componentCode = "NETWORK_ENERGY", customerScope = "DOMESTIC_BT", effectiveFrom = "2026-07-01T00:00:00.000Z", effectiveTo = "2026-08-01T00:00:00.000Z", approvalStatus = "APPROVED", reviewStatus = "APPROVED", normalizedValue = 1 } = {}) {
-  const base = { tenantId, id, identityKey: `${tenantId}|${id}`, version: "1", parentVersionId: null, authority: "ARERA", sourceType: "OFFICIAL_ATTACHMENT", sourceReference: "https://official.example/regulatory-source", officialIdentifier: "REG-TEST", publicationDate: "2026-06-01T00:00:00.000Z", retrievedAt: "2026-06-02T00:00:00.000Z", effectiveFrom, effectiveTo, vector: "EE", customerScope, componentCode, originalValue: normalizedValue, originalUnit: "EUR/KWH", normalizedValue, normalizedUnit: "EUR/KWH", applicationBasis: "test fixture only", sourceSha256: "a".repeat(64), conversionProvenance: [], approvalStatus, reviewStatus };
+function value({ tenantId = "tenant_a", id = "reg-1", componentCode = "NETWORK_ENERGY", customerScope = "DOMESTIC_BT", effectiveFrom = "2026-07-01T00:00:00.000Z", effectiveTo = "2026-08-01T00:00:00.000Z", approvalStatus = "APPROVED", reviewStatus = "APPROVED", normalizedValue = 1, normalizedUnit = "EUR/KWH" } = {}) {
+  const base = { tenantId, id, identityKey: `${tenantId}|${id}`, version: "1", parentVersionId: null, authority: "ARERA", sourceType: "OFFICIAL_ATTACHMENT", sourceReference: "https://official.example/regulatory-source", officialIdentifier: "REG-TEST", publicationDate: "2026-06-01T00:00:00.000Z", retrievedAt: "2026-06-02T00:00:00.000Z", effectiveFrom, effectiveTo, vector: "EE", customerScope, componentCode, originalValue: normalizedValue, originalUnit: normalizedUnit, normalizedValue, normalizedUnit, applicationBasis: "test fixture only", sourceSha256: "a".repeat(64), conversionProvenance: [], approvalStatus, reviewStatus };
   return { ...base, checksum: checksumFor(base) };
 }
 
@@ -37,6 +37,15 @@ assert.equal(await bridge.resolve("tenant_a", { componentCode: "NETWORK_ENERGY",
 assert.equal(await bridge.resolve("tenant_a", { componentCode: "NETWORK_FIXED", customerScope: "DOMESTIC_BT", effectiveAt: "2026-07-01T00:00:00.000Z" }), null, "wrong component is not returned");
 assert.equal(await bridge.resolve("tenant_a", { componentCode: "NETWORK_ENERGY", customerScope: "NON_DOMESTIC_BT", effectiveAt: "2026-07-01T00:00:00.000Z" }), null, "wrong customer scope is not returned");
 assert.equal((await bridge.resolve("tenant_b", { componentCode: "NETWORK_ENERGY", customerScope: "DOMESTIC_BT", effectiveAt: "2026-07-01T00:00:00.000Z" })).id, "reg-b", "tenant isolation is enforced");
+
+const unitRepository = new MemoryRepository();
+const unitBridge = new ProductionRegulatoryPersistenceBridge(unitRepository);
+await unitBridge.save("tenant_a", value({ id: "reg-uc6-energy", componentCode: "UC6", customerScope: "DOMESTIC_RESIDENT_BT", effectiveTo: "2026-09-01T00:00:00.000Z", normalizedUnit: "EUR/KWH" }));
+await unitBridge.save("tenant_a", value({ id: "reg-uc6-power", componentCode: "UC6", customerScope: "DOMESTIC_RESIDENT_BT", effectiveTo: "2026-09-01T00:00:00.000Z", normalizedUnit: "EUR/KW/YEAR" }));
+assert.equal((await unitBridge.list("tenant_a", { componentCode: "UC6", customerScope: "DOMESTIC_RESIDENT_BT" })).length, 2, "query without normalizedUnit remains supported");
+assert.deepEqual((await unitBridge.list("tenant_a", { componentCode: "UC6", customerScope: "DOMESTIC_RESIDENT_BT", normalizedUnit: "EUR/KWH" })).map((item) => item.id), ["reg-uc6-energy"], "exact energy unit match");
+assert.deepEqual((await unitBridge.list("tenant_a", { componentCode: "UC6", customerScope: "DOMESTIC_RESIDENT_BT", normalizedUnit: "EUR/KW/YEAR" })).map((item) => item.id), ["reg-uc6-power"], "exact power unit match");
+assert.equal((await unitBridge.list("tenant_a", { componentCode: "UC6", customerScope: "DOMESTIC_RESIDENT_BT", normalizedUnit: "EUR/MWH" })).length, 0, "unknown unit does not fallback");
 
 await bridge.save("tenant_a", value({ id: "reg-conflict-a" }));
 await bridge.save("tenant_a", value({ id: "reg-conflict-b", normalizedValue: 2 }));

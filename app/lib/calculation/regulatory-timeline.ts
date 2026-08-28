@@ -5,6 +5,7 @@ export interface RegulatoryTimelineRequest {
   readonly tenantId: string;
   readonly componentCode: RegulatoryValueComponentCode;
   readonly customerScope: RegulatoryCustomerScope;
+  readonly normalizedUnit: RegulatoryValueRecord["normalizedUnit"];
   readonly periodStart: string;
   readonly periodEnd: string;
 }
@@ -43,6 +44,7 @@ export interface RegulatoryTimeline {
   readonly tenantId: string;
   readonly componentCode: RegulatoryValueComponentCode;
   readonly customerScope: RegulatoryCustomerScope;
+  readonly normalizedUnit: RegulatoryValueRecord["normalizedUnit"];
   readonly periodStart: string;
   readonly periodEnd: string;
   readonly segments: readonly RegulatoryTimelineSegment[];
@@ -177,7 +179,7 @@ export async function resolveRegulatoryTimeline(
   request: RegulatoryTimelineRequest,
 ): Promise<RegulatoryTimeline> {
   const period = validateRequest(request);
-  const records = await bridge.list(request.tenantId, { componentCode: request.componentCode, customerScope: request.customerScope });
+  const records = await bridge.list(request.tenantId, { componentCode: request.componentCode, customerScope: request.customerScope, normalizedUnit: request.normalizedUnit });
   const applicable = sortedApplicableRecords(records, period.start, period.end);
   const segments: RegulatoryTimelineSegment[] = [];
   let cursor = period.start;
@@ -193,5 +195,5 @@ export async function resolveRegulatoryTimeline(
   }
 
   if (cursor < period.end) return fail("REGULATORY_TIMELINE_GAP");
-  return { tenantId: request.tenantId, componentCode: request.componentCode, customerScope: request.customerScope, periodStart: request.periodStart, periodEnd: request.periodEnd, segments };
+  return { tenantId: request.tenantId, componentCode: request.componentCode, customerScope: request.customerScope, normalizedUnit: request.normalizedUnit, periodStart: request.periodStart, periodEnd: request.periodEnd, segments };
 }
