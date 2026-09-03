@@ -3,12 +3,23 @@ import { readFile } from "node:fs/promises";
 import { checksumFor } from "../app/lib/foundation/regulatory-validation.ts";
 import { resolveRegulatoryTimeline } from "../app/lib/calculation/regulatory-timeline.ts";
 import { ProductionRegulatoryPersistenceBridge } from "../app/lib/regulatory-bridge.ts";
+import { collisionDomainKey, regulatoryApprovalDomainId } from "../app/lib/regulatory-approval-domain.ts";
 
 class MemoryRepository {
   constructor() { this.records = []; }
   async get(tenantId, recordId) { return this.records.find((record) => record.tenantId === tenantId && record.recordId === recordId) ?? null; }
   async list(tenantId) { return this.records.filter((record) => record.tenantId === tenantId); }
-  async put() { throw new Error("PUT_NOT_USED"); }
+  async put(input) {
+    const existing = await this.get(input.tenantId, input.recordId);
+    if (input.idempotencyKey !== undefined && existing?.idempotencyKey === input.idempotencyKey) return existing;
+    if (input.expectedVersion === undefined && existing) throw new Error("PERSISTENCE_RECORD_ALREADY_EXISTS");
+    if (input.expectedVersion !== undefined && (!existing || existing.version !== input.expectedVersion)) throw new Error("PERSISTENCE_VERSION_CONFLICT");
+    const now = input.now ?? "2026-08-25T00:00:00.000Z";
+    const record = { schemaVersion: 1, recordId: input.recordId, tenantId: input.tenantId, version: existing ? existing.version + 1 : 1, createdAt: existing?.createdAt ?? now, updatedAt: now, payload: structuredClone(input.payload), idempotencyKey: input.idempotencyKey };
+    this.records = this.records.filter((item) => !(item.tenantId === input.tenantId && item.recordId === input.recordId));
+    this.records.push(record);
+    return record;
+  }
   async append(input) {
     if (await this.get(input.tenantId, input.recordId)) throw new Error("PERSISTENCE_APPEND_ONLY_CONFLICT");
     const now = input.now ?? "2026-08-25T00:00:00.000Z";
@@ -85,8 +96,17 @@ function regulatoryRecord({
 }
 
 async function bridgeWith(records) {
-  const bridge = new ProductionRegulatoryPersistenceBridge(new MemoryRepository());
+  const repository = new MemoryRepository();
+  const approvals = new MemoryRepository();
+  const bridge = new ProductionRegulatoryPersistenceBridge(repository, approvals);
   for (const record of records) await bridge.save(record.tenantId, record);
+  for (const record of records) {
+    const domainKey = collisionDomainKey(record);
+    const stateId = regulatoryApprovalDomainId(record.tenantId, domainKey);
+    const previous = await approvals.get(record.tenantId, stateId);
+    const state = previous?.payload ?? { domainKey, componentCode: record.componentCode, customerScope: record.customerScope, normalizedUnit: record.normalizedUnit, effectiveApprovals: [] };
+    await approvals.put({ tenantId: record.tenantId, recordId: stateId, payload: { ...state, effectiveApprovals: [...state.effectiveApprovals, { targetRecordId: record.id, targetRecordChecksum: record.checksum, effectiveFrom: record.effectiveFrom, effectiveTo: record.effectiveTo, decisionEventId: `audit_fixture_${record.id}` }] }, expectedVersion: previous?.version });
+  }
   return bridge;
 }
 
@@ -222,12 +242,12 @@ assert.deepEqual(uc6PowerTimeline.segments.map((segment) => segment.regulatoryRe
 
 await assertCode(async () => resolveRegulatoryTimeline(await bridgeWith([uc6PowerRecord]), request({ componentCode: "UC6", normalizedUnit: "EUR/KWH" })), "REGULATORY_TIMELINE_GAP");
 
-const uc6EnergyOverlapBridge = await bridgeWith([
+const uc6EnergyOverlapBridge = directBridgeWith([
   regulatoryRecord({ id: "uc6-energy-overlap-a", componentCode: "UC6", normalizedUnit: "EUR/KWH", effectiveFrom: "2026-07-01", effectiveTo: "2026-09-01" }),
   regulatoryRecord({ id: "uc6-energy-overlap-b", componentCode: "UC6", normalizedUnit: "EUR/KWH", effectiveFrom: "2026-08-01", effectiveTo: "2026-10-01", normalizedValue: 22 }),
 ]);
 await assertCode(() => resolveRegulatoryTimeline(uc6EnergyOverlapBridge, request({ componentCode: "UC6", normalizedUnit: "EUR/KWH" })), "REGULATORY_TIMELINE_OVERLAP");
-const uc6PowerOverlapBridge = await bridgeWith([
+const uc6PowerOverlapBridge = directBridgeWith([
   regulatoryRecord({ id: "uc6-power-overlap-a", componentCode: "UC6", normalizedUnit: "EUR/KW/YEAR", effectiveFrom: "2026-07-01", effectiveTo: "2026-09-01" }),
   regulatoryRecord({ id: "uc6-power-overlap-b", componentCode: "UC6", normalizedUnit: "EUR/KW/YEAR", effectiveFrom: "2026-08-01", effectiveTo: "2026-10-01", normalizedValue: 22 }),
 ]);
@@ -346,14 +366,14 @@ const overlapRecords = [
   regulatoryRecord({ id: "overlap-a", effectiveFrom: "2026-07-01", effectiveTo: "2026-09-01", normalizedValue: 11 }),
   regulatoryRecord({ id: "overlap-b", effectiveFrom: "2026-08-01", effectiveTo: "2026-10-01", normalizedValue: 22 }),
 ];
-const overlapBridge = await bridgeWith(overlapRecords);
+const overlapBridge = directBridgeWith(overlapRecords);
 await assertCode(() => resolveRegulatoryTimeline(overlapBridge, request()), "REGULATORY_TIMELINE_OVERLAP");
 const sameValueOverlapRecords = overlapRecords.map((record) => {
   const withoutChecksum = Object.fromEntries(Object.entries(record).filter(([key]) => key !== "checksum"));
   const sameValue = { ...withoutChecksum, normalizedValue: 11 };
   return { ...sameValue, checksum: checksumFor(sameValue) };
 });
-const sameValueOverlapBridge = await bridgeWith(sameValueOverlapRecords);
+const sameValueOverlapBridge = directBridgeWith(sameValueOverlapRecords);
 await assertCode(() => resolveRegulatoryTimeline(sameValueOverlapBridge, request()), "REGULATORY_TIMELINE_OVERLAP");
 
 const filtered = await resolveRegulatoryTimeline(await bridgeWith([

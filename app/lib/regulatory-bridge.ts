@@ -2,6 +2,9 @@ import type { RegulatoryValueRecord } from "./foundation/regulatory-types.ts";
 // @ts-expect-error Node's strip-only test runner requires the explicit extension.
 import { validateChecksum, validateTenantId } from "./foundation/regulatory-validation.ts";
 import type { TenantRecord, TenantRecordRepository } from "./persistence/types.ts";
+import type { RegulatoryApprovalDomainState } from "./regulatory-approval-domain.ts";
+// @ts-expect-error Node's strip-only test runner requires the explicit extension.
+import { collisionDomainKey, isEffectiveApproval, regulatoryApprovalDomainId, validateRegulatoryApprovalDomainState } from "./regulatory-approval-domain.ts";
 
 export interface RegulatoryValueQuery {
   readonly componentCode?: RegulatoryValueRecord["componentCode"];
@@ -65,8 +68,9 @@ function valueFromRecord(record: TenantRecord<RegulatoryValueRecord>, tenantId: 
 
 export class ProductionRegulatoryPersistenceBridge {
   private readonly repository: RegulatoryValueRepository;
+  private readonly approvalDomains: TenantRecordRepository<RegulatoryApprovalDomainState>;
 
-  constructor(repository: RegulatoryValueRepository) { this.repository = repository; }
+  constructor(repository: RegulatoryValueRepository, approvalDomains: TenantRecordRepository<RegulatoryApprovalDomainState>) { this.repository = repository; this.approvalDomains = approvalDomains; }
 
   async save(tenantId: string, value: RegulatoryValueRecord): Promise<TenantRecord<RegulatoryValueRecord>> {
     assertRecordShape(value, tenantId);
@@ -82,19 +86,20 @@ export class ProductionRegulatoryPersistenceBridge {
   async list(tenantId: string, query: RegulatoryValueQuery = {}): Promise<readonly RegulatoryValueRecord[]> {
     validateTenantId(tenantId);
     const records = await this.repository.list(tenantId);
-    return records.flatMap((record) => {
-      const value = record.payload;
-      if (!value || typeof value !== "object" || Array.isArray(value)) return [];
-      if ((value as RegulatoryValueRecord).tenantId !== tenantId) fail("REGULATORY_TENANT_MISMATCH");
-      if ((value as RegulatoryValueRecord).approvalStatus !== "APPROVED" || (value as RegulatoryValueRecord).reviewStatus !== "APPROVED") return [];
-      const candidate = value as RegulatoryValueRecord;
+    const visible = await Promise.all(records.map(async (record) => {
+      const candidate = valueFromRecord(record, tenantId);
       if (query.componentCode !== undefined && candidate.componentCode !== query.componentCode) return [];
       if (query.customerScope !== undefined && candidate.customerScope !== query.customerScope) return [];
       if (query.normalizedUnit !== undefined && candidate.normalizedUnit !== query.normalizedUnit) return [];
-      assertRecordShape(candidate, tenantId);
       if (query.effectiveAt !== undefined && !isApplicable(candidate, query.effectiveAt)) return [];
-      return [candidate];
-    });
+      const domainKey = collisionDomainKey(candidate);
+      const stateId = regulatoryApprovalDomainId(tenantId, domainKey);
+      const stored = await this.approvalDomains.get(tenantId, stateId);
+      if (!stored) return [];
+      const state = validateRegulatoryApprovalDomainState(stored.payload, domainKey);
+      return isEffectiveApproval(state, candidate) ? [candidate] : [];
+    }));
+    return visible.flat();
   }
 
   async resolve(tenantId: string, query: Required<Pick<RegulatoryValueQuery, "componentCode" | "customerScope" | "effectiveAt">>): Promise<RegulatoryValueRecord | null> {

@@ -16,6 +16,7 @@ import type { MarketArchiveRecord, MarketArchiveRepository } from "../market/typ
 // @ts-expect-error Node's strip-only test runner requires the explicit extension.
 import { validateStoredMarketArchive } from "../market/validation.ts";
 import type { RegulatoryValueRecord } from "../foundation/regulatory-types.ts";
+import type { RegulatoryApprovalDomainState } from "../regulatory-approval-domain.ts";
 import type { AuditEvent, BillIngestionMetadata, CalculationResultRecord, CommercialProposalRecord, ComparisonResultRecord, DeletableTenantRecordRepository, ExportMetadataRecord, NormalizedBillSnapshot } from "../persistence/types.ts";
 
 const TENANT_PATTERN = /^tenant_[a-z0-9-]+$/;
@@ -291,6 +292,7 @@ export class SupabaseProductionStorageAdapter implements ProductionStorageAdapte
   readonly cteArchives: DeletableTenantRecordRepository<unknown>;
   readonly marketDataArchives: TenantRecordRepository<unknown>;
   readonly regulatoryValues: TenantRecordRepository<RegulatoryValueRecord>;
+  readonly approvalDomains: TenantRecordRepository<RegulatoryApprovalDomainState>;
   readonly calculationResults: TenantRecordRepository<CalculationResultRecord>;
   readonly comparisonResults: TenantRecordRepository<ComparisonResultRecord>;
   readonly proposals: TenantRecordRepository<CommercialProposalRecord>;
@@ -307,6 +309,7 @@ export class SupabaseProductionStorageAdapter implements ProductionStorageAdapte
     this.cteArchives = new SupabaseRecordRepository(client, "cte-records") as SupabaseRecordRepository<unknown> & DeletableTenantRecordRepository<unknown>;
     this.marketDataArchives = new SupabaseRecordRepository(client, "market-data-archives");
     this.regulatoryValues = new SupabaseRecordRepository<RegulatoryValueRecord>(client, "regulatory-values");
+    this.approvalDomains = new SupabaseRecordRepository<RegulatoryApprovalDomainState>(client, "regulatory-approval-domains");
     this.calculationResults = new SupabaseRecordRepository(client, "calculations");
     this.comparisonResults = new SupabaseRecordRepository(client, "comparisons");
     this.proposals = new SupabaseRecordRepository(client, "proposals");

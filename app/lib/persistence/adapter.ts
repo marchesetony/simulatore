@@ -1,5 +1,6 @@
 import type { BillRepository, DocumentStoragePort } from "../foundation/real-bill";
 import type { RegulatoryValueRecord } from "../foundation/regulatory-types.ts";
+import type { RegulatoryApprovalDomainState } from "../regulatory-approval-domain.ts";
 import type { CteArchiveRepository as DomainCteArchiveRepository } from "../cte/archive/types";
 import type { MarketArchiveRepository as DomainMarketArchiveRepository } from "../market/types";
 // @ts-expect-error Node's strip-only test runner requires the explicit extension.
@@ -25,6 +26,7 @@ export interface ProductionStorageAdapter {
   readonly cteArchives: DeletableTenantRecordRepository<unknown>;
   readonly marketDataArchives: TenantRecordRepository<unknown>;
   readonly regulatoryValues: TenantRecordRepository<RegulatoryValueRecord>;
+  readonly approvalDomains: TenantRecordRepository<RegulatoryApprovalDomainState>;
   readonly calculationResults: CalculationResultRepository;
   readonly comparisonResults: ComparisonResultRepository;
   readonly proposals: CommercialProposalRepository;
@@ -42,6 +44,7 @@ export interface RuntimeRepositories {
   readonly cteArchives: DeletableTenantRecordRepository<unknown>;
   readonly marketDataArchives: TenantRecordRepository<unknown>;
   readonly regulatoryValues: TenantRecordRepository<RegulatoryValueRecord>;
+  readonly approvalDomains: TenantRecordRepository<RegulatoryApprovalDomainState>;
   readonly calculationResults: CalculationResultRepository;
   readonly comparisonResults: ComparisonResultRepository;
   readonly proposals: CommercialProposalRepository;
@@ -63,7 +66,7 @@ function isProductionStorageAdapter(adapter: unknown): adapter is ProductionStor
     && hasMethods(item.billRepository, ["get", "list", "save"])
     && hasMethods(item.documentStorage, ["store", "read", "remove"])
     && hasMethods(item.cteArchives, ["get", "list", "put", "append", "delete"])
-    && ["billIngestionMetadata", "normalizedBillSnapshots", "marketDataArchives", "regulatoryValues", "calculationResults", "comparisonResults", "proposals", "exports", "auditEvents"].every((name) => hasMethods(item[name], ["get", "list", "put", "append"]));
+    && ["billIngestionMetadata", "normalizedBillSnapshots", "marketDataArchives", "regulatoryValues", "approvalDomains", "calculationResults", "comparisonResults", "proposals", "exports", "auditEvents"].every((name) => hasMethods(item[name], ["get", "list", "put", "append"]));
 }
 
 export function registerProductionStorageAdapter(adapter: ProductionStorageAdapter): void {
@@ -91,6 +94,7 @@ export function runtimeRepositories(): RuntimeRepositories {
     cteArchives: local.collection("cte-archives"),
     marketDataArchives: local.collection("market-data-archives"),
     regulatoryValues: local.collection<RegulatoryValueRecord>("regulatory-values"),
+    approvalDomains: local.collection<RegulatoryApprovalDomainState>("regulatory-approval-domains"),
     calculationResults: local.collection("calculations"),
     comparisonResults: local.collection("comparisons"),
     proposals: local.collection("proposals"),
