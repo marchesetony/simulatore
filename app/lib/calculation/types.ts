@@ -153,7 +153,7 @@ export interface RegulatoryData {
 }
 
 export type CalculationCostScope = "COMMERCIAL_ONLY" | "COMMERCIAL_PLUS_REGULATED_PARTIAL";
-export type RegulatedComponentIncluded = "UC3_ENERGY" | "UC6_ENERGY" | "UC6_POWER" | "NETWORK_FIXED" | "NETWORK_POWER" | "NETWORK_ENERGY" | "METERING_FIXED" | "TRANSMISSION_ENERGY";
+export type RegulatedComponentIncluded = "UC3_ENERGY" | "UC6_ENERGY" | "UC6_POWER" | "UC6_FIXED" | "NETWORK_FIXED" | "NETWORK_POWER" | "NETWORK_ENERGY" | "METERING_FIXED" | "TRANSMISSION_ENERGY";
 
 export interface CalculationMarketReference {
   readonly recordId: string;

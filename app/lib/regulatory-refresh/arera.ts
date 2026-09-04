@@ -51,15 +51,18 @@ export function createAreraRegulatorySourceReader(input: { readonly fetcher?: Ar
       const bta6 = await fetchOfficialBta6Sources({ tenantId, retrievedAt, fetcher: input.fetcher });
       let current: Awaited<ReturnType<AreraElectricityRegulatorySourceAdapter["importOfficial"]>>;
       try {
-        const arera = new AreraElectricityRegulatorySourceAdapter(sink(), { tenantId, fetcher: input.fetcher, systemChargesPage: ARERA_SYSTEM_CHARGES_PAGE });
+        const arera = new AreraElectricityRegulatorySourceAdapter(sink(), { tenantId, fetcher: input.fetcher, systemChargesPage: ARERA_SYSTEM_CHARGES_PAGE, includeBta6Uc: true });
         current = await arera.importOfficial({ retrievedAt });
       } catch (error) {
         if (!(error instanceof Error) || error.message !== "ARERA_HTTP_404") throw error;
-        const arera = new AreraElectricityRegulatorySourceAdapter(sink(), { tenantId, fetcher: input.fetcher });
+        const arera = new AreraElectricityRegulatorySourceAdapter(sink(), { tenantId, fetcher: input.fetcher, includeBta6Uc: true });
         current = await arera.importOfficial({ retrievedAt });
       }
       const infrastructure = new Map(current.infrastructure.records.map((record) => [record.componentCode, record]));
       const system = current.systemChargeRecords;
+      const bta6Uc3 = system.find((record) => record.componentCode === "UC3" && record.customerScope === "NON_DOMESTIC_BT_BTA6" && record.normalizedUnit === "EUR/KWH");
+      const bta6Uc6Energy = system.find((record) => record.componentCode === "UC6" && record.customerScope === "NON_DOMESTIC_BT_BTA6" && record.normalizedUnit === "EUR/KWH");
+      const bta6Uc6Fixed = system.find((record) => record.componentCode === "UC6" && record.customerScope === "NON_DOMESTIC_BT_BTA6" && record.normalizedUnit === "EUR/POD/YEAR");
       const residentSource: Partial<Record<RegulatoryValueComponentCode, RegulatoryValueRecord>> = {
         NETWORK_FIXED: infrastructure.get("S1_TOTAL") ? exactScopeRecord({ ...infrastructure.get("S1_TOTAL")!, componentCode: "NETWORK_FIXED" }, "DOMESTIC_RESIDENT_BT") : undefined,
         NETWORK_POWER: infrastructure.get("S2_POWER") ? exactScopeRecord({ ...infrastructure.get("S2_POWER")!, componentCode: "NETWORK_POWER" }, "DOMESTIC_RESIDENT_BT") : undefined,
@@ -71,7 +74,7 @@ export function createAreraRegulatorySourceReader(input: { readonly fetcher?: Ar
       const records: RegulatoryValueRecord[] = [];
       for (const domain of CALCULATED_REGULATORY_DOMAINS) {
         const source = domain.customerScope === "NON_DOMESTIC_BT_BTA6"
-          ? ({ "NETWORK_FIXED|NON_DOMESTIC_BT_BTA6|EUR/POD/YEAR": bta6.fixed, "NETWORK_POWER|NON_DOMESTIC_BT_BTA6|EUR/KW/YEAR": bta6.power, "NETWORK_ENERGY|NON_DOMESTIC_BT_BTA6|EUR/KWH": bta6.energy, "METERING_FIXED|NON_DOMESTIC_BT_BTA6|EUR/POD/YEAR": bta6.metering, "TRANSMISSION_ENERGY|NON_DOMESTIC_BT_BTA6|EUR/KWH": bta6.transmission } as Record<string, RegulatoryValueRecord>)[regulatoryDomainKey(domain)]
+          ? ({ "NETWORK_FIXED|NON_DOMESTIC_BT_BTA6|EUR/POD/YEAR": bta6.fixed, "NETWORK_POWER|NON_DOMESTIC_BT_BTA6|EUR/KW/YEAR": bta6.power, "NETWORK_ENERGY|NON_DOMESTIC_BT_BTA6|EUR/KWH": bta6.energy, "METERING_FIXED|NON_DOMESTIC_BT_BTA6|EUR/POD/YEAR": bta6.metering, "TRANSMISSION_ENERGY|NON_DOMESTIC_BT_BTA6|EUR/KWH": bta6.transmission, "UC3|NON_DOMESTIC_BT_BTA6|EUR/KWH": bta6Uc3, "UC6|NON_DOMESTIC_BT_BTA6|EUR/KWH": bta6Uc6Energy, "UC6|NON_DOMESTIC_BT_BTA6|EUR/POD/YEAR": bta6Uc6Fixed } as Record<string, RegulatoryValueRecord | undefined>)[regulatoryDomainKey(domain)]
           : domain.componentCode === "UC6" && domain.normalizedUnit === "EUR/KW/YEAR" ? residentUc6Power : domain.componentCode === "UC6" ? residentUc6Energy : residentSource[domain.componentCode];
         if (!source || source.normalizedUnit !== domain.normalizedUnit) continue;
         records.push(domain.customerScope === "DOMESTIC_RESIDENT_BT" && source.customerScope !== domain.customerScope ? exactScopeRecord(source, domain.customerScope) : source);

@@ -29,6 +29,9 @@ const bta6Domains: readonly RegulatoryRefreshDomain[] = [
   { componentCode: "NETWORK_ENERGY", customerScope: bta6Scope, normalizedUnit: "EUR/KWH", sourceAdapter: "ARERA_ELECTRICITY" },
   { componentCode: "METERING_FIXED", customerScope: bta6Scope, normalizedUnit: "EUR/POD/YEAR", sourceAdapter: "ARERA_ELECTRICITY" },
   { componentCode: "TRANSMISSION_ENERGY", customerScope: bta6Scope, normalizedUnit: "EUR/KWH", sourceAdapter: "ARERA_ELECTRICITY" },
+  { componentCode: "UC3", customerScope: bta6Scope, normalizedUnit: "EUR/KWH", sourceAdapter: "ARERA_ELECTRICITY" },
+  { componentCode: "UC6", customerScope: bta6Scope, normalizedUnit: "EUR/KWH", sourceAdapter: "ARERA_ELECTRICITY" },
+  { componentCode: "UC6", customerScope: bta6Scope, normalizedUnit: "EUR/POD/YEAR", sourceAdapter: "ARERA_ELECTRICITY" },
 ];
 
 /** Single source of truth shared by the economic calculator and refresh service. */

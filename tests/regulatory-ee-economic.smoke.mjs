@@ -234,6 +234,9 @@ const bta6Records = [
   baseRecord({ id: "qa-bta6-energy", componentCode: "NETWORK_ENERGY", customerScope: bta6Scope, normalizedUnit: "EUR/KWH", normalizedValue: 0.00066 }),
   baseRecord({ id: "qa-bta6-metering", componentCode: "METERING_FIXED", customerScope: bta6Scope, normalizedUnit: "EUR/POD/YEAR", normalizedValue: 19.6826 }),
   baseRecord({ id: "qa-bta6-transmission", componentCode: "TRANSMISSION_ENERGY", customerScope: bta6Scope, normalizedUnit: "EUR/KWH", normalizedValue: 0.0119 }),
+  baseRecord({ id: "qa-bta6-uc3", componentCode: "UC3", customerScope: bta6Scope, normalizedUnit: "EUR/KWH", normalizedValue: 0.00276 }),
+  baseRecord({ id: "qa-bta6-uc6-energy", componentCode: "UC6", customerScope: bta6Scope, normalizedUnit: "EUR/KWH", normalizedValue: 0.00007 }),
+  baseRecord({ id: "qa-bta6-uc6-fixed", componentCode: "UC6", customerScope: bta6Scope, normalizedUnit: "EUR/POD/YEAR", normalizedValue: 1.6824 }),
 ];
 const bta6Request = request({ customerCategory: "NON_RESIDENTIAL", residency: undefined });
 const bta6Calculation = await calculateRegulatedEeSubset(bta6Request, { trustedElectricityContext: bta6Context, regulatoryBridge: await bridgeWith(bta6Records) });
@@ -243,17 +246,40 @@ assert.equal(bta6Component("NETWORK_POWER")?.amount.minorUnits, 5488);
 assert.equal(bta6Component("NETWORK_ENERGY")?.amount.minorUnits, 66);
 assert.equal(bta6Component("METERING_FIXED")?.amount.minorUnits, 164);
 assert.equal(bta6Component("TRANSMISSION_ENERGY")?.amount.minorUnits, 1190);
-assert.equal(bta6Calculation.components.reduce((sum, component) => sum + component.amount.minorUnits, 0), 6953);
-assert.deepEqual(bta6Calculation.includedComponents, ["NETWORK_FIXED", "NETWORK_POWER", "NETWORK_ENERGY", "METERING_FIXED", "TRANSMISSION_ENERGY"]);
-assert.equal(bta6Calculation.partialWarning, "REGULATED_SUBSET_PARTIAL_BTA6_NETWORK_METERING_TRANSMISSION_ONLY");
+assert.equal(bta6Component("UC3")?.amount.minorUnits, 276);
+assert.equal(bta6Calculation.components.find((component) => component.formulaId === "REGULATED_UC6_ENERGY_RATE_TIMES_KWH")?.amount.minorUnits, 7);
+assert.equal(bta6Calculation.components.find((component) => component.formulaId === "REGULATED_BTA6_UC6_FIXED_RATE_TIMES_TIME")?.amount.minorUnits, 14);
+assert.equal(bta6Calculation.components.reduce((sum, component) => sum + component.amount.minorUnits, 0), 7250);
+assert.deepEqual(bta6Calculation.includedComponents, ["NETWORK_FIXED", "NETWORK_POWER", "NETWORK_ENERGY", "METERING_FIXED", "TRANSMISSION_ENERGY", "UC3_ENERGY", "UC6_ENERGY", "UC6_FIXED"]);
+assert.equal(bta6Calculation.partialWarning, "REGULATED_SUBSET_PARTIAL_BTA6_NETWORK_METERING_TRANSMISSION_UC3_UC6_ONLY");
+assert.equal(bta6Calculation.components.some((component) => component.formulaInputs.componentCode === "UC6" && component.formulaInputs.rateEurPerKwYear !== undefined), false);
 console.log("BTA6_NETWORK_FIXED_ECONOMIC=PASS");
 console.log("BTA6_NETWORK_POWER_ECONOMIC=PASS");
 console.log("BTA6_NETWORK_ENERGY_ECONOMIC=PASS");
 console.log("BTA6_METERING_ECONOMIC=PASS");
 console.log("BTA6_TRANSMISSION_ECONOMIC=PASS");
+console.log("BTA6_UC3_ECONOMIC=PASS");
+console.log("BTA6_UC6_ENERGY_ECONOMIC=PASS");
+console.log("BTA6_UC6_FIXED_ECONOMIC=PASS");
 console.log("BTA6_NETWORK_POWER_CONTRACTUAL_USED=PASS");
-console.log("BTA6_REGULATED_COMPONENTS_INCLUDED=NETWORK_FIXED,NETWORK_POWER,NETWORK_ENERGY,METERING_FIXED,TRANSMISSION_ENERGY");
-console.log("BTA6_TOTAL_REGULATED_SUBSET=69.53 EUR / 6953 minorUnits");
+console.log("BTA6_REGULATED_COMPONENTS_INCLUDED=NETWORK_FIXED,NETWORK_POWER,NETWORK_ENERGY,METERING_FIXED,TRANSMISSION_ENERGY,UC3_ENERGY,UC6_ENERGY,UC6_FIXED");
+console.log("BTA6_TOTAL_REGULATED_SUBSET=72.50 EUR / 7250 minorUnits");
+console.log("BTA6_UC6_POWER_NOT_REQUESTED=PASS");
+console.log("BTA6_UC6_POWER_NOT_CALCULATED=PASS");
+const annualBta6Records = bta6Records.map((record) => {
+  const withoutChecksum = Object.fromEntries(Object.entries(record).filter(([key]) => key !== "checksum"));
+  const payload = { ...withoutChecksum, effectiveFrom: "2026-01-01", effectiveTo: "2027-01-01" };
+  return { ...payload, checksum: checksumFor(payload) };
+});
+const annualBta6 = await calculateRegulatedEeSubset(request({ customerCategory: "NON_RESIDENTIAL", residency: undefined, supplyPeriod: { periodStart: "2026-01-01", periodEnd: "2027-01-01" } }), { trustedElectricityContext: bta6Context, regulatoryBridge: await bridgeWith(annualBta6Records) });
+const annualUc6Fixed = annualBta6.components.find((component) => component.formulaId === "REGULATED_BTA6_UC6_FIXED_RATE_TIMES_TIME");
+assert.equal(annualUc6Fixed?.amount.minorUnits, 168);
+assert.equal(Object.hasOwn(annualUc6Fixed?.formulaInputs ?? {}, "powerBasisKw"), false);
+assert.equal(Object.hasOwn(annualUc6Fixed?.formulaInputs ?? {}, "contractedPowerKw"), false);
+assert.equal(Object.hasOwn(annualUc6Fixed?.formulaInputs ?? {}, "availablePowerKw"), false);
+console.log("BTA6_UC6_FIXED_ONE_MONTH=PASS");
+console.log("BTA6_UC6_FIXED_TWELVE_MONTHS=PASS");
+console.log("BTA6_UC6_FIXED_POWER_INDEPENDENT=PASS");
 const bta6MaxContext = { ...bta6Context, regulatoryPowerBasisKind: "MONTHLY_MAX_DRAWN", regulatoryPowerBasisKw: 24 };
 const bta6MaxCalculation = await calculateRegulatedEeSubset(bta6Request, { trustedElectricityContext: bta6MaxContext, regulatoryBridge: await bridgeWith(bta6Records) });
 assert.equal(bta6MaxCalculation.components.find((component) => component.formulaInputs.componentCode === "NETWORK_POWER")?.formulaInputs.powerBasisKw, 24);
@@ -264,8 +290,8 @@ console.log("BTA6_MULTI_MONTH_MAX_DRAWN_FAIL_CLOSED=PASS");
 
 const realBta6Request = parseSimulationRequest({ schemaVersion: 1, tenantId: "tenant_local-demo", vector: "EE", calculationDate: "2026-07-15", supplyPeriod: { periodStart: "2026-07-01", periodEnd: "2026-08-01" }, customerCategory: "NON_RESIDENTIAL", currency: "EUR", taxTreatment: "EXCLUDED", voltageLevel: "LV", consumption: { basis: "PERIOD", unit: "KWH", f1: 500, f2: 300, f3: 200 }, sourceBill: { billId: "qa-bta6-source-bill", version: "qa-version" } }, "tenant_local-demo");
 const realBta6 = await calculateRegulatedEeSubset(realBta6Request, { trustedElectricityContext: { ...bta6Context, regulatoryCustomerScope: "NON_DOMESTIC_BT_BTA6" }, regulatoryBridge: realBridge });
-assert.deepEqual(new Set(realBta6.references.map((reference) => reference.componentCode)), new Set(["NETWORK_FIXED", "NETWORK_POWER", "NETWORK_ENERGY", "METERING_FIXED", "TRANSMISSION_ENERGY"]));
-assert.equal(realBta6.references.length, 5);
+assert.deepEqual(new Set(realBta6.references.map((reference) => reference.componentCode + "|" + reference.normalizedUnit)), new Set(["NETWORK_FIXED|EUR/POD/YEAR", "NETWORK_POWER|EUR/KW/YEAR", "NETWORK_ENERGY|EUR/KWH", "METERING_FIXED|EUR/POD/YEAR", "TRANSMISSION_ENERGY|EUR/KWH", "UC3|EUR/KWH", "UC6|EUR/KWH", "UC6|EUR/POD/YEAR"]));
+assert.equal(realBta6.references.length, 8);
 assert.equal(realBta6.components.find((component) => component.formulaInputs.componentCode === "NETWORK_POWER")?.formulaInputs.powerBasisKw, 20);
 for (const component of realBta6.components) console.log(`REAL_BTA6_${String(component.formulaInputs.componentCode)}_QA_COST=${component.amount.amount} EUR / ${component.amount.minorUnits} minorUnits`);
 console.log("REAL_BTA6_RATES_READ=PASS");

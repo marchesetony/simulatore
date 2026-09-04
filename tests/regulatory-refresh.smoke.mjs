@@ -41,17 +41,17 @@ assert.equal(repositories.regulatoryValues.records.length, 0);
 console.log("DRY_RUN_NO_WRITE=PASS");
 
 const first = await runRegulatoryRefresh({ tenantId: tenant, repositories, sourceReader, now, runId: "refresh_initial_run", trigger: "TEST" });
-assert.equal(first.status, "SUCCESS"); assert.equal(first.createdCount, 11); assert.equal(first.approvedCount, 11);
+assert.equal(first.status, "SUCCESS"); assert.equal(first.createdCount, CALCULATED_REGULATORY_DOMAINS.length); assert.equal(first.approvedCount, CALCULATED_REGULATORY_DOMAINS.length);
 console.log("AUTOMATIC_C3_ACTIVATION=PASS"); console.log("AUTOMATIC_C3_BYPASS=NO");
 
 const second = await runRegulatoryRefresh({ tenantId: tenant, repositories, sourceReader, now, runId: "refresh_same_run", trigger: "TEST" });
-assert.equal(second.status, "SUCCESS"); assert.equal(second.unchangedCount, 11); assert.equal(second.createdCount, 0); assert.equal(second.approvedCount, 0); assert.equal(second.replacedCount, 0);
+assert.equal(second.status, "SUCCESS"); assert.equal(second.unchangedCount, CALCULATED_REGULATORY_DOMAINS.length); assert.equal(second.createdCount, 0); assert.equal(second.approvedCount, 0); assert.equal(second.replacedCount, 0);
 console.log("UNCHANGED_NO_NEW_RECORD=PASS"); console.log("REGULATORY_REFRESH_IDEMPOTENT=PASS");
 
 const correctionDomain = CALCULATED_REGULATORY_DOMAINS[0];
 const corrected = fixtureRecords.map((record) => record.id === fixtureRecords[0].id ? makeRecord(correctionDomain, 9.99, ["2026-01-01", "2027-01-01"], "c") : record);
 const correction = await runRegulatoryRefresh({ tenantId: tenant, repositories, sourceReader: { adapterName: "ARERA_ELECTRICITY", async load() { return corrected; } }, now, runId: "refresh_correction_run", trigger: "TEST" });
-assert.equal(correction.status, "SUCCESS"); assert.equal(correction.replacedCount, 1); assert.equal((await repositories.regulatoryValues.list(tenant)).length, 12);
+assert.equal(correction.status, "SUCCESS"); assert.equal(correction.replacedCount, 1); assert.equal((await repositories.regulatoryValues.list(tenant)).length, CALCULATED_REGULATORY_DOMAINS.length + 1);
 console.log("SAME_PERIOD_OFFICIAL_CORRECTION=PASS"); console.log("OLD_RECORD_PRESERVED=PASS"); console.log("OFFICIAL_CORRECTION_REPLACED=PASS");
 
 const rolloverRepos = { regulatoryValues: new MemoryRepository(), approvalDomains: new MemoryRepository(), auditEvents: new MemoryRepository(), regulatoryRefreshState: new MemoryRepository(), regulatoryRefreshRuns: new MemoryRepository() };
@@ -59,7 +59,7 @@ const openRecords = CALCULATED_REGULATORY_DOMAINS.map((domain, index) => makeRec
 await runRegulatoryRefresh({ tenantId: tenant, repositories: rolloverRepos, sourceReader: { adapterName: "ARERA_ELECTRICITY", async load() { return openRecords; } }, now, runId: "refresh_open_initial", trigger: "TEST" });
 const rolledRecords = CALCULATED_REGULATORY_DOMAINS.map((domain, index) => makeRecord(domain, 3 + index / 100, ["2027-01-01", null]));
 const rollover = await runRegulatoryRefresh({ tenantId: tenant, repositories: rolloverRepos, sourceReader: { adapterName: "ARERA_ELECTRICITY", async load() { return rolledRecords; } }, now, runId: "refresh_open_rollover", trigger: "TEST" });
-assert.equal(rollover.status, "SUCCESS"); assert.equal(rollover.replacedCount, 11);
+assert.equal(rollover.status, "SUCCESS"); assert.equal(rollover.replacedCount, CALCULATED_REGULATORY_DOMAINS.length);
 console.log("OPEN_ENDED_ROLLOVER=PASS"); console.log("AUTO_RATE_CHANGE=PASS"); console.log("NO_GAP=PASS"); console.log("NO_OVERLAP=PASS");
 
 const failed = await runRegulatoryRefresh({ tenantId: tenant, repositories, sourceReader: { adapterName: "ARERA_ELECTRICITY", async load() { throw new Error("ARERA_TIMEOUT"); } }, now: "2026-09-05T00:00:00.000Z", runId: "refresh_failure_run", trigger: "TEST" });
