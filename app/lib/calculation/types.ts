@@ -1,4 +1,5 @@
 import type { CustomerResidency, CustomerType, TaxInclusionState, VoltageLevel } from "../energy/types";
+import type { RegulatoryValueComponentCode, RegulatoryCustomerScope } from "../foundation/regulatory-types";
 
 export const CALCULATION_SCHEMA_VERSION = 1 as const;
 export const CALCULATION_ENGINE_VERSION = "1" as const;
@@ -124,13 +125,35 @@ export interface CalculationMoney {
 
 export interface CalculationComponent {
   readonly componentId: string;
-  readonly category: "ENERGY" | "FIXED_FEE" | "VARIABLE_FEE" | "IMBALANCE" | "ONE_OFF_FEE" | "DISCOUNT";
+  readonly category: "ENERGY" | "FIXED_FEE" | "VARIABLE_FEE" | "IMBALANCE" | "ONE_OFF_FEE" | "DISCOUNT" | "REGULATED_ENERGY" | "REGULATED_POWER";
   readonly label: string;
   readonly sign: "CHARGE" | "DISCOUNT";
   readonly amount: CalculationMoney;
   readonly formulaId: string;
   readonly formulaInputs: Readonly<Record<string, string | number | boolean>>;
 }
+
+export interface RegulatoryDataReference {
+  readonly componentCode: RegulatoryValueComponentCode;
+  readonly customerScope: RegulatoryCustomerScope;
+  readonly normalizedUnit: string;
+  readonly normalizedValue: number;
+  readonly regulatoryRecordId: string;
+  readonly checksum: string;
+  readonly officialIdentifier: string;
+  readonly sourceReference: string;
+  readonly segmentStart: string;
+  readonly segmentEnd: string;
+  readonly sourceSha256?: string;
+  readonly publicationDate?: string;
+}
+
+export interface RegulatoryData {
+  readonly references: readonly RegulatoryDataReference[];
+}
+
+export type CalculationCostScope = "COMMERCIAL_ONLY" | "COMMERCIAL_PLUS_REGULATED_PARTIAL";
+export type RegulatedComponentIncluded = "UC3_ENERGY" | "UC6_ENERGY" | "UC6_POWER";
 
 export interface CalculationMarketReference {
   readonly recordId: string;
@@ -161,6 +184,11 @@ export interface CalculationResult {
   readonly marketData: readonly CalculationMarketReference[];
   readonly components: readonly CalculationComponent[];
   readonly totalCommercialCost: CalculationMoney;
+  readonly totalRegulatedSubsetCost: CalculationMoney | null;
+  readonly totalCommercialPlusRegulatedSubsetCost: CalculationMoney | null;
+  readonly costScope: CalculationCostScope;
+  readonly regulatedComponentsIncluded: readonly RegulatedComponentIncluded[];
+  readonly regulatoryData: RegulatoryData;
   readonly unitCost: { readonly amount: number; readonly unit: "EUR_PER_KWH" | "EUR_PER_SMC"; readonly currency: "EUR" };
   readonly savingsVsBaseline: CalculationMoney | null;
   readonly warnings: readonly string[];

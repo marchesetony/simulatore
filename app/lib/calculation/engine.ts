@@ -11,10 +11,14 @@ import type { ElectricityMonthlyPunRecord, GasMonthlyPsvRecord } from "../energy
 import { queryApprovedHistoricalMarketData } from "../market/service.ts";
 import type { CteArchiveRepository } from "../cte/archive/types";
 import type { CalculationComponent, CalculationExclusion, CalculationExclusionCode, CalculationMarketReference, CalculationMoney, CalculationResult, ElectricitySimulationRequest, GasSimulationRequest, SimulationRequest } from "./types";
+import type { ElectricitySupplyContext } from "./trusted-ee-supply-context.ts";
+import type { ProductionRegulatoryPersistenceBridge } from "../regulatory-bridge.ts";
 // @ts-expect-error Node's strip-only test runner requires the explicit extension.
 import { add, divide, fromNumber, multiply, rational, roundCents, toDecimal, type Rational } from "./decimal.ts";
 // @ts-expect-error Node's strip-only test runner requires the explicit extension.
 import { monthsInSimulationPeriod } from "./input.ts";
+// @ts-expect-error Node's strip-only test runner requires the explicit extension.
+import { calculateRegulatedEeSubset, REGULATED_COMPONENTS_INCLUDED, REGULATED_SUBSET_PARTIAL_WARNING, type RegulatedEeExecutionContext } from "./regulated-ee.ts";
 
 export class CalculationEngineError extends Error {
   readonly code: string;
@@ -69,6 +73,11 @@ function totalMinor(components: readonly CalculationComponent[]): number {
   return Number(total);
 }
 function componentWarning(request: SimulationRequest): readonly string[] { return request.sourceBill ? ["SOURCE_BILL_REFERENCE_RECORDED"] : []; }
+
+export interface CalculationDependencies {
+  readonly trustedElectricityContext?: ElectricitySupplyContext;
+  readonly regulatoryBridge?: Pick<ProductionRegulatoryPersistenceBridge, "list">;
+}
 
 function profileForEe(request: ElectricitySimulationRequest, month: string): { readonly f1: number; readonly f2: number; readonly f3: number } {
   if (request.consumption.monthlyProfile) return request.consumption.monthlyProfile.find((profile) => profile.month === month) ?? fail("MONTHLY_PROFILE_INVALID");
@@ -189,7 +198,16 @@ export async function assertCommerciallyActive(cteRepository: CteArchiveReposito
   if (version === null || version.versionId !== versionId || version.status !== "APPROVED" || version.contract.approval.status !== "APPROVED") return fail("CTE_NOT_APPROVED");
 }
 
-export async function calculatePreparedOffer(request: SimulationRequest, prepared: EligibleOffer): Promise<CalculationResult> {
+export async function calculatePreparedOffer(request: SimulationRequest, prepared: EligibleOffer, dependencies: CalculationDependencies = {}): Promise<CalculationResult> {
+  let regulated: Awaited<ReturnType<typeof calculateRegulatedEeSubset>> | null = null;
+  if (request.vector === "EE" && request.sourceBill) {
+    const trustedElectricityContext = dependencies.trustedElectricityContext;
+    const regulatoryBridge = dependencies.regulatoryBridge;
+    if (!trustedElectricityContext) throw new CalculationEngineError("REGULATORY_TRUST_CONTEXT_REQUIRED");
+    if (!regulatoryBridge) throw new CalculationEngineError("REGULATORY_BRIDGE_REQUIRED");
+    const execution: RegulatedEeExecutionContext = { trustedElectricityContext, regulatoryBridge };
+    regulated = await calculateRegulatedEeSubset(request, execution);
+  }
   const drafts: ComponentDraft[] = []; const totalQuantity = request.vector === "EE" ? add(add(fromNumber(request.consumption.f1), fromNumber(request.consumption.f2)), fromNumber(request.consumption.f3)) : multiply(fromNumber(request.consumption.smc), request.consumption.correctionCoefficient.value === undefined ? fromNumber(1) : fromNumber(request.consumption.correctionCoefficient.value)); const months = monthCount(request);
   if (request.vector === "EE") addElectricityEnergy(drafts, request, prepared.offer, prepared.markets); else addGasEnergy(drafts, request, prepared.offer, prepared.markets);
   addFeeComponents(drafts, prepared.offer.fixedFees, "FIXED_FEE", request, totalQuantity, months);
@@ -197,9 +215,9 @@ export async function calculatePreparedOffer(request: SimulationRequest, prepare
   addDeclaredComponent(drafts, prepared.offer.imbalance, "IMBALANCE", request, totalQuantity, months);
   addOneOffComponents(drafts, prepared.offer.oneOffFees);
   addFeeComponents(drafts, prepared.offer.commercialDiscounts, "DISCOUNT", request, totalQuantity, months);
-  const components = convertDrafts(drafts); const total = totalMinor(components); if (totalQuantity.numerator <= BigInt(0)) fail("CALCULATION_ZERO_CONSUMPTION"); const unit: "EUR_PER_KWH" | "EUR_PER_SMC" = request.vector === "EE" ? "EUR_PER_KWH" : "EUR_PER_SMC"; const unitCost = { amount: toDecimal(divide(rational(BigInt(total), BigInt(100)), totalQuantity), 6), unit, currency: "EUR" as const }; const baseline = request.baseline ? roundCents(fromNumber(request.baseline.totalCommercialCost)) : null; const marketData = prepared.markets.map(referenceOf); const normalizedInput = request; const payload = { schemaVersion: 1 as const, engineVersion: "1" as const, normalizedInput, sourceCte: { archiveId: prepared.record.archiveId, cteId: prepared.record.cteId, versionId: prepared.version.versionId, version: prepared.version.contract.version, supplier: prepared.version.contract.supplier.name, offerCode: prepared.offer.offerCode }, marketData, components, totalCommercialCost: money(total), unitCost, roundingPolicy: "ROUND_HALF_UP_TO_CENT_PER_COMPONENT" as const }; const resultFingerprint = fingerprint(payload); return { ...payload, calculationId: `calc_${resultFingerprint.slice(0, 32)}`, fingerprint: resultFingerprint, calculatedAt: `${request.calculationDate}T00:00:00.000Z`, tenantId: request.tenantId, vector: request.vector, customerCategory: request.customerCategory, ...(request.vector === "EE" ? { voltageLevel: request.voltageLevel } : {}), calculationDate: request.calculationDate, supplyPeriod: request.supplyPeriod, currency: "EUR", taxTreatment: request.taxTreatment, savingsVsBaseline: baseline === null ? null : money(baseline - total), warnings: componentWarning(request) };
+  const commercialComponents = convertDrafts(drafts); const regulatedComponents = regulated?.components ?? []; const components = [...commercialComponents, ...regulatedComponents]; const totalCommercial = totalMinor(commercialComponents); const totalRegulated = regulated === null ? null : totalMinor(regulatedComponents); const totalPlusRegulated = totalRegulated === null ? null : totalCommercial + totalRegulated; if (totalQuantity.numerator <= BigInt(0)) fail("CALCULATION_ZERO_CONSUMPTION"); const unit: "EUR_PER_KWH" | "EUR_PER_SMC" = request.vector === "EE" ? "EUR_PER_KWH" : "EUR_PER_SMC"; const unitCost = { amount: toDecimal(divide(rational(BigInt(totalCommercial), BigInt(100)), totalQuantity), 6), unit, currency: "EUR" as const }; const baseline = request.baseline ? roundCents(fromNumber(request.baseline.totalCommercialCost)) : null; const marketData = prepared.markets.map(referenceOf); const normalizedInput = request; const costScope = regulated === null ? "COMMERCIAL_ONLY" as const : "COMMERCIAL_PLUS_REGULATED_PARTIAL" as const; const payload = { schemaVersion: 1 as const, engineVersion: "1" as const, normalizedInput, sourceCte: { archiveId: prepared.record.archiveId, cteId: prepared.record.cteId, versionId: prepared.version.versionId, version: prepared.version.contract.version, supplier: prepared.version.contract.supplier.name, offerCode: prepared.offer.offerCode }, marketData, components, totalCommercialCost: money(totalCommercial), totalRegulatedSubsetCost: totalRegulated === null ? null : money(totalRegulated), totalCommercialPlusRegulatedSubsetCost: totalPlusRegulated === null ? null : money(totalPlusRegulated), costScope, regulatedComponentsIncluded: regulated === null ? [] : [...REGULATED_COMPONENTS_INCLUDED], regulatoryData: { references: regulated?.references ?? [] }, unitCost, roundingPolicy: "ROUND_HALF_UP_TO_CENT_PER_COMPONENT" as const }; const resultFingerprint = fingerprint(payload); return { ...payload, calculationId: `calc_${resultFingerprint.slice(0, 32)}`, fingerprint: resultFingerprint, calculatedAt: `${request.calculationDate}T00:00:00.000Z`, tenantId: request.tenantId, vector: request.vector, customerCategory: request.customerCategory, ...(request.vector === "EE" ? { voltageLevel: request.voltageLevel } : {}), calculationDate: request.calculationDate, supplyPeriod: request.supplyPeriod, currency: "EUR", taxTreatment: request.taxTreatment, savingsVsBaseline: baseline === null ? null : money(baseline - totalCommercial), warnings: [...componentWarning(request), ...(regulated === null ? [] : [REGULATED_SUBSET_PARTIAL_WARNING])] };
 }
 
-export async function calculateApprovedOffer(cteRepository: CteArchiveRepository, marketRepository: MarketArchiveRepository, request: SimulationRequest, archiveId: string): Promise<CalculationResult> { const prepared = await prepareApprovedOffer(cteRepository, marketRepository, request, archiveId); return calculatePreparedOffer(request, prepared); }
+export async function calculateApprovedOffer(cteRepository: CteArchiveRepository, marketRepository: MarketArchiveRepository, request: SimulationRequest, archiveId: string, dependencies: CalculationDependencies = {}): Promise<CalculationResult> { const prepared = await prepareApprovedOffer(cteRepository, marketRepository, request, archiveId); return calculatePreparedOffer(request, prepared, dependencies); }
 
 export function exclusionFor(record: CteArchiveRecord, code: CalculationExclusionCode, message: string): CalculationExclusion { const version = record.currentApprovedVersionId ? record.versions.find((candidate) => candidate.versionId === record.currentApprovedVersionId) : null; const contract = version?.contract ?? record.versions[0]?.contract; return { archiveId: record.archiveId, cteId: record.cteId, vector: record.vector, supplier: contract?.supplier.name ?? "", offerCode: contract?.offer.code ?? "", cteVersion: version?.contract.version ?? null, code, message }; }
