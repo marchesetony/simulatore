@@ -7,11 +7,14 @@ import { resolveRegulatoryTimeline, type RegulatoryTimeline, type RegulatoryTime
 import { add, divide, fromNumber, multiply, roundCents, toDecimal, type Rational } from "./decimal.ts";
 // @ts-expect-error Node's strip-only test runner requires the explicit extension.
 import { monthsInSimulationPeriod } from "./input.ts";
+// @ts-expect-error Node's strip-only test runner requires the explicit extension.
+import { assertCalculatedRegulatoryDomain, CALCULATED_REGULATORY_DOMAINS } from "../regulatory-refresh/registry.ts";
 
 export const REGULATED_COMPONENTS_INCLUDED = ["UC3_ENERGY", "UC6_ENERGY", "UC6_POWER", "NETWORK_FIXED", "NETWORK_POWER", "TRANSMISSION_ENERGY"] as const;
 export const REGULATED_SUBSET_PARTIAL_WARNING = "REGULATED_SUBSET_PARTIAL_NETWORK_UC3_UC6_ONLY" as const;
 export const BTA6_REGULATED_COMPONENTS_INCLUDED = ["NETWORK_FIXED", "NETWORK_POWER", "NETWORK_ENERGY", "METERING_FIXED", "TRANSMISSION_ENERGY"] as const;
 export const BTA6_REGULATED_SUBSET_PARTIAL_WARNING = "REGULATED_SUBSET_PARTIAL_BTA6_NETWORK_METERING_TRANSMISSION_ONLY" as const;
+export { CALCULATED_REGULATORY_DOMAINS };
 
 export interface RegulatedEeExecutionContext {
   readonly trustedElectricityContext: ElectricitySupplyContext;
@@ -156,6 +159,7 @@ function timelineFor(
   componentCode: "UC3" | "UC6" | "NETWORK_FIXED" | "NETWORK_POWER" | "NETWORK_ENERGY" | "METERING_FIXED" | "TRANSMISSION_ENERGY",
   normalizedUnit: "EUR/KWH" | "EUR/KW/YEAR" | "EUR/POD/YEAR",
 ): Promise<RegulatoryTimeline> {
+  assertCalculatedRegulatoryDomain({ componentCode, customerScope: context.regulatoryCustomerScope, normalizedUnit });
   return resolveRegulatoryTimeline(bridge, {
     tenantId: request.tenantId,
     componentCode,

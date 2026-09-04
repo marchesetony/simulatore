@@ -298,6 +298,8 @@ export class SupabaseProductionStorageAdapter implements ProductionStorageAdapte
   readonly proposals: TenantRecordRepository<CommercialProposalRecord>;
   readonly exports: TenantRecordRepository<ExportMetadataRecord>;
   readonly auditEvents: SupabaseRecordRepository<AuditEvent>;
+  readonly regulatoryRefreshState: TenantRecordRepository<unknown>;
+  readonly regulatoryRefreshRuns: TenantRecordRepository<unknown>;
 
   constructor(client: ProviderClient, storageBucket: string) {
     this.cteArchiveRepository = new SupabaseCteArchiveRepository(client);
@@ -315,6 +317,8 @@ export class SupabaseProductionStorageAdapter implements ProductionStorageAdapte
     this.proposals = new SupabaseRecordRepository(client, "proposals");
     this.exports = new SupabaseRecordRepository(client, "exports");
     this.auditEvents = new SupabaseRecordRepository(client, "audit-events");
+    this.regulatoryRefreshState = new SupabaseRecordRepository(client, "regulatory-refresh-state");
+    this.regulatoryRefreshRuns = new SupabaseRecordRepository(client, "regulatory-refresh-runs");
   }
 }
 

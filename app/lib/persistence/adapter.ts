@@ -32,6 +32,8 @@ export interface ProductionStorageAdapter {
   readonly proposals: CommercialProposalRepository;
   readonly exports: ExportMetadataRepository;
   readonly auditEvents: AuditEventRepository;
+  readonly regulatoryRefreshState: TenantRecordRepository<unknown>;
+  readonly regulatoryRefreshRuns: TenantRecordRepository<unknown>;
 }
 
 export interface RuntimeRepositories {
@@ -50,6 +52,8 @@ export interface RuntimeRepositories {
   readonly proposals: CommercialProposalRepository;
   readonly exports: ExportMetadataRepository;
   readonly auditEvents: AuditEventRepository;
+  readonly regulatoryRefreshState: TenantRecordRepository<unknown>;
+  readonly regulatoryRefreshRuns: TenantRecordRepository<unknown>;
 }
 
 let productionStorageAdapter: ProductionStorageAdapter | null = null;
@@ -66,7 +70,7 @@ function isProductionStorageAdapter(adapter: unknown): adapter is ProductionStor
     && hasMethods(item.billRepository, ["get", "list", "save"])
     && hasMethods(item.documentStorage, ["store", "read", "remove"])
     && hasMethods(item.cteArchives, ["get", "list", "put", "append", "delete"])
-    && ["billIngestionMetadata", "normalizedBillSnapshots", "marketDataArchives", "regulatoryValues", "approvalDomains", "calculationResults", "comparisonResults", "proposals", "exports", "auditEvents"].every((name) => hasMethods(item[name], ["get", "list", "put", "append"]));
+    && ["billIngestionMetadata", "normalizedBillSnapshots", "marketDataArchives", "regulatoryValues", "approvalDomains", "calculationResults", "comparisonResults", "proposals", "exports", "auditEvents", "regulatoryRefreshState", "regulatoryRefreshRuns"].every((name) => hasMethods(item[name], ["get", "list", "put", "append"]));
 }
 
 export function registerProductionStorageAdapter(adapter: ProductionStorageAdapter): void {
@@ -100,5 +104,7 @@ export function runtimeRepositories(): RuntimeRepositories {
     proposals: local.collection("proposals"),
     exports: local.collection("exports"),
     auditEvents: local.collection("audit-events"),
+    regulatoryRefreshState: local.collection("regulatory-refresh-state"),
+    regulatoryRefreshRuns: local.collection("regulatory-refresh-runs"),
   };
 }
