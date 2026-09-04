@@ -395,9 +395,11 @@ await assertCode(async () => resolveRegulatoryTimeline(await bridgeWith([
   regulatoryRecord({ tenantId: tenantB, id: "tenant-b-record", effectiveFrom: "2026-07-01", effectiveTo: "2026-09-01" }),
 ]), request()), "REGULATORY_TIMELINE_GAP");
 
-await assertCode(async () => resolveRegulatoryTimeline(await bridgeWith([
-  regulatoryRecord({ id: "imported", approvalStatus: "IMPORTED", reviewStatus: "NEEDS_REVIEW", effectiveFrom: "2026-07-01", effectiveTo: "2026-09-01" }),
-]), request()), "REGULATORY_TIMELINE_GAP");
+const importedRecord = regulatoryRecord({ id: "imported", approvalStatus: "IMPORTED", reviewStatus: "NEEDS_REVIEW", effectiveFrom: "2026-07-01", effectiveTo: "2026-09-01" });
+const importedTimeline = await resolveRegulatoryTimeline(await bridgeWith([importedRecord]), request());
+assert.equal(importedTimeline.segments.length, 1);
+assertSegmentPreservesRecord(importedTimeline.segments[0], importedRecord);
+console.log("C3_IMPORTED_RECORD_ACCEPTED_FROM_BRIDGE=PASS");
 
 await assertCode(async () => resolveRegulatoryTimeline(await bridgeWith([
   regulatoryRecord({ id: "bad-date", effectiveFrom: "2026-07-01T00:00:00", effectiveTo: "2026-09-01" }),

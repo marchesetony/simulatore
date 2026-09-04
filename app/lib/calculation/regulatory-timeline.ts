@@ -126,7 +126,6 @@ function sortedApplicableRecords(
   periodEnd: number,
 ): readonly { readonly record: RegulatoryValueRecord; readonly from: number; readonly to: number }[] {
   const applicable = records
-    .filter((record) => record.approvalStatus === "APPROVED" && record.reviewStatus === "APPROVED")
     .map((record) => {
       const interval = intervalFor(record);
       return { record, ...interval };
