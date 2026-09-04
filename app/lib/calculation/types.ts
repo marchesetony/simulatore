@@ -125,7 +125,7 @@ export interface CalculationMoney {
 
 export interface CalculationComponent {
   readonly componentId: string;
-  readonly category: "ENERGY" | "FIXED_FEE" | "VARIABLE_FEE" | "IMBALANCE" | "ONE_OFF_FEE" | "DISCOUNT" | "REGULATED_ENERGY" | "REGULATED_POWER";
+  readonly category: "ENERGY" | "FIXED_FEE" | "VARIABLE_FEE" | "IMBALANCE" | "ONE_OFF_FEE" | "DISCOUNT" | "REGULATED_ENERGY" | "REGULATED_POWER" | "REGULATED_FIXED";
   readonly label: string;
   readonly sign: "CHARGE" | "DISCOUNT";
   readonly amount: CalculationMoney;
@@ -153,7 +153,7 @@ export interface RegulatoryData {
 }
 
 export type CalculationCostScope = "COMMERCIAL_ONLY" | "COMMERCIAL_PLUS_REGULATED_PARTIAL";
-export type RegulatedComponentIncluded = "UC3_ENERGY" | "UC6_ENERGY" | "UC6_POWER";
+export type RegulatedComponentIncluded = "UC3_ENERGY" | "UC6_ENERGY" | "UC6_POWER" | "NETWORK_FIXED" | "NETWORK_POWER" | "TRANSMISSION_ENERGY";
 
 export interface CalculationMarketReference {
   readonly recordId: string;

@@ -39,12 +39,12 @@ const baseRecord = ({ id, componentCode, normalizedUnit, normalizedValue, effect
   return { ...base, checksum: checksumFor(base) };
 };
 
-async function bridgeWith(records) {
+async function bridgeWith(records, approvedRecords = records) {
   const repository = new MemoryRepository();
   const approvals = new MemoryRepository();
   const bridge = new ProductionRegulatoryPersistenceBridge(repository, approvals);
   for (const record of records) await bridge.save(tenant, record);
-  for (const record of records) {
+  for (const record of approvedRecords) {
     const domainKey = collisionDomainKey(record);
     const stateId = regulatoryApprovalDomainId(tenant, domainKey);
     const previous = await approvals.get(tenant, stateId);
@@ -66,23 +66,42 @@ const singleRecords = [
   baseRecord({ id: "qa-uc6-energy", componentCode: "UC6", normalizedUnit: "EUR/KWH", normalizedValue: 0.00007 }),
   baseRecord({ id: "qa-uc6-power", componentCode: "UC6", normalizedUnit: "EUR/KW/YEAR", normalizedValue: 0.1988 }),
 ];
-const singleBridge = await bridgeWith(singleRecords);
+const networkRecords = [
+  baseRecord({ id: "qa-network-fixed", componentCode: "NETWORK_FIXED", normalizedUnit: "EUR/POD/YEAR", normalizedValue: 12 }),
+  baseRecord({ id: "qa-network-power", componentCode: "NETWORK_POWER", normalizedUnit: "EUR/KW/YEAR", normalizedValue: 12 }),
+  baseRecord({ id: "qa-transmission-energy", componentCode: "TRANSMISSION_ENERGY", normalizedUnit: "EUR/KWH", normalizedValue: 0.01 }),
+];
+const allRecords = [...singleRecords, ...networkRecords];
+const singleBridge = await bridgeWith(allRecords);
 const singleRequest = request();
 const regulated = await calculateRegulatedEeSubset(singleRequest, { trustedElectricityContext: context, regulatoryBridge: singleBridge });
 const byFormula = (formulaId) => regulated.components.find((component) => component.formulaId === formulaId);
 assert.equal(byFormula("REGULATED_UC3_RATE_TIMES_KWH")?.amount.minorUnits, 276);
 assert.equal(byFormula("REGULATED_UC6_ENERGY_RATE_TIMES_KWH")?.amount.minorUnits, 7);
 assert.equal(byFormula("REGULATED_UC6_POWER_RATE_TIMES_KW_TIME")?.amount.minorUnits, 5);
+assert.equal(byFormula("REGULATED_NETWORK_FIXED_RATE_TIMES_TIME")?.amount.minorUnits, 100);
+assert.equal(byFormula("REGULATED_NETWORK_POWER_RATE_TIMES_KW_TIME")?.amount.minorUnits, 300);
+assert.equal(byFormula("REGULATED_TRANSMISSION_RATE_TIMES_KWH")?.amount.minorUnits, 1000);
 assert.equal(byFormula("REGULATED_UC6_POWER_RATE_TIMES_KW_TIME")?.formulaInputs.contractedPowerKw, 3);
+assert.equal(byFormula("REGULATED_NETWORK_POWER_RATE_TIMES_KW_TIME")?.formulaInputs.contractedPowerKw, 3);
 assert.equal(byFormula("REGULATED_UC6_POWER_RATE_TIMES_KW_TIME")?.formulaInputs.annualDivisor, 12);
+assert.equal(byFormula("REGULATED_NETWORK_FIXED_RATE_TIMES_TIME")?.formulaInputs.annualDivisor, 12);
+assert.equal(byFormula("REGULATED_NETWORK_POWER_RATE_TIMES_KW_TIME")?.formulaInputs.annualDivisor, 12);
 console.log("UC3_FIXTURE_COST=2.76 EUR / 276 minorUnits");
 console.log("UC6_ENERGY_FIXTURE_COST=0.07 EUR / 7 minorUnits");
 console.log("UC6_POWER_FIXTURE_COST=0.05 EUR / 5 minorUnits");
-console.log("REGULATED_FIXTURE_SUBTOTAL=2.88 EUR / 288 minorUnits");
+console.log("NETWORK_FIXED_FIXTURE_COST=1.00 EUR / 100 minorUnits");
+console.log("NETWORK_POWER_FIXTURE_COST=3.00 EUR / 300 minorUnits");
+console.log("TRANSMISSION_ENERGY_FIXTURE_COST=10.00 EUR / 1000 minorUnits");
+console.log("REGULATED_FIXTURE_SUBTOTAL=16.88 EUR / 1688 minorUnits");
 console.log("UC3_ECONOMIC_COMPONENT=PASS");
 console.log("UC6_ENERGY_ECONOMIC_COMPONENT=PASS");
 console.log("UC6_POWER_ECONOMIC_COMPONENT=PASS");
+console.log("NETWORK_FIXED_ECONOMIC_COMPONENT=PASS");
+console.log("NETWORK_POWER_ECONOMIC_COMPONENT=PASS");
+console.log("TRANSMISSION_ENERGY_ECONOMIC_COMPONENT=PASS");
 console.log("UC6_POWER_USES_CONTRACTED_POWER=PASS");
+console.log("NETWORK_POWER_USES_CONTRACTED_POWER=PASS");
 console.log("AVAILABLE_POWER_IGNORED=PASS");
 
 const prepared = {
@@ -93,27 +112,38 @@ const prepared = {
 };
 const integrated = await calculatePreparedOffer(singleRequest, prepared, { trustedElectricityContext: context, regulatoryBridge: singleBridge });
 assert.equal(integrated.totalCommercialCost.minorUnits, 10000);
-assert.equal(integrated.totalRegulatedSubsetCost?.minorUnits, 288);
-assert.equal(integrated.totalCommercialPlusRegulatedSubsetCost?.minorUnits, 10288);
+assert.equal(integrated.totalRegulatedSubsetCost?.minorUnits, 1688);
+assert.equal(integrated.totalCommercialPlusRegulatedSubsetCost?.minorUnits, 11688);
 assert.equal(integrated.costScope, "COMMERCIAL_PLUS_REGULATED_PARTIAL");
-assert.deepEqual(integrated.regulatedComponentsIncluded, ["UC3_ENERGY", "UC6_ENERGY", "UC6_POWER"]);
-assert.equal(integrated.regulatoryData.references.length, 3);
-assert.ok(integrated.warnings.includes("REGULATED_SUBSET_PARTIAL_UC3_UC6_ONLY"));
-assert.equal(integrated.components.filter((component) => component.category === "REGULATED_ENERGY").length, 2);
-assert.equal(integrated.components.filter((component) => component.category === "REGULATED_POWER").length, 1);
+assert.deepEqual(integrated.regulatedComponentsIncluded, ["UC3_ENERGY", "UC6_ENERGY", "UC6_POWER", "NETWORK_FIXED", "NETWORK_POWER", "TRANSMISSION_ENERGY"]);
+assert.equal(integrated.regulatoryData.references.length, 6);
+assert.ok(integrated.warnings.includes("REGULATED_SUBSET_PARTIAL_NETWORK_UC3_UC6_ONLY"));
+assert.equal(integrated.components.filter((component) => component.category === "REGULATED_ENERGY").length, 3);
+assert.equal(integrated.components.filter((component) => component.category === "REGULATED_POWER").length, 2);
+assert.equal(integrated.components.filter((component) => component.category === "REGULATED_FIXED").length, 1);
 console.log("TOTAL_COMMERCIAL_UNCHANGED=PASS");
 console.log("COST_SCOPE=COMMERCIAL_PLUS_REGULATED_PARTIAL");
 console.log("REGULATORY_REFERENCES_PRESERVED=PASS");
 console.log("NO_TOTAL_COMPONENTS=PASS");
 console.log("NO_DOUBLE_COUNT=PASS");
 
+const measurementRecord = baseRecord({ id: "qa-s1-measure", componentCode: "S1_MEASURE", normalizedUnit: "EUR/POD/YEAR", normalizedValue: 99 });
+const measurementBridge = await bridgeWith([...allRecords, measurementRecord], allRecords);
+const measurementCalculation = await calculateRegulatedEeSubset(singleRequest, { trustedElectricityContext: context, regulatoryBridge: measurementBridge });
+assert.equal(measurementCalculation.references.some((reference) => reference.componentCode === "S1_MEASURE"), false);
+assert.equal(measurementCalculation.components.some((component) => component.formulaInputs.componentCode === "S1_MEASURE"), false);
+assert.equal(measurementCalculation.components.filter((component) => component.formulaInputs.componentCode === "NETWORK_FIXED").length, 1);
+console.log("MEASUREMENT_DOUBLE_COUNT_PREVENTED=PASS");
+
 const twoMonthRequest = request({ supplyPeriod: { periodStart: "2026-07-01", periodEnd: "2026-09-01" } });
-const twoMonthRecords = singleRecords.map((record) => {
+const twoMonthRecords = allRecords.map((record) => {
   const withoutChecksum = Object.fromEntries(Object.entries({ ...record, effectiveTo: "2026-09-01" }).filter(([key]) => key !== "checksum"));
   return { ...withoutChecksum, checksum: checksumFor(withoutChecksum) };
 });
 const twoMonth = await calculateRegulatedEeSubset(twoMonthRequest, { trustedElectricityContext: context, regulatoryBridge: await bridgeWith(twoMonthRecords) });
 assert.equal(twoMonth.components.find((component) => component.formulaId === "REGULATED_UC6_POWER_RATE_TIMES_KW_TIME")?.formulaInputs.monthsApplied, 2);
+assert.equal(twoMonth.components.find((component) => component.formulaId === "REGULATED_NETWORK_FIXED_RATE_TIMES_TIME")?.formulaInputs.monthsApplied, 2);
+assert.equal(twoMonth.components.find((component) => component.formulaId === "REGULATED_NETWORK_POWER_RATE_TIMES_KW_TIME")?.formulaInputs.monthsApplied, 2);
 console.log("MULTI_MONTH_SINGLE_RATE=PASS");
 
 const changedRecords = [
@@ -133,7 +163,7 @@ console.log("FAIL_CLOSED_NO_PROFILE=PASS");
 const midMonthRecords = [
   baseRecord({ id: "midmonth-uc3-before", componentCode: "UC3", normalizedUnit: "EUR/KWH", normalizedValue: 0.00276, effectiveFrom: "2026-07-01", effectiveTo: "2026-07-15" }),
   baseRecord({ id: "midmonth-uc3-after", componentCode: "UC3", normalizedUnit: "EUR/KWH", normalizedValue: 0.003, effectiveFrom: "2026-07-15", effectiveTo: "2026-08-01" }),
-  ...singleRecords.filter((record) => record.componentCode !== "UC3"),
+  ...allRecords.filter((record) => record.componentCode !== "UC3"),
 ];
 const midMonthBridge = await bridgeWith(midMonthRecords);
 await assert.rejects(() => calculateRegulatedEeSubset(singleRequest, { trustedElectricityContext: context, regulatoryBridge: midMonthBridge }), /REGULATORY_PRORATION_UNSUPPORTED/);
@@ -184,12 +214,12 @@ const realBridge = new ProductionRegulatoryPersistenceBridge(realRoot.collection
 const realRequest = parseSimulationRequest({ schemaVersion: 1, tenantId: "tenant_local-demo", vector: "EE", calculationDate: "2026-07-15", supplyPeriod: { periodStart: "2026-07-01", periodEnd: "2026-08-01" }, customerCategory: "RESIDENTIAL", residency: "RESIDENT", voltageLevel: "LV", currency: "EUR", taxTreatment: "EXCLUDED", consumption: { basis: "PERIOD", unit: "KWH", f1: 500, f2: 300, f3: 200 }, sourceBill: { billId: "qa-source-bill", version: "qa-version" } }, "tenant_local-demo");
 const real = await calculateRegulatedEeSubset(realRequest, { trustedElectricityContext: { ...context, regulatoryCustomerScope: scope }, regulatoryBridge: realBridge });
 const realByCode = new Map(real.references.map((reference) => [reference.componentCode + "|" + reference.normalizedUnit, reference]));
-for (const [marker, key] of [["REAL_UC3_RATE_READ", "UC3|EUR/KWH"], ["REAL_UC6_ENERGY_RATE_READ", "UC6|EUR/KWH"], ["REAL_UC6_POWER_RATE_READ", "UC6|EUR/KW/YEAR"]]) {
+for (const [marker, key] of [["REAL_UC3_RATE_READ", "UC3|EUR/KWH"], ["REAL_UC6_ENERGY_RATE_READ", "UC6|EUR/KWH"], ["REAL_UC6_POWER_RATE_READ", "UC6|EUR/KW/YEAR"], ["REAL_NETWORK_FIXED_RATE_READ", "NETWORK_FIXED|EUR/POD/YEAR"], ["REAL_NETWORK_POWER_RATE_READ", "NETWORK_POWER|EUR/KW/YEAR"], ["REAL_TRANSMISSION_RATE_READ", "TRANSMISSION_ENERGY|EUR/KWH"]]) {
   const reference = realByCode.get(key);
   assert.ok(reference && reference.regulatoryRecordId && reference.checksum);
   console.log(`${marker}=PASS`);
 }
-for (const [label, formulaId] of [["REAL_UC3_QA_COST", "REGULATED_UC3_RATE_TIMES_KWH"], ["REAL_UC6_ENERGY_QA_COST", "REGULATED_UC6_ENERGY_RATE_TIMES_KWH"], ["REAL_UC6_POWER_QA_COST", "REGULATED_UC6_POWER_RATE_TIMES_KW_TIME"]]) {
+for (const [label, formulaId] of [["REAL_UC3_QA_COST", "REGULATED_UC3_RATE_TIMES_KWH"], ["REAL_UC6_ENERGY_QA_COST", "REGULATED_UC6_ENERGY_RATE_TIMES_KWH"], ["REAL_UC6_POWER_QA_COST", "REGULATED_UC6_POWER_RATE_TIMES_KW_TIME"], ["REAL_NETWORK_FIXED_QA_COST", "REGULATED_NETWORK_FIXED_RATE_TIMES_TIME"], ["REAL_NETWORK_POWER_QA_COST", "REGULATED_NETWORK_POWER_RATE_TIMES_KW_TIME"], ["REAL_TRANSMISSION_QA_COST", "REGULATED_TRANSMISSION_RATE_TIMES_KWH"]]) {
   const component = real.components.find((candidate) => candidate.formulaId === formulaId);
   assert.ok(component);
   console.log(`${label}=${component.amount.amount} EUR / ${component.amount.minorUnits} minorUnits`);

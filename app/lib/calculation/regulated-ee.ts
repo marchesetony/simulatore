@@ -8,8 +8,8 @@ import { add, divide, fromNumber, multiply, roundCents, toDecimal, type Rational
 // @ts-expect-error Node's strip-only test runner requires the explicit extension.
 import { monthsInSimulationPeriod } from "./input.ts";
 
-export const REGULATED_COMPONENTS_INCLUDED = ["UC3_ENERGY", "UC6_ENERGY", "UC6_POWER"] as const;
-export const REGULATED_SUBSET_PARTIAL_WARNING = "REGULATED_SUBSET_PARTIAL_UC3_UC6_ONLY" as const;
+export const REGULATED_COMPONENTS_INCLUDED = ["UC3_ENERGY", "UC6_ENERGY", "UC6_POWER", "NETWORK_FIXED", "NETWORK_POWER", "TRANSMISSION_ENERGY"] as const;
+export const REGULATED_SUBSET_PARTIAL_WARNING = "REGULATED_SUBSET_PARTIAL_NETWORK_UC3_UC6_ONLY" as const;
 
 export interface RegulatedEeExecutionContext {
   readonly trustedElectricityContext: ElectricitySupplyContext;
@@ -116,12 +116,61 @@ function powerComponent(segment: RegulatoryTimelineSegment, context: Electricity
   };
 }
 
+function fixedComponent(segment: RegulatoryTimelineSegment, componentId: string, monthsApplied: number): CalculationComponent {
+  if (!Number.isSafeInteger(monthsApplied) || monthsApplied < 1) return fail("REGULATORY_PRORATION_UNSUPPORTED");
+  const value = multiply(fromNumber(segment.normalizedValue), divide(fromNumber(monthsApplied), fromNumber(12)));
+  return {
+    componentId,
+    category: "REGULATED_FIXED",
+    label: "Rete quota fissa regolata",
+    sign: "CHARGE",
+    amount: money(roundCents(value)),
+    formulaId: "REGULATED_NETWORK_FIXED_RATE_TIMES_TIME",
+    formulaInputs: {
+      componentCode: segment.componentCode,
+      rateEurPerPodYear: segment.normalizedValue,
+      monthsApplied,
+      annualDivisor: 12,
+      customerScope: segment.customerScope,
+      regulatoryRecordId: segment.regulatoryRecordId,
+      regulatoryChecksum: segment.checksum,
+      segmentStart: segment.segmentStart,
+      segmentEnd: segment.segmentEnd,
+    },
+  };
+}
+
+function networkPowerComponent(segment: RegulatoryTimelineSegment, context: ElectricitySupplyContext, componentId: string, monthsApplied: number): CalculationComponent {
+  if (!Number.isSafeInteger(monthsApplied) || monthsApplied < 1) return fail("REGULATORY_PRORATION_UNSUPPORTED");
+  const value = multiply(multiply(fromNumber(segment.normalizedValue), fromNumber(context.contractedPowerKw)), divide(fromNumber(monthsApplied), fromNumber(12)));
+  return {
+    componentId,
+    category: "REGULATED_POWER",
+    label: "Rete quota potenza regolata",
+    sign: "CHARGE",
+    amount: money(roundCents(value)),
+    formulaId: "REGULATED_NETWORK_POWER_RATE_TIMES_KW_TIME",
+    formulaInputs: {
+      componentCode: segment.componentCode,
+      rateEurPerKwYear: segment.normalizedValue,
+      contractedPowerKw: context.contractedPowerKw,
+      monthsApplied,
+      annualDivisor: 12,
+      customerScope: segment.customerScope,
+      regulatoryRecordId: segment.regulatoryRecordId,
+      regulatoryChecksum: segment.checksum,
+      segmentStart: segment.segmentStart,
+      segmentEnd: segment.segmentEnd,
+    },
+  };
+}
+
 function timelineFor(
   request: ElectricitySimulationRequest,
   context: ElectricitySupplyContext,
   bridge: Pick<ProductionRegulatoryPersistenceBridge, "list">,
-  componentCode: "UC3" | "UC6",
-  normalizedUnit: "EUR/KWH" | "EUR/KW/YEAR",
+  componentCode: "UC3" | "UC6" | "NETWORK_FIXED" | "NETWORK_POWER" | "TRANSMISSION_ENERGY",
+  normalizedUnit: "EUR/KWH" | "EUR/KW/YEAR" | "EUR/POD/YEAR",
 ): Promise<RegulatoryTimeline> {
   return resolveRegulatoryTimeline(bridge, {
     tenantId: request.tenantId,
@@ -144,7 +193,10 @@ export async function calculateRegulatedEeSubset(
   const uc3 = await timelineFor(request, context, bridge, "UC3", "EUR/KWH");
   const uc6Energy = await timelineFor(request, context, bridge, "UC6", "EUR/KWH");
   const uc6Power = await timelineFor(request, context, bridge, "UC6", "EUR/KW/YEAR");
-  [uc3, uc6Energy, uc6Power].forEach(assertMonthAligned);
+  const networkFixed = await timelineFor(request, context, bridge, "NETWORK_FIXED", "EUR/POD/YEAR");
+  const networkPower = await timelineFor(request, context, bridge, "NETWORK_POWER", "EUR/KW/YEAR");
+  const transmissionEnergy = await timelineFor(request, context, bridge, "TRANSMISSION_ENERGY", "EUR/KWH");
+  [uc3, uc6Energy, uc6Power, networkFixed, networkPower, transmissionEnergy].forEach(assertMonthAligned);
 
   const components: CalculationComponent[] = [];
   for (const [timeline, componentId, label, formulaId] of [
@@ -157,6 +209,15 @@ export async function calculateRegulatedEeSubset(
     const monthsApplied = monthsInSimulationPeriod({ periodStart: segment.segmentStart.slice(0, 10), periodEnd: segment.segmentEnd.slice(0, 10) }).length;
     components.push(powerComponent(segment, context, `regulated:uc6-power:${segment.regulatoryRecordId}`, monthsApplied));
   });
+  networkFixed.segments.forEach((segment) => {
+    const monthsApplied = monthsInSimulationPeriod({ periodStart: segment.segmentStart.slice(0, 10), periodEnd: segment.segmentEnd.slice(0, 10) }).length;
+    components.push(fixedComponent(segment, `regulated:network-fixed:${segment.regulatoryRecordId}`, monthsApplied));
+  });
+  networkPower.segments.forEach((segment) => {
+    const monthsApplied = monthsInSimulationPeriod({ periodStart: segment.segmentStart.slice(0, 10), periodEnd: segment.segmentEnd.slice(0, 10) }).length;
+    components.push(networkPowerComponent(segment, context, `regulated:network-power:${segment.regulatoryRecordId}`, monthsApplied));
+  });
+  transmissionEnergy.segments.forEach((segment) => components.push(energyComponent(segment, quantityForSegment(request, segment, transmissionEnergy.segments.length), `regulated:transmission-energy:${segment.regulatoryRecordId}`, "Trasmissione energia regolata", "REGULATED_TRANSMISSION_RATE_TIMES_KWH")));
 
-  return { components, references: [uc3, uc6Energy, uc6Power].flatMap((timeline) => timeline.segments.map(referenceOf)) };
+  return { components, references: [uc3, uc6Energy, uc6Power, networkFixed, networkPower, transmissionEnergy].flatMap((timeline) => timeline.segments.map(referenceOf)) };
 }
