@@ -32,7 +32,7 @@ function assertPeriod(value: unknown): { readonly periodStart: string; readonly 
   return { periodStart, periodEnd };
 }
 function assertNoTrustedOutcome(value: Record<string, unknown>): void {
-  const forbidden = ["approval", "approved", "trustedPrice", "customerScope", "regulatoryCustomerScope", "contractedPowerKw", "availablePowerKw", "trustedSupplyContext"];
+  const forbidden = ["approval", "approved", "trustedPrice", "customerScope", "regulatoryCustomerScope", "contractedPowerKw", "availablePowerKw", "trustedSupplyContext", "powerMaximumDrawn", "powerBillingBasis", "regulatoryPowerBasisKw", "regulatoryPowerBasisKind"];
   if (forbidden.some((key) => Object.prototype.hasOwnProperty.call(value, key))) fail("TRUSTED_OUTCOME_FORBIDDEN");
 }
 

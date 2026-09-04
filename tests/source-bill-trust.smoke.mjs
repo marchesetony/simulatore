@@ -15,13 +15,15 @@ const found = (value, confidence = 0.99) => ({ value, status: "FOUND", confidenc
 const notFound = () => ({ value: null, status: "NOT_FOUND", confidence: 0, source: "DOCUMENT_AI" });
 const fact = (code, value, status = "FOUND") => ({ code, value, status });
 
-function facts({ committed = "3 kW", available = "6 kW", residence = "Residente", voltage = "BT", supplyUse = "Domestico" } = {}) {
+function facts({ committed = "3 kW", available = "6 kW", maximumDrawn = null, billingBasis = null, residence = "Residente", voltage = "BT", supplyUse = "Domestico" } = {}) {
   return [
     fact("SUPPLY_USE_CATEGORY_RAW", supplyUse),
     fact("DOMESTIC_RESIDENCE_STATUS_RAW", residence),
     fact("VOLTAGE_CLASS_RAW", voltage),
     ...(committed === null ? [] : [fact("POWER_COMMITTED", committed)]),
     ...(available === null ? [] : [fact("POWER_AVAILABLE", available)]),
+    ...(maximumDrawn === null ? [] : [fact("POWER_MAXIMUM_DRAWN", maximumDrawn)]),
+    ...(billingBasis === null ? [] : [fact("POWER_BILLING_BASIS_RAW", billingBasis)]),
   ];
 }
 
@@ -140,13 +142,15 @@ try {
   assert.equal(trusted?.availablePowerKw, 6);
   assert.equal(trusted?.regulatoryCustomerScope, "DOMESTIC_RESIDENT_BT");
 
-  const bta6Extraction = eeExtraction({}, facts({ supplyUse: "Altri usi", committed: "17 kW", available: "18,7 kW" }));
+  const bta6Extraction = eeExtraction({}, facts({ supplyUse: "Altri usi", committed: "17 kW", available: "18,7 kW", billingBasis: "Potenza contrattualmente impegnata" }));
   const bta6Approved = await seed({ repository, storage, tenantId: tenantA, extraction: bta6Extraction });
   const bta6SourceBill = { billId: bta6Approved.id, version: bta6Approved.currentApprovedVersionId };
   const bta6Trusted = await resolveTrustedElectricityContextFromSourceBill(repository, tenantA, request(tenantA, bta6SourceBill, { customerCategory: "NON_RESIDENTIAL", residency: undefined }));
   assert.equal(bta6Trusted?.regulatoryCustomerScope, "NON_DOMESTIC_BT_BTA6");
   assert.equal(bta6Trusted?.availablePowerKw, 18.7);
   assert.equal(bta6Trusted?.contractedPowerKw, 17);
+  assert.equal(bta6Trusted?.regulatoryPowerBasisKind, "CONTRACTUAL_COMMITTED");
+  assert.equal(bta6Trusted?.regulatoryPowerBasisKw, 17);
   assertSyncCode(() => request(tenantA, bta6SourceBill, { regulatoryCustomerScope: "NON_DOMESTIC_BT_BTA6" }), "TRUSTED_OUTCOME_FORBIDDEN");
 
   await assertAsyncCode(() => resolveTrustedElectricityContextFromSourceBill(repository, tenantA, request(tenantA, { ...sourceBill, version: "version-number-1" })), "SOURCE_BILL_VERSION_MISMATCH");

@@ -1,5 +1,5 @@
 import type { ElectricitySupplyContext } from "./trusted-ee-supply-context.ts";
-import type { ElectricitySimulationRequest, CalculationComponent, RegulatoryDataReference } from "./types.ts";
+import type { ElectricitySimulationRequest, CalculationComponent, RegulatoryDataReference, RegulatedComponentIncluded } from "./types.ts";
 import type { ProductionRegulatoryPersistenceBridge } from "../regulatory-bridge.ts";
 // @ts-expect-error Node's strip-only test runner requires the explicit extension.
 import { resolveRegulatoryTimeline, type RegulatoryTimeline, type RegulatoryTimelineSegment } from "./regulatory-timeline.ts";
@@ -10,6 +10,8 @@ import { monthsInSimulationPeriod } from "./input.ts";
 
 export const REGULATED_COMPONENTS_INCLUDED = ["UC3_ENERGY", "UC6_ENERGY", "UC6_POWER", "NETWORK_FIXED", "NETWORK_POWER", "TRANSMISSION_ENERGY"] as const;
 export const REGULATED_SUBSET_PARTIAL_WARNING = "REGULATED_SUBSET_PARTIAL_NETWORK_UC3_UC6_ONLY" as const;
+export const BTA6_REGULATED_COMPONENTS_INCLUDED = ["NETWORK_FIXED", "NETWORK_POWER", "NETWORK_ENERGY", "METERING_FIXED", "TRANSMISSION_ENERGY"] as const;
+export const BTA6_REGULATED_SUBSET_PARTIAL_WARNING = "REGULATED_SUBSET_PARTIAL_BTA6_NETWORK_METERING_TRANSMISSION_ONLY" as const;
 
 export interface RegulatedEeExecutionContext {
   readonly trustedElectricityContext: ElectricitySupplyContext;
@@ -19,6 +21,8 @@ export interface RegulatedEeExecutionContext {
 export interface RegulatedEeCalculation {
   readonly components: readonly CalculationComponent[];
   readonly references: readonly RegulatoryDataReference[];
+  readonly includedComponents: readonly RegulatedComponentIncluded[];
+  readonly partialWarning: string;
 }
 
 const fail = (code: string): never => { throw new Error(code); };
@@ -91,20 +95,25 @@ function energyComponent(
   };
 }
 
-function powerComponent(segment: RegulatoryTimelineSegment, context: ElectricitySupplyContext, componentId: string, monthsApplied: number): CalculationComponent {
+function powerComponent(segment: RegulatoryTimelineSegment, context: ElectricitySupplyContext, componentId: string, monthsApplied: number, bta6: boolean, network = false): CalculationComponent {
   if (!Number.isSafeInteger(monthsApplied) || monthsApplied < 1) return fail("REGULATORY_PRORATION_UNSUPPORTED");
-  const value = multiply(multiply(fromNumber(segment.normalizedValue), fromNumber(context.contractedPowerKw)), divide(fromNumber(monthsApplied), fromNumber(12)));
+  const powerBasisKw = bta6 ? context.regulatoryPowerBasisKw : context.contractedPowerKw;
+  const powerBasisKind = bta6 ? context.regulatoryPowerBasisKind : undefined;
+  if (powerBasisKw === undefined || !Number.isFinite(powerBasisKw) || powerBasisKw <= 0 || (bta6 && !powerBasisKind)) return fail("REGULATORY_TRUST_CONTEXT_INVALID");
+  const effectivePowerKw = powerBasisKw;
+  const effectivePowerBasisKind = powerBasisKind as string | undefined;
+  const value = multiply(multiply(fromNumber(segment.normalizedValue), fromNumber(effectivePowerKw)), divide(fromNumber(monthsApplied), fromNumber(12)));
   return {
     componentId,
     category: "REGULATED_POWER",
-    label: "UC6 potenza regolata",
+    label: bta6 ? "BTA6 quota potenza regolata" : network ? "Rete quota potenza regolata" : "UC6 potenza regolata",
     sign: "CHARGE",
     amount: money(roundCents(value)),
-    formulaId: "REGULATED_UC6_POWER_RATE_TIMES_KW_TIME",
+    formulaId: bta6 ? "REGULATED_BTA6_NETWORK_POWER_RATE_TIMES_ENGAGED_KW_TIME" : network ? "REGULATED_NETWORK_POWER_RATE_TIMES_KW_TIME" : "REGULATED_UC6_POWER_RATE_TIMES_KW_TIME",
     formulaInputs: {
       componentCode: segment.componentCode,
       rateEurPerKwYear: segment.normalizedValue,
-      contractedPowerKw: context.contractedPowerKw,
+      ...(bta6 ? { powerBasisKind: effectivePowerBasisKind as string, powerBasisKw: effectivePowerKw } : { contractedPowerKw: context.contractedPowerKw }),
       monthsApplied,
       annualDivisor: 12,
       customerScope: segment.customerScope,
@@ -116,44 +125,19 @@ function powerComponent(segment: RegulatoryTimelineSegment, context: Electricity
   };
 }
 
-function fixedComponent(segment: RegulatoryTimelineSegment, componentId: string, monthsApplied: number): CalculationComponent {
+function fixedComponent(segment: RegulatoryTimelineSegment, componentId: string, monthsApplied: number, label = "Rete quota fissa regolata", formulaId = "REGULATED_NETWORK_FIXED_RATE_TIMES_TIME"): CalculationComponent {
   if (!Number.isSafeInteger(monthsApplied) || monthsApplied < 1) return fail("REGULATORY_PRORATION_UNSUPPORTED");
   const value = multiply(fromNumber(segment.normalizedValue), divide(fromNumber(monthsApplied), fromNumber(12)));
   return {
     componentId,
     category: "REGULATED_FIXED",
-    label: "Rete quota fissa regolata",
+    label,
     sign: "CHARGE",
     amount: money(roundCents(value)),
-    formulaId: "REGULATED_NETWORK_FIXED_RATE_TIMES_TIME",
+    formulaId,
     formulaInputs: {
       componentCode: segment.componentCode,
       rateEurPerPodYear: segment.normalizedValue,
-      monthsApplied,
-      annualDivisor: 12,
-      customerScope: segment.customerScope,
-      regulatoryRecordId: segment.regulatoryRecordId,
-      regulatoryChecksum: segment.checksum,
-      segmentStart: segment.segmentStart,
-      segmentEnd: segment.segmentEnd,
-    },
-  };
-}
-
-function networkPowerComponent(segment: RegulatoryTimelineSegment, context: ElectricitySupplyContext, componentId: string, monthsApplied: number): CalculationComponent {
-  if (!Number.isSafeInteger(monthsApplied) || monthsApplied < 1) return fail("REGULATORY_PRORATION_UNSUPPORTED");
-  const value = multiply(multiply(fromNumber(segment.normalizedValue), fromNumber(context.contractedPowerKw)), divide(fromNumber(monthsApplied), fromNumber(12)));
-  return {
-    componentId,
-    category: "REGULATED_POWER",
-    label: "Rete quota potenza regolata",
-    sign: "CHARGE",
-    amount: money(roundCents(value)),
-    formulaId: "REGULATED_NETWORK_POWER_RATE_TIMES_KW_TIME",
-    formulaInputs: {
-      componentCode: segment.componentCode,
-      rateEurPerKwYear: segment.normalizedValue,
-      contractedPowerKw: context.contractedPowerKw,
       monthsApplied,
       annualDivisor: 12,
       customerScope: segment.customerScope,
@@ -169,7 +153,7 @@ function timelineFor(
   request: ElectricitySimulationRequest,
   context: ElectricitySupplyContext,
   bridge: Pick<ProductionRegulatoryPersistenceBridge, "list">,
-  componentCode: "UC3" | "UC6" | "NETWORK_FIXED" | "NETWORK_POWER" | "TRANSMISSION_ENERGY",
+  componentCode: "UC3" | "UC6" | "NETWORK_FIXED" | "NETWORK_POWER" | "NETWORK_ENERGY" | "METERING_FIXED" | "TRANSMISSION_ENERGY",
   normalizedUnit: "EUR/KWH" | "EUR/KW/YEAR" | "EUR/POD/YEAR",
 ): Promise<RegulatoryTimeline> {
   return resolveRegulatoryTimeline(bridge, {
@@ -190,6 +174,25 @@ export async function calculateRegulatedEeSubset(
   if (execution.trustedElectricityContext.vector !== "EE" || !Number.isFinite(execution.trustedElectricityContext.contractedPowerKw) || execution.trustedElectricityContext.contractedPowerKw <= 0) return fail("REGULATORY_TRUST_CONTEXT_INVALID");
 
   const { trustedElectricityContext: context, regulatoryBridge: bridge } = execution;
+  if (context.regulatoryCustomerScope === "NON_DOMESTIC_BT_BTA6") {
+    const powerBasisKw = context.regulatoryPowerBasisKw;
+    if (!context.regulatoryPowerBasisKind || powerBasisKw === undefined || !Number.isFinite(powerBasisKw) || powerBasisKw <= 0) return fail("REGULATORY_TRUST_CONTEXT_INVALID");
+    const months = monthsInSimulationPeriod(request.supplyPeriod).length;
+    if (context.regulatoryPowerBasisKind === "MONTHLY_MAX_DRAWN" && months > 1) return fail("BTA6_MONTHLY_MAX_POWER_PROFILE_REQUIRED");
+    const networkFixed = await timelineFor(request, context, bridge, "NETWORK_FIXED", "EUR/POD/YEAR");
+    const networkPower = await timelineFor(request, context, bridge, "NETWORK_POWER", "EUR/KW/YEAR");
+    const networkEnergy = await timelineFor(request, context, bridge, "NETWORK_ENERGY", "EUR/KWH");
+    const meteringFixed = await timelineFor(request, context, bridge, "METERING_FIXED", "EUR/POD/YEAR");
+    const transmissionEnergy = await timelineFor(request, context, bridge, "TRANSMISSION_ENERGY", "EUR/KWH");
+    [networkFixed, networkPower, networkEnergy, meteringFixed, transmissionEnergy].forEach(assertMonthAligned);
+    const components: CalculationComponent[] = [];
+    networkFixed.segments.forEach((segment) => { const monthsApplied = monthsInSimulationPeriod({ periodStart: segment.segmentStart.slice(0, 10), periodEnd: segment.segmentEnd.slice(0, 10) }).length; components.push(fixedComponent(segment, `regulated:bta6-network-fixed:${segment.regulatoryRecordId}`, monthsApplied, "BTA6 quota fissa distribuzione regolata", "REGULATED_BTA6_NETWORK_FIXED_RATE_TIMES_TIME")); });
+    networkPower.segments.forEach((segment) => { const monthsApplied = monthsInSimulationPeriod({ periodStart: segment.segmentStart.slice(0, 10), periodEnd: segment.segmentEnd.slice(0, 10) }).length; components.push(powerComponent(segment, context, `regulated:bta6-network-power:${segment.regulatoryRecordId}`, monthsApplied, true)); });
+    for (const [timeline, componentId, label, formulaId] of [[networkEnergy, "regulated:bta6-network-energy", "BTA6 energia distribuzione regolata", "REGULATED_BTA6_NETWORK_ENERGY_RATE_TIMES_KWH"], [transmissionEnergy, "regulated:bta6-transmission-energy", "BTA6 energia trasmissione regolata", "REGULATED_TRANSMISSION_RATE_TIMES_KWH"]] as const) timeline.segments.forEach((segment) => components.push(energyComponent(segment, quantityForSegment(request, segment, timeline.segments.length), `${componentId}:${segment.regulatoryRecordId}`, label, formulaId)));
+    meteringFixed.segments.forEach((segment) => { const monthsApplied = monthsInSimulationPeriod({ periodStart: segment.segmentStart.slice(0, 10), periodEnd: segment.segmentEnd.slice(0, 10) }).length; components.push(fixedComponent(segment, `regulated:bta6-metering-fixed:${segment.regulatoryRecordId}`, monthsApplied, "BTA6 quota misura regolata", "REGULATED_BTA6_METERING_FIXED_RATE_TIMES_TIME")); });
+    return { components, references: [networkFixed, networkPower, networkEnergy, meteringFixed, transmissionEnergy].flatMap((timeline) => timeline.segments.map(referenceOf)), includedComponents: [...BTA6_REGULATED_COMPONENTS_INCLUDED], partialWarning: BTA6_REGULATED_SUBSET_PARTIAL_WARNING };
+  }
+
   const uc3 = await timelineFor(request, context, bridge, "UC3", "EUR/KWH");
   const uc6Energy = await timelineFor(request, context, bridge, "UC6", "EUR/KWH");
   const uc6Power = await timelineFor(request, context, bridge, "UC6", "EUR/KW/YEAR");
@@ -207,7 +210,7 @@ export async function calculateRegulatedEeSubset(
   }
   uc6Power.segments.forEach((segment) => {
     const monthsApplied = monthsInSimulationPeriod({ periodStart: segment.segmentStart.slice(0, 10), periodEnd: segment.segmentEnd.slice(0, 10) }).length;
-    components.push(powerComponent(segment, context, `regulated:uc6-power:${segment.regulatoryRecordId}`, monthsApplied));
+    components.push(powerComponent(segment, context, `regulated:uc6-power:${segment.regulatoryRecordId}`, monthsApplied, false));
   });
   networkFixed.segments.forEach((segment) => {
     const monthsApplied = monthsInSimulationPeriod({ periodStart: segment.segmentStart.slice(0, 10), periodEnd: segment.segmentEnd.slice(0, 10) }).length;
@@ -215,9 +218,9 @@ export async function calculateRegulatedEeSubset(
   });
   networkPower.segments.forEach((segment) => {
     const monthsApplied = monthsInSimulationPeriod({ periodStart: segment.segmentStart.slice(0, 10), periodEnd: segment.segmentEnd.slice(0, 10) }).length;
-    components.push(networkPowerComponent(segment, context, `regulated:network-power:${segment.regulatoryRecordId}`, monthsApplied));
+    components.push(powerComponent(segment, context, `regulated:network-power:${segment.regulatoryRecordId}`, monthsApplied, false, true));
   });
   transmissionEnergy.segments.forEach((segment) => components.push(energyComponent(segment, quantityForSegment(request, segment, transmissionEnergy.segments.length), `regulated:transmission-energy:${segment.regulatoryRecordId}`, "Trasmissione energia regolata", "REGULATED_TRANSMISSION_RATE_TIMES_KWH")));
 
-  return { components, references: [uc3, uc6Energy, uc6Power, networkFixed, networkPower, transmissionEnergy].flatMap((timeline) => timeline.segments.map(referenceOf)) };
+  return { components, references: [uc3, uc6Energy, uc6Power, networkFixed, networkPower, transmissionEnergy].flatMap((timeline) => timeline.segments.map(referenceOf)), includedComponents: [...REGULATED_COMPONENTS_INCLUDED], partialWarning: REGULATED_SUBSET_PARTIAL_WARNING };
 }

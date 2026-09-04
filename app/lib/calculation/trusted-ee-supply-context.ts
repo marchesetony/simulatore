@@ -1,4 +1,4 @@
-import type { BillSupplyProfile, DomesticResidenceStatus, SupplyUseCategory } from "../ingestion/bill-supply-profile.ts";
+import type { BillSupplyProfile, DomesticResidenceStatus, PowerBillingBasis, SupplyUseCategory } from "../ingestion/bill-supply-profile.ts";
 import type { RegulatoryCustomerScope } from "../foundation/regulatory-types.ts";
 import type { VoltageLevel } from "../energy/types";
 
@@ -19,7 +19,7 @@ const PUBLIC_NON_DOMESTIC_SUPPLY_USE: readonly SupplyUseCategory[] = ["PUBLIC_LI
 
 function normalizedText(value: string): string { return value.normalize("NFKC").trim().replace(/\s+/g, " "); }
 
-function parsePowerField(field: BillSupplyProfile["powerCommitted"] | BillSupplyProfile["powerAvailable"], missingCode: string, invalidCode: string): number | undefined {
+function parsePowerField(field: BillSupplyProfile["powerCommitted"] | BillSupplyProfile["powerAvailable"] | BillSupplyProfile["powerMaximumDrawn"], missingCode: string, invalidCode: string): number | undefined {
   if (field.status === "NOT_FOUND") {
     if (missingCode === "CONTRACTED_POWER_REQUIRED") fail(missingCode);
     return undefined;
@@ -41,6 +41,10 @@ export function parseContractedPowerKw(field: BillSupplyProfile["powerCommitted"
 
 export function parseAvailablePowerKw(field: BillSupplyProfile["powerAvailable"]): number | undefined {
   return parsePowerField(field, "AVAILABLE_POWER_OPTIONAL", "AVAILABLE_POWER_INVALID");
+}
+
+export function parseMaximumDrawnPowerKw(field: BillSupplyProfile["powerMaximumDrawn"]): number {
+  return parsePowerField(field, "BTA6_MAXIMUM_DRAWN_POWER_REQUIRED", "BTA6_MAXIMUM_DRAWN_POWER_INVALID") ?? fail("BTA6_MAXIMUM_DRAWN_POWER_REQUIRED");
 }
 
 function requiredVoltageLevel(profile: BillSupplyProfile): VoltageLevel {
@@ -87,6 +91,18 @@ export interface ElectricitySupplyContext {
   readonly domesticResidenceStatus: DomesticResidenceStatus;
   readonly voltageLevel: VoltageLevel;
   readonly regulatoryCustomerScope: RegulatoryCustomerScope;
+  readonly regulatoryPowerBasisKind?: Exclude<PowerBillingBasis, "UNKNOWN">;
+  readonly regulatoryPowerBasisKw?: number;
+}
+
+function regulatoryPowerBasis(profile: BillSupplyProfile, scope: RegulatoryCustomerScope, contractedPowerKw: number): { readonly regulatoryPowerBasisKind: Exclude<PowerBillingBasis, "UNKNOWN">; readonly regulatoryPowerBasisKw: number } | undefined {
+  if (scope !== "NON_DOMESTIC_BT_BTA6") return undefined;
+  if (profile.powerBillingBasis.status !== "FOUND") fail("BTA6_POWER_BILLING_BASIS_REQUIRED");
+  const basis = profile.powerBillingBasis.normalizedValue;
+  if (basis === "UNKNOWN") fail("BTA6_POWER_BILLING_BASIS_REQUIRED");
+  if (basis === "CONTRACTUAL_COMMITTED") return { regulatoryPowerBasisKind: basis, regulatoryPowerBasisKw: contractedPowerKw };
+  if (basis === "MONTHLY_MAX_DRAWN") return { regulatoryPowerBasisKind: basis, regulatoryPowerBasisKw: parseMaximumDrawnPowerKw(profile.powerMaximumDrawn) };
+  return fail("BTA6_POWER_BILLING_BASIS_REQUIRED");
 }
 
 export function buildTrustedElectricitySupplyContext(profile: BillSupplyProfile): ElectricitySupplyContext {
@@ -95,6 +111,7 @@ export function buildTrustedElectricitySupplyContext(profile: BillSupplyProfile)
   const contractedPowerKw = parseContractedPowerKw(profile.powerCommitted);
   const availablePowerKw = parseAvailablePowerKw(profile.powerAvailable);
   const regulatoryCustomerScope = deriveRegulatoryCustomerScope(profile, voltageLevel, availablePowerKw);
+  const basis = regulatoryPowerBasis(profile, regulatoryCustomerScope, contractedPowerKw);
   return {
     vector: "EE",
     contractedPowerKw,
@@ -103,5 +120,6 @@ export function buildTrustedElectricitySupplyContext(profile: BillSupplyProfile)
     domesticResidenceStatus: profile.domesticResidenceStatus.normalizedValue,
     voltageLevel,
     regulatoryCustomerScope,
+    ...(basis ?? {}),
   };
 }

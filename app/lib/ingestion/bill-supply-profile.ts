@@ -4,6 +4,8 @@ export const SUPPLY_USE_CATEGORY_VALUES = ["DOMESTIC", "OTHER_USE", "PUBLIC_LIGH
 export type SupplyUseCategory = typeof SUPPLY_USE_CATEGORY_VALUES[number];
 export const DOMESTIC_RESIDENCE_STATUS_VALUES = ["RESIDENT", "NON_RESIDENT", "NOT_APPLICABLE", "UNKNOWN"] as const;
 export type DomesticResidenceStatus = typeof DOMESTIC_RESIDENCE_STATUS_VALUES[number];
+export const POWER_BILLING_BASIS_VALUES = ["CONTRACTUAL_COMMITTED", "MONTHLY_MAX_DRAWN", "UNKNOWN"] as const;
+export type PowerBillingBasis = typeof POWER_BILLING_BASIS_VALUES[number];
 
 export interface SupplyProfileField {
   readonly rawValue: string | null;
@@ -20,6 +22,8 @@ export interface BillSupplyProfile {
   readonly nominalVoltage: SupplyProfileField;
   readonly powerCommitted: SupplyProfileField;
   readonly powerAvailable: SupplyProfileField;
+  readonly powerMaximumDrawn: SupplyProfileField;
+  readonly powerBillingBasis: SupplyProfileField & { readonly normalizedValue: PowerBillingBasis };
 }
 
 const PROFILE_CODES = {
@@ -31,6 +35,8 @@ const PROFILE_CODES = {
   nominalVoltage: "NOMINAL_VOLTAGE",
   powerCommitted: "POWER_COMMITTED",
   powerAvailable: "POWER_AVAILABLE",
+  powerMaximumDrawn: "POWER_MAXIMUM_DRAWN",
+  powerBillingBasis: "POWER_BILLING_BASIS_RAW",
 } as const;
 
 type ProfileCode = typeof PROFILE_CODES[keyof typeof PROFILE_CODES];
@@ -96,6 +102,14 @@ function normalizeVoltageClass(value: string | null): string | null {
   return null;
 }
 
+function normalizePowerBillingBasis(value: string | null): PowerBillingBasis {
+  if (!value) return "UNKNOWN";
+  const text = folded(value);
+  if (/\b(?:potenza\s+)?(?:contrattualmente\s+impegnata|contractual(?:ly)?\s+committed)\b/.test(text)) return "CONTRACTUAL_COMMITTED";
+  if (/\b(?:massim[oa]\s+(?:valore\s+della\s+)?potenza\s+prelevata|livello\s+massimo\s+di\s+potenza\s+prelevata|monthly\s+max(?:imum)?\s+drawn)\b/.test(text)) return "MONTHLY_MAX_DRAWN";
+  return "UNKNOWN";
+}
+
 function withNormalized(field: SupplyProfileField, normalizedValue: string | null): SupplyProfileField {
   return { ...field, normalizedValue };
 }
@@ -117,6 +131,8 @@ export function buildBillSupplyProfile(facts: readonly StructuredBillExtendedFac
     nominalVoltage: rawField(factFor(facts, PROFILE_CODES.nominalVoltage)),
     powerCommitted: rawField(factFor(facts, PROFILE_CODES.powerCommitted)),
     powerAvailable: rawField(factFor(facts, PROFILE_CODES.powerAvailable)),
+    powerMaximumDrawn: rawField(factFor(facts, PROFILE_CODES.powerMaximumDrawn)),
+    powerBillingBasis: { ...rawField(factFor(facts, PROFILE_CODES.powerBillingBasis)), normalizedValue: normalizePowerBillingBasis(factFor(facts, PROFILE_CODES.powerBillingBasis)?.value ?? null) },
   };
 }
 
@@ -130,5 +146,6 @@ export function validateBillSupplyProfile(value: unknown): asserts value is Bill
     if (item.rawValue !== null && typeof item.rawValue !== "string") throw new Error(`BILL_SUPPLY_PROFILE_INVALID:${key}.rawValue`);
     if (item.normalizedValue !== null && typeof item.normalizedValue !== "string") throw new Error(`BILL_SUPPLY_PROFILE_INVALID:${key}.normalizedValue`);
     if (typeof item.status !== "string" || !["FOUND", "NOT_FOUND", "INVALID", "NEEDS_REVIEW"].includes(item.status)) throw new Error(`BILL_SUPPLY_PROFILE_INVALID:${key}.status`);
+    if (key === "powerBillingBasis" && !POWER_BILLING_BASIS_VALUES.includes(item.normalizedValue as PowerBillingBasis)) throw new Error(`BILL_SUPPLY_PROFILE_INVALID:${key}.normalizedValue`);
   }
 }

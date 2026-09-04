@@ -13,6 +13,9 @@ export const ARERA_575_PAGE = "https://www.arera.it/area-operatori/prezzi-e-tari
 export const ARERA_227_PAGE = "https://www.arera.it/atti-e-provvedimenti/dettaglio/26/227-26";
 export const ARERA_SYSTEM_CHARGES_PAGE = "https://www.arera.it/area-operatori/prezzi-e-tariffe/oneri-generali-di-sistema-e-ulteriori-componenti";
 export const ARERA_575_IDENTIFIER = "575/2025/R/eel";
+export const ARERA_575_TIT_TABLES_URL = "https://www.arera.it/fileadmin/allegati/docs/25/575-2025-R-eel-TABELLE_TIT.xlsx";
+export const ARERA_575_TIME_TABLES_URL = "https://www.arera.it/fileadmin/allegati/docs/25/575-2025-R-eel-TABELLE_TIME.xlsx";
+export const ARERA_TRANSMISSION_PAGE = "https://www.arera.it/area-operatori/prezzi-e-tariffe/tariffa-per-il-servizio-di-trasmissione";
 export const ARERA_227_IDENTIFIER = "227/2026/R/com";
 export const ARERA_588_IDENTIFIER = "588/2025/R/com";
 export const ARERA_588_TABLES_URL = "https://www.arera.it/fileadmin/allegati/docs/25/588-2025-R-com-TABELLE.xlsx";
@@ -199,6 +202,89 @@ export function parseArera575DomesticInfrastructure(input: { readonly html: stri
     createValue({ ...base, componentCode: "S3_ENERGY_TRANSMISSION", originalValue: values[3], originalUnit: "CENT_EUR/KWH", applicationBasis: "componente s3 - quota energia/trasmissione" }),
   ];
   return { source: { sourceReference, officialIdentifier: ARERA_575_IDENTIFIER, publicationDate, retrievedAt: input.retrievedAt, sourceSha256 }, records };
+}
+
+export type AreraBta6SourceValues = {
+  readonly fixed: RegulatoryValueRecord;
+  readonly power: RegulatoryValueRecord;
+  readonly energy: RegulatoryValueRecord;
+  readonly metering: RegulatoryValueRecord;
+  readonly transmission: RegulatoryValueRecord;
+};
+
+function rowsFromCells(cells: readonly XlsxCell[]): readonly number[] {
+  return [...new Set(cells.map((cell) => cell.row))].sort((a, b) => a - b);
+}
+
+function assertAnnual2026(cells: readonly XlsxCell[]): void {
+  if (!cells.some((cell) => /anno\s+2026/i.test(cell.value))) throw new Error("ARERA_2026_COLUMN_MISSING");
+}
+
+function bta6DistributionValues(body: Uint8Array): { readonly fixed: number; readonly power: number; readonly energy: number } {
+  const shared = xlsxSharedStrings(body);
+  const cells = xlsxSheet(body, "xl/worksheets/sheet3.xml", shared);
+  assertAnnual2026(cells);
+  const row = rowsFromCells(cells).find((rowNumber) => {
+    const values = cells.filter((cell) => cell.row === rowNumber).map((cell) => cell.value);
+    return values.some((value) => value.trim().toUpperCase() === "BTA6") && values.some((value) => /potenza disponibile superiore a 16,5/i.test(value));
+  });
+  if (row === undefined) throw new Error("ARERA_BTA6_DISTRIBUTION_ROW_MISSING");
+  const fixed = xlsxNumeric(cells, row, "E");
+  const power = xlsxNumeric(cells, row, "I");
+  const energy = xlsxNumeric(cells, row, "M");
+  if (fixed === null || power === null || energy === null) throw new Error("ARERA_BTA6_DISTRIBUTION_VALUE_MISSING");
+  return { fixed, power, energy };
+}
+
+export function parseArera575Bta6DistributionXlsx(input: { readonly body: Uint8Array; readonly sourceReference?: string; readonly publicationDate?: string; readonly retrievedAt: string; readonly sourceSha256?: string; readonly tenantId?: string }): readonly RegulatoryValueRecord[] {
+  const sourceReference = input.sourceReference ?? ARERA_575_TIT_TABLES_URL;
+  const sourceSha256 = input.sourceSha256 ?? sourceHash(input.body);
+  const tenantId = input.tenantId ?? "tenant_local-demo";
+  const values = bta6DistributionValues(input.body);
+  const base = { tenantId, sourceType: "OFFICIAL_ATTACHMENT" as const, sourceReference, officialIdentifier: `${ARERA_575_IDENTIFIER}:TIT:Tabella 3:BTA6`, publicationDate: input.publicationDate ?? "2025-12-30", retrievedAt: input.retrievedAt, effectiveFrom: "2026-01-01", effectiveTo: "2027-01-01", customerScope: "NON_DOMESTIC_BT_BTA6", sourceSha256 };
+  return [
+    createValue({ ...base, componentCode: "NETWORK_FIXED", originalValue: values.fixed, originalUnit: "CENT_EUR/POD/YEAR", applicationBasis: "TIT Tabella 3, BTA6 - Altre utenze in bassa tensione con potenza disponibile superiore a 16,5 kW; quota fissa tariffa 2026" }),
+    createValue({ ...base, componentCode: "NETWORK_POWER", originalValue: values.power, originalUnit: "CENT_EUR/KW/YEAR", applicationBasis: "TIT Tabella 3, BTA6 - Altre utenze in bassa tensione con potenza disponibile superiore a 16,5 kW; quota potenza tariffa 2026" }),
+    createValue({ ...base, componentCode: "NETWORK_ENERGY", originalValue: values.energy, originalUnit: "CENT_EUR/KWH", applicationBasis: "TIT Tabella 3, BTA6 - Altre utenze in bassa tensione con potenza disponibile superiore a 16,5 kW; quota energia tariffa 2026" }),
+  ];
+}
+
+function bta6MeteringValue(body: Uint8Array): number {
+  const shared = xlsxSharedStrings(body);
+  const cells = xlsxSheet(body, "xl/worksheets/sheet2.xml", shared);
+  assertAnnual2026(cells);
+  const row = rowsFromCells(cells).find((rowNumber) => cells.some((cell) => cell.row === rowNumber && /^Altre utenze in bassa tensione$/i.test(clean(cell.value))));
+  if (row === undefined) throw new Error("ARERA_BTA6_METERING_ROW_MISSING");
+  const value = xlsxNumeric(cells, row, "E");
+  if (value === null) throw new Error("ARERA_BTA6_METERING_VALUE_MISSING");
+  return value;
+}
+
+export function parseArera575Bta6MeasurementXlsx(input: { readonly body: Uint8Array; readonly sourceReference?: string; readonly publicationDate?: string; readonly retrievedAt: string; readonly sourceSha256?: string; readonly tenantId?: string }): RegulatoryValueRecord {
+  const sourceReference = input.sourceReference ?? ARERA_575_TIME_TABLES_URL;
+  const sourceSha256 = input.sourceSha256 ?? sourceHash(input.body);
+  return createValue({ tenantId: input.tenantId ?? "tenant_local-demo", sourceType: "OFFICIAL_ATTACHMENT", sourceReference, officialIdentifier: `${ARERA_575_IDENTIFIER}:TIME:Tabella 1:MIS1`, publicationDate: input.publicationDate ?? "2025-12-30", retrievedAt: input.retrievedAt, effectiveFrom: "2026-01-01", effectiveTo: "2027-01-01", componentCode: "METERING_FIXED", customerScope: "NON_DOMESTIC_BT_BTA6", originalValue: bta6MeteringValue(input.body), originalUnit: "CENT_EUR/POD/YEAR", applicationBasis: "TABELLE TIME Tabella 1 MIS1; tariffa 2026 uniforme per l'intera categoria ufficiale Altre utenze in bassa tensione, sottoclasse BTA6", sourceSha256 });
+}
+
+export function parseAreraBta6TransmissionHtml(input: { readonly html: string; readonly sourceReference?: string; readonly publicationDate?: string; readonly retrievedAt: string; readonly sourceSha256?: string; readonly tenantId?: string }): RegulatoryValueRecord {
+  const sourceReference = input.sourceReference ?? ARERA_TRANSMISSION_PAGE;
+  const rows = tableRows(input.html);
+  const row = rows.find((cells) => /^d\)\s*Altre utenze in bassa tensione$/i.test(cells[0] ?? ""));
+  if (!row) throw new Error("ARERA_BTA6_TRANSMISSION_ROW_MISSING");
+  const values = row.slice(1).filter((value) => value.trim() && value.trim() !== "-").map(parseItalianNumber);
+  if (values.length < 3) throw new Error("ARERA_BTA6_TRANSMISSION_VALUE_MISSING");
+  return createValue({ tenantId: input.tenantId ?? "tenant_local-demo", sourceType: "OFFICIAL_WEB_PAGE", sourceReference, officialIdentifier: "ARERA_TRAS_2026:Altre utenze in bassa tensione", publicationDate: input.publicationDate ?? "2025-12-29", retrievedAt: input.retrievedAt, effectiveFrom: "2026-01-01", effectiveTo: "2027-01-01", componentCode: "TRANSMISSION_ENERGY", customerScope: "NON_DOMESTIC_BT_BTA6", originalValue: values.at(-1) as number, originalUnit: "CENT_EUR/KWH", applicationBasis: "Tariffa ufficiale di trasmissione 2026, TRAS_E per l'intera categoria Altre utenze in bassa tensione, sottoclasse BTA6; TRAS_P non applicabile alla bassa tensione", sourceSha256: input.sourceSha256 ?? textHash(input.html) });
+}
+
+export async function fetchOfficialBta6Sources(input: { readonly retrievedAt: string; readonly fetcher?: AreraFetcher; readonly tenantId?: string }): Promise<AreraBta6SourceValues> {
+  const fetcher = input.fetcher ?? (fetch as unknown as AreraFetcher);
+  const tit = await fetchOfficialAreraSource(ARERA_575_TIT_TABLES_URL, fetcher);
+  const time = await fetchOfficialAreraSource(ARERA_575_TIME_TABLES_URL, fetcher);
+  const transmission = await fetchOfficialAreraSource(ARERA_TRANSMISSION_PAGE, fetcher);
+  const distribution = parseArera575Bta6DistributionXlsx({ body: tit.bytes, sourceReference: tit.url, retrievedAt: input.retrievedAt, sourceSha256: sourceHash(tit.bytes), tenantId: input.tenantId });
+  const metering = parseArera575Bta6MeasurementXlsx({ body: time.bytes, sourceReference: time.url, retrievedAt: input.retrievedAt, sourceSha256: sourceHash(time.bytes), tenantId: input.tenantId });
+  const transmissionRecord = parseAreraBta6TransmissionHtml({ html: new TextDecoder().decode(transmission.bytes), sourceReference: transmission.url, retrievedAt: input.retrievedAt, sourceSha256: sourceHash(transmission.bytes), tenantId: input.tenantId });
+  return { fixed: distribution[0], power: distribution[1], energy: distribution[2], metering, transmission: transmissionRecord };
 }
 
 export type AreraAttachment = { readonly url: string; readonly extension: "XLS" | "XLSX" | "CSV" | "PDF" | "HTML"; readonly anchorText: string };

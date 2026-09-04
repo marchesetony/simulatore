@@ -7,13 +7,15 @@ import { buildTrustedElectricitySupplyContext, parseAvailablePowerKw, parseContr
 const tenant = "tenant_trusted-context";
 const fact = (code, value, status = "FOUND") => ({ code, value, status });
 
-function profile({ residence = "residente", supplyUse = "domestico", committed = "3 kW", available = "6 kW", powerStatus = "FOUND", voltage = "BT" } = {}) {
+function profile({ residence = "residente", supplyUse = "domestico", committed = "3 kW", available = "6 kW", maximumDrawn = null, billingBasis = null, powerStatus = "FOUND", voltage = "BT" } = {}) {
   return buildBillSupplyProfile([
     fact("SUPPLY_USE_CATEGORY_RAW", supplyUse),
     fact("DOMESTIC_RESIDENCE_STATUS_RAW", residence),
     fact("VOLTAGE_CLASS_RAW", voltage),
     ...(committed === null ? [] : [fact("POWER_COMMITTED", committed, powerStatus)]),
     ...(available === null ? [] : [fact("POWER_AVAILABLE", available)]),
+    ...(maximumDrawn === null ? [] : [fact("POWER_MAXIMUM_DRAWN", maximumDrawn)]),
+    ...(billingBasis === null ? [] : [fact("POWER_BILLING_BASIS_RAW", billingBasis)]),
   ]);
 }
 
@@ -36,10 +38,17 @@ const nonResident = buildTrustedElectricitySupplyContext(profile({ residence: "n
 assert.equal(nonResident.contractedPowerKw, 4.5);
 assert.equal(nonResident.regulatoryCustomerScope, "DOMESTIC_NON_RESIDENT_BT");
 
-const bta6 = buildTrustedElectricitySupplyContext(profile({ supplyUse: "altri usi", committed: "17 kW", available: "18,7 kW" }));
+const bta6 = buildTrustedElectricitySupplyContext(profile({ supplyUse: "altri usi", committed: "17 kW", available: "18,7 kW", billingBasis: "Potenza contrattualmente impegnata" }));
 assert.equal(bta6.contractedPowerKw, 17);
 assert.equal(bta6.availablePowerKw, 18.7);
 assert.equal(bta6.regulatoryCustomerScope, "NON_DOMESTIC_BT_BTA6");
+assert.equal(bta6.regulatoryPowerBasisKind, "CONTRACTUAL_COMMITTED");
+assert.equal(bta6.regulatoryPowerBasisKw, 17);
+const bta6MaxDrawn = buildTrustedElectricitySupplyContext(profile({ supplyUse: "altri usi", committed: "20 kW", available: "30 kW", maximumDrawn: "24 kW", billingBasis: "Massimo valore della potenza prelevata nel mese" }));
+assert.equal(bta6MaxDrawn.regulatoryPowerBasisKind, "MONTHLY_MAX_DRAWN");
+assert.equal(bta6MaxDrawn.regulatoryPowerBasisKw, 24);
+assertCode(() => buildTrustedElectricitySupplyContext(profile({ supplyUse: "altri usi", committed: "20 kW", available: "30 kW" })), "BTA6_POWER_BILLING_BASIS_REQUIRED");
+assertCode(() => buildTrustedElectricitySupplyContext(profile({ supplyUse: "altri usi", committed: "20 kW", available: "30 kW", billingBasis: "Massimo valore della potenza prelevata nel mese" })), "BTA6_MAXIMUM_DRAWN_POWER_REQUIRED");
 assert.equal(buildTrustedElectricitySupplyContext(profile({ supplyUse: "altri usi", committed: "17 kW", available: "16,5 kW" })).regulatoryCustomerScope, "NON_DOMESTIC_BT");
 assertCode(() => buildTrustedElectricitySupplyContext(profile({ supplyUse: "altri usi", committed: "25 kW", available: null })), "AVAILABLE_POWER_REQUIRED_FOR_BT_TARIFF_CLASS");
 assert.equal(buildTrustedElectricitySupplyContext(profile({ supplyUse: "pubblica illuminazione", committed: "17 kW", available: "18,7 kW" })).regulatoryCustomerScope, "NON_DOMESTIC_BT");
@@ -68,6 +77,7 @@ assertCode(() => parseSimulationRequest({ ...baseRequest, regulatoryCustomerScop
 assertCode(() => parseSimulationRequest({ ...baseRequest, contractedPowerKw: 3 }, tenant), "TRUSTED_OUTCOME_FORBIDDEN");
 assertCode(() => parseSimulationRequest({ ...baseRequest, availablePowerKw: 3.3 }, tenant), "TRUSTED_OUTCOME_FORBIDDEN");
 assertCode(() => parseSimulationRequest({ ...baseRequest, trustedSupplyContext: {} }, tenant), "TRUSTED_OUTCOME_FORBIDDEN");
+for (const [field, value] of [["powerMaximumDrawn", 24], ["powerBillingBasis", "MONTHLY_MAX_DRAWN"], ["regulatoryPowerBasisKw", 24], ["regulatoryPowerBasisKind", "MONTHLY_MAX_DRAWN"]]) assertCode(() => parseSimulationRequest({ ...baseRequest, [field]: value }, tenant), "TRUSTED_OUTCOME_FORBIDDEN");
 
 const gas = parseSimulationRequest({ ...baseRequest, vector: "GAS", residency: undefined, consumption: { basis: "PERIOD", unit: "SMC", smc: 100, correctionCoefficient: { required: false } } }, tenant);
 assert.equal(gas.vector, "GAS");
