@@ -13,7 +13,7 @@ export type VersionState = "CURRENT" | "SUPERSEDED";
 export type RegulatoryValueSourceType = "OFFICIAL_WEB_PAGE" | "OFFICIAL_PROVVEDIMENTO" | "OFFICIAL_ATTACHMENT";
 export type RegulatoryValueVector = "EE" | "GAS";
 export type RegulatoryReferenceDomain = "NETWORK" | "SYSTEM_CHARGES" | "DISPATCHING" | "CAPACITY_MARKET" | "MARKET_INDEX" | "TAX" | "CONTRACT";
-export type RegulatoryCustomerScope = "DOMESTIC_BT" | "DOMESTIC_RESIDENT_BT" | "DOMESTIC_NON_RESIDENT_BT" | "NON_DOMESTIC_BT" | "ALL_ELECTRICITY";
+export type RegulatoryCustomerScope = "DOMESTIC_BT" | "DOMESTIC_RESIDENT_BT" | "DOMESTIC_NON_RESIDENT_BT" | "NON_DOMESTIC_BT" | "NON_DOMESTIC_BT_BTA6" | "ALL_ELECTRICITY";
 export type RegulatoryValueComponentCode =
   | "S1_TOTAL" | "S1_MEASURE" | "S2_POWER" | "S3_ENERGY_TRANSMISSION"
   | "NETWORK_FIXED" | "METERING_FIXED" | "NETWORK_POWER" | "NETWORK_ENERGY" | "TRANSMISSION_ENERGY"

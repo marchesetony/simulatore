@@ -95,7 +95,7 @@ const tableRows = (html: string): readonly TableRow[] => [...html.matchAll(/<tr\
 const recordId = (identityKey: string): string => `arera_${createHash("sha256").update(identityKey).digest("hex").slice(0, 24)}`;
 const scopeFor = (value: string | undefined): RegulatoryCustomerScope => {
   const scope = clean(value ?? "DOMESTIC_BT").toUpperCase().replace(/\s+/g, "_") as RegulatoryCustomerScope;
-  if (!["DOMESTIC_BT", "DOMESTIC_RESIDENT_BT", "DOMESTIC_NON_RESIDENT_BT", "NON_DOMESTIC_BT", "ALL_ELECTRICITY"].includes(scope)) throw new Error("ARERA_CUSTOMER_SCOPE_INVALID");
+  if (!["DOMESTIC_BT", "DOMESTIC_RESIDENT_BT", "DOMESTIC_NON_RESIDENT_BT", "NON_DOMESTIC_BT", "NON_DOMESTIC_BT_BTA6", "ALL_ELECTRICITY"].includes(scope)) throw new Error("ARERA_CUSTOMER_SCOPE_INVALID");
   return scope;
 };
 

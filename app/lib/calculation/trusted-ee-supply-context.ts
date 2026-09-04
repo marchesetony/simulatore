@@ -15,7 +15,7 @@ export class TrustedElectricitySupplyContextError extends Error {
 const fail = (code: string): never => { throw new TrustedElectricitySupplyContextError(code); };
 const POWER_KW_PATTERN = /^(\d+(?:[.,]\d+)?)\s*kW$/i;
 const VOLTAGE_LEVELS: readonly VoltageLevel[] = ["LV", "MV", "HV", "EHV"];
-const NON_DOMESTIC_SUPPLY_USE: readonly SupplyUseCategory[] = ["OTHER_USE", "PUBLIC_LIGHTING", "PUBLIC_EV_CHARGING"];
+const PUBLIC_NON_DOMESTIC_SUPPLY_USE: readonly SupplyUseCategory[] = ["PUBLIC_LIGHTING", "PUBLIC_EV_CHARGING"];
 
 function normalizedText(value: string): string { return value.normalize("NFKC").trim().replace(/\s+/g, " "); }
 
@@ -57,7 +57,7 @@ function requiredSupplyUse(profile: BillSupplyProfile): Exclude<SupplyUseCategor
   return value as Exclude<SupplyUseCategory, "UNKNOWN">;
 }
 
-function deriveRegulatoryCustomerScope(profile: BillSupplyProfile, voltageLevel: VoltageLevel): RegulatoryCustomerScope {
+function deriveRegulatoryCustomerScope(profile: BillSupplyProfile, voltageLevel: VoltageLevel, availablePowerKw: number | undefined): RegulatoryCustomerScope {
   if (voltageLevel !== "LV") fail("REGULATORY_SCOPE_UNRESOLVED");
   const supplyUse = requiredSupplyUse(profile);
   if (supplyUse === "DOMESTIC") {
@@ -67,7 +67,12 @@ function deriveRegulatoryCustomerScope(profile: BillSupplyProfile, voltageLevel:
     if (residence === "NON_RESIDENT") return "DOMESTIC_NON_RESIDENT_BT";
     fail("DOMESTIC_RESIDENCE_INVALID");
   }
-  if (NON_DOMESTIC_SUPPLY_USE.includes(supplyUse)) {
+  if (supplyUse === "OTHER_USE") {
+    if (profile.domesticResidenceStatus.normalizedValue !== "NOT_APPLICABLE") fail("DOMESTIC_RESIDENCE_INVALID");
+    const availablePower = availablePowerKw ?? fail("AVAILABLE_POWER_REQUIRED_FOR_BT_TARIFF_CLASS");
+    return availablePower > 16.5 ? "NON_DOMESTIC_BT_BTA6" : "NON_DOMESTIC_BT";
+  }
+  if (PUBLIC_NON_DOMESTIC_SUPPLY_USE.includes(supplyUse)) {
     if (profile.domesticResidenceStatus.normalizedValue !== "NOT_APPLICABLE") fail("DOMESTIC_RESIDENCE_INVALID");
     return "NON_DOMESTIC_BT";
   }
@@ -89,7 +94,7 @@ export function buildTrustedElectricitySupplyContext(profile: BillSupplyProfile)
   const supplyUseCategory = requiredSupplyUse(profile);
   const contractedPowerKw = parseContractedPowerKw(profile.powerCommitted);
   const availablePowerKw = parseAvailablePowerKw(profile.powerAvailable);
-  const regulatoryCustomerScope = deriveRegulatoryCustomerScope(profile, voltageLevel);
+  const regulatoryCustomerScope = deriveRegulatoryCustomerScope(profile, voltageLevel, availablePowerKw);
   return {
     vector: "EE",
     contractedPowerKw,

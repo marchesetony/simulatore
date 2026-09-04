@@ -44,6 +44,7 @@ function expectedClientIdentity(context: ElectricitySupplyContext): { readonly c
     case "DOMESTIC_RESIDENT_BT": return { customerCategory: "RESIDENTIAL", residency: "RESIDENT" };
     case "DOMESTIC_NON_RESIDENT_BT": return { customerCategory: "RESIDENTIAL", residency: "NON_RESIDENT" };
     case "NON_DOMESTIC_BT": return { customerCategory: "NON_RESIDENTIAL" };
+    case "NON_DOMESTIC_BT_BTA6": return { customerCategory: "NON_RESIDENTIAL" };
     default: return fail("SOURCE_BILL_TRUST_CONTEXT_UNAVAILABLE");
   }
 }

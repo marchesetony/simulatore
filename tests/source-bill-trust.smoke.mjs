@@ -140,6 +140,15 @@ try {
   assert.equal(trusted?.availablePowerKw, 6);
   assert.equal(trusted?.regulatoryCustomerScope, "DOMESTIC_RESIDENT_BT");
 
+  const bta6Extraction = eeExtraction({}, facts({ supplyUse: "Altri usi", committed: "17 kW", available: "18,7 kW" }));
+  const bta6Approved = await seed({ repository, storage, tenantId: tenantA, extraction: bta6Extraction });
+  const bta6SourceBill = { billId: bta6Approved.id, version: bta6Approved.currentApprovedVersionId };
+  const bta6Trusted = await resolveTrustedElectricityContextFromSourceBill(repository, tenantA, request(tenantA, bta6SourceBill, { customerCategory: "NON_RESIDENTIAL", residency: undefined }));
+  assert.equal(bta6Trusted?.regulatoryCustomerScope, "NON_DOMESTIC_BT_BTA6");
+  assert.equal(bta6Trusted?.availablePowerKw, 18.7);
+  assert.equal(bta6Trusted?.contractedPowerKw, 17);
+  assertSyncCode(() => request(tenantA, bta6SourceBill, { regulatoryCustomerScope: "NON_DOMESTIC_BT_BTA6" }), "TRUSTED_OUTCOME_FORBIDDEN");
+
   await assertAsyncCode(() => resolveTrustedElectricityContextFromSourceBill(repository, tenantA, request(tenantA, { ...sourceBill, version: "version-number-1" })), "SOURCE_BILL_VERSION_MISMATCH");
   await assertAsyncCode(() => resolveTrustedElectricityContextFromSourceBill(repository, tenantA, request(tenantA, { billId: "missing-bill", version: "missing-version" })), "SOURCE_BILL_NOT_FOUND");
   await assertAsyncCode(() => resolveTrustedElectricityContextFromSourceBill(repository, tenantB, request(tenantB, sourceBill)), "SOURCE_BILL_NOT_FOUND");
@@ -161,6 +170,8 @@ try {
 
   const missingPower = await seed({ repository, storage, tenantId: tenantA, extraction: eeExtraction({}, facts({ committed: null })) });
   await assertAsyncCode(() => resolveTrustedElectricityContextFromSourceBill(repository, tenantA, request(tenantA, { billId: missingPower.id, version: missingPower.currentApprovedVersionId })), "CONTRACTED_POWER_REQUIRED");
+  const missingBta6AvailablePower = await seed({ repository, storage, tenantId: tenantA, extraction: eeExtraction({}, facts({ supplyUse: "Altri usi", committed: "25 kW", available: null })) });
+  await assertAsyncCode(() => resolveTrustedElectricityContextFromSourceBill(repository, tenantA, request(tenantA, { billId: missingBta6AvailablePower.id, version: missingBta6AvailablePower.currentApprovedVersionId }, { customerCategory: "NON_RESIDENTIAL", residency: undefined })), "AVAILABLE_POWER_REQUIRED_FOR_BT_TARIFF_CLASS");
 
   await assertAsyncCode(() => resolveTrustedElectricityContextFromSourceBill(repository, tenantA, request(tenantA, sourceBill, { voltageLevel: "MV" })), "SOURCE_BILL_VOLTAGE_MISMATCH");
   await assertAsyncCode(() => resolveTrustedElectricityContextFromSourceBill(repository, tenantA, request(tenantA, sourceBill, { customerCategory: "NON_RESIDENTIAL", residency: undefined })), "SOURCE_BILL_CUSTOMER_CATEGORY_MISMATCH");

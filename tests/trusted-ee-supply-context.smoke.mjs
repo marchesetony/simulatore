@@ -36,6 +36,15 @@ const nonResident = buildTrustedElectricitySupplyContext(profile({ residence: "n
 assert.equal(nonResident.contractedPowerKw, 4.5);
 assert.equal(nonResident.regulatoryCustomerScope, "DOMESTIC_NON_RESIDENT_BT");
 
+const bta6 = buildTrustedElectricitySupplyContext(profile({ supplyUse: "altri usi", committed: "17 kW", available: "18,7 kW" }));
+assert.equal(bta6.contractedPowerKw, 17);
+assert.equal(bta6.availablePowerKw, 18.7);
+assert.equal(bta6.regulatoryCustomerScope, "NON_DOMESTIC_BT_BTA6");
+assert.equal(buildTrustedElectricitySupplyContext(profile({ supplyUse: "altri usi", committed: "17 kW", available: "16,5 kW" })).regulatoryCustomerScope, "NON_DOMESTIC_BT");
+assertCode(() => buildTrustedElectricitySupplyContext(profile({ supplyUse: "altri usi", committed: "25 kW", available: null })), "AVAILABLE_POWER_REQUIRED_FOR_BT_TARIFF_CLASS");
+assert.equal(buildTrustedElectricitySupplyContext(profile({ supplyUse: "pubblica illuminazione", committed: "17 kW", available: "18,7 kW" })).regulatoryCustomerScope, "NON_DOMESTIC_BT");
+assert.equal(buildTrustedElectricitySupplyContext(profile({ supplyUse: "ricarica veicoli elettrici", committed: "17 kW", available: "18,7 kW" })).regulatoryCustomerScope, "NON_DOMESTIC_BT");
+
 assertCode(() => buildTrustedElectricitySupplyContext(profile({ residence: "domestico" })), "DOMESTIC_RESIDENCE_INVALID");
 assertCode(() => buildTrustedElectricitySupplyContext(profile({ committed: null, available: "6 kW" })), "CONTRACTED_POWER_REQUIRED");
 assert.equal(buildTrustedElectricitySupplyContext(profile({ committed: "3 kW", available: "9 kW" })).contractedPowerKw, 3);
@@ -55,7 +64,10 @@ const baseRequest = {
   consumption: { basis: "PERIOD", unit: "KWH", f1: 100, f2: 50, f3: 25 },
 };
 assertCode(() => parseSimulationRequest({ ...baseRequest, customerScope: "NON_DOMESTIC_BT" }, tenant), "TRUSTED_OUTCOME_FORBIDDEN");
+assertCode(() => parseSimulationRequest({ ...baseRequest, regulatoryCustomerScope: "NON_DOMESTIC_BT_BTA6" }, tenant), "TRUSTED_OUTCOME_FORBIDDEN");
 assertCode(() => parseSimulationRequest({ ...baseRequest, contractedPowerKw: 3 }, tenant), "TRUSTED_OUTCOME_FORBIDDEN");
+assertCode(() => parseSimulationRequest({ ...baseRequest, availablePowerKw: 3.3 }, tenant), "TRUSTED_OUTCOME_FORBIDDEN");
+assertCode(() => parseSimulationRequest({ ...baseRequest, trustedSupplyContext: {} }, tenant), "TRUSTED_OUTCOME_FORBIDDEN");
 
 const gas = parseSimulationRequest({ ...baseRequest, vector: "GAS", residency: undefined, consumption: { basis: "PERIOD", unit: "SMC", smc: 100, correctionCoefficient: { required: false } } }, tenant);
 assert.equal(gas.vector, "GAS");
@@ -73,7 +85,14 @@ assert.doesNotMatch(source, /(?:fetch\s*\(|https?:\/\/)/);
 
 console.log("CONTRACTED_POWER_TESTS=PASS");
 console.log("CUSTOMER_CLASSIFICATION_TESTS=PASS");
+console.log("BTA6_CLASSIFICATION=PASS");
+console.log("BTA6_THRESHOLD_STRICT=PASS");
+console.log("OTHER_USE_MISSING_AVAILABLE_POWER_FAIL_CLOSED=PASS");
+console.log("PUBLIC_LIGHTING_NOT_BTA6=PASS");
+console.log("PUBLIC_EV_CHARGING_NOT_BTA6=PASS");
 console.log("CLIENT_SCOPE_REJECTED=PASS");
+console.log("BTA6_CLIENT_SCOPE_FORBIDDEN=PASS");
+console.log("TRUSTED_POWER_FIELDS_CLIENT_FORBIDDEN=PASS");
 console.log("GAS_REGRESSION=PASS");
 console.log("NO_NETWORK=PASS");
 console.log("NO_TARIFF_HARDCODE=PASS");
