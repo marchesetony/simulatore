@@ -300,6 +300,9 @@ export class SupabaseProductionStorageAdapter implements ProductionStorageAdapte
   readonly auditEvents: SupabaseRecordRepository<AuditEvent>;
   readonly regulatoryRefreshState: TenantRecordRepository<unknown>;
   readonly regulatoryRefreshRuns: TenantRecordRepository<unknown>;
+  readonly marketRefreshState: TenantRecordRepository<unknown>;
+  readonly marketRefreshRuns: TenantRecordRepository<unknown>;
+  readonly marketRefreshLocks: TenantRecordRepository<unknown>;
 
   constructor(client: ProviderClient, storageBucket: string) {
     this.cteArchiveRepository = new SupabaseCteArchiveRepository(client);
@@ -319,6 +322,9 @@ export class SupabaseProductionStorageAdapter implements ProductionStorageAdapte
     this.auditEvents = new SupabaseRecordRepository(client, "audit-events");
     this.regulatoryRefreshState = new SupabaseRecordRepository(client, "regulatory-refresh-state");
     this.regulatoryRefreshRuns = new SupabaseRecordRepository(client, "regulatory-refresh-runs");
+    this.marketRefreshState = new SupabaseRecordRepository(client, "market-refresh-state");
+    this.marketRefreshRuns = new SupabaseRecordRepository(client, "market-refresh-runs");
+    this.marketRefreshLocks = new SupabaseRecordRepository(client, "market-refresh-locks");
   }
 }
 

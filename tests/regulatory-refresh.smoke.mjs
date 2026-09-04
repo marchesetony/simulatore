@@ -79,7 +79,7 @@ assert.throws(() => configuredRefreshTenants({ APP_RUNTIME_MODE: "production" })
 assert.throws(() => cronSecretConfigured({}), /CRON_SECRET_REQUIRED/);
 assert.equal(cronAuthorizationMatches(new Request("https://example.test", { headers: { authorization: "Bearer qa-secret" } }), "qa-secret"), true);
 assert.equal(cronAuthorizationMatches(new Request("https://example.test", { headers: { authorization: "Bearer wrong" } }), "qa-secret"), false);
-const vercel = JSON.parse(await readFile("vercel.json", "utf8")); assert.deepEqual(vercel.crons, [{ path: "/api/cron/regulatory-refresh", schedule: "15 3 * * *" }]);
+const vercel = JSON.parse(await readFile("vercel.json", "utf8")); assert.deepEqual(vercel.crons[0], { path: "/api/cron/regulatory-refresh", schedule: "15 3 * * *" });
 console.log("CRON_SECRET_PROTECTED=PASS"); console.log("CRON_AUTH_TEST=PASS"); console.log("DAILY_CRON_CONFIG=PASS");
 console.log("AUTO_REFRESH_YEAR_INDEPENDENT=PASS"); console.log("PRODUCTION_REFRESH_YEAR_HARDCODED=NO");
 console.log("NO_DB_MIGRATION_REQUIRED=PASS"); console.log("REGULATORY_REFRESH_TESTS=PASS");

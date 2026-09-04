@@ -34,6 +34,9 @@ export interface ProductionStorageAdapter {
   readonly auditEvents: AuditEventRepository;
   readonly regulatoryRefreshState: TenantRecordRepository<unknown>;
   readonly regulatoryRefreshRuns: TenantRecordRepository<unknown>;
+  readonly marketRefreshState?: TenantRecordRepository<unknown>;
+  readonly marketRefreshRuns?: TenantRecordRepository<unknown>;
+  readonly marketRefreshLocks?: TenantRecordRepository<unknown>;
 }
 
 export interface RuntimeRepositories {
@@ -54,6 +57,9 @@ export interface RuntimeRepositories {
   readonly auditEvents: AuditEventRepository;
   readonly regulatoryRefreshState: TenantRecordRepository<unknown>;
   readonly regulatoryRefreshRuns: TenantRecordRepository<unknown>;
+  readonly marketRefreshState: TenantRecordRepository<unknown>;
+  readonly marketRefreshRuns: TenantRecordRepository<unknown>;
+  readonly marketRefreshLocks: TenantRecordRepository<unknown>;
 }
 
 let productionStorageAdapter: ProductionStorageAdapter | null = null;
@@ -85,7 +91,7 @@ export function runtimeRepositories(): RuntimeRepositories {
   const config = getRuntimeConfig();
   if (config.runtimeMode === "production") {
     if (!productionStorageAdapter) throw new Error("PERSISTENCE_ADAPTER_UNAVAILABLE");
-    return productionStorageAdapter;
+    return { ...productionStorageAdapter, marketRefreshState: productionStorageAdapter.marketRefreshState ?? productionStorageAdapter.marketDataArchives, marketRefreshRuns: productionStorageAdapter.marketRefreshRuns ?? productionStorageAdapter.marketDataArchives, marketRefreshLocks: productionStorageAdapter.marketRefreshLocks ?? productionStorageAdapter.marketDataArchives };
   }
   const local = new LocalFilesystemAdapter("var/phase6");
   return {
@@ -106,5 +112,8 @@ export function runtimeRepositories(): RuntimeRepositories {
     auditEvents: local.collection("audit-events"),
     regulatoryRefreshState: local.collection("regulatory-refresh-state"),
     regulatoryRefreshRuns: local.collection("regulatory-refresh-runs"),
+    marketRefreshState: local.collection("market-refresh-state"),
+    marketRefreshRuns: local.collection("market-refresh-runs"),
+    marketRefreshLocks: local.collection("market-refresh-locks"),
   };
 }

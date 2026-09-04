@@ -2,6 +2,8 @@ import type { PublicBillDocument } from "../foundation/real-bill";
 import type { StructuredBillExtraction } from "../ingestion/structured-bill";
 import type { MarketArchiveRecord, MarketArchiveRepository } from "./types";
 // @ts-expect-error Node's strip-only test runner requires the explicit extension.
+import { compareMarketVersions } from "./service.ts";
+// @ts-expect-error Node's strip-only test runner requires the explicit extension.
 import { buildBillAnalystReview } from "../foundation/bill-analyst-review.ts";
 // @ts-expect-error Node's strip-only test runner requires the explicit extension.
 import { attachBillRegulatoryAudit } from "../foundation/bill-public-audit.ts";
@@ -16,7 +18,7 @@ export interface InvoicePunReference {
   readonly f2: number | null;
   readonly f3: number | null;
   readonly unit: "EUR_PER_MWH";
-  readonly authority: "GME";
+  readonly authority: "GME" | "ARERA";
   readonly sourceType: "OFFICIAL";
   readonly sourceReference: string | null;
   readonly publishedAt: string | null;
@@ -64,14 +66,15 @@ export function deriveInvoiceReferenceMonths(period: OfficialPunBillInput["billi
   return result;
 }
 
-function isGmeOfficial(record: MarketArchiveRecord): boolean {
+function isOfficialPunSource(record: MarketArchiveRecord): boolean {
   const source = record.record.source;
-  if (source.authority !== undefined && source.authority !== "GME") return false;
+  if (source.authority !== undefined && source.authority !== "GME" && source.authority !== "ARERA") return false;
   if (source.sourceType !== undefined && source.sourceType !== "OFFICIAL") return false;
   let hostname = "";
   try { hostname = new URL(source.url).hostname.toLowerCase(); } catch { return false; }
-  const namedGme = [source.sourceId, source.name].some((value) => value.trim().toUpperCase() === "GME" || /\bGME\b/i.test(value));
-  return namedGme && hostname === "gme.mercatoelettrico.org";
+  const authority = source.authority ?? (hostname === "gme.mercatoelettrico.org" ? "GME" : hostname === "arera.it" || hostname === "www.arera.it" ? "ARERA" : null);
+  const namedOfficial = authority === "GME" ? [source.sourceId, source.name].some((value) => /\bGME\b/i.test(value)) : authority === "ARERA" ? [source.sourceId, source.name].some((value) => /\bARERA\b/i.test(value)) : false;
+  return namedOfficial && ((authority === "GME" && hostname === "gme.mercatoelettrico.org") || (authority === "ARERA" && (hostname === "arera.it" || hostname === "www.arera.it")));
 }
 
 function unavailableReference(referenceMonth: string, pricingMode: PunTariffStructure): InvoicePunReference {
@@ -82,7 +85,7 @@ function availableReference(record: MarketArchiveRecord, pricingMode: PunTariffS
   const market = record.record;
   if (market.vector !== "EE" || market.index !== "PUN") return null;
   if (pricingMode === "MONO" && (!market.monthly || !finite(market.monthly.value))) return null;
-  if (pricingMode === "F1_F2_F3" && ![market.f1, market.f2, market.f3].some((rate) => rate && finite(rate.value))) return null;
+  if (pricingMode === "F1_F2_F3" && ![market.f1, market.f2, market.f3].every((rate) => rate && finite(rate.value))) return null;
   return {
     referenceMonth: record.month,
     pricingMode,
@@ -91,7 +94,7 @@ function availableReference(record: MarketArchiveRecord, pricingMode: PunTariffS
     f2: pricingMode === "F1_F2_F3" ? market.f2?.value ?? null : null,
     f3: pricingMode === "F1_F2_F3" ? market.f3?.value ?? null : null,
     unit: "EUR_PER_MWH",
-    authority: "GME",
+    authority: market.source.authority === "ARERA" ? "ARERA" : "GME",
     sourceType: "OFFICIAL",
     sourceReference: market.source.url,
     publishedAt: market.publicationDate,
@@ -109,9 +112,8 @@ export async function resolveOfficialPunForBill(repository: MarketArchiveReposit
   if (input.vector !== "EE" || months.length === 0) return [];
   const records = await repository.list(input.tenantId);
   return months.map((month) => {
-    const candidates = records.filter((record) => record.status === "APPROVED" && record.month === month && record.vector === "EE" && record.index === "PUN" && isGmeOfficial(record));
-    if (candidates.length !== 1) return unavailableReference(month, input.structure);
-    return availableReference(candidates[0], input.structure) ?? unavailableReference(month, input.structure);
+    const candidates = records.filter((record) => record.status === "APPROVED" && record.month === month && record.vector === "EE" && record.index === "PUN" && isOfficialPunSource(record) && availableReference(record, input.structure) !== null).sort(compareMarketVersions);
+    return candidates.length === 0 ? unavailableReference(month, input.structure) : availableReference(candidates[0], input.structure) ?? unavailableReference(month, input.structure);
   });
 }
 
