@@ -21,6 +21,8 @@ export const ARERA_TRANSMISSION_PAGE = "https://www.arera.it/area-operatori/prez
 export const ARERA_227_IDENTIFIER = "227/2026/R/com";
 export const ARERA_588_IDENTIFIER = "588/2025/R/com";
 export const ARERA_588_TABLES_URL = "https://www.arera.it/fileadmin/allegati/docs/25/588-2025-R-com-TABELLE.xlsx";
+export const ARERA_98_PDF_URL = "https://www.arera.it/fileadmin/allegati/docs/26/98-2026-R-com.pdf";
+export const ARERA_98_IDENTIFIER = "98/2026/R/com";
 export const ARERA_227_PDF_URL = "https://www.arera.it/fileadmin/allegati/docs/26/227-2026-R-com.pdf";
 export const ARERA_587_PAGE = "https://www.arera.it/atti-e-provvedimenti/dettaglio/25/587-25";
 export const ARERA_587_PDF_URL = "https://www.arera.it/fileadmin/allegati/docs/25/587-2025-R-eel.pdf";
@@ -716,6 +718,48 @@ export function parseArera588Bta6Uc3Uc6Xlsx(input: { readonly body: Uint8Array; 
   return parseArera588Bta6Uc3Uc6TableRows({ ...input, rows: candidateRows, sourceSha256: input.sourceSha256 ?? sourceHash(input.body) });
 }
 
+export function parseArera588Bta6ArimTableRows(input: { readonly rows: readonly (readonly string[])[]; readonly sourceReference?: string; readonly publicationDate?: string; readonly retrievedAt: string; readonly sourceSha256: string; readonly tenantId?: string; readonly effectiveFrom?: string; readonly effectiveTo?: string | null }): readonly RegulatoryValueRecord[] {
+  const sourceReference = input.sourceReference ?? ARERA_588_TABLES_URL;
+  const publicationDate = input.publicationDate ?? "2025-12-30";
+  const tenantId = input.tenantId ?? "tenant_local-demo";
+  const effectiveFrom = input.effectiveFrom ?? "2026-01-01";
+  const effectiveTo = input.effectiveTo === undefined ? null : input.effectiveTo;
+  const row = input.rows.find((candidate) => /altre utenze in bassa tensione con potenza disponibile superiore a 16,5 kw/i.test(clean(candidate[1] ?? "")));
+  if (!row) throw new Error("ARERA_588_BTA6_ARIM_ROW_MISSING");
+  const parseTableNumber = (value: string): number => {
+    const parsed = Number(clean(value).replace(/,/g, "."));
+    if (!Number.isFinite(parsed)) throw new Error("ARERA_NUMBER_INVALID");
+    return parsed;
+  };
+  const fixed = parseTableNumber(row[2] ?? "");
+  const power = parseTableNumber(row[3] ?? "");
+  const energy = parseTableNumber(row[4] ?? "");
+  const confirmationSource = `${ARERA_98_PDF_URL};${ARERA_227_PDF_URL}`;
+  const base = {
+    tenantId, sourceType: "OFFICIAL_ATTACHMENT" as const, sourceReference, officialIdentifier: `${ARERA_588_IDENTIFIER}:Tabella B:BTA6:OPEN_UNTIL_SUPERSEDED`,
+    publicationDate, retrievedAt: input.retrievedAt, effectiveFrom, effectiveTo, customerScope: "NON_DOMESTIC_BT_BTA6" as const,
+    sourceSha256: input.sourceSha256, confirmationSource,
+    applicationBasis: "Tabella B ARIM della deliberazione 588/2025/R/com; riga \"Altre utenze in bassa tensione con potenza disponibile superiore a 16,5 kW\"; ARIM indifferenziata rispetto alle classi di agevolazione; valori dal 01/01/2026 confermati dalle deliberazioni 98/2026/R/com e 227/2026/R/com",
+  };
+  return [
+    createValue({ ...base, componentCode: "ARIM", originalValue: fixed, originalUnit: "CENT_EUR/POD/YEAR", applicationBasis: `${base.applicationBasis}; quota fissa` }),
+    createValue({ ...base, componentCode: "ARIM", originalValue: power, originalUnit: "CENT_EUR/KW/YEAR", applicationBasis: `${base.applicationBasis}; quota potenza` }),
+    createValue({ ...base, componentCode: "ARIM", originalValue: energy, originalUnit: "CENT_EUR/KWH", applicationBasis: `${base.applicationBasis}; quota energia` }),
+  ];
+}
+
+export function parseArera588Bta6ArimXlsx(input: { readonly body: Uint8Array; readonly sourceReference?: string; readonly publicationDate?: string; readonly retrievedAt: string; readonly sourceSha256?: string; readonly tenantId?: string; readonly effectiveFrom?: string; readonly effectiveTo?: string | null }): readonly RegulatoryValueRecord[] {
+  const shared = xlsxSharedStrings(input.body);
+  const cells = xlsxSheet(input.body, "xl/worksheets/sheet6.xml", shared);
+  const rowNumbers = rowsFromCells(cells);
+  const candidateRows = rowNumbers.map((row) => ["", xlsxCell(cells, row, "B"), xlsxCell(cells, row, "C"), xlsxCell(cells, row, "D"), xlsxCell(cells, row, "E")]);
+  const headerFixed = clean(xlsxCell(cells, 7, "C")).toLowerCase();
+  const headerPower = clean(xlsxCell(cells, 7, "D")).toLowerCase();
+  const headerEnergy = clean(xlsxCell(cells, 7, "E")).toLowerCase();
+  if (!headerFixed.includes("centesimi di euro/punto di prelievo/anno") || !headerPower.includes("centesimi di euro/kw per anno") || !headerEnergy.includes("centesimi di euro/kwh")) throw new Error("ARERA_588_BTA6_ARIM_UNIT_HEADERS_INVALID");
+  return parseArera588Bta6ArimTableRows({ ...input, rows: candidateRows, sourceSha256: input.sourceSha256 ?? sourceHash(input.body) });
+}
+
 export function parseArera587Annual2026Values(input: { readonly retrievedAt: string; readonly sourceSha256: string; readonly tenantId?: string; readonly publicationDate?: string }): readonly RegulatoryValueRecord[] {
   const base = { tenantId: input.tenantId ?? "tenant_local-demo", sourceType: "OFFICIAL_PROVVEDIMENTO" as const, sourceReference: ARERA_587_PDF_URL, officialIdentifier: ARERA_587_IDENTIFIER, publicationDate: input.publicationDate ?? "2025-12-23", retrievedAt: input.retrievedAt, effectiveFrom: "2026-01-01", effectiveTo: "2027-01-01", customerScope: "ALL_ELECTRICITY", originalUnit: "CENT_EUR/KWH", sourceSha256: input.sourceSha256, authority: "ARERA" as const, publishedBy: "ARERA" as const, calculatedBy: "ARERA" as const, contractPassThroughRequired: true };
   return [
@@ -749,9 +793,9 @@ export function resolveAreraEffectiveValue(records: readonly RegulatoryValueReco
 
 export class AreraElectricityRegulatorySourceAdapter {
   private readonly repository: RegulatoryRepository;
-  private readonly options: { readonly fetcher?: AreraFetcher; readonly regulatoryRoot?: string; readonly tenantId?: string; readonly systemChargesPage?: string; readonly includeBta6Uc?: boolean };
+  private readonly options: { readonly fetcher?: AreraFetcher; readonly regulatoryRoot?: string; readonly tenantId?: string; readonly systemChargesPage?: string; readonly includeBta6Uc?: boolean; readonly includeBta6Arim?: boolean };
 
-  constructor(repository: RegulatoryRepository, options: { readonly fetcher?: AreraFetcher; readonly regulatoryRoot?: string; readonly tenantId?: string; readonly systemChargesPage?: string; readonly includeBta6Uc?: boolean } = {}) {
+  constructor(repository: RegulatoryRepository, options: { readonly fetcher?: AreraFetcher; readonly regulatoryRoot?: string; readonly tenantId?: string; readonly systemChargesPage?: string; readonly includeBta6Uc?: boolean; readonly includeBta6Arim?: boolean } = {}) {
     this.repository = repository;
     this.options = options;
   }
@@ -800,11 +844,12 @@ export class AreraElectricityRegulatorySourceAdapter {
     }
     let uc3SourceStrategy: "DIRECT_227" | "OFFICIAL_CARRY_FORWARD" | "UNRESOLVED" = initialKnownCodes.has("UC3") ? "DIRECT_227" : "UNRESOLVED";
     let uc6SourceStrategy: "DIRECT_227" | "OFFICIAL_CARRY_FORWARD" | "UNRESOLVED" = initialKnownCodes.has("UC6") ? "DIRECT_227" : "UNRESOLVED";
-    if (this.options.includeBta6Uc || !initialKnownCodes.has("UC3") || !initialKnownCodes.has("UC6")) {
+    if (this.options.includeBta6Uc || this.options.includeBta6Arim || !initialKnownCodes.has("UC3") || !initialKnownCodes.has("UC6")) {
       const priorPayload = await fetchOfficialAreraSource(ARERA_588_TABLES_URL, fetcher);
       const priorRecords = [
         ...parseArera588Uc3Uc6Xlsx({ body: priorPayload.bytes, sourceReference: priorPayload.url, retrievedAt: input.retrievedAt, sourceSha256: sourceHash(priorPayload.bytes), tenantId }),
         ...(this.options.includeBta6Uc ? parseArera588Bta6Uc3Uc6Xlsx({ body: priorPayload.bytes, sourceReference: priorPayload.url, retrievedAt: input.retrievedAt, sourceSha256: sourceHash(priorPayload.bytes), tenantId }) : []),
+        ...(this.options.includeBta6Arim ? parseArera588Bta6ArimXlsx({ body: priorPayload.bytes, sourceReference: priorPayload.url, retrievedAt: input.retrievedAt, sourceSha256: sourceHash(priorPayload.bytes), tenantId }) : []),
       ];
       systemChargeRecords = [...systemChargeRecords, ...priorRecords];
       if (!initialKnownCodes.has("UC3")) uc3SourceStrategy = "OFFICIAL_CARRY_FORWARD";
