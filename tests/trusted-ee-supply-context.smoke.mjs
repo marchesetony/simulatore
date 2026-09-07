@@ -90,7 +90,8 @@ try { buildTrustedElectricitySupplyContext(profile()); } finally { globalThis.fe
 assert.equal(networkCalled, false);
 
 const source = await readFile(new URL("../app/lib/calculation/trusted-ee-supply-context.ts", import.meta.url), "utf8");
-assert.doesNotMatch(source, /(?:ARERA|TERNA|GME|PUN|ASOS|ARIM|UC3|UC6|CAPACITY_MARKET|DISPATCHING|EUR\/KWH|EUR\/KW)/);
+assert.doesNotMatch(source, /(?:ARERA|TERNA|GME|PUN|ARIM|UC3|UC6|CAPACITY_MARKET|DISPATCHING|EUR\/KWH|EUR\/KW)/);
+assert.match(source, /asosClass/);
 assert.doesNotMatch(source, /(?:fetch\s*\(|https?:\/\/)/);
 
 console.log("CONTRACTED_POWER_TESTS=PASS");

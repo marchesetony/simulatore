@@ -76,7 +76,12 @@ export async function resolveTrustedElectricityContextFromSourceBill(
   const approved = publicApproved(document, approvedVersionId);
   const profile = profileFromApprovedStructuredBill(approved);
   let context: ElectricitySupplyContext;
-  try { context = buildTrustedElectricitySupplyContext(profile); } catch (error) { return trustedContextError(error); }
+  try {
+    context = buildTrustedElectricitySupplyContext(profile, {
+      simulationPeriod: request.supplyPeriod,
+      sourceBillBinding: { billId: document.id, approvedVersionId },
+    });
+  } catch (error) { return trustedContextError(error); }
   reconcileClientRequest(request, context);
   return context;
 }

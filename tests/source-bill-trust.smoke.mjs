@@ -15,7 +15,7 @@ const found = (value, confidence = 0.99) => ({ value, status: "FOUND", confidenc
 const notFound = () => ({ value: null, status: "NOT_FOUND", confidence: 0, source: "DOCUMENT_AI" });
 const fact = (code, value, status = "FOUND") => ({ code, value, status });
 
-function facts({ committed = "3 kW", available = "6 kW", maximumDrawn = null, billingBasis = null, residence = "Residente", voltage = "BT", supplyUse = "Domestico" } = {}) {
+function facts({ committed = "3 kW", available = "6 kW", maximumDrawn = null, billingBasis = null, residence = "Residente", voltage = "BT", supplyUse = "Domestico", asosClass = null, asosSource = "CSEA registry 2026", asosFrom = "2026-01-01" } = {}) {
   return [
     fact("SUPPLY_USE_CATEGORY_RAW", supplyUse),
     fact("DOMESTIC_RESIDENCE_STATUS_RAW", residence),
@@ -24,6 +24,12 @@ function facts({ committed = "3 kW", available = "6 kW", maximumDrawn = null, bi
     ...(available === null ? [] : [fact("POWER_AVAILABLE", available)]),
     ...(maximumDrawn === null ? [] : [fact("POWER_MAXIMUM_DRAWN", maximumDrawn)]),
     ...(billingBasis === null ? [] : [fact("POWER_BILLING_BASIS_RAW", billingBasis)]),
+    ...(asosClass === null ? [] : [
+      fact("ASOS_CLASS_RAW", asosClass),
+      fact("ASOS_CLASS_SOURCE_RAW", asosSource),
+      fact("ASOS_CLASS_EFFECTIVE_FROM", asosFrom),
+      fact("ASOS_CLASS_EVIDENCE_RAW", `Fonte esplicita: ${asosClass}`),
+    ]),
   ];
 }
 
@@ -142,7 +148,7 @@ try {
   assert.equal(trusted?.availablePowerKw, 6);
   assert.equal(trusted?.regulatoryCustomerScope, "DOMESTIC_RESIDENT_BT");
 
-  const bta6Extraction = eeExtraction({}, facts({ supplyUse: "Altri usi", committed: "17 kW", available: "18,7 kW", billingBasis: "Potenza contrattualmente impegnata" }));
+  const bta6Extraction = eeExtraction({}, facts({ supplyUse: "Altri usi", committed: "17 kW", available: "18,7 kW", billingBasis: "Potenza contrattualmente impegnata", asosClass: "ASOS Classe 2" }));
   const bta6Approved = await seed({ repository, storage, tenantId: tenantA, extraction: bta6Extraction });
   const bta6SourceBill = { billId: bta6Approved.id, version: bta6Approved.currentApprovedVersionId };
   const bta6Trusted = await resolveTrustedElectricityContextFromSourceBill(repository, tenantA, request(tenantA, bta6SourceBill, { customerCategory: "NON_RESIDENTIAL", residency: undefined }));
@@ -151,6 +157,14 @@ try {
   assert.equal(bta6Trusted?.contractedPowerKw, 17);
   assert.equal(bta6Trusted?.regulatoryPowerBasisKind, "CONTRACTUAL_COMMITTED");
   assert.equal(bta6Trusted?.regulatoryPowerBasisKw, 17);
+  assert.equal(bta6Trusted?.asosClass, "ASOS_CLASS_2");
+  assert.equal(bta6Trusted?.energyIntensiveStatus, "ENERGY_INTENSIVE");
+  assert.equal(bta6Trusted?.asosClassEvidence?.billId, bta6Approved.id);
+  assert.equal(bta6Trusted?.asosClassEvidence?.approvedVersionId, bta6Approved.currentApprovedVersionId);
+  assert.equal(bta6Trusted?.asosClassEvidence?.sourceKind, "CSEA");
+  const clientClassAttempt = await resolveTrustedElectricityContextFromSourceBill(repository, tenantA, request(tenantA, bta6SourceBill, { customerCategory: "NON_RESIDENTIAL", residency: undefined, asosClass: "ASOS_CLASS_3", energyIntensiveStatus: "NOT_ENERGY_INTENSIVE" }));
+  assert.equal(clientClassAttempt?.asosClass, "ASOS_CLASS_2");
+  assert.equal(clientClassAttempt?.energyIntensiveStatus, "ENERGY_INTENSIVE");
   assertSyncCode(() => request(tenantA, bta6SourceBill, { regulatoryCustomerScope: "NON_DOMESTIC_BT_BTA6" }), "TRUSTED_OUTCOME_FORBIDDEN");
 
   await assertAsyncCode(() => resolveTrustedElectricityContextFromSourceBill(repository, tenantA, request(tenantA, { ...sourceBill, version: "version-number-1" })), "SOURCE_BILL_VERSION_MISMATCH");
