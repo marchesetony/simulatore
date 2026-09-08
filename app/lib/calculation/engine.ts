@@ -13,6 +13,9 @@ import type { CteArchiveRepository } from "../cte/archive/types";
 import type { CalculationComponent, CalculationExclusion, CalculationExclusionCode, CalculationMarketReference, CalculationMoney, CalculationResult, ElectricitySimulationRequest, GasSimulationRequest, SimulationRequest } from "./types";
 import type { ElectricitySupplyContext } from "./trusted-ee-supply-context.ts";
 import type { ProductionRegulatoryPersistenceBridge } from "../regulatory-bridge.ts";
+import type { TenantRecordRepository } from "../persistence/types.ts";
+// @ts-expect-error Node's strip-only test runner requires the explicit extension.
+import { deterministicRecordId } from "../persistence/types.ts";
 // @ts-expect-error Node's strip-only test runner requires the explicit extension.
 import { add, divide, fromNumber, multiply, rational, roundCents, toDecimal, type Rational } from "./decimal.ts";
 // @ts-expect-error Node's strip-only test runner requires the explicit extension.
@@ -77,6 +80,15 @@ function componentWarning(request: SimulationRequest): readonly string[] { retur
 export interface CalculationDependencies {
   readonly trustedElectricityContext?: ElectricitySupplyContext;
   readonly regulatoryBridge?: Pick<ProductionRegulatoryPersistenceBridge, "list">;
+  readonly regulatoryRefreshState?: Pick<TenantRecordRepository<unknown>, "get">;
+}
+
+export async function assertNoKnownDomesticTierDivergence(repository: Pick<TenantRecordRepository<unknown>, "get"> | undefined, tenantId: string): Promise<void> {
+  if (!repository) return;
+  const stored = await repository.get(tenantId, deterministicRecordId("regulatory-refresh-state", tenantId, "regulatory-refresh"));
+  const payload = stored?.payload;
+  const errors = payload && typeof payload === "object" && !Array.isArray(payload) && Array.isArray((payload as { readonly errors?: unknown }).errors) ? (payload as { readonly errors: readonly unknown[] }).errors : [];
+  if (errors.some((error) => typeof error === "string" && error.includes("DOMESTIC_TIER_RATE_DIVERGENCE_UNSUPPORTED"))) throw new CalculationEngineError("DOMESTIC_TIER_RATE_DIVERGENCE_UNSUPPORTED");
 }
 
 function profileForEe(request: ElectricitySimulationRequest, month: string): { readonly f1: number; readonly f2: number; readonly f3: number } {
@@ -205,6 +217,7 @@ export async function calculatePreparedOffer(request: SimulationRequest, prepare
     const regulatoryBridge = dependencies.regulatoryBridge;
     if (!trustedElectricityContext) throw new CalculationEngineError("REGULATORY_TRUST_CONTEXT_REQUIRED");
     if (!regulatoryBridge) throw new CalculationEngineError("REGULATORY_BRIDGE_REQUIRED");
+    await assertNoKnownDomesticTierDivergence(dependencies.regulatoryRefreshState, request.tenantId);
     const execution: RegulatedEeExecutionContext = { trustedElectricityContext, regulatoryBridge };
     regulated = await calculateRegulatedEeSubset(request, execution);
   }

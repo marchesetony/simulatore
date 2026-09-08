@@ -139,6 +139,7 @@ export interface RegulatoryDataReference {
   readonly normalizedUnit: string;
   readonly regulatoryVariant?: RegulatoryVariant;
   readonly normalizedValue: number;
+  readonly applicationBasis: string;
   readonly regulatoryRecordId: string;
   readonly checksum: string;
   readonly officialIdentifier: string;

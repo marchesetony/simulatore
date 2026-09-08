@@ -21,7 +21,7 @@ export async function POST(request: Request): Promise<Response> {
     if (simulation.vector === "EE" && simulation.sourceBill) {
       const trustedElectricityContext = await resolveTrustedElectricityContextFromSourceBill(repositories.billRepository, tenantId, simulation);
       if (!trustedElectricityContext) throw new Error("REGULATORY_TRUST_CONTEXT_REQUIRED");
-      dependencies = { trustedElectricityContext, regulatoryBridge: new ProductionRegulatoryPersistenceBridge(repositories.regulatoryValues, repositories.approvalDomains) };
+      dependencies = { trustedElectricityContext, regulatoryBridge: new ProductionRegulatoryPersistenceBridge(repositories.regulatoryValues, repositories.approvalDomains), regulatoryRefreshState: repositories.regulatoryRefreshState };
     }
     const result = await calculateApprovedOffer(repositories.cteArchiveRepository, repositories.marketArchiveRepository, simulation, body.archiveId, dependencies);
     await repositories.calculationResults.put({ tenantId, recordId: result.calculationId, payload: { calculationId: result.calculationId, fingerprint: result.fingerprint, result }, idempotencyKey: result.fingerprint });

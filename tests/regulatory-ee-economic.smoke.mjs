@@ -32,9 +32,9 @@ class MemoryRepository {
 
 const tenant = "tenant_regulatory-ee-smoke";
 const scope = "DOMESTIC_RESIDENT_BT";
-const baseRecord = ({ id, componentCode, normalizedUnit, normalizedValue, customerScope = scope, effectiveFrom = "2026-07-01", effectiveTo = "2026-08-01", approvalStatus = "IMPORTED", reviewStatus = "NEEDS_REVIEW" }) => {
+const baseRecord = ({ id, componentCode, normalizedUnit, normalizedValue, customerScope = scope, effectiveFrom = "2026-07-01", effectiveTo = "2026-08-01", applicationBasis = "QA fixture only", approvalStatus = "IMPORTED", reviewStatus = "NEEDS_REVIEW" }) => {
   const base = {
-    tenantId: tenant, id, identityKey: `${tenant}|${id}`, version: "1", parentVersionId: null, authority: "ARERA", sourceType: "OFFICIAL_ATTACHMENT", sourceReference: "https://official.example/regulatory-ee-smoke", officialIdentifier: "QA-REGULATORY-FIXTURE", publicationDate: "2026-06-26", retrievedAt: "2026-09-04T00:00:00Z", effectiveFrom, effectiveTo, vector: "EE", customerScope, componentCode, originalValue: normalizedValue, originalUnit: normalizedUnit, normalizedValue, normalizedUnit, applicationBasis: "QA fixture only", sourceSha256: "a".repeat(64), conversionProvenance: [], approvalStatus, reviewStatus,
+    tenantId: tenant, id, identityKey: `${tenant}|${id}`, version: "1", parentVersionId: null, authority: "ARERA", sourceType: "OFFICIAL_ATTACHMENT", sourceReference: "https://official.example/regulatory-ee-smoke", officialIdentifier: "QA-REGULATORY-FIXTURE", publicationDate: "2026-06-26", retrievedAt: "2026-09-04T00:00:00Z", effectiveFrom, effectiveTo, vector: "EE", customerScope, componentCode, originalValue: normalizedValue, originalUnit: normalizedUnit, normalizedValue, normalizedUnit, applicationBasis, sourceSha256: "a".repeat(64), conversionProvenance: [], approvalStatus, reviewStatus,
   };
   return { ...base, checksum: checksumFor(base) };
 };
@@ -65,6 +65,8 @@ const singleRecords = [
   baseRecord({ id: "qa-uc3", componentCode: "UC3", normalizedUnit: "EUR/KWH", normalizedValue: 0.00276 }),
   baseRecord({ id: "qa-uc6-energy", componentCode: "UC6", normalizedUnit: "EUR/KWH", normalizedValue: 0.00007 }),
   baseRecord({ id: "qa-uc6-power", componentCode: "UC6", normalizedUnit: "EUR/KW/YEAR", normalizedValue: 0.1988 }),
+  baseRecord({ id: "qa-asos-energy", componentCode: "ASOS", normalizedUnit: "EUR/KWH", normalizedValue: 0.031515, applicationBasis: "DOMESTIC_ALL_FORMAL_CONSUMPTION_TIERS_EQUAL_RATE; FORMAL_TIERS:0-1800_KWH_PER_YEAR|GT_1800_KWH_PER_YEAR" }),
+  baseRecord({ id: "qa-arim-energy", componentCode: "ARIM", normalizedUnit: "EUR/KWH", normalizedValue: 0.001638, applicationBasis: "DOMESTIC_ALL_FORMAL_CONSUMPTION_TIERS_EQUAL_RATE; FORMAL_TIERS:0-1800_KWH_PER_YEAR|GT_1800_KWH_PER_YEAR" }),
 ];
 const networkRecords = [
   baseRecord({ id: "qa-network-fixed", componentCode: "NETWORK_FIXED", normalizedUnit: "EUR/POD/YEAR", normalizedValue: 12 }),
@@ -93,7 +95,7 @@ console.log("UC6_POWER_FIXTURE_COST=0.05 EUR / 5 minorUnits");
 console.log("NETWORK_FIXED_FIXTURE_COST=1.00 EUR / 100 minorUnits");
 console.log("NETWORK_POWER_FIXTURE_COST=3.00 EUR / 300 minorUnits");
 console.log("TRANSMISSION_ENERGY_FIXTURE_COST=10.00 EUR / 1000 minorUnits");
-console.log("REGULATED_FIXTURE_SUBTOTAL=16.88 EUR / 1688 minorUnits");
+console.log("REGULATED_FIXTURE_SUBTOTAL=50.04 EUR / 5004 minorUnits");
 console.log("UC3_ECONOMIC_COMPONENT=PASS");
 console.log("UC6_ENERGY_ECONOMIC_COMPONENT=PASS");
 console.log("UC6_POWER_ECONOMIC_COMPONENT=PASS");
@@ -112,13 +114,13 @@ const prepared = {
 };
 const integrated = await calculatePreparedOffer(singleRequest, prepared, { trustedElectricityContext: context, regulatoryBridge: singleBridge });
 assert.equal(integrated.totalCommercialCost.minorUnits, 10000);
-assert.equal(integrated.totalRegulatedSubsetCost?.minorUnits, 1688);
-assert.equal(integrated.totalCommercialPlusRegulatedSubsetCost?.minorUnits, 11688);
+assert.equal(integrated.totalRegulatedSubsetCost?.minorUnits, 5004);
+assert.equal(integrated.totalCommercialPlusRegulatedSubsetCost?.minorUnits, 15004);
 assert.equal(integrated.costScope, "COMMERCIAL_PLUS_REGULATED_PARTIAL");
-assert.deepEqual(integrated.regulatedComponentsIncluded, ["UC3_ENERGY", "UC6_ENERGY", "UC6_POWER", "NETWORK_FIXED", "NETWORK_POWER", "TRANSMISSION_ENERGY"]);
-assert.equal(integrated.regulatoryData.references.length, 6);
-assert.ok(integrated.warnings.includes("REGULATED_SUBSET_PARTIAL_NETWORK_UC3_UC6_ONLY"));
-assert.equal(integrated.components.filter((component) => component.category === "REGULATED_ENERGY").length, 3);
+assert.deepEqual(integrated.regulatedComponentsIncluded, ["UC3_ENERGY", "UC6_ENERGY", "UC6_POWER", "NETWORK_FIXED", "NETWORK_POWER", "TRANSMISSION_ENERGY", "ASOS_ENERGY", "ARIM_ENERGY"]);
+assert.equal(integrated.regulatoryData.references.length, 8);
+assert.ok(integrated.warnings.includes("REGULATED_SUBSET_PARTIAL_DOMESTIC_NETWORK_UC3_UC6_ASOS_ARIM_ONLY"));
+assert.equal(integrated.components.filter((component) => component.category === "REGULATED_ENERGY").length, 5);
 assert.equal(integrated.components.filter((component) => component.category === "REGULATED_POWER").length, 2);
 assert.equal(integrated.components.filter((component) => component.category === "REGULATED_FIXED").length, 1);
 console.log("TOTAL_COMMERCIAL_UNCHANGED=PASS");

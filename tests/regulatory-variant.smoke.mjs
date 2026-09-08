@@ -75,7 +75,7 @@ assert.equal(regulatoryApprovalDomainId(tenant, legacyState.domainKey), regulato
 console.log("LEGACY_C3_STATE_COMPATIBLE=PASS");
 console.log("NO_DB_MIGRATION_REQUIRED=PASS");
 
-assert.equal(CALCULATED_REGULATORY_DOMAINS.length, 29);
+assert.equal(CALCULATED_REGULATORY_DOMAINS.length, 31);
 assert.equal(CALCULATED_REGULATORY_DOMAINS.filter((domain) => domain.regulatoryVariant !== undefined).length, 12);
 assert.deepEqual(CALCULATED_REGULATORY_DOMAINS.map(regulatoryDomainKey), AUTO_REFRESH_REGISTERED_DOMAINS.map(regulatoryDomainKey));
 assert.equal(CALCULATED_REGULATORY_DOMAINS.some((domain) => domain.regulatoryVariant === "UNKNOWN"), false);

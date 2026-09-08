@@ -183,7 +183,7 @@ export async function resolveRegulatoryTimeline(
   request: RegulatoryTimelineRequest,
 ): Promise<RegulatoryTimeline> {
   const period = validateRequest(request);
-  if (request.componentCode === "ASOS" && request.regulatoryVariant === undefined) throw new RegulatoryTimelineError("REGULATORY_TIMELINE_VARIANT_REQUIRED");
+  if (request.componentCode === "ASOS" && request.customerScope === "NON_DOMESTIC_BT_BTA6" && request.regulatoryVariant === undefined) throw new RegulatoryTimelineError("REGULATORY_TIMELINE_VARIANT_REQUIRED");
   const query = { componentCode: request.componentCode, customerScope: request.customerScope, normalizedUnit: request.normalizedUnit, ...(request.regulatoryVariant === undefined ? {} : { regulatoryVariant: request.regulatoryVariant }) };
   const records = await bridge.list(request.tenantId, query);
   const applicable = sortedApplicableRecords(records, period.start, period.end);

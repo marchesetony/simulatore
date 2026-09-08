@@ -106,7 +106,7 @@ export class ProductionRegulatoryPersistenceBridge {
   }
 
   async resolve(tenantId: string, query: Required<Pick<RegulatoryValueQuery, "componentCode" | "customerScope" | "effectiveAt">> & Pick<RegulatoryValueQuery, "normalizedUnit" | "regulatoryVariant">): Promise<RegulatoryValueRecord | null> {
-    if (query.componentCode === "ASOS" && typeof query.regulatoryVariant !== "string") fail("REGULATORY_VARIANT_REQUIRED");
+    if (query.componentCode === "ASOS" && query.customerScope === "NON_DOMESTIC_BT_BTA6" && typeof query.regulatoryVariant !== "string") fail("REGULATORY_VARIANT_REQUIRED");
     const matches = await this.list(tenantId, query);
     if (matches.length > 1) fail("REGULATORY_APPROVED_VALUE_CONFLICT");
     return matches[0] ?? null;

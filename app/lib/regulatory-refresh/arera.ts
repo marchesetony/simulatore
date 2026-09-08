@@ -1,7 +1,7 @@
 import type { RegulatoryRepository } from "../foundation/regulatory-ports.ts";
 import type { RegulatoryCustomerScope, RegulatoryValueComponentCode, RegulatoryValueRecord } from "../foundation/regulatory-types.ts";
 // @ts-expect-error Node's strip-only test runner requires the explicit extension.
-import { ARERA_SYSTEM_CHARGES_PAGE, createRegulatoryValue, fetchOfficialBta6Sources, AreraElectricityRegulatorySourceAdapter, type AreraFetcher } from "../foundation/arera-electricity-regulatory.ts";
+import { ARERA_SYSTEM_CHARGES_PAGE, createRegulatoryValue, fetchOfficialBta6Sources, AreraElectricityRegulatorySourceAdapter, type AreraFetcher, DOMESTIC_EQUAL_RATE_APPLICATION_BASIS } from "../foundation/arera-electricity-regulatory.ts";
 // @ts-expect-error Node's strip-only test runner requires the explicit extension.
 import { CALCULATED_REGULATORY_DOMAINS, regulatoryDomainKey, type RegulatoryRefreshDomain } from "./registry.ts";
 
@@ -75,12 +75,16 @@ export function createAreraRegulatorySourceReader(input: { readonly fetcher?: Ar
       };
       const residentUc6Power = system.find((record) => record.componentCode === "UC6" && record.normalizedUnit === "EUR/KW/YEAR");
       const residentUc6Energy = system.find((record) => record.componentCode === "UC6" && record.normalizedUnit === "EUR/KWH");
+      const residentAsos = system.filter((record) => record.componentCode === "ASOS" && record.customerScope === "DOMESTIC_RESIDENT_BT" && record.normalizedUnit === "EUR/KWH").sort((left, right) => Date.parse(right.effectiveFrom) - Date.parse(left.effectiveFrom))[0];
+      const residentArim = system.filter((record) => record.componentCode === "ARIM" && record.customerScope === "DOMESTIC_RESIDENT_BT" && record.normalizedUnit === "EUR/KWH").sort((left, right) => Date.parse(left.effectiveFrom) - Date.parse(right.effectiveFrom))[0];
+      if (residentAsos && !residentAsos.applicationBasis.includes(DOMESTIC_EQUAL_RATE_APPLICATION_BASIS)) throw new Error("DOMESTIC_ASOS_APPLICATION_BASIS_INVALID");
+      if (residentArim && !residentArim.applicationBasis.includes(DOMESTIC_EQUAL_RATE_APPLICATION_BASIS)) throw new Error("DOMESTIC_ARIM_APPLICATION_BASIS_INVALID");
       const bta6Asos = Object.fromEntries(system.filter((record) => record.componentCode === "ASOS" && record.customerScope === "NON_DOMESTIC_BT_BTA6" && record.regulatoryVariant !== undefined).map((record) => [`${record.componentCode}|${record.customerScope}|${record.normalizedUnit}|${record.regulatoryVariant}`, record]));
       const records: RegulatoryValueRecord[] = [];
       for (const domain of CALCULATED_REGULATORY_DOMAINS) {
         const source = domain.customerScope === "NON_DOMESTIC_BT_BTA6"
           ? ({ "NETWORK_FIXED|NON_DOMESTIC_BT_BTA6|EUR/POD/YEAR": bta6.fixed, "NETWORK_POWER|NON_DOMESTIC_BT_BTA6|EUR/KW/YEAR": bta6.power, "NETWORK_ENERGY|NON_DOMESTIC_BT_BTA6|EUR/KWH": bta6.energy, "METERING_FIXED|NON_DOMESTIC_BT_BTA6|EUR/POD/YEAR": bta6.metering, "TRANSMISSION_ENERGY|NON_DOMESTIC_BT_BTA6|EUR/KWH": bta6.transmission, "UC3|NON_DOMESTIC_BT_BTA6|EUR/KWH": bta6Uc3, "UC6|NON_DOMESTIC_BT_BTA6|EUR/KWH": bta6Uc6Energy, "UC6|NON_DOMESTIC_BT_BTA6|EUR/POD/YEAR": bta6Uc6Fixed, "ARIM|NON_DOMESTIC_BT_BTA6|EUR/POD/YEAR": bta6ArimFixed, "ARIM|NON_DOMESTIC_BT_BTA6|EUR/KW/YEAR": bta6ArimPower, "ARIM|NON_DOMESTIC_BT_BTA6|EUR/KWH": bta6ArimEnergy, ...bta6Asos } as Record<string, RegulatoryValueRecord | undefined>)[regulatoryDomainKey(domain)]
-          : domain.componentCode === "UC6" && domain.normalizedUnit === "EUR/KW/YEAR" ? residentUc6Power : domain.componentCode === "UC6" ? residentUc6Energy : residentSource[domain.componentCode];
+          : domain.componentCode === "ASOS" ? residentAsos : domain.componentCode === "ARIM" ? residentArim : domain.componentCode === "UC6" && domain.normalizedUnit === "EUR/KW/YEAR" ? residentUc6Power : domain.componentCode === "UC6" ? residentUc6Energy : residentSource[domain.componentCode];
         if (!source || source.normalizedUnit !== domain.normalizedUnit) continue;
         records.push(domain.customerScope === "DOMESTIC_RESIDENT_BT" && source.customerScope !== domain.customerScope ? exactScopeRecord(source, domain.customerScope) : source);
       }
