@@ -34,9 +34,10 @@ const keys = new Set(AUTO_REFRESH_REGISTERED_DOMAINS.map(regulatoryDomainKey));
 for (const unit of ["EUR/POD/YEAR", "EUR/KW/YEAR", "EUR/KWH"]) {
   assert.equal(keys.has(`ARIM|NON_DOMESTIC_BT_BTA6|${unit}`), true);
 }
-assert.equal(CALCULATED_REGULATORY_DOMAINS.length, 17);
-assert.equal(AUTO_REFRESH_REGISTERED_DOMAINS.length, 17);
-assert.equal(AUTO_REFRESH_REGISTERED_DOMAINS, CALCULATED_REGULATORY_DOMAINS);
+assert.equal(CALCULATED_REGULATORY_DOMAINS.length, 29);
+assert.equal(CALCULATED_REGULATORY_DOMAINS.filter((domain) => domain.regulatoryVariant === undefined).length, 17);
+assert.equal(AUTO_REFRESH_REGISTERED_DOMAINS.length, 29);
+assert.deepEqual(AUTO_REFRESH_REGISTERED_DOMAINS.map(regulatoryDomainKey), CALCULATED_REGULATORY_DOMAINS.map(regulatoryDomainKey));
 
 const local = new LocalFilesystemAdapter("var/phase6");
 const bridge = new ProductionRegulatoryPersistenceBridge(local.collection("regulatory-values"), local.collection("regulatory-approval-domains"));

@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import type { AuthRole } from "./auth/types.ts";
-import type { RegulatoryValueRecord } from "./foundation/regulatory-types.ts";
+import type { RegulatoryValueRecord, RegulatoryVariant } from "./foundation/regulatory-types.ts";
 // @ts-expect-error Node's strip-only test runner requires the explicit extension.
 import { validateChecksum, validateTenantId } from "./foundation/regulatory-validation.ts";
 import type { AuditEvent, AuditEventRepository, TenantRecord, TenantRecordRepository } from "./persistence/types.ts";
@@ -22,6 +22,7 @@ export interface RegulatoryApprovalDomainState {
   readonly componentCode: RegulatoryValueRecord["componentCode"];
   readonly customerScope: RegulatoryValueRecord["customerScope"];
   readonly normalizedUnit: string;
+  readonly regulatoryVariant?: RegulatoryVariant;
   readonly effectiveApprovals: readonly RegulatoryApprovalEffectiveEntry[];
 }
 
@@ -100,9 +101,12 @@ function assertTargetRecord(value: RegulatoryValueRecord, tenantId: string): Reg
   return value;
 }
 
-export function collisionDomainKey(value: Pick<RegulatoryValueRecord, "componentCode" | "customerScope" | "normalizedUnit">): string {
+export function collisionDomainKey(value: Pick<RegulatoryValueRecord, "componentCode" | "customerScope" | "normalizedUnit" | "regulatoryVariant">): string {
   if ([value.componentCode, value.customerScope, value.normalizedUnit].some((item) => typeof item !== "string" || item.trim() === "" || item.includes("|"))) fail("REGULATORY_APPROVAL_DOMAIN_INVALID");
-  return `${value.componentCode}|${value.customerScope}|${value.normalizedUnit}`;
+  if (value.regulatoryVariant !== undefined && (typeof value.regulatoryVariant !== "string" || value.regulatoryVariant.includes("|"))) fail("REGULATORY_APPROVAL_DOMAIN_INVALID");
+  return value.regulatoryVariant === undefined
+    ? `${value.componentCode}|${value.customerScope}|${value.normalizedUnit}`
+    : `${value.componentCode}|${value.customerScope}|${value.normalizedUnit}|${value.regulatoryVariant}`;
 }
 
 export function regulatoryApprovalDomainId(tenantId: string, domainKey: string): string {
@@ -112,7 +116,7 @@ export function regulatoryApprovalDomainId(tenantId: string, domainKey: string):
 }
 
 function emptyState(value: RegulatoryValueRecord): RegulatoryApprovalDomainState {
-  return { domainKey: collisionDomainKey(value), componentCode: value.componentCode, customerScope: value.customerScope, normalizedUnit: value.normalizedUnit, effectiveApprovals: [] };
+  return { domainKey: collisionDomainKey(value), componentCode: value.componentCode, customerScope: value.customerScope, normalizedUnit: value.normalizedUnit, ...(value.regulatoryVariant === undefined ? {} : { regulatoryVariant: value.regulatoryVariant }), effectiveApprovals: [] };
 }
 
 function assertDomainState(state: RegulatoryApprovalDomainState, domainKey: string): RegulatoryApprovalDomainState {

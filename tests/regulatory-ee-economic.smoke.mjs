@@ -258,7 +258,7 @@ assert.equal(bta6Calculation.components.find((component) => component.formulaId 
 assert.equal(bta6Calculation.components.find((component) => component.formulaId === "REGULATED_BTA6_ARIM_POWER_RATE_TIMES_REGULATORY_KW_TIME")?.formulaInputs.powerBasisKw, 20);
 assert.equal(bta6Calculation.components.reduce((sum, component) => sum + component.amount.minorUnits, 0), 8011);
 assert.deepEqual(bta6Calculation.includedComponents, ["NETWORK_FIXED", "NETWORK_POWER", "NETWORK_ENERGY", "METERING_FIXED", "TRANSMISSION_ENERGY", "UC3_ENERGY", "UC6_ENERGY", "UC6_FIXED", "ARIM_FIXED", "ARIM_POWER", "ARIM_ENERGY"]);
-assert.equal(bta6Calculation.partialWarning, "REGULATED_SUBSET_PARTIAL_BTA6_NETWORK_METERING_TRANSMISSION_UC3_UC6_ARIM_ONLY");
+assert.equal(bta6Calculation.partialWarning, "BTA6_ASOS_EXCLUDED_CLASS_UNKNOWN");
 assert.equal(bta6Calculation.components.some((component) => component.formulaInputs.componentCode === "UC6" && component.formulaInputs.rateEurPerKwYear !== undefined), false);
 console.log("BTA6_NETWORK_FIXED_ECONOMIC=PASS");
 console.log("BTA6_NETWORK_POWER_ECONOMIC=PASS");

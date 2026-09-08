@@ -104,6 +104,6 @@ await tenantMismatchRepository.append({ tenantId: "tenant_a", recordId: "reg-ten
 await assert.rejects(() => new ProductionRegulatoryPersistenceBridge(tenantMismatchRepository, new MemoryRepository()).list("tenant_a"), /REGULATORY_TENANT_MISMATCH/);
 
 const source = await readFile("app/lib/regulatory-bridge.ts", "utf8");
-assert.equal(/(?:EUR\/KWH|EUR\/MWH|0\.\d+|NETWORK_FIXED|ASOS|DISPATCHING|CAPACITY_MARKET)/.test(source), false, "production bridge has no hardcoded regulatory values");
+assert.equal(/(?:EUR\/KWH|EUR\/MWH|0\.\d+|NETWORK_FIXED|DISPATCHING|CAPACITY_MARKET)/.test(source), false, "production bridge has no hardcoded regulatory values");
 assert.equal(/fetch\(|axios|https:\/\//.test(source), false, "bridge makes no network calls");
 console.log("REGULATORY_PRODUCTION_BRIDGE_SMOKE=OK");

@@ -29,6 +29,7 @@ function exactScopeRecord(record: RegulatoryValueRecord, customerScope: Regulato
     conversionProvenance: record.conversionProvenance,
     carriedForwardFrom: record.carriedForwardFrom,
     confirmationSource: record.confirmationSource,
+    regulatoryVariant: record.regulatoryVariant,
     authority: record.authority,
     publishedBy: record.publishedBy === "TERNA" ? "TERNA" : record.publishedBy === undefined ? undefined : "ARERA",
     calculatedBy: record.calculatedBy === "TERNA" ? "TERNA" : record.calculatedBy === undefined ? undefined : "ARERA",
@@ -74,10 +75,11 @@ export function createAreraRegulatorySourceReader(input: { readonly fetcher?: Ar
       };
       const residentUc6Power = system.find((record) => record.componentCode === "UC6" && record.normalizedUnit === "EUR/KW/YEAR");
       const residentUc6Energy = system.find((record) => record.componentCode === "UC6" && record.normalizedUnit === "EUR/KWH");
+      const bta6Asos = Object.fromEntries(system.filter((record) => record.componentCode === "ASOS" && record.customerScope === "NON_DOMESTIC_BT_BTA6" && record.regulatoryVariant !== undefined).map((record) => [`${record.componentCode}|${record.customerScope}|${record.normalizedUnit}|${record.regulatoryVariant}`, record]));
       const records: RegulatoryValueRecord[] = [];
       for (const domain of CALCULATED_REGULATORY_DOMAINS) {
         const source = domain.customerScope === "NON_DOMESTIC_BT_BTA6"
-          ? ({ "NETWORK_FIXED|NON_DOMESTIC_BT_BTA6|EUR/POD/YEAR": bta6.fixed, "NETWORK_POWER|NON_DOMESTIC_BT_BTA6|EUR/KW/YEAR": bta6.power, "NETWORK_ENERGY|NON_DOMESTIC_BT_BTA6|EUR/KWH": bta6.energy, "METERING_FIXED|NON_DOMESTIC_BT_BTA6|EUR/POD/YEAR": bta6.metering, "TRANSMISSION_ENERGY|NON_DOMESTIC_BT_BTA6|EUR/KWH": bta6.transmission, "UC3|NON_DOMESTIC_BT_BTA6|EUR/KWH": bta6Uc3, "UC6|NON_DOMESTIC_BT_BTA6|EUR/KWH": bta6Uc6Energy, "UC6|NON_DOMESTIC_BT_BTA6|EUR/POD/YEAR": bta6Uc6Fixed, "ARIM|NON_DOMESTIC_BT_BTA6|EUR/POD/YEAR": bta6ArimFixed, "ARIM|NON_DOMESTIC_BT_BTA6|EUR/KW/YEAR": bta6ArimPower, "ARIM|NON_DOMESTIC_BT_BTA6|EUR/KWH": bta6ArimEnergy } as Record<string, RegulatoryValueRecord | undefined>)[regulatoryDomainKey(domain)]
+          ? ({ "NETWORK_FIXED|NON_DOMESTIC_BT_BTA6|EUR/POD/YEAR": bta6.fixed, "NETWORK_POWER|NON_DOMESTIC_BT_BTA6|EUR/KW/YEAR": bta6.power, "NETWORK_ENERGY|NON_DOMESTIC_BT_BTA6|EUR/KWH": bta6.energy, "METERING_FIXED|NON_DOMESTIC_BT_BTA6|EUR/POD/YEAR": bta6.metering, "TRANSMISSION_ENERGY|NON_DOMESTIC_BT_BTA6|EUR/KWH": bta6.transmission, "UC3|NON_DOMESTIC_BT_BTA6|EUR/KWH": bta6Uc3, "UC6|NON_DOMESTIC_BT_BTA6|EUR/KWH": bta6Uc6Energy, "UC6|NON_DOMESTIC_BT_BTA6|EUR/POD/YEAR": bta6Uc6Fixed, "ARIM|NON_DOMESTIC_BT_BTA6|EUR/POD/YEAR": bta6ArimFixed, "ARIM|NON_DOMESTIC_BT_BTA6|EUR/KW/YEAR": bta6ArimPower, "ARIM|NON_DOMESTIC_BT_BTA6|EUR/KWH": bta6ArimEnergy, ...bta6Asos } as Record<string, RegulatoryValueRecord | undefined>)[regulatoryDomainKey(domain)]
           : domain.componentCode === "UC6" && domain.normalizedUnit === "EUR/KW/YEAR" ? residentUc6Power : domain.componentCode === "UC6" ? residentUc6Energy : residentSource[domain.componentCode];
         if (!source || source.normalizedUnit !== domain.normalizedUnit) continue;
         records.push(domain.customerScope === "DOMESTIC_RESIDENT_BT" && source.customerScope !== domain.customerScope ? exactScopeRecord(source, domain.customerScope) : source);
@@ -88,7 +90,7 @@ export function createAreraRegulatorySourceReader(input: { readonly fetcher?: Ar
 }
 
 export function assertReaderDomain(domain: RegulatoryRefreshDomain, records: readonly RegulatoryValueRecord[]): RegulatoryValueRecord {
-  const matches = records.filter((record) => record.componentCode === domain.componentCode && record.customerScope === domain.customerScope && record.normalizedUnit === domain.normalizedUnit);
+  const matches = records.filter((record) => record.componentCode === domain.componentCode && record.customerScope === domain.customerScope && record.normalizedUnit === domain.normalizedUnit && record.regulatoryVariant === domain.regulatoryVariant);
   if (matches.length !== 1) throw new Error(`ARERA_REFRESH_SOURCE_DOMAIN_INVALID:${regulatoryDomainKey(domain)}`);
   return matches[0];
 }

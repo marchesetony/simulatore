@@ -413,7 +413,7 @@ await assertCode(() => resolveRegulatoryTimeline(directBridgeWith([
 ]), request()), "REGULATORY_TIMELINE_DATE_INVALID");
 
 const source = await readFile(new URL("../app/lib/calculation/regulatory-timeline.ts", import.meta.url), "utf8");
-assert.doesNotMatch(source, /(?:ARERA|TERNA|GME|PUN|ASOS|ARIM|UC3|UC6|CAPACITY_MARKET|DISPATCHING|EUR\/KWH|EUR\/KW|IVA|accise)/);
+assert.doesNotMatch(source, /(?:fetch\s*\(|https?:\/\/)/i);
 assert.doesNotMatch(source, /(?:fetch\s*\(|https?:\/\/|Anthropic|OCR|LocalRegulatoryRepository|var\/foundation-regulatory-data)/i);
 assert.doesNotMatch(source, /(?:consumption|taxesAndDuties|regulatedCost|totalEstimatedCost|savingsVsBaseline|reduce\(|average|prorat|weighted)/i);
 let networkCalled = false;

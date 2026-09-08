@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { inflateRawSync } from "node:zlib";
 import type { RegulatoryRepository } from "./regulatory-ports";
-import type { RegulatoryCustomerScope, RegulatoryValueComponentCode, RegulatoryValueRecord, RegulatoryValueSourceType } from "./regulatory-types";
+import type { RegulatoryCustomerScope, RegulatoryValueComponentCode, RegulatoryValueRecord, RegulatoryValueSourceType, RegulatoryVariant } from "./regulatory-types";
 // @ts-expect-error Node's strip-only test runner requires the explicit extension.
 import { referenceDomainForComponent } from "./regulatory-domains.ts";
 // @ts-expect-error Node's strip-only test runner requires the explicit extension.
@@ -22,6 +22,7 @@ export const ARERA_227_IDENTIFIER = "227/2026/R/com";
 export const ARERA_588_IDENTIFIER = "588/2025/R/com";
 export const ARERA_588_TABLES_URL = "https://www.arera.it/fileadmin/allegati/docs/25/588-2025-R-com-TABELLE.xlsx";
 export const ARERA_98_PDF_URL = "https://www.arera.it/fileadmin/allegati/docs/26/98-2026-R-com.pdf";
+export const ARERA_98_TABLES_URL = "https://www.arera.it/fileadmin/allegati/docs/26/98-2026-R-com-TABELLE.xlsx";
 export const ARERA_98_IDENTIFIER = "98/2026/R/com";
 export const ARERA_227_PDF_URL = "https://www.arera.it/fileadmin/allegati/docs/26/227-2026-R-com.pdf";
 export const ARERA_587_PAGE = "https://www.arera.it/atti-e-provvedimenti/dettaglio/25/587-25";
@@ -150,6 +151,7 @@ export function createRegulatoryValue(input: {
   readonly effectiveTo: string | null;
   readonly componentCode: RegulatoryValueComponentCode;
   readonly customerScope?: string;
+  readonly regulatoryVariant?: RegulatoryVariant;
   readonly originalValue: number;
   readonly originalUnit: string;
   readonly applicationBasis: string;
@@ -166,13 +168,15 @@ export function createRegulatoryValue(input: {
 }): RegulatoryValueRecord {
   if (!isAllowedOfficialRegulatoryUrl(input.sourceReference)) throw new Error("OFFICIAL_REGULATORY_DOMAIN_NOT_ALLOWED");
   const normalized = normalizeRegulatoryUnit(input.originalValue, input.originalUnit);
-  const identityKey = [input.tenantId, input.officialIdentifier, input.componentCode, scopeFor(input.customerScope), input.effectiveFrom, normalized.unit].join("|");
+  const identityParts = [input.tenantId, input.officialIdentifier, input.componentCode, scopeFor(input.customerScope), input.effectiveFrom, normalized.unit];
+  if (input.regulatoryVariant !== undefined) identityParts.push(input.regulatoryVariant);
+  const identityKey = identityParts.join("|");
   const base = {
     tenantId: input.tenantId, id: recordId(identityKey), identityKey, version: "1", parentVersionId: null,
     authority: input.authority ?? "ARERA", sourceType: input.sourceType, sourceReference: input.sourceReference, officialIdentifier: input.officialIdentifier,
     publishedBy: input.publishedBy ?? input.authority ?? "ARERA", calculatedBy: input.calculatedBy ?? input.authority ?? "ARERA", officialName: input.officialName ?? input.componentCode, contractPassThroughRequired: input.contractPassThroughRequired ?? false,
     publicationDate: input.publicationDate, retrievedAt: input.retrievedAt, effectiveFrom: input.effectiveFrom, effectiveTo: input.effectiveTo,
-    vector: "EE" as const, customerScope: scopeFor(input.customerScope), componentCode: input.componentCode, referenceDomain: input.referenceDomain ?? referenceDomainForComponent(input.componentCode) ?? undefined,
+    vector: "EE" as const, customerScope: scopeFor(input.customerScope), componentCode: input.componentCode, ...(input.regulatoryVariant === undefined ? {} : { regulatoryVariant: input.regulatoryVariant }), referenceDomain: input.referenceDomain ?? referenceDomainForComponent(input.componentCode) ?? undefined,
     originalValue: input.originalValue, originalUnit: canonicalUnit(input.originalUnit), normalizedValue: normalized.value, normalizedUnit: normalized.unit,
     applicationBasis: input.applicationBasis, sourceSha256: input.sourceSha256, approvalStatus: "IMPORTED" as const, reviewStatus: "NEEDS_REVIEW" as const,
     ...(input.carriedForwardFrom === undefined ? {} : { carriedForwardFrom: input.carriedForwardFrom }),
@@ -469,9 +473,70 @@ const xlsxNumeric = (cells: readonly XlsxCell[], row: number, column: string): n
   return Number.isFinite(parsed) ? parsed : null;
 };
 
-function parseArera227Xlsx(input: { readonly body: Uint8Array; readonly sourceReference: string; readonly publicationDate: string; readonly retrievedAt: string; readonly sourceSha256: string; readonly tenantId: string }): readonly RegulatoryValueRecord[] {
+const asosVariantFromTitle = (title: string): RegulatoryVariant | null => {
+  const normalized = clean(title).toUpperCase();
+  if (/CLASSE DI AGEVOLAZIONE:\s*0\b/.test(normalized)) return "ASOS_CLASS_0";
+  if (/CLASSE DI AGEVOLAZIONE:\s*ASOS1\b/.test(normalized)) return "ASOS_CLASS_1";
+  if (/CLASSE DI AGEVOLAZIONE:\s*ASOS2\b/.test(normalized)) return "ASOS_CLASS_2";
+  if (/CLASSE DI AGEVOLAZIONE:\s*ASOS3\b/.test(normalized)) return "ASOS_CLASS_3";
+  return null;
+};
+
+export function parseAreraAsosBta6ClassesXlsx(input: {
+  readonly body: Uint8Array;
+  readonly sourceReference: string;
+  readonly officialIdentifier: string;
+  readonly publicationDate: string;
+  readonly retrievedAt: string;
+  readonly sourceSha256?: string;
+  readonly tenantId?: string;
+  readonly effectiveFrom: string;
+  readonly effectiveTo?: string | null;
+}): readonly RegulatoryValueRecord[] {
   const shared = xlsxSharedStrings(input.body);
+  const tenantId = input.tenantId ?? "tenant_local-demo";
+  const sourceSha256 = input.sourceSha256 ?? sourceHash(input.body);
   const records: RegulatoryValueRecord[] = [];
+  for (let sheetNumber = 1; sheetNumber <= 12; sheetNumber += 1) {
+    let cells: readonly XlsxCell[];
+    try { cells = xlsxSheet(input.body, `xl/worksheets/sheet${sheetNumber}.xml`, shared); } catch (error) {
+      if (error instanceof Error && error.message.startsWith("ARERA_XLSX_ENTRY_MISSING")) break;
+      throw error;
+    }
+    const title = `${xlsxCell(cells, 2, "A")} ${xlsxCell(cells, 3, "A")} ${xlsxCell(cells, 6, "C")}`;
+    const regulatoryVariant = asosVariantFromTitle(title);
+    if (regulatoryVariant === null) continue;
+    const fixed = xlsxNumeric(cells, 20, "C");
+    const power = xlsxNumeric(cells, 20, "D");
+    const energy = xlsxNumeric(cells, 20, "E");
+    if (fixed === null || power === null || energy === null) throw new Error(`ARERA_ASOS_BTA6_CLASS_ROW_MISSING:${regulatoryVariant}`);
+    const basis = `Tabella ASOS ufficiale ${sheetNumber}, ${regulatoryVariant}; riga Altre utenze in bassa tensione con potenza disponibile superiore a 16,5 kW`;
+    const base = { tenantId, sourceType: "OFFICIAL_ATTACHMENT" as const, sourceReference: input.sourceReference, officialIdentifier: input.officialIdentifier, publicationDate: input.publicationDate, retrievedAt: input.retrievedAt, effectiveFrom: input.effectiveFrom, effectiveTo: input.effectiveTo === undefined ? null : input.effectiveTo, componentCode: "ASOS" as const, customerScope: "NON_DOMESTIC_BT_BTA6" as const, regulatoryVariant, applicationBasis: basis, sourceSha256 };
+    records.push(createValue({ ...base, originalValue: fixed, originalUnit: "CENT_EUR/POD/YEAR" }));
+    records.push(createValue({ ...base, originalValue: power, originalUnit: "CENT_EUR/KW/YEAR" }));
+    records.push(createValue({ ...base, originalValue: energy, originalUnit: "CENT_EUR/KWH" }));
+  }
+  if (records.length === 0) throw new Error("ARERA_ASOS_BTA6_CLASS_ROWS_MISSING");
+  return records;
+}
+
+export function discoverAreraCurrentEffectiveFrom(html: string, retrievedAt: string): string {
+  const at = Date.parse(retrievedAt);
+  if (!Number.isFinite(at)) throw new Error("ARERA_RETRIEVAL_DATE_INVALID");
+  const dates = [...html.matchAll(/\bdal\s+0?(\d{1,2})[./](0?\d{1,2})[./](\d{2,4})/gi)].map((match) => {
+    const year = Number(match[3].length === 2 ? `20${match[3]}` : match[3]);
+    const month = Number(match[2]);
+    const day = Number(match[1]);
+    const iso = `${String(year).padStart(4, "0")}-${String(month).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
+    return { iso, time: Date.parse(`${iso}T00:00:00.000Z`) };
+  }).filter((item) => Number.isFinite(item.time) && item.time <= at).sort((left, right) => right.time - left.time);
+  if (dates.length === 0) throw new Error("ARERA_EFFECTIVE_FROM_NOT_DISCOVERED");
+  return dates[0].iso;
+}
+
+function parseArera227Xlsx(input: { readonly body: Uint8Array; readonly sourceReference: string; readonly publicationDate: string; readonly retrievedAt: string; readonly sourceSha256: string; readonly tenantId: string; readonly effectiveFrom: string }): readonly RegulatoryValueRecord[] {
+  const shared = xlsxSharedStrings(input.body);
+  const records: RegulatoryValueRecord[] = [...parseAreraAsosBta6ClassesXlsx({ ...input, officialIdentifier: ARERA_227_IDENTIFIER, effectiveFrom: input.effectiveFrom, effectiveTo: null })];
   for (let sheetNumber = 1; sheetNumber <= 12; sheetNumber += 1) {
     const sheetName = `xl/worksheets/sheet${sheetNumber}.xml`;
     let cells: readonly XlsxCell[];
@@ -488,8 +553,8 @@ function parseArera227Xlsx(input: { readonly body: Uint8Array; readonly sourceRe
       const applicationBasis = componentCode === "ARIM"
         ? `Tabella B ufficiale ${componentCode}; valori confermati dal 01/07/2026, precedentemente in vigore secondo la fonte richiamata ${ARERA_227_IDENTIFIER}`
         : `Tabella A ufficiale ${componentCode}; classe di agevolazione 0; riga ${scope}`;
-      if (fixed !== null) records.push(createValue({ tenantId: input.tenantId, sourceType: "OFFICIAL_ATTACHMENT", sourceReference: input.sourceReference, officialIdentifier: ARERA_227_IDENTIFIER, publicationDate: input.publicationDate, retrievedAt: input.retrievedAt, effectiveFrom: "2026-07-01", effectiveTo: null, componentCode, customerScope: scope, originalValue: fixed, originalUnit: "CENT_EUR/POD/YEAR", applicationBasis, sourceSha256: input.sourceSha256 }));
-      if (energy !== null) records.push(createValue({ tenantId: input.tenantId, sourceType: "OFFICIAL_ATTACHMENT", sourceReference: input.sourceReference, officialIdentifier: ARERA_227_IDENTIFIER, publicationDate: input.publicationDate, retrievedAt: input.retrievedAt, effectiveFrom: "2026-07-01", effectiveTo: null, componentCode, customerScope: scope, originalValue: energy, originalUnit: "CENT_EUR/KWH", applicationBasis, sourceSha256: input.sourceSha256 }));
+      if (fixed !== null) records.push(createValue({ tenantId: input.tenantId, sourceType: "OFFICIAL_ATTACHMENT", sourceReference: input.sourceReference, officialIdentifier: ARERA_227_IDENTIFIER, publicationDate: input.publicationDate, retrievedAt: input.retrievedAt, effectiveFrom: input.effectiveFrom, effectiveTo: null, componentCode, customerScope: scope, originalValue: fixed, originalUnit: "CENT_EUR/POD/YEAR", applicationBasis, sourceSha256: input.sourceSha256 }));
+      if (energy !== null) records.push(createValue({ tenantId: input.tenantId, sourceType: "OFFICIAL_ATTACHMENT", sourceReference: input.sourceReference, officialIdentifier: ARERA_227_IDENTIFIER, publicationDate: input.publicationDate, retrievedAt: input.retrievedAt, effectiveFrom: input.effectiveFrom, effectiveTo: null, componentCode, customerScope: scope, originalValue: energy, originalUnit: "CENT_EUR/KWH", applicationBasis, sourceSha256: input.sourceSha256 }));
     }
   }
   if (records.length === 0) throw new Error("ARERA_227_XLSX_STRUCTURED_ROWS_MISSING");
@@ -612,14 +677,15 @@ export function parseAreraDomesticJuly2026Xlsx(body: Uint8Array): AreraDomesticJ
   return { sheetName: sheet.name, rowCount: rows.length, componentCount: rows.length, unmappedCount: rows.filter((row) => row.componentCode === null).length, rows };
 }
 
-export function parseArera227StructuredAttachment(input: { readonly body: string | Uint8Array; readonly contentType?: string; readonly sourceReference: string; readonly publicationDate: string; readonly retrievedAt: string; readonly sourceSha256?: string; readonly tenantId?: string }): readonly RegulatoryValueRecord[] {
+export function parseArera227StructuredAttachment(input: { readonly body: string | Uint8Array; readonly contentType?: string; readonly sourceReference: string; readonly publicationDate: string; readonly retrievedAt: string; readonly sourceSha256?: string; readonly tenantId?: string; readonly effectiveFrom?: string }): readonly RegulatoryValueRecord[] {
   const type = (input.contentType ?? "").toLowerCase();
   const isSpreadsheet = type.includes("spreadsheet") || /\.(?:xls|xlsx)(?:$|\?)/i.test(input.sourceReference);
   const tenantId = input.tenantId ?? "tenant_local-demo";
   const sourceSha256 = input.sourceSha256 ?? textHash(typeof input.body === "string" ? input.body : new TextDecoder().decode(input.body));
   if (isSpreadsheet) {
     if (!(input.body instanceof Uint8Array) || !/\.xlsx(?:$|\?)/i.test(input.sourceReference)) throw new Error("ARERA_227_STRUCTURED_PARSE_BLOCKED");
-    return parseArera227Xlsx({ body: input.body, sourceReference: input.sourceReference, publicationDate: input.publicationDate, retrievedAt: input.retrievedAt, sourceSha256, tenantId });
+    if (!input.effectiveFrom) throw new Error("ARERA_EFFECTIVE_FROM_REQUIRED");
+    return parseArera227Xlsx({ body: input.body, sourceReference: input.sourceReference, publicationDate: input.publicationDate, retrievedAt: input.retrievedAt, sourceSha256, tenantId, effectiveFrom: input.effectiveFrom });
   }
   if (type.includes("pdf") || /\.pdf(?:$|\?)/i.test(input.sourceReference)) throw new Error("ARERA_227_STRUCTURED_PARSE_BLOCKED");
   if (typeof input.body !== "string") throw new Error("ARERA_227_STRUCTURED_PARSE_BLOCKED");
@@ -636,8 +702,9 @@ export function parseArera227StructuredAttachment(input: { readonly body: string
   const basisIndex = indexOf(["applicationbasis", "basis", "applicazione"], 6);
   return rows.slice(1).filter((row) => row[codeIndex]).map((row) => {
     const code = componentFor(row[codeIndex]);
-    const effectiveFrom = clean(row[fromIndex] ?? "") || (code === "ASOS" ? "2026-07-01" : "2026-01-01");
-    return createValue({ tenantId, sourceType: "OFFICIAL_ATTACHMENT", sourceReference: input.sourceReference, officialIdentifier: ARERA_227_IDENTIFIER, publicationDate: input.publicationDate, retrievedAt: input.retrievedAt, effectiveFrom, effectiveTo: clean(row[toIndex] ?? "") || null, componentCode: code, customerScope: row[scopeIndex], originalValue: parseItalianNumber(row[valueIndex]), originalUnit: row[unitIndex], applicationBasis: clean(row[basisIndex] ?? "") || (code === "ARIM" ? "ARIM confermata dalla precedente decorrenza 01/01/2026" : `componente ${code} dal ${effectiveFrom}`), sourceSha256 });
+    const effectiveFrom = clean(row[fromIndex] ?? "") || input.effectiveFrom || "";
+    if (!effectiveFrom) throw new Error("ARERA_EFFECTIVE_FROM_REQUIRED");
+    return createValue({ tenantId, sourceType: "OFFICIAL_ATTACHMENT", sourceReference: input.sourceReference, officialIdentifier: ARERA_227_IDENTIFIER, publicationDate: input.publicationDate, retrievedAt: input.retrievedAt, effectiveFrom, effectiveTo: clean(row[toIndex] ?? "") || null, componentCode: code, customerScope: row[scopeIndex], originalValue: parseItalianNumber(row[valueIndex]), originalUnit: row[unitIndex], applicationBasis: clean(row[basisIndex] ?? "") || (code === "ARIM" ? "ARIM confermata dalla precedente decorrenza ufficiale" : `componente ${code} dal ${effectiveFrom}`), sourceSha256 });
   });
 }
 
@@ -809,16 +876,20 @@ export class AreraElectricityRegulatorySourceAdapter {
     const attachments = discoverAreraAttachments(new TextDecoder().decode(decisionPayload.bytes));
     const structuredAttachments = attachments.filter((item) => ["XLSX", "CSV", "HTML"].includes(item.extension));
     const attachment = structuredAttachments[0] ?? attachments.find((item) => ["XLSX", "XLS", "CSV", "HTML", "PDF"].includes(item.extension)) ?? null;
+    let currentEffectiveFrom: string | undefined;
+    try { currentEffectiveFrom = discoverAreraCurrentEffectiveFrom(new TextDecoder().decode(decisionPayload.bytes), input.retrievedAt); } catch (error) {
+      if (!(error instanceof Error) || error.message !== "ARERA_EFFECTIVE_FROM_NOT_DISCOVERED") throw error;
+    }
     let systemChargeRecords: RegulatoryValueRecord[] = [];
     let structuredParse: "PARSED" | "BLOCKED" | "MISSING" = "MISSING";
     for (const currentAttachment of structuredAttachments) {
       try {
         if (currentAttachment.extension === "XLSX") {
           const attachmentPayload = await fetchOfficialAreraSource(currentAttachment.url, fetcher);
-          systemChargeRecords = [...systemChargeRecords, ...parseArera227StructuredAttachment({ body: attachmentPayload.bytes, contentType: attachmentPayload.contentType, sourceReference: attachmentPayload.url, publicationDate: "2026-06-25", retrievedAt: input.retrievedAt, sourceSha256: sourceHash(attachmentPayload.bytes), tenantId })];
+          systemChargeRecords = [...systemChargeRecords, ...parseArera227StructuredAttachment({ body: attachmentPayload.bytes, contentType: attachmentPayload.contentType, sourceReference: attachmentPayload.url, publicationDate: "2026-06-25", retrievedAt: input.retrievedAt, sourceSha256: sourceHash(attachmentPayload.bytes), tenantId, effectiveFrom: currentEffectiveFrom })];
         } else {
           const attachmentPayload = await fetchOfficialAreraSource(currentAttachment.url, fetcher);
-          systemChargeRecords = [...systemChargeRecords, ...parseArera227StructuredAttachment({ body: new TextDecoder().decode(attachmentPayload.bytes), contentType: currentAttachment.extension === "HTML" ? "text/html" : "text/csv", sourceReference: attachmentPayload.url, publicationDate: "2026-06-25", retrievedAt: input.retrievedAt, sourceSha256: sourceHash(attachmentPayload.bytes), tenantId })];
+          systemChargeRecords = [...systemChargeRecords, ...parseArera227StructuredAttachment({ body: new TextDecoder().decode(attachmentPayload.bytes), contentType: currentAttachment.extension === "HTML" ? "text/html" : "text/csv", sourceReference: attachmentPayload.url, publicationDate: "2026-06-25", retrievedAt: input.retrievedAt, sourceSha256: sourceHash(attachmentPayload.bytes), tenantId, effectiveFrom: currentEffectiveFrom })];
         }
         structuredParse = "PARSED";
       } catch (error) {

@@ -1,9 +1,10 @@
-import type { RegulatoryCustomerScope, RegulatoryValueComponentCode } from "../foundation/regulatory-types.ts";
+import type { RegulatoryCustomerScope, RegulatoryValueComponentCode, RegulatoryVariant } from "../foundation/regulatory-types.ts";
 
 export interface RegulatoryRefreshDomain {
   readonly componentCode: RegulatoryValueComponentCode;
   readonly customerScope: RegulatoryCustomerScope;
   readonly normalizedUnit: "EUR/KWH" | "EUR/KW/YEAR" | "EUR/POD/YEAR";
+  readonly regulatoryVariant?: RegulatoryVariant;
   readonly sourceAdapter: "ARERA_ELECTRICITY";
 }
 
@@ -13,6 +14,7 @@ export const REGULATORY_REFRESH_STALE_DAYS = 35 as const;
 
 const residentScope = "DOMESTIC_RESIDENT_BT" as const;
 const bta6Scope = "NON_DOMESTIC_BT_BTA6" as const;
+const asosVariants = ["ASOS_CLASS_0", "ASOS_CLASS_1", "ASOS_CLASS_2", "ASOS_CLASS_3"] as const;
 
 const residentDomains: readonly RegulatoryRefreshDomain[] = [
   { componentCode: "UC3", customerScope: residentScope, normalizedUnit: "EUR/KWH", sourceAdapter: "ARERA_ELECTRICITY" },
@@ -37,21 +39,29 @@ const bta6Domains: readonly RegulatoryRefreshDomain[] = [
   { componentCode: "ARIM", customerScope: bta6Scope, normalizedUnit: "EUR/KWH", sourceAdapter: "ARERA_ELECTRICITY" },
 ];
 
+const asosDomains: readonly RegulatoryRefreshDomain[] = asosVariants.flatMap((regulatoryVariant) => ([
+  { componentCode: "ASOS" as const, customerScope: bta6Scope, normalizedUnit: "EUR/POD/YEAR" as const, regulatoryVariant, sourceAdapter: "ARERA_ELECTRICITY" as const },
+  { componentCode: "ASOS" as const, customerScope: bta6Scope, normalizedUnit: "EUR/KW/YEAR" as const, regulatoryVariant, sourceAdapter: "ARERA_ELECTRICITY" as const },
+  { componentCode: "ASOS" as const, customerScope: bta6Scope, normalizedUnit: "EUR/KWH" as const, regulatoryVariant, sourceAdapter: "ARERA_ELECTRICITY" as const },
+]));
+
 /** Single source of truth shared by the economic calculator and refresh service. */
-export const CALCULATED_REGULATORY_DOMAINS: readonly RegulatoryRefreshDomain[] = Object.freeze([...residentDomains, ...bta6Domains]);
+export const CALCULATED_REGULATORY_DOMAINS: readonly RegulatoryRefreshDomain[] = Object.freeze([...residentDomains, ...bta6Domains, ...asosDomains]);
 export const AUTO_REFRESH_REGISTERED_DOMAINS = CALCULATED_REGULATORY_DOMAINS;
 
-export function regulatoryDomainKey(domain: Pick<RegulatoryRefreshDomain, "componentCode" | "customerScope" | "normalizedUnit">): string {
-  return `${domain.componentCode}|${domain.customerScope}|${domain.normalizedUnit}`;
+export function regulatoryDomainKey(domain: Pick<RegulatoryRefreshDomain, "componentCode" | "customerScope" | "normalizedUnit" | "regulatoryVariant">): string {
+  return domain.regulatoryVariant === undefined
+    ? `${domain.componentCode}|${domain.customerScope}|${domain.normalizedUnit}`
+    : `${domain.componentCode}|${domain.customerScope}|${domain.normalizedUnit}|${domain.regulatoryVariant}`;
 }
 
 const registeredKeys = new Set(CALCULATED_REGULATORY_DOMAINS.map(regulatoryDomainKey));
 
-export function isCalculatedRegulatoryDomain(domain: Pick<RegulatoryRefreshDomain, "componentCode" | "customerScope" | "normalizedUnit">): boolean {
+export function isCalculatedRegulatoryDomain(domain: Pick<RegulatoryRefreshDomain, "componentCode" | "customerScope" | "normalizedUnit" | "regulatoryVariant">): boolean {
   return registeredKeys.has(regulatoryDomainKey(domain));
 }
 
-export function assertCalculatedRegulatoryDomain(domain: Pick<RegulatoryRefreshDomain, "componentCode" | "customerScope" | "normalizedUnit">): void {
+export function assertCalculatedRegulatoryDomain(domain: Pick<RegulatoryRefreshDomain, "componentCode" | "customerScope" | "normalizedUnit" | "regulatoryVariant">): void {
   if (!isCalculatedRegulatoryDomain(domain)) throw new Error("REGULATORY_REFRESH_DOMAIN_UNREGISTERED");
 }
 

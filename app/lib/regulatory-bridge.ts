@@ -10,6 +10,8 @@ export interface RegulatoryValueQuery {
   readonly componentCode?: RegulatoryValueRecord["componentCode"];
   readonly customerScope?: RegulatoryValueRecord["customerScope"];
   readonly normalizedUnit?: RegulatoryValueRecord["normalizedUnit"];
+  /** Omitted means generic internal listing; null explicitly selects legacy records. */
+  readonly regulatoryVariant?: RegulatoryValueRecord["regulatoryVariant"] | null;
   readonly effectiveAt?: string;
 }
 
@@ -91,6 +93,7 @@ export class ProductionRegulatoryPersistenceBridge {
       if (query.componentCode !== undefined && candidate.componentCode !== query.componentCode) return [];
       if (query.customerScope !== undefined && candidate.customerScope !== query.customerScope) return [];
       if (query.normalizedUnit !== undefined && candidate.normalizedUnit !== query.normalizedUnit) return [];
+      if (query.regulatoryVariant !== undefined && (query.regulatoryVariant === null ? candidate.regulatoryVariant !== undefined : candidate.regulatoryVariant !== query.regulatoryVariant)) return [];
       if (query.effectiveAt !== undefined && !isApplicable(candidate, query.effectiveAt)) return [];
       const domainKey = collisionDomainKey(candidate);
       const stateId = regulatoryApprovalDomainId(tenantId, domainKey);
@@ -102,7 +105,8 @@ export class ProductionRegulatoryPersistenceBridge {
     return visible.flat();
   }
 
-  async resolve(tenantId: string, query: Required<Pick<RegulatoryValueQuery, "componentCode" | "customerScope" | "effectiveAt">>): Promise<RegulatoryValueRecord | null> {
+  async resolve(tenantId: string, query: Required<Pick<RegulatoryValueQuery, "componentCode" | "customerScope" | "effectiveAt">> & Pick<RegulatoryValueQuery, "normalizedUnit" | "regulatoryVariant">): Promise<RegulatoryValueRecord | null> {
+    if (query.componentCode === "ASOS" && typeof query.regulatoryVariant !== "string") fail("REGULATORY_VARIANT_REQUIRED");
     const matches = await this.list(tenantId, query);
     if (matches.length > 1) fail("REGULATORY_APPROVED_VALUE_CONFLICT");
     return matches[0] ?? null;

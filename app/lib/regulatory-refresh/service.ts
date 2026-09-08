@@ -104,7 +104,7 @@ async function acquireLease(dependencies: RegulatoryRefreshDependencies, tenantI
 }
 
 function assertCandidate(domain: RegulatoryRefreshDomain, candidate: RegulatoryValueRecord, tenantId: string): void {
-  if (candidate.tenantId !== tenantId || candidate.componentCode !== domain.componentCode || candidate.customerScope !== domain.customerScope || candidate.normalizedUnit !== domain.normalizedUnit) throw new Error(`REGULATORY_REFRESH_DOMAIN_MISMATCH:${regulatoryDomainKey(domain)}`);
+  if (candidate.tenantId !== tenantId || candidate.componentCode !== domain.componentCode || candidate.customerScope !== domain.customerScope || candidate.normalizedUnit !== domain.normalizedUnit || candidate.regulatoryVariant !== domain.regulatoryVariant) throw new Error(`REGULATORY_REFRESH_DOMAIN_MISMATCH:${regulatoryDomainKey(domain)}`);
   if (!isAllowedAreraUrl(candidate.sourceReference)) throw new Error("OFFICIAL_SOURCE_ALLOWLIST_FAILED");
   if (!candidate.sourceSha256 || !/^[a-f0-9]{64}$/i.test(candidate.sourceSha256)) throw new Error("SOURCE_SHA256_INVALID");
   validateChecksum(candidate);
@@ -122,15 +122,15 @@ async function verifyTimeline(domain: RegulatoryRefreshDomain, candidate: Regula
   const periodEnd = candidate.effectiveTo ?? nextMonthStart(now);
   if (Date.parse(periodEnd) <= Date.parse(periodStart)) return;
   const bridge = new ProductionRegulatoryPersistenceBridge(dependencies.repositories.regulatoryValues, dependencies.repositories.approvalDomains);
-  await resolveRegulatoryTimeline(bridge, { tenantId, componentCode: domain.componentCode, customerScope: domain.customerScope, normalizedUnit: domain.normalizedUnit, periodStart, periodEnd });
+  await resolveRegulatoryTimeline(bridge, { tenantId, componentCode: domain.componentCode, customerScope: domain.customerScope, normalizedUnit: domain.normalizedUnit, ...(domain.regulatoryVariant === undefined ? {} : { regulatoryVariant: domain.regulatoryVariant }), periodStart, periodEnd });
 }
 
 function equivalent(left: RegulatoryValueRecord, right: RegulatoryValueRecord): boolean {
-  return left.componentCode === right.componentCode && left.customerScope === right.customerScope && left.normalizedUnit === right.normalizedUnit && left.effectiveFrom === right.effectiveFrom && left.effectiveTo === right.effectiveTo && left.normalizedValue === right.normalizedValue && left.sourceSha256 === right.sourceSha256;
+  return left.componentCode === right.componentCode && left.customerScope === right.customerScope && left.normalizedUnit === right.normalizedUnit && left.regulatoryVariant === right.regulatoryVariant && left.effectiveFrom === right.effectiveFrom && left.effectiveTo === right.effectiveTo && left.normalizedValue === right.normalizedValue && left.sourceSha256 === right.sourceSha256;
 }
 
 function versionedRecord(record: RegulatoryValueRecord, suffix: string, extra: { readonly effectiveTo?: string | null; readonly carriedForwardFrom?: string; readonly confirmationSource?: string }): RegulatoryValueRecord {
-  return createRegulatoryValue({ tenantId: record.tenantId, sourceType: record.sourceType, sourceReference: record.sourceReference, officialIdentifier: `${record.officialIdentifier}:${suffix}`, publicationDate: record.publicationDate, retrievedAt: record.retrievedAt, effectiveFrom: record.effectiveFrom, effectiveTo: extra.effectiveTo === undefined ? record.effectiveTo : extra.effectiveTo, componentCode: record.componentCode, customerScope: record.customerScope, originalValue: record.originalValue, originalUnit: record.originalUnit, applicationBasis: record.applicationBasis, sourceSha256: record.sourceSha256, conversionProvenance: record.conversionProvenance, carriedForwardFrom: extra.carriedForwardFrom ?? record.carriedForwardFrom, confirmationSource: extra.confirmationSource ?? record.confirmationSource, authority: record.authority, publishedBy: record.publishedBy === "TERNA" ? "TERNA" : record.publishedBy === undefined ? undefined : "ARERA", calculatedBy: record.calculatedBy === "TERNA" ? "TERNA" : record.calculatedBy === undefined ? undefined : "ARERA", officialName: record.officialName, contractPassThroughRequired: record.contractPassThroughRequired, referenceDomain: record.referenceDomain });
+  return createRegulatoryValue({ tenantId: record.tenantId, sourceType: record.sourceType, sourceReference: record.sourceReference, officialIdentifier: `${record.officialIdentifier}:${suffix}`, publicationDate: record.publicationDate, retrievedAt: record.retrievedAt, effectiveFrom: record.effectiveFrom, effectiveTo: extra.effectiveTo === undefined ? record.effectiveTo : extra.effectiveTo, componentCode: record.componentCode, customerScope: record.customerScope, regulatoryVariant: record.regulatoryVariant, originalValue: record.originalValue, originalUnit: record.originalUnit, applicationBasis: record.applicationBasis, sourceSha256: record.sourceSha256, conversionProvenance: record.conversionProvenance, carriedForwardFrom: extra.carriedForwardFrom ?? record.carriedForwardFrom, confirmationSource: extra.confirmationSource ?? record.confirmationSource, authority: record.authority, publishedBy: record.publishedBy === "TERNA" ? "TERNA" : record.publishedBy === undefined ? undefined : "ARERA", calculatedBy: record.calculatedBy === "TERNA" ? "TERNA" : record.calculatedBy === undefined ? undefined : "ARERA", officialName: record.officialName, contractPassThroughRequired: record.contractPassThroughRequired, referenceDomain: record.referenceDomain });
 }
 
 async function saveIfMissing(repository: RuntimeRepositories["regulatoryValues"], tenantId: string, record: RegulatoryValueRecord, now: string): Promise<RegulatoryValueRecord> {
@@ -151,13 +151,13 @@ async function refreshDomain(domain: RegulatoryRefreshDomain, candidate: Regulat
     await approval.approveRegulatoryValue({ tenantId, targetRecordId: same.payload.id, principalId: actor, role: "ADMIN", correlationId, idempotencyKey: key("approve", same.payload.id), evidenceReference });
     return { unchanged: 1, created: 0, approved: 0, replaced: 0 };
   }
-  const samePeriod = values.find((stored) => stored.payload.componentCode === domain.componentCode && stored.payload.customerScope === domain.customerScope && stored.payload.normalizedUnit === domain.normalizedUnit && stored.payload.effectiveFrom === candidate.effectiveFrom && stored.payload.effectiveTo === candidate.effectiveTo);
+  const samePeriod = values.find((stored) => stored.payload.componentCode === domain.componentCode && stored.payload.customerScope === domain.customerScope && stored.payload.normalizedUnit === domain.normalizedUnit && stored.payload.regulatoryVariant === domain.regulatoryVariant && stored.payload.effectiveFrom === candidate.effectiveFrom && stored.payload.effectiveTo === candidate.effectiveTo);
   const approvedDomain = await dependencies.repositories.approvalDomains.get(tenantId, regulatoryApprovalDomainId(tenantId, regulatoryDomainKey(domain)));
   const effective = approvedDomain?.payload.effectiveApprovals ?? [];
   const approvedSamePeriod = samePeriod && effective.find((entry) => entry.targetRecordId === samePeriod.payload.id && entry.targetRecordChecksum === samePeriod.payload.checksum);
   let next = candidate;
   if (samePeriod && approvedSamePeriod) next = versionedRecord(candidate, `correction-${candidate.sourceSha256.slice(0, 16)}`, {});
-  const openEnded = values.filter((stored) => stored.payload.componentCode === domain.componentCode && stored.payload.customerScope === domain.customerScope && stored.payload.normalizedUnit === domain.normalizedUnit && stored.payload.effectiveTo === null && Date.parse(stored.payload.effectiveFrom) < Date.parse(candidate.effectiveFrom)).sort((a, b) => Date.parse(b.payload.effectiveFrom) - Date.parse(a.payload.effectiveFrom))[0];
+  const openEnded = values.filter((stored) => stored.payload.componentCode === domain.componentCode && stored.payload.customerScope === domain.customerScope && stored.payload.normalizedUnit === domain.normalizedUnit && stored.payload.regulatoryVariant === domain.regulatoryVariant && stored.payload.effectiveTo === null && Date.parse(stored.payload.effectiveFrom) < Date.parse(candidate.effectiveFrom)).sort((a, b) => Date.parse(b.payload.effectiveFrom) - Date.parse(a.payload.effectiveFrom))[0];
   let replaced = 0;
   if (openEnded) {
     const openApproved = effective.find((entry) => entry.targetRecordId === openEnded.payload.id && entry.targetRecordChecksum === openEnded.payload.checksum);

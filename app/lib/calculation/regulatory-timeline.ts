@@ -1,11 +1,12 @@
 import type { ProductionRegulatoryPersistenceBridge } from "../regulatory-bridge.ts";
-import type { RegulatoryValueComponentCode, RegulatoryCustomerScope, RegulatoryValueRecord } from "../foundation/regulatory-types.ts";
+import type { RegulatoryValueComponentCode, RegulatoryCustomerScope, RegulatoryValueRecord, RegulatoryVariant } from "../foundation/regulatory-types.ts";
 
 export interface RegulatoryTimelineRequest {
   readonly tenantId: string;
   readonly componentCode: RegulatoryValueComponentCode;
   readonly customerScope: RegulatoryCustomerScope;
   readonly normalizedUnit: RegulatoryValueRecord["normalizedUnit"];
+  readonly regulatoryVariant?: RegulatoryVariant;
   readonly periodStart: string;
   readonly periodEnd: string;
 }
@@ -24,6 +25,7 @@ export interface RegulatoryTimelineSegment {
   readonly customerScope: RegulatoryCustomerScope;
   readonly normalizedValue: number;
   readonly normalizedUnit: string;
+  readonly regulatoryVariant?: RegulatoryVariant;
   readonly applicationBasis: string;
   readonly effectiveFrom: string;
   readonly effectiveTo: string | null;
@@ -45,6 +47,7 @@ export interface RegulatoryTimeline {
   readonly componentCode: RegulatoryValueComponentCode;
   readonly customerScope: RegulatoryCustomerScope;
   readonly normalizedUnit: RegulatoryValueRecord["normalizedUnit"];
+  readonly regulatoryVariant?: RegulatoryVariant;
   readonly periodStart: string;
   readonly periodEnd: string;
   readonly segments: readonly RegulatoryTimelineSegment[];
@@ -53,6 +56,7 @@ export interface RegulatoryTimeline {
 export type RegulatoryTimelineErrorCode =
   | "REGULATORY_TIMELINE_PERIOD_INVALID"
   | "REGULATORY_TIMELINE_DATE_INVALID"
+  | "REGULATORY_TIMELINE_VARIANT_REQUIRED"
   | "REGULATORY_TIMELINE_GAP"
   | "REGULATORY_TIMELINE_OVERLAP";
 
@@ -156,6 +160,7 @@ function segmentFrom(record: RegulatoryValueRecord, segmentStart: number, segmen
     customerScope: record.customerScope,
     normalizedValue: record.normalizedValue,
     normalizedUnit: record.normalizedUnit,
+    ...(record.regulatoryVariant === undefined ? {} : { regulatoryVariant: record.regulatoryVariant }),
     applicationBasis: record.applicationBasis,
     effectiveFrom: record.effectiveFrom,
     effectiveTo: record.effectiveTo,
@@ -178,7 +183,9 @@ export async function resolveRegulatoryTimeline(
   request: RegulatoryTimelineRequest,
 ): Promise<RegulatoryTimeline> {
   const period = validateRequest(request);
-  const records = await bridge.list(request.tenantId, { componentCode: request.componentCode, customerScope: request.customerScope, normalizedUnit: request.normalizedUnit });
+  if (request.componentCode === "ASOS" && request.regulatoryVariant === undefined) throw new RegulatoryTimelineError("REGULATORY_TIMELINE_VARIANT_REQUIRED");
+  const query = { componentCode: request.componentCode, customerScope: request.customerScope, normalizedUnit: request.normalizedUnit, ...(request.regulatoryVariant === undefined ? {} : { regulatoryVariant: request.regulatoryVariant }) };
+  const records = await bridge.list(request.tenantId, query);
   const applicable = sortedApplicableRecords(records, period.start, period.end);
   const segments: RegulatoryTimelineSegment[] = [];
   let cursor = period.start;
@@ -194,5 +201,5 @@ export async function resolveRegulatoryTimeline(
   }
 
   if (cursor < period.end) return fail("REGULATORY_TIMELINE_GAP");
-  return { tenantId: request.tenantId, componentCode: request.componentCode, customerScope: request.customerScope, normalizedUnit: request.normalizedUnit, periodStart: request.periodStart, periodEnd: request.periodEnd, segments };
+  return { tenantId: request.tenantId, componentCode: request.componentCode, customerScope: request.customerScope, normalizedUnit: request.normalizedUnit, ...(request.regulatoryVariant === undefined ? {} : { regulatoryVariant: request.regulatoryVariant }), periodStart: request.periodStart, periodEnd: request.periodEnd, segments };
 }

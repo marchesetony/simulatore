@@ -1,5 +1,5 @@
 import type { CustomerResidency, CustomerType, TaxInclusionState, VoltageLevel } from "../energy/types";
-import type { RegulatoryValueComponentCode, RegulatoryCustomerScope } from "../foundation/regulatory-types";
+import type { RegulatoryValueComponentCode, RegulatoryCustomerScope, RegulatoryVariant } from "../foundation/regulatory-types";
 
 export const CALCULATION_SCHEMA_VERSION = 1 as const;
 export const CALCULATION_ENGINE_VERSION = "1" as const;
@@ -137,6 +137,7 @@ export interface RegulatoryDataReference {
   readonly componentCode: RegulatoryValueComponentCode;
   readonly customerScope: RegulatoryCustomerScope;
   readonly normalizedUnit: string;
+  readonly regulatoryVariant?: RegulatoryVariant;
   readonly normalizedValue: number;
   readonly regulatoryRecordId: string;
   readonly checksum: string;
@@ -153,7 +154,7 @@ export interface RegulatoryData {
 }
 
 export type CalculationCostScope = "COMMERCIAL_ONLY" | "COMMERCIAL_PLUS_REGULATED_PARTIAL";
-export type RegulatedComponentIncluded = "UC3_ENERGY" | "UC6_ENERGY" | "UC6_POWER" | "UC6_FIXED" | "NETWORK_FIXED" | "NETWORK_POWER" | "NETWORK_ENERGY" | "METERING_FIXED" | "TRANSMISSION_ENERGY" | "ARIM_FIXED" | "ARIM_POWER" | "ARIM_ENERGY";
+export type RegulatedComponentIncluded = "UC3_ENERGY" | "UC6_ENERGY" | "UC6_POWER" | "UC6_FIXED" | "NETWORK_FIXED" | "NETWORK_POWER" | "NETWORK_ENERGY" | "METERING_FIXED" | "TRANSMISSION_ENERGY" | "ARIM_FIXED" | "ARIM_POWER" | "ARIM_ENERGY" | "ASOS_FIXED" | "ASOS_POWER" | "ASOS_ENERGY";
 
 export interface CalculationMarketReference {
   readonly recordId: string;
