@@ -1,7 +1,7 @@
 import type { RegulatoryRepository } from "../foundation/regulatory-ports.ts";
 import type { RegulatoryCustomerScope, RegulatoryValueComponentCode, RegulatoryValueRecord } from "../foundation/regulatory-types.ts";
 // @ts-expect-error Node's strip-only test runner requires the explicit extension.
-import { ARERA_SYSTEM_CHARGES_PAGE, createRegulatoryValue, fetchOfficialBta6Sources, AreraElectricityRegulatorySourceAdapter, type AreraFetcher, DOMESTIC_EQUAL_RATE_APPLICATION_BASIS } from "../foundation/arera-electricity-regulatory.ts";
+import { ARERA_SYSTEM_CHARGES_PAGE, createRegulatoryValue, fetchOfficialBta6Sources, AreraElectricityRegulatorySourceAdapter, fetchAreraDomesticCdispdWorkbook, parseAreraDomesticCdispdXlsx, type AreraFetcher, DOMESTIC_EQUAL_RATE_APPLICATION_BASIS } from "../foundation/arera-electricity-regulatory.ts";
 // @ts-expect-error Node's strip-only test runner requires the explicit extension.
 import { CALCULATED_REGULATORY_DOMAINS, regulatoryDomainKey, type RegulatoryRefreshDomain } from "./registry.ts";
 
@@ -50,6 +50,8 @@ export function createAreraRegulatorySourceReader(input: { readonly fetcher?: Ar
     adapterName: "ARERA_ELECTRICITY",
     async load({ tenantId, retrievedAt }): Promise<readonly RegulatoryValueRecord[]> {
       const bta6 = await fetchOfficialBta6Sources({ tenantId, retrievedAt, fetcher: input.fetcher });
+      const cdispdWorkbook = await fetchAreraDomesticCdispdWorkbook(input.fetcher);
+      const cdispd = parseAreraDomesticCdispdXlsx({ body: cdispdWorkbook.bytes, sourceReference: cdispdWorkbook.url, retrievedAt, tenantId, sourceSha256: undefined, discoveryReference: cdispdWorkbook.discoveryUrl });
       let current: Awaited<ReturnType<AreraElectricityRegulatorySourceAdapter["importOfficial"]>>;
       try {
         const arera = new AreraElectricityRegulatorySourceAdapter(sink(), { tenantId, fetcher: input.fetcher, systemChargesPage: ARERA_SYSTEM_CHARGES_PAGE, includeBta6Uc: true, includeBta6Arim: true });
@@ -80,11 +82,12 @@ export function createAreraRegulatorySourceReader(input: { readonly fetcher?: Ar
       if (residentAsos && !residentAsos.applicationBasis.includes(DOMESTIC_EQUAL_RATE_APPLICATION_BASIS)) throw new Error("DOMESTIC_ASOS_APPLICATION_BASIS_INVALID");
       if (residentArim && !residentArim.applicationBasis.includes(DOMESTIC_EQUAL_RATE_APPLICATION_BASIS)) throw new Error("DOMESTIC_ARIM_APPLICATION_BASIS_INVALID");
       const bta6Asos = Object.fromEntries(system.filter((record) => record.componentCode === "ASOS" && record.customerScope === "NON_DOMESTIC_BT_BTA6" && record.regulatoryVariant !== undefined).map((record) => [`${record.componentCode}|${record.customerScope}|${record.normalizedUnit}|${record.regulatoryVariant}`, record]));
-      const records: RegulatoryValueRecord[] = [];
+      const records: RegulatoryValueRecord[] = [...cdispd.records];
       for (const domain of CALCULATED_REGULATORY_DOMAINS) {
         const source = domain.customerScope === "NON_DOMESTIC_BT_BTA6"
           ? ({ "NETWORK_FIXED|NON_DOMESTIC_BT_BTA6|EUR/POD/YEAR": bta6.fixed, "NETWORK_POWER|NON_DOMESTIC_BT_BTA6|EUR/KW/YEAR": bta6.power, "NETWORK_ENERGY|NON_DOMESTIC_BT_BTA6|EUR/KWH": bta6.energy, "METERING_FIXED|NON_DOMESTIC_BT_BTA6|EUR/POD/YEAR": bta6.metering, "TRANSMISSION_ENERGY|NON_DOMESTIC_BT_BTA6|EUR/KWH": bta6.transmission, "UC3|NON_DOMESTIC_BT_BTA6|EUR/KWH": bta6Uc3, "UC6|NON_DOMESTIC_BT_BTA6|EUR/KWH": bta6Uc6Energy, "UC6|NON_DOMESTIC_BT_BTA6|EUR/POD/YEAR": bta6Uc6Fixed, "ARIM|NON_DOMESTIC_BT_BTA6|EUR/POD/YEAR": bta6ArimFixed, "ARIM|NON_DOMESTIC_BT_BTA6|EUR/KW/YEAR": bta6ArimPower, "ARIM|NON_DOMESTIC_BT_BTA6|EUR/KWH": bta6ArimEnergy, ...bta6Asos } as Record<string, RegulatoryValueRecord | undefined>)[regulatoryDomainKey(domain)]
-          : domain.componentCode === "ASOS" ? residentAsos : domain.componentCode === "ARIM" ? residentArim : domain.componentCode === "UC6" && domain.normalizedUnit === "EUR/KW/YEAR" ? residentUc6Power : domain.componentCode === "UC6" ? residentUc6Energy : residentSource[domain.componentCode];
+          : domain.componentCode === "DISPATCHING_TOTAL" ? undefined : domain.componentCode === "ASOS" ? residentAsos : domain.componentCode === "ARIM" ? residentArim : domain.componentCode === "UC6" && domain.normalizedUnit === "EUR/KW/YEAR" ? residentUc6Power : domain.componentCode === "UC6" ? residentUc6Energy : residentSource[domain.componentCode];
+        if (domain.componentCode === "DISPATCHING_TOTAL") continue;
         if (!source || source.normalizedUnit !== domain.normalizedUnit) continue;
         records.push(domain.customerScope === "DOMESTIC_RESIDENT_BT" && source.customerScope !== domain.customerScope ? exactScopeRecord(source, domain.customerScope) : source);
       }
@@ -94,7 +97,13 @@ export function createAreraRegulatorySourceReader(input: { readonly fetcher?: Ar
 }
 
 export function assertReaderDomain(domain: RegulatoryRefreshDomain, records: readonly RegulatoryValueRecord[]): RegulatoryValueRecord {
-  const matches = records.filter((record) => record.componentCode === domain.componentCode && record.customerScope === domain.customerScope && record.normalizedUnit === domain.normalizedUnit && record.regulatoryVariant === domain.regulatoryVariant);
+  const matches = recordsForDomain(domain, records);
   if (matches.length !== 1) throw new Error(`ARERA_REFRESH_SOURCE_DOMAIN_INVALID:${regulatoryDomainKey(domain)}`);
   return matches[0];
+}
+
+export function recordsForDomain(domain: RegulatoryRefreshDomain, records: readonly RegulatoryValueRecord[]): readonly RegulatoryValueRecord[] {
+  const matches = records.filter((record) => record.componentCode === domain.componentCode && record.customerScope === domain.customerScope && record.normalizedUnit === domain.normalizedUnit && record.regulatoryVariant === domain.regulatoryVariant);
+  if (matches.length === 0) throw new Error(`ARERA_REFRESH_SOURCE_DOMAIN_INVALID:${regulatoryDomainKey(domain)}`);
+  return domain.componentCode === "DISPATCHING_TOTAL" ? [...matches].sort((left, right) => Date.parse(right.effectiveFrom) - Date.parse(left.effectiveFrom)) : matches;
 }

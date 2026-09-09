@@ -17,6 +17,7 @@ const bta6Scope = "NON_DOMESTIC_BT_BTA6" as const;
 const asosVariants = ["ASOS_CLASS_0", "ASOS_CLASS_1", "ASOS_CLASS_2", "ASOS_CLASS_3"] as const;
 
 const residentDomains: readonly RegulatoryRefreshDomain[] = [
+  { componentCode: "DISPATCHING_TOTAL", customerScope: residentScope, normalizedUnit: "EUR/KWH", sourceAdapter: "ARERA_ELECTRICITY" },
   { componentCode: "ASOS", customerScope: residentScope, normalizedUnit: "EUR/KWH", sourceAdapter: "ARERA_ELECTRICITY" },
   { componentCode: "ARIM", customerScope: residentScope, normalizedUnit: "EUR/KWH", sourceAdapter: "ARERA_ELECTRICITY" },
   { componentCode: "UC3", customerScope: residentScope, normalizedUnit: "EUR/KWH", sourceAdapter: "ARERA_ELECTRICITY" },

@@ -62,6 +62,7 @@ function request(overrides = {}) {
 
 const context = { vector: "EE", contractedPowerKw: 3, availablePowerKw: 3.3, supplyUseCategory: "DOMESTIC", domesticResidenceStatus: "RESIDENT", voltageLevel: "LV", regulatoryCustomerScope: scope };
 const singleRecords = [
+  baseRecord({ id: "qa-cdispd", componentCode: "DISPATCHING_TOTAL", normalizedUnit: "EUR/KWH", normalizedValue: 0.018468, applicationBasis: "CDISPD aggregate dispatching + capacity market" }),
   baseRecord({ id: "qa-uc3", componentCode: "UC3", normalizedUnit: "EUR/KWH", normalizedValue: 0.00276 }),
   baseRecord({ id: "qa-uc6-energy", componentCode: "UC6", normalizedUnit: "EUR/KWH", normalizedValue: 0.00007 }),
   baseRecord({ id: "qa-uc6-power", componentCode: "UC6", normalizedUnit: "EUR/KW/YEAR", normalizedValue: 0.1988 }),
@@ -114,18 +115,19 @@ const prepared = {
 };
 const integrated = await calculatePreparedOffer(singleRequest, prepared, { trustedElectricityContext: context, regulatoryBridge: singleBridge });
 assert.equal(integrated.totalCommercialCost.minorUnits, 10000);
-assert.equal(integrated.totalRegulatedSubsetCost?.minorUnits, 5004);
-assert.equal(integrated.totalCommercialPlusRegulatedSubsetCost?.minorUnits, 15004);
+assert.equal(integrated.totalRegulatedSubsetCost?.minorUnits, 6851);
+assert.equal(integrated.totalCommercialPlusRegulatedSubsetCost?.minorUnits, 16851);
 assert.equal(integrated.costScope, "COMMERCIAL_PLUS_REGULATED_PARTIAL");
-assert.deepEqual(integrated.regulatedComponentsIncluded, ["UC3_ENERGY", "UC6_ENERGY", "UC6_POWER", "NETWORK_FIXED", "NETWORK_POWER", "TRANSMISSION_ENERGY", "ASOS_ENERGY", "ARIM_ENERGY"]);
-assert.equal(integrated.regulatoryData.references.length, 8);
+assert.deepEqual(integrated.regulatedComponentsIncluded, ["UC3_ENERGY", "UC6_ENERGY", "UC6_POWER", "NETWORK_FIXED", "NETWORK_POWER", "TRANSMISSION_ENERGY", "DISPATCHING_TOTAL_ENERGY", "ASOS_ENERGY", "ARIM_ENERGY"]);
+assert.equal(integrated.regulatoryData.references.length, 9);
 assert.ok(integrated.warnings.includes("REGULATED_SUBSET_PARTIAL_DOMESTIC_NETWORK_UC3_UC6_ASOS_ARIM_ONLY"));
-assert.equal(integrated.components.filter((component) => component.category === "REGULATED_ENERGY").length, 5);
+assert.equal(integrated.components.filter((component) => component.category === "REGULATED_ENERGY").length, 6);
 assert.equal(integrated.components.filter((component) => component.category === "REGULATED_POWER").length, 2);
 assert.equal(integrated.components.filter((component) => component.category === "REGULATED_FIXED").length, 1);
 console.log("TOTAL_COMMERCIAL_UNCHANGED=PASS");
 console.log("COST_SCOPE=COMMERCIAL_PLUS_REGULATED_PARTIAL");
 console.log("REGULATORY_REFERENCES_PRESERVED=PASS");
+console.log("CDISPD_ECONOMIC_COMPONENT=PASS");
 console.log("NO_TOTAL_COMPONENTS=PASS");
 console.log("NO_DOUBLE_COUNT=PASS");
 

@@ -10,6 +10,7 @@ import { checksumFor } from "./regulatory-validation.ts";
 export const ARERA_ALLOWED_HOSTS = new Set(["arera.it", "www.arera.it"]);
 export const TERNA_ALLOWED_HOSTS = new Set(["terna.it", "www.terna.it", "dati.terna.it"]);
 export const ARERA_575_PAGE = "https://www.arera.it/area-operatori/prezzi-e-tariffe/tariffe-trasmissione-distribuzione-e-misura-clienti-domestici";
+export const ARERA_DOMESTIC_FREE_MARKET_VALUES_PAGE = "https://www.arera.it/consumatori/valori-rete-oneri-domestici-ee";
 export const ARERA_DISTRIBUTION_PAGE = "https://www.arera.it/area-operatori/prezzi-e-tariffe/distr";
 export const ARERA_MEASUREMENT_PAGE = "https://www.arera.it/area-operatori/prezzi-e-tariffe/tariffa-per-il-servizio-di-misura";
 export const ARERA_227_PAGE = "https://www.arera.it/atti-e-provvedimenti/dettaglio/26/227-26";
@@ -759,7 +760,7 @@ const julyUnitForColumn = (column: string, row: number): string | null => {
 };
 
 const julyCodeForColumn = (column: string, row: number): RegulatoryValueComponentCode | null => {
-  if (column === "C" && row === 14) return "DISPATCHING";
+  if (column === "C" && row === 14) return "DISPATCHING_TOTAL";
   if (column === "D" && row === 15) return "NETWORK_FIXED";
   if (column === "E" && row === 16) return "NETWORK_POWER";
   if (column === "F" && row === 14) return "TRANSMISSION_ENERGY";
@@ -875,6 +876,97 @@ export function parseArera588Uc3Uc6Xlsx(input: { readonly body: Uint8Array; read
   const cells = xlsxSheet(input.body, "xl/worksheets/sheet7.xml", shared);
   const rows = [...new Set(cells.map((cell) => cell.row))].map((row) => ["", xlsxCell(cells, row, "B"), xlsxCell(cells, row, "C"), "", xlsxCell(cells, row, "E"), xlsxCell(cells, row, "F")]);
   return parseArera588Uc3Uc6TableRows({ ...input, rows, sourceSha256: input.sourceSha256 ?? sourceHash(input.body) });
+}
+
+export interface AreraDomesticCdispdImport {
+  readonly source: { readonly sourceReference: string; readonly officialIdentifier: string; readonly publicationDate: string; readonly retrievedAt: string; readonly sourceSha256: string };
+  readonly sheetNames: readonly string[];
+  readonly records: readonly RegulatoryValueRecord[];
+}
+
+const italianMonths: Readonly<Record<string, number>> = Object.freeze({ gennaio: 1, febbraio: 2, marzo: 3, aprile: 4, maggio: 5, giugno: 6, luglio: 7, agosto: 8, settembre: 9, ottobre: 10, novembre: 11, dicembre: 12 });
+
+function domesticMonthInterval(sheetName: string): { readonly year: number; readonly month: number; readonly effectiveFrom: string; readonly effectiveTo: string } {
+  const match = /^(gennaio|febbraio|marzo|aprile|maggio|giugno|luglio|agosto|settembre|ottobre|novembre|dicembre)\s+(20\d{2})$/i.exec(clean(sheetName));
+  if (!match) throw new Error(`ARERA_DOMESTIC_CDISPD_SHEET_NAME_AMBIGUOUS:${sheetName}`);
+  const month = italianMonths[match[1].toLowerCase()];
+  const year = Number(match[2]);
+  const effectiveFrom = `${String(year).padStart(4, "0")}-${String(month).padStart(2, "0")}-01`;
+  const next = new Date(Date.UTC(year, month, 1));
+  const effectiveTo = next.toISOString().slice(0, 10);
+  return { year, month, effectiveFrom, effectiveTo };
+}
+
+function domesticCdispdSheetValue(cells: readonly XlsxCell[], sheetName: string, row: number): number {
+  const title = clean(`${xlsxCell(cells, 4, "A")} ${xlsxCell(cells, 4, "B")}`).toUpperCase();
+  if (!title.includes("CLIENTI DOMESTICI") || !title.includes("MERCATO LIBERO")) throw new Error(`ARERA_DOMESTIC_CDISPD_SCOPE_INVALID:${sheetName}`);
+  const header = clean(`${xlsxCell(cells, 11, "C")} ${xlsxCell(cells, 12, "C")}`).toLowerCase();
+  if (!header.includes("dispacciamento")) throw new Error(`ARERA_DOMESTIC_CDISPD_HEADER_MISSING:${sheetName}`);
+  const value = xlsxNumeric(cells, row, "C");
+  if (value === null) throw new Error(`ARERA_DOMESTIC_CDISPD_VALUE_MISSING:${sheetName}`);
+  return value;
+}
+
+export function discoverAreraDomesticWorkbookUrl(html: string, baseUrl: string = ARERA_DOMESTIC_FREE_MARKET_VALUES_PAGE): string {
+  const candidates = discoverAreraAttachments(html, baseUrl)
+    .filter((attachment) => attachment.extension === "XLSX")
+    .map((attachment) => ({ ...attachment, year: Number(/Corrispettivi_libero_elettrico_domestico_(20\d{2})\.xlsx$/i.exec(attachment.url)?.[1] ?? "0") }))
+    .filter((attachment) => attachment.year > 0)
+    .sort((left, right) => right.year - left.year || left.url.localeCompare(right.url));
+  if (candidates.length === 0) throw new Error("ARERA_DOMESTIC_CDISPD_WORKBOOK_NOT_DISCOVERED");
+  return candidates[0].url;
+}
+
+export async function fetchAreraDomesticCdispdWorkbook(fetcher?: AreraFetcher): Promise<{ readonly url: string; readonly bytes: Uint8Array; readonly contentType: string; readonly discoveryUrl: string }> {
+  const page = await fetchOfficialAreraSource(ARERA_DOMESTIC_FREE_MARKET_VALUES_PAGE, fetcher);
+  const workbookUrl = discoverAreraDomesticWorkbookUrl(new TextDecoder().decode(page.bytes), page.url);
+  const workbook = await fetchOfficialAreraSource(workbookUrl, fetcher);
+  return { ...workbook, discoveryUrl: page.url };
+}
+
+export function parseAreraDomesticCdispdXlsx(input: { readonly body: Uint8Array; readonly sourceReference: string; readonly retrievedAt: string; readonly publicationDate?: string; readonly sourceSha256?: string; readonly tenantId?: string; readonly discoveryReference?: string }): AreraDomesticCdispdImport {
+  const shared = xlsxSharedStrings(input.body);
+  const sheets = xlsxSheetNames(input.body);
+  const monthSheets = sheets.filter((sheet) => /\b20\d{2}\b/.test(sheet.name));
+  if (monthSheets.length === 0) throw new Error("ARERA_DOMESTIC_CDISPD_MONTHLY_SHEETS_MISSING");
+  const sourceSha256 = input.sourceSha256 ?? sourceHash(input.body);
+  const tenantId = input.tenantId ?? "tenant_local-demo";
+  const records: RegulatoryValueRecord[] = [];
+  const years = new Set<number>();
+  for (const sheet of monthSheets) {
+    const interval = domesticMonthInterval(sheet.name);
+    years.add(interval.year);
+    const cells = xlsxSheet(input.body, sheet.path, shared);
+    const resident = domesticCdispdSheetValue(cells, sheet.name, 14);
+    const nonResident = domesticCdispdSheetValue(cells, sheet.name, 24);
+    if (Math.abs(resident - nonResident) > 1e-12) throw new Error(`ARERA_DOMESTIC_CDISPD_RESIDENCY_DIVERGENCE:${sheet.name}`);
+    const officialIdentifier = `ARERA_DOMESTIC_FREE_CDISPD_${interval.year}`;
+    records.push(createRegulatoryValue({
+      tenantId,
+      sourceType: "OFFICIAL_ATTACHMENT",
+      sourceReference: input.sourceReference,
+      officialIdentifier,
+      publicationDate: input.publicationDate ?? interval.effectiveFrom,
+      retrievedAt: input.retrievedAt,
+      effectiveFrom: interval.effectiveFrom,
+      effectiveTo: interval.effectiveTo,
+      componentCode: "DISPATCHING_TOTAL",
+      customerScope: "DOMESTIC_RESIDENT_BT",
+      originalValue: resident,
+      originalUnit: "EUR/KWH",
+      applicationBasis: `ARERA workbook retail mercato libero domestico; CDISPD aggregato dispacciamento + mercato della capacità; sheet=${sheet.name}; cell=C14; ${input.discoveryReference ? `discovery=${input.discoveryReference}; ` : ""}referenceDomain=DISPATCHING; contractPassThroughRequired=false`,
+      sourceSha256,
+      confirmationSource: input.discoveryReference ?? ARERA_DOMESTIC_FREE_MARKET_VALUES_PAGE,
+      authority: "ARERA",
+      publishedBy: "ARERA",
+      calculatedBy: "ARERA",
+      officialName: "CDISPD",
+      contractPassThroughRequired: false,
+      referenceDomain: "DISPATCHING",
+    }));
+  }
+  if (years.size !== 1) throw new Error("ARERA_DOMESTIC_CDISPD_MULTIPLE_YEARS_UNSUPPORTED");
+  return { source: { sourceReference: input.sourceReference, officialIdentifier: `ARERA_DOMESTIC_FREE_CDISPD_${[...years][0]}`, publicationDate: input.publicationDate ?? records[0].publicationDate, retrievedAt: input.retrievedAt, sourceSha256 }, sheetNames: monthSheets.map((sheet) => sheet.name), records };
 }
 
 export function parseArera588Bta6Uc3Uc6TableRows(input: { readonly rows: readonly (readonly string[])[]; readonly sourceReference?: string; readonly publicationDate?: string; readonly retrievedAt: string; readonly sourceSha256: string; readonly tenantId?: string; readonly effectiveFrom?: string; readonly effectiveTo?: string | null }): readonly RegulatoryValueRecord[] {

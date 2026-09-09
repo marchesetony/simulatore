@@ -14,7 +14,7 @@ import type { RuntimeRepositories } from "../persistence/adapter.ts";
 // @ts-expect-error Node's strip-only test runner requires the explicit extension.
 import { deterministicRecordId } from "../persistence/types.ts";
 // @ts-expect-error Node's strip-only test runner requires the explicit extension.
-import { createAreraRegulatorySourceReader, assertReaderDomain, type RegulatorySourceReader } from "./arera.ts";
+import { createAreraRegulatorySourceReader, recordsForDomain, type RegulatorySourceReader } from "./arera.ts";
 // @ts-expect-error Node's strip-only test runner requires the explicit extension.
 import { AUTO_REFRESH_REGISTERED_DOMAINS, CALCULATED_REGULATORY_DOMAINS, REGULATORY_REFRESH_STALE_DAYS, regulatoryDomainKey, type RegulatoryRefreshDomain } from "./registry.ts";
 
@@ -196,9 +196,9 @@ export async function runRegulatoryRefresh(input: { readonly tenantId: string } 
   try { candidates = await reader.load({ tenantId: input.tenantId, retrievedAt: now }); } catch (error) { errors.push(errorText(error)); }
   for (const domain of CALCULATED_REGULATORY_DOMAINS) {
     try {
-      const candidate = assertReaderDomain(domain, candidates);
-      checks.push({ domain: regulatoryDomainKey(domain), status: "PASS", sourceReference: candidate.sourceReference, sourceSha256: candidate.sourceSha256 });
-      if (!dryRun) {
+      const domainCandidates = recordsForDomain(domain, candidates);
+      checks.push({ domain: regulatoryDomainKey(domain), status: "PASS", sourceReference: domainCandidates[0].sourceReference, sourceSha256: domainCandidates[0].sourceSha256 });
+      if (!dryRun) for (const candidate of domainCandidates) {
         const result = await refreshDomain(domain, candidate, input, input.tenantId, runId, now);
         await verifyTimeline(domain, candidate, input, input.tenantId, now);
         unchangedCount += result.unchanged; createdCount += result.created; approvedCount += result.approved; replacedCount += result.replaced;

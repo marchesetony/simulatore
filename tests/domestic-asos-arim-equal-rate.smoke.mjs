@@ -54,6 +54,7 @@ function value({ componentCode, normalizedUnit, normalizedValue, effectiveFrom =
 }
 
 const baseRecords = [
+  value({ componentCode: "DISPATCHING_TOTAL", normalizedUnit: "EUR/KWH", normalizedValue: 0.018468 }),
   value({ componentCode: "UC3", normalizedUnit: "EUR/KWH", normalizedValue: 0.00276 }),
   value({ componentCode: "UC6", normalizedUnit: "EUR/KWH", normalizedValue: 0.00007 }),
   value({ componentCode: "UC6", normalizedUnit: "EUR/KW/YEAR", normalizedValue: 0.1988 }),
@@ -89,8 +90,8 @@ function request(consumption, periodStart = "2026-07-01", periodEnd = "2026-08-0
 const context = { vector: "EE", contractedPowerKw: 3, availablePowerKw: 3.3, supplyUseCategory: "DOMESTIC", domesticResidenceStatus: "RESIDENT", voltageLevel: "LV", regulatoryCustomerScope: scope };
 const bridge = await bridgeWith(baseRecords);
 
-assert.equal(CALCULATED_REGULATORY_DOMAINS.length, 31);
-assert.equal(AUTO_REFRESH_REGISTERED_DOMAINS.length, 31);
+assert.equal(CALCULATED_REGULATORY_DOMAINS.length, 32);
+assert.equal(AUTO_REFRESH_REGISTERED_DOMAINS.length, 32);
 assertAutoRefreshCoverage();
 assert.ok(CALCULATED_REGULATORY_DOMAINS.some((domain) => domain.componentCode === "ASOS" && domain.customerScope === scope && domain.normalizedUnit === "EUR/KWH" && domain.regulatoryVariant === undefined));
 assert.ok(CALCULATED_REGULATORY_DOMAINS.some((domain) => domain.componentCode === "ARIM" && domain.customerScope === scope && domain.normalizedUnit === "EUR/KWH" && domain.regulatoryVariant === undefined));
