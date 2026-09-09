@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
-import type { CteContract } from "./types";
+import type { CteContract, CtePassThroughComponent } from "./types";
 // @ts-expect-error Node's strip-only test runner requires the explicit extension.
-import { validateCteContract } from "./validation.ts";
+import { assertPassThroughComponents, validateCteContract } from "./validation.ts";
 import type { DocumentStoragePort } from "../foundation/real-bill";
 import type { DeletableTenantRecordRepository, TenantRecord } from "../persistence/types";
 // @ts-expect-error Node's strip-only test runner requires the explicit extension.
@@ -18,7 +18,7 @@ export const CTE_ALLOWED_CONTENT_TYPES = ["application/pdf", "image/jpeg", "imag
 export type CteDocumentContentType = typeof CTE_ALLOWED_CONTENT_TYPES[number];
 export type CteIngestionStatus = "UPLOADED" | "OCR_PROCESSING" | "EXTRACTION_PROCESSING" | "REVIEW_REQUIRED" | "PROVIDER_NOT_CONFIGURED" | "FAILED" | "APPROVED";
 export type CteExtractionFieldStatus = "CONFIRMED" | "UNCERTAIN" | "NOT_FOUND" | "CORRECTED";
-export type CteExtractionValue = string | number | null;
+export type CteExtractionValue = string | number | null | readonly CtePassThroughComponent[];
 
 export interface CteExtractionField {
   readonly path: string;
@@ -104,7 +104,7 @@ const commonFieldPaths = [
   "documentType", "vector", "supplier.name", "supplier.supplierId", "offer.name", "offer.code",
   "validity.periodStart", "validity.periodEnd", "expiry.date", "eligibility.customerTypes",
   "pricing.mode", "currency", "taxTreatment", "commercialTerms.fixedFees", "commercialTerms.variableFees",
-  "commercialTerms.oneOffFees", "commercialTerms.commercialDiscounts", "commercialTerms.imbalance",
+  "commercialTerms.oneOffFees", "commercialTerms.commercialDiscounts", "commercialTerms.imbalance", "commercialTerms.passThroughComponents",
 ] as const;
 const eeFieldPaths = ["eligibility.voltageLevels", "pricing.reference", "pricing.spread.amount"] as const;
 const gasFieldPaths = ["pricing.reference", "pricing.spread.amount"] as const;
@@ -138,11 +138,13 @@ function sourcePage(value: unknown): number | null { return value === null ? nul
 function sourceText(value: unknown): string | null { return value === null ? null : typeof value === "string" && value.length <= 500 ? value : fail("CTE_EXTRACTION_SCHEMA_INVALID"); }
 function extractionField(value: unknown): CteExtractionField {
   if (!isRecord(value) || typeof value.path !== "string" || value.path.length < 1 || value.path.length > 120) fail("CTE_EXTRACTION_SCHEMA_INVALID");
-  if (!(value.value === null || typeof value.value === "string" || typeof value.value === "number" && Number.isFinite(value.value))) fail("CTE_EXTRACTION_SCHEMA_INVALID");
+  const structuredPassThrough = value.path === "commercialTerms.passThroughComponents" && Array.isArray(value.value) ? value.value : null;
+  if (structuredPassThrough !== null) assertPassThroughComponents(structuredPassThrough);
+  if (!(value.value === null || typeof value.value === "string" || typeof value.value === "number" && Number.isFinite(value.value) || structuredPassThrough !== null)) fail("CTE_EXTRACTION_SCHEMA_INVALID");
   if (typeof value.confidence !== "number" || !Number.isFinite(value.confidence) || value.confidence < 0 || value.confidence > 1) fail("CTE_EXTRACTION_SCHEMA_INVALID");
   const status = value.status === "CONFIRMED" || value.status === "UNCERTAIN" || value.status === "NOT_FOUND" || value.status === "CORRECTED" ? value.status : value.value === null ? "NOT_FOUND" : value.confidence < 0.8 ? "UNCERTAIN" : "CONFIRMED";
   if (status === "NOT_FOUND" && value.value !== null) fail("CTE_EXTRACTION_SCHEMA_INVALID");
-  return { path: value.path, value: value.value, confidence: value.confidence, sourcePage: sourcePage(value.sourcePage), sourceText: sourceText(value.sourceText), status };
+  return { path: value.path, value: structuredPassThrough === null ? value.value as CteExtractionValue : structuredPassThrough as readonly CtePassThroughComponent[], confidence: value.confidence, sourcePage: sourcePage(value.sourcePage), sourceText: sourceText(value.sourceText), status };
 }
 
 function extractionNotes(value: unknown): readonly string[] {

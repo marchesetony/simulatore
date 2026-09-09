@@ -5,6 +5,7 @@ import type {
   CteExpiry,
   CteFeeComponent,
   CteOffer,
+  CtePassThroughComponent,
   CtePrice,
   CteSupplier,
   ElectricityCteContract,
@@ -14,7 +15,7 @@ import type {
 import { assertDatePeriod, assertEffectivePeriod, assertVersionMetadata, EnergyContractValidationError } from "../energy/validation.ts";
 // @ts-expect-error Node's strip-only test runner requires the explicit extension.
 import { assertApprovalMetadata } from "../energy/validation.ts";
-import type { ApprovalMetadata, VoltageLevel } from "../energy/types";
+import type { ApprovalMetadata, DatePeriod, VoltageLevel } from "../energy/types";
 
 const fail = (code: string): never => { throw new EnergyContractValidationError(code); };
 const record = (value: unknown, code: string): Record<string, unknown> => typeof value === "object" && value !== null && !Array.isArray(value) ? value as Record<string, unknown> : fail(code);
@@ -51,6 +52,44 @@ function assertFee(value: unknown): asserts value is CteFeeComponent {
   if (item.currency !== "EUR") fail("CURRENCY_INVALID");
   enumValue(item.unit, ["EUR_PER_KWH", "EUR_PER_SMC", "EUR_PER_MONTH", "EUR_PER_YEAR", "EUR_PER_CONTRACT"], "CTE_FEE_UNIT_INVALID");
   enumValue(item.taxTreatment, ["INCLUDED", "EXCLUDED", "NOT_APPLICABLE"], "CTE_TAX_TREATMENT_INVALID");
+}
+
+function assertPassThroughComponent(value: unknown, validity?: DatePeriod): asserts value is CtePassThroughComponent {
+  const item = record(value, "CTE_PASS_THROUGH_INVALID");
+  nonEmpty(item.componentId, "CTE_PASS_THROUGH_INVALID");
+  enumValue(item.kind, ["DISPATCHING", "CAPACITY_MARKET", "OTHER_CONTRACTUAL_PASS_THROUGH"], "CTE_PASS_THROUGH_INVALID");
+  const declarationState = enumValue(item.declarationState, ["EXPLICIT_COMPONENT", "INCLUDED_IN_ENERGY_PRICE", "NOT_APPLICABLE", "NOT_DECLARED", "EXTERNAL_PASS_THROUGH"], "CTE_PASS_THROUGH_INVALID");
+  if (typeof item.effectiveFrom !== "string" || typeof item.effectiveTo !== "string") fail("CTE_PASS_THROUGH_PERIOD_INVALID");
+  const effectiveFrom = item.effectiveFrom as string;
+  const effectiveTo = item.effectiveTo as string;
+  assertEffectivePeriod({ effectiveFrom, effectiveTo }, "CTE_PASS_THROUGH_PERIOD_INVALID");
+  if (validity && (effectiveFrom < validity.periodStart || effectiveTo > validity.periodEnd)) fail("CTE_PASS_THROUGH_PERIOD_OUTSIDE_CTE");
+  const hasFee = Object.prototype.hasOwnProperty.call(item, "fee");
+  const hasExternalReference = Object.prototype.hasOwnProperty.call(item, "externalReference");
+  if (declarationState === "EXPLICIT_COMPONENT") {
+    if (!hasFee || hasExternalReference) fail("CTE_PASS_THROUGH_DECLARATION_INVALID");
+    assertFee(item.fee);
+    if (item.fee.unit !== "EUR_PER_KWH" && item.fee.unit !== "EUR_PER_MONTH") fail("CTE_PASS_THROUGH_UNIT_INVALID");
+    if (item.fee.taxTreatment !== "EXCLUDED") fail("CTE_PASS_THROUGH_TAX_INVALID");
+  } else if (declarationState === "EXTERNAL_PASS_THROUGH") {
+    if (hasFee || !hasExternalReference || typeof item.externalReference !== "string" || !item.externalReference.trim()) fail("CTE_PASS_THROUGH_DECLARATION_INVALID");
+  } else if (hasFee || hasExternalReference) fail("CTE_PASS_THROUGH_DECLARATION_INVALID");
+}
+
+export function assertPassThroughComponents(value: unknown, validity?: DatePeriod): asserts value is readonly CtePassThroughComponent[] {
+  if (!Array.isArray(value)) fail("CTE_PASS_THROUGH_INVALID");
+  const components = (value as readonly unknown[]).map((candidate: unknown) => { assertPassThroughComponent(candidate, validity); return candidate; }) as CtePassThroughComponent[];
+  const componentIds = new Set<string>();
+  for (const component of components) {
+    if (componentIds.has(component.componentId)) fail("CTE_PASS_THROUGH_DUPLICATE");
+    componentIds.add(component.componentId);
+  }
+  const previousByKind = new Map<CtePassThroughComponent["kind"], CtePassThroughComponent>();
+  for (const component of [...components].sort((left, right) => left.effectiveFrom.localeCompare(right.effectiveFrom) || left.effectiveTo.localeCompare(right.effectiveTo))) {
+    const previous = previousByKind.get(component.kind);
+    if (previous && component.effectiveFrom < previous.effectiveTo) fail("CTE_PASS_THROUGH_OVERLAP");
+    previousByKind.set(component.kind, component);
+  }
 }
 
 function assertDeclaredComponent(value: unknown): asserts value is CteDeclaredComponent {
@@ -98,6 +137,8 @@ function assertBase(value: unknown): Record<string, unknown> {
   if (item.currency !== "EUR") fail("CURRENCY_INVALID");
   enumValue(item.taxTreatment, ["INCLUDED", "EXCLUDED", "NOT_APPLICABLE"], "CTE_TAX_TREATMENT_INVALID");
   assertCommercialTerms(item.commercialTerms);
+  const commercialTerms = item.commercialTerms as unknown as Record<string, unknown>;
+  if (commercialTerms.passThroughComponents !== undefined) assertPassThroughComponents(commercialTerms.passThroughComponents, item.validity as DatePeriod);
   assertApprovalMetadata(item.approval as ApprovalMetadata);
   return item;
 }

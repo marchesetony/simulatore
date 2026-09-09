@@ -49,6 +49,29 @@ export interface CteFeeComponent {
   readonly taxTreatment: TaxInclusionState;
 }
 
+export type CtePassThroughKind = "DISPATCHING" | "CAPACITY_MARKET" | "OTHER_CONTRACTUAL_PASS_THROUGH";
+export type CtePassThroughDeclarationState = "EXPLICIT_COMPONENT" | "INCLUDED_IN_ENERGY_PRICE" | "NOT_APPLICABLE" | "NOT_DECLARED" | "EXTERNAL_PASS_THROUGH";
+
+type CtePassThroughBase = {
+  readonly componentId: string;
+  readonly kind: CtePassThroughKind;
+  readonly effectiveFrom: string;
+  readonly effectiveTo: string;
+};
+
+export type CtePassThroughComponent = CtePassThroughBase & ({
+  readonly declarationState: "EXPLICIT_COMPONENT";
+  readonly fee: CteFeeComponent;
+} | {
+  readonly declarationState: "INCLUDED_IN_ENERGY_PRICE" | "NOT_APPLICABLE" | "NOT_DECLARED";
+  readonly fee?: never;
+  readonly externalReference?: never;
+} | {
+  readonly declarationState: "EXTERNAL_PASS_THROUGH";
+  readonly fee?: never;
+  readonly externalReference: string;
+});
+
 export type CteDeclaredComponent = {
   readonly status: "DECLARED";
   readonly component: CteFeeComponent;
@@ -63,6 +86,7 @@ export interface CteCommercialTerms {
   readonly imbalance: CteDeclaredComponent;
   readonly oneOffFees: readonly CteFeeComponent[];
   readonly commercialDiscounts: readonly CteFeeComponent[];
+  readonly passThroughComponents?: readonly CtePassThroughComponent[];
 }
 
 export type ElectricityPricing = {
@@ -140,6 +164,7 @@ export type CalculationReadyOfferBase = {
   readonly imbalance: CteDeclaredComponent;
   readonly oneOffFees: readonly CteFeeComponent[];
   readonly commercialDiscounts: readonly CteFeeComponent[];
+  readonly passThroughComponents?: readonly CtePassThroughComponent[];
 };
 
 export interface ElectricityCalculationReadyOffer extends CalculationReadyOfferBase {

@@ -1,9 +1,9 @@
 import type { CteExtractionField, CteExtractionFieldStatus, CteIngestionRecord } from "./ingestion";
-import type { CteContract } from "./types";
+import type { CteContract, CtePassThroughComponent } from "./types";
 // @ts-expect-error Node's strip-only test runner requires the explicit extension.
 import { validateCteContract } from "./validation.ts";
 
-export type CteReviewValue = string | number | readonly string[] | null;
+export type CteReviewValue = string | number | readonly string[] | readonly CtePassThroughComponent[] | null;
 
 export interface CteReviewField {
   readonly fieldKey: string;
@@ -75,6 +75,7 @@ const labels: Record<string, string> = {
   "commercialTerms.imbalance": "Sbilanciamento",
   "commercialTerms.oneOffFees": "Una tantum",
   "commercialTerms.commercialDiscounts": "Sconti commerciali",
+  "commercialTerms.passThroughComponents": "Componenti contrattuali pass-through",
   "eligibility.voltageLevels": "Livelli tensione",
   taxTreatment: "Trattamento fiscale",
 };
@@ -211,6 +212,12 @@ function feeComponent(field: CteReviewField | undefined, feeId: string, vector: 
   return { feeId, label: label ?? field?.label ?? feeId, amount, currency: "EUR", unit, taxTreatment: tax };
 }
 
+function passThroughComponents(field: CteExtractionField | CteReviewField | undefined): readonly CtePassThroughComponent[] | null {
+  if (!field || field.status === "NOT_FOUND" || field.status === "UNCERTAIN") return null;
+  const value = "normalizedValue" in field ? field.normalizedValue : field.value;
+  return Array.isArray(value) ? value as readonly CtePassThroughComponent[] : null;
+}
+
 function authoritativeFailure(errorCode: string, validationPaths: readonly string[]): CteAuthoritativeBuildResult {
   return { contract: null, errorCode, validationPaths };
 }
@@ -237,6 +244,9 @@ export function tryBuildAuthoritativeCteContract(record: Pick<CteIngestionRecord
   const reference = asString(fields.get("pricing.reference"));
   const spread = asNumber(fields.get("pricing.spread.amount"));
   const expectedUnit = record.vector === "EE" ? "EUR_PER_KWH" : "EUR_PER_SMC";
+  const passThroughField = fields.get("commercialTerms.passThroughComponents");
+  if (passThroughField?.status === "UNCERTAIN" && passThroughField.normalizedValue !== null) return authoritativeFailure("CTE_AUTHORITATIVE_FIELD_UNCERTAIN", ["commercialTerms.passThroughComponents"]);
+  const typedPassThroughComponents = passThroughComponents(passThroughField);
   const requiredPaths: string[] = [];
   if (!supplierName) requiredPaths.push("supplier.name");
   if (!supplierId) requiredPaths.push("supplier.supplierId");
@@ -284,7 +294,7 @@ export function tryBuildAuthoritativeCteContract(record: Pick<CteIngestionRecord
     taxTreatment: tax,
     eligibility: record.vector === "EE" ? { customerTypes: customer, voltageLevels: voltage } : { customerTypes: customer },
     pricing,
-    commercialTerms: { fixedFees: fixed ? [fixed] : [], variableFees: variable ? [variable] : [], imbalance: imbalance ? { status: "DECLARED" as const, component: imbalance } : { status: "NOT_DECLARED" as const, reason: "NOT_PROVIDED" as const }, oneOffFees: oneOff ? [oneOff] : [], commercialDiscounts: discounts ? [discounts] : [] },
+    commercialTerms: { fixedFees: fixed ? [fixed] : [], variableFees: variable ? [variable] : [], imbalance: imbalance ? { status: "DECLARED" as const, component: imbalance } : { status: "NOT_DECLARED" as const, reason: "NOT_PROVIDED" as const }, oneOffFees: oneOff ? [oneOff] : [], commercialDiscounts: discounts ? [discounts] : [], ...(typedPassThroughComponents === null ? {} : { passThroughComponents: typedPassThroughComponents }) },
   } as CteContract;
   try { validateCteContract(contract); } catch { return authoritativeFailure("CTE_AUTHORITATIVE_SCHEMA_INVALID", ["contract"]); }
   return { contract, errorCode: null, validationPaths: [] };
@@ -368,6 +378,7 @@ function reviewField(fieldKey: string, field: CteExtractionField | undefined, ve
   if (fieldKey === "commercialTerms.variableFees" || fieldKey === "commercialTerms.imbalance") return money(field, vector, vector === "GAS" ? "\u20AC/Smc" : "\u20AC/kWh");
   if (fieldKey === "commercialTerms.commercialDiscounts") return base(fieldKey, concise(text(field)), field);
   if (fieldKey === "commercialTerms.oneOffFees") { const result = money(field, vector, "\u20AC"); const description = oneOffDescription(text(field)); return description ? { ...result, description } : result; }
+  if (fieldKey === "commercialTerms.passThroughComponents") return base(fieldKey, Array.isArray(field?.value) ? field.value as readonly CtePassThroughComponent[] : null, field);
   return null;
 }
 
@@ -411,6 +422,7 @@ export function normalizeCteReview(record: Pick<CteIngestionRecord, "fields" | "
     reviewField("commercialTerms.imbalance", byPath.get("commercialTerms.imbalance"), record.vector),
     reviewField("commercialTerms.oneOffFees", byPath.get("commercialTerms.oneOffFees"), record.vector),
     reviewField("commercialTerms.commercialDiscounts", byPath.get("commercialTerms.commercialDiscounts"), record.vector),
+    reviewField("commercialTerms.passThroughComponents", byPath.get("commercialTerms.passThroughComponents"), record.vector),
     voltage(byPath.get("eligibility.voltageLevels")),
     tax(byPath.get("taxTreatment")),
   ].filter((field): field is CteReviewField => field !== null);
@@ -459,7 +471,7 @@ export function cteApprovalGate(record: Pick<CteIngestionRecord, "fields" | "vec
 }
 
 export function formatCteReviewValue(field: CteReviewField): string {
-  if (Array.isArray(field.normalizedValue)) return field.normalizedValue.join(", ");
+  if (Array.isArray(field.normalizedValue)) return field.normalizedValue.map((value) => typeof value === "string" ? value : `${value.kind}:${value.declarationState}`).join(", ");
   if (typeof field.normalizedValue === "number") return `${italianNumber(field.normalizedValue)}${field.unit ? ` ${field.unit}` : ""}`;
   return typeof field.normalizedValue === "string" ? field.normalizedValue : "Non rilevato";
 }

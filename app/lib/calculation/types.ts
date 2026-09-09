@@ -1,5 +1,6 @@
 import type { CustomerResidency, CustomerType, TaxInclusionState, VoltageLevel } from "../energy/types";
 import type { RegulatoryValueComponentCode, RegulatoryCustomerScope, RegulatoryVariant } from "../foundation/regulatory-types";
+import type { CtePassThroughKind } from "../cte/types";
 
 export const CALCULATION_SCHEMA_VERSION = 1 as const;
 export const CALCULATION_ENGINE_VERSION = "1" as const;
@@ -198,4 +199,16 @@ export interface CalculationResult {
   readonly savingsVsBaseline: CalculationMoney | null;
   readonly warnings: readonly string[];
   readonly roundingPolicy: "ROUND_HALF_UP_TO_CENT_PER_COMPONENT";
+  readonly contractualPassThroughCompleteness?: "COMPLETE" | "PARTIAL";
+  readonly contractualPassThroughStates?: readonly ContractualPassThroughStatus[];
+  readonly bta6NetOfTaxCompleteCandidate?: boolean;
+}
+
+export type ContractualPassThroughState = "RESOLVED_EXPLICIT" | "RESOLVED_INCLUDED" | "RESOLVED_NOT_APPLICABLE" | "UNRESOLVED_NOT_DECLARED" | "UNRESOLVED_EXTERNAL";
+
+export interface ContractualPassThroughStatus {
+  readonly kind: CtePassThroughKind;
+  readonly state: ContractualPassThroughState;
+  readonly effectiveFrom: string;
+  readonly effectiveTo: string;
 }

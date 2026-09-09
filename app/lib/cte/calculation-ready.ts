@@ -28,6 +28,7 @@ export function toCalculationReadyOffer(value: unknown): CalculationReadyOffer {
     imbalance: fees.imbalance,
     oneOffFees: fees.oneOffFees,
     commercialDiscounts: fees.commercialDiscounts,
+    ...(fees.passThroughComponents === undefined ? {} : { passThroughComponents: fees.passThroughComponents }),
   };
   return contract.vector === "EE"
     ? { ...base, vector: "EE", pricing: contract.pricing }
