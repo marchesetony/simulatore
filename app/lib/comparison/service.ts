@@ -4,7 +4,7 @@ import type { MarketArchiveRepository } from "../market/types";
 // @ts-expect-error Node's strip-only test runner requires the explicit extension.
 import { calculatePreparedOffer, exclusionFor, prepareApprovedOffer } from "../calculation/engine.ts";
 import type { CalculationDependencies } from "../calculation/engine";
-import type { CalculationExclusionCode, CalculationResult, RegulatedComponentIncluded, SimulationRequest } from "../calculation/types";
+import type { CalculationExclusionCode, CalculationResult, ContractualPassThroughState, ContractualPassThroughStatus, RegulatedComponentIncluded, SimulationRequest } from "../calculation/types";
 // @ts-expect-error Node's strip-only test runner requires the explicit extension.
 import { EE_FISCAL_EXCLUSION_NOTICE } from "../calculation/economic-scope.ts";
 import type { ComparisonCostBasis, ComparisonRankingEntry, ComparisonResult } from "./types";
@@ -46,6 +46,25 @@ function codeOf(error: unknown): CalculationExclusionCode {
   return code;
 }
 function canonicalComponentSet(values: readonly RegulatedComponentIncluded[]): readonly RegulatedComponentIncluded[] { return [...new Set(values)].sort() as RegulatedComponentIncluded[]; }
+const RESOLVED_CONTRACTUAL_STATES = new Set<ContractualPassThroughState>(["RESOLVED_EXPLICIT", "RESOLVED_INCLUDED", "RESOLVED_NOT_APPLICABLE"]);
+function normalizedContractualState(state: ContractualPassThroughState): "RESOLVED" | "UNRESOLVED_NOT_DECLARED" | "UNRESOLVED_EXTERNAL" { if (RESOLVED_CONTRACTUAL_STATES.has(state)) return "RESOLVED"; return state === "UNRESOLVED_NOT_DECLARED" ? state : "UNRESOLVED_EXTERNAL"; }
+function canonicalContractualCoverage(states: readonly ContractualPassThroughStatus[]): string {
+  const byKind = new Map<string, Array<{ state: ReturnType<typeof normalizedContractualState>; effectiveFrom: string; effectiveTo: string }>>();
+  states.forEach((status) => { const list = byKind.get(status.kind) ?? []; list.push({ state: normalizedContractualState(status.state), effectiveFrom: status.effectiveFrom, effectiveTo: status.effectiveTo }); byKind.set(status.kind, list); });
+  return [...byKind.keys()].sort().map((kind) => {
+    const merged: Array<{ state: ReturnType<typeof normalizedContractualState>; effectiveFrom: string; effectiveTo: string }> = [];
+    for (const segment of (byKind.get(kind) ?? []).sort((left, right) => left.effectiveFrom.localeCompare(right.effectiveFrom) || left.effectiveTo.localeCompare(right.effectiveTo))) {
+      const previous = merged.at(-1);
+      if (previous && previous.state === segment.state && previous.effectiveTo === segment.effectiveFrom) previous.effectiveTo = segment.effectiveTo;
+      else merged.push({ ...segment });
+    }
+    return `${kind}=${merged.map((segment) => `${segment.state}:${segment.effectiveFrom}:${segment.effectiveTo}`).join(",")}`;
+  }).join("|");
+}
+export function contractualCoverageKey(result: CalculationResult): string | null {
+  if (result.contractualPassThroughStates === undefined) return result.contractualPassThroughCompleteness === undefined ? null : "INVALID_CONTRACTUAL_METADATA";
+  return canonicalContractualCoverage(result.contractualPassThroughStates);
+}
 export interface ComparisonCostSelection {
   readonly comparisonCost: CalculationResult["totalCommercialCost"];
   readonly comparisonCostBasis: ComparisonCostBasis;
@@ -57,7 +76,7 @@ export function comparisonCostOf(result: CalculationResult): ComparisonCostSelec
   if (result.costScope === "COMMERCIAL_PLUS_REGULATED_PARTIAL" && result.totalCommercialPlusRegulatedSubsetCost !== null) return { comparisonCost: result.totalCommercialPlusRegulatedSubsetCost, comparisonCostBasis: "COMMERCIAL_PLUS_REGULATED_PARTIAL", regulatedComponentsIncluded: canonicalComponentSet(result.regulatedComponentsIncluded) };
   return null;
 }
-export function comparisonCompletenessKey(result: CalculationResult): string | null { const selection = comparisonCostOf(result); return selection === null ? null : `${selection.comparisonCostBasis}|${selection.regulatedComponentsIncluded.join(",")}`; }
+export function comparisonCompletenessKey(result: CalculationResult): string | null { const selection = comparisonCostOf(result); if (selection === null) return null; const contractual = contractualCoverageKey(result); return `${selection.comparisonCostBasis}|${selection.regulatedComponentsIncluded.join(",")}${contractual === null ? "" : `|CONTRACTUAL=${contractual}`}`; }
 function compareResults(left: CalculationResult, right: CalculationResult): number {
   const leftCost = comparisonCostOf(left)?.comparisonCost.minorUnits ?? Number.MAX_SAFE_INTEGER;
   const rightCost = comparisonCostOf(right)?.comparisonCost.minorUnits ?? Number.MAX_SAFE_INTEGER;

@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import type { CalculationComponent, CalculationExclusion, CalculationResult, RegulatedComponentIncluded, SimulationRequest } from "../calculation/types";
+import type { CalculationComponent, CalculationCostScope, CalculationExclusion, CalculationResult, ContractualPassThroughState, ContractualPassThroughStatus, RegulatedComponentIncluded, SimulationRequest } from "../calculation/types";
 // @ts-expect-error Node's strip-only test runner requires the explicit extension.
 import { DOMESTIC_NET_OF_TAX_COMPLETE_COMPONENTS } from "../calculation/types.ts";
 // @ts-expect-error Node's strip-only test runner requires the explicit extension.
@@ -7,6 +7,8 @@ import { EE_FISCAL_EXCLUSION_NOTICE } from "../calculation/economic-scope.ts";
 // @ts-expect-error Node's strip-only test runner requires the explicit extension.
 import { parseSimulationRequest } from "../calculation/input.ts";
 import type { ComparisonCostBasis, ComparisonRankingEntry, ComparisonResult } from "../comparison/types";
+// @ts-expect-error Node's strip-only test runner requires the explicit extension.
+import { comparisonCompletenessKey } from "../comparison/service.ts";
 
 export class ProposalValidationError extends Error {
   readonly code: string;
@@ -27,9 +29,11 @@ export function normalizedNote(value: unknown): string { if (typeof value !== "s
 export function dateOnly(value: unknown, code: string): string { const date = text(value, code, 10); if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return proposalFail(code); const parsed = Date.parse(`${date}T00:00:00.000Z`); if (!Number.isFinite(parsed) || new Date(parsed).toISOString().slice(0, 10) !== date) return proposalFail(code); return date; }
 export function assertPeriod(value: unknown, code: string): { readonly periodStart: string; readonly periodEnd: string } { if (typeof value !== "object" || value === null || Array.isArray(value)) return proposalFail(code); const item = value as Record<string, unknown>; const periodStart = dateOnly(item.periodStart, code); const periodEnd = dateOnly(item.periodEnd, code); if (periodStart >= periodEnd) return proposalFail(code); return { periodStart, periodEnd }; }
 export function assertInputSize(value: unknown): void { if (Buffer.byteLength(canonical(value), "utf8") > 262144) proposalFail("PROPOSAL_INPUT_TOO_LARGE"); }
+function record(value: unknown, code: string): Record<string, unknown> { if (typeof value !== "object" || value === null || Array.isArray(value)) return proposalFail(code); return value as Record<string, unknown>; }
+function enumValue<T extends string>(value: unknown, values: readonly T[], code: string): T { if (typeof value !== "string" || !values.includes(value as T)) return proposalFail(code); return value as T; }
 
 function calculationPayload(result: CalculationResult): unknown {
-  return { schemaVersion: result.schemaVersion, engineVersion: result.engineVersion, normalizedInput: result.normalizedInput, sourceCte: result.sourceCte, marketData: result.marketData, components: result.components, totalCommercialCost: result.totalCommercialCost, totalRegulatedSubsetCost: result.totalRegulatedSubsetCost, totalCommercialPlusRegulatedSubsetCost: result.totalCommercialPlusRegulatedSubsetCost, costScope: result.costScope, regulatedComponentsIncluded: result.regulatedComponentsIncluded, regulatoryData: result.regulatoryData, unitCost: result.unitCost, roundingPolicy: result.roundingPolicy };
+  return { schemaVersion: result.schemaVersion, engineVersion: result.engineVersion, normalizedInput: result.normalizedInput, sourceCte: result.sourceCte, marketData: result.marketData, components: result.components, totalCommercialCost: result.totalCommercialCost, totalRegulatedSubsetCost: result.totalRegulatedSubsetCost, totalCommercialPlusRegulatedSubsetCost: result.totalCommercialPlusRegulatedSubsetCost, costScope: result.costScope, regulatedComponentsIncluded: result.regulatedComponentsIncluded, regulatoryData: result.regulatoryData, unitCost: result.unitCost, roundingPolicy: result.roundingPolicy, ...(result.contractualPassThroughCompleteness !== undefined ? { contractualPassThroughCompleteness: result.contractualPassThroughCompleteness, contractualPassThroughStates: result.contractualPassThroughStates, bta6NetOfTaxCompleteCandidate: result.bta6NetOfTaxCompleteCandidate } : {}) };
 }
 
 export function assertMoney(value: unknown, code: string): asserts value is { readonly amount: number; readonly minorUnits: number; readonly currency: "EUR" } {
@@ -53,6 +57,56 @@ export function assertComponent(value: unknown): asserts value is CalculationCom
 
 const REGULATED_COMPONENTS: readonly RegulatedComponentIncluded[] = ["UC3_ENERGY", "UC6_ENERGY", "UC6_POWER", "UC6_FIXED", "NETWORK_FIXED", "NETWORK_POWER", "NETWORK_ENERGY", "METERING_FIXED", "TRANSMISSION_ENERGY", "ARIM_FIXED", "ARIM_POWER", "ARIM_ENERGY", "ASOS_FIXED", "ASOS_POWER", "ASOS_ENERGY", "DISPATCHING_TOTAL_ENERGY"];
 function canonicalComponentSet(values: readonly RegulatedComponentIncluded[]): readonly RegulatedComponentIncluded[] { return [...new Set(values)].sort() as RegulatedComponentIncluded[]; }
+const BTA6_COMPLETE_COMPONENTS: readonly RegulatedComponentIncluded[] = ["NETWORK_FIXED", "NETWORK_POWER", "NETWORK_ENERGY", "METERING_FIXED", "TRANSMISSION_ENERGY", "UC3_ENERGY", "UC6_ENERGY", "UC6_FIXED", "ARIM_FIXED", "ARIM_POWER", "ARIM_ENERGY", "ASOS_FIXED", "ASOS_POWER", "ASOS_ENERGY"];
+const CONTRACTUAL_KINDS = ["DISPATCHING", "CAPACITY_MARKET", "OTHER_CONTRACTUAL_PASS_THROUGH"] as const;
+const CONTRACTUAL_STATES = ["RESOLVED_EXPLICIT", "RESOLVED_INCLUDED", "RESOLVED_NOT_APPLICABLE", "UNRESOLVED_NOT_DECLARED", "UNRESOLVED_EXTERNAL"] as const;
+const RESOLVED_STATES = new Set<ContractualPassThroughState>(["RESOLVED_EXPLICIT", "RESOLVED_INCLUDED", "RESOLVED_NOT_APPLICABLE"]);
+function contractualStateResolved(state: ContractualPassThroughState): boolean { return RESOLVED_STATES.has(state); }
+function assertContractualStates(value: unknown, period: { readonly periodStart: string; readonly periodEnd: string }, code: string): asserts value is readonly ContractualPassThroughStatus[] {
+  if (!Array.isArray(value) || value.length === 0) proposalFail(code);
+  const states = value as readonly unknown[];
+  const typed = states.map((item) => {
+    const entry = record(item, code);
+    const kind = enumValue(entry.kind, CONTRACTUAL_KINDS, code);
+    const state = enumValue(entry.state, CONTRACTUAL_STATES, code);
+    const effectiveFrom = dateOnly(entry.effectiveFrom, code);
+    const effectiveTo = dateOnly(entry.effectiveTo, code);
+    if (effectiveFrom >= effectiveTo || effectiveFrom < period.periodStart || effectiveTo > period.periodEnd) proposalFail(code);
+    return { kind, state, effectiveFrom, effectiveTo } satisfies ContractualPassThroughStatus;
+  });
+  const previousByKind = new Map<string, ContractualPassThroughStatus>();
+  for (const status of [...typed].sort((left, right) => left.kind.localeCompare(right.kind) || left.effectiveFrom.localeCompare(right.effectiveFrom) || left.effectiveTo.localeCompare(right.effectiveTo))) {
+    const previous = previousByKind.get(status.kind);
+    if (previous && previous.effectiveTo > status.effectiveFrom) proposalFail(code);
+    previousByKind.set(status.kind, status);
+  }
+  if (!(typed.some((status) => status.kind === "DISPATCHING") && typed.some((status) => status.kind === "CAPACITY_MARKET"))) proposalFail(code);
+}
+export function assertContractualSummary(value: unknown, period: { readonly periodStart: string; readonly periodEnd: string }, costScope: CalculationCostScope, vector: "EE" | "GAS", customerCategory: SimulationRequest["customerCategory"], code: string): void {
+  if (value === undefined) {
+    if (costScope === "COMMERCIAL_PLUS_REGULATED_NET_OF_TAX_COMPLETE" && !(vector === "EE" && customerCategory === "RESIDENTIAL")) proposalFail(code);
+    return;
+  }
+  const summary = record(value, code);
+  if (vector !== "EE" || customerCategory !== "NON_RESIDENTIAL") proposalFail(code);
+  const completeness = enumValue(summary.completeness, ["COMPLETE", "PARTIAL"], code);
+  assertContractualStates(summary.states, period, code);
+  if (typeof summary.bta6NetOfTaxComplete !== "boolean") proposalFail(code);
+  const states = summary.states as readonly ContractualPassThroughStatus[];
+  const requiredKinds = ["DISPATCHING", "CAPACITY_MARKET"] as const;
+  const fullyResolved = requiredKinds.every((kind) => {
+    const segments = states.filter((status) => status.kind === kind).sort((left, right) => left.effectiveFrom.localeCompare(right.effectiveFrom));
+    let cursor = period.periodStart;
+    for (const segment of segments) {
+      if (segment.effectiveFrom !== cursor || !contractualStateResolved(segment.state)) return false;
+      cursor = segment.effectiveTo;
+    }
+    return cursor === period.periodEnd;
+  });
+  if (completeness === "COMPLETE" && !fullyResolved) proposalFail(code);
+  if (summary.bta6NetOfTaxComplete && (vector !== "EE" || customerCategory !== "NON_RESIDENTIAL" || costScope !== "COMMERCIAL_PLUS_REGULATED_NET_OF_TAX_COMPLETE" || completeness !== "COMPLETE" || !fullyResolved)) proposalFail(code);
+  if (costScope === "COMMERCIAL_PLUS_REGULATED_NET_OF_TAX_COMPLETE" && vector === "EE" && customerCategory === "NON_RESIDENTIAL" && summary.bta6NetOfTaxComplete !== true) proposalFail(code);
+}
 export function assertRegulatedComponentSet(value: unknown, code: string): asserts value is readonly RegulatedComponentIncluded[] {
   if (!Array.isArray(value) || value.some((item) => typeof item !== "string" || !REGULATED_COMPONENTS.includes(item as RegulatedComponentIncluded))) proposalFail(code);
   const items = value as readonly RegulatedComponentIncluded[];
@@ -106,7 +160,13 @@ function assertCalculationShape(result: CalculationResult, tenantId: string): Si
   assertRegulatedComponentSet(result.regulatedComponentsIncluded, "CALCULATION_REGULATED_COMPONENTS_INVALID");
   if (result.costScope === "COMMERCIAL_ONLY" && (result.totalRegulatedSubsetCost !== null || result.totalCommercialPlusRegulatedSubsetCost !== null || result.regulatedComponentsIncluded.length !== 0)) proposalFail("CALCULATION_COST_SCOPE_INVALID");
   if (result.costScope === "COMMERCIAL_PLUS_REGULATED_PARTIAL" && (result.totalRegulatedSubsetCost === null || result.totalCommercialPlusRegulatedSubsetCost === null)) proposalFail("CALCULATION_COST_SCOPE_INVALID");
-  if (result.costScope === "COMMERCIAL_PLUS_REGULATED_NET_OF_TAX_COMPLETE" && (result.vector !== "EE" || result.normalizedInput.customerCategory !== "RESIDENTIAL" || result.normalizedInput.residency !== "RESIDENT" || result.totalRegulatedSubsetCost === null || result.totalCommercialPlusRegulatedSubsetCost === null || canonicalComponentSet(result.regulatedComponentsIncluded).join("|") !== canonicalComponentSet(DOMESTIC_NET_OF_TAX_COMPLETE_COMPONENTS).join("|"))) proposalFail("CALCULATION_COST_SCOPE_INVALID");
+  const contractualFieldsPresent = result.contractualPassThroughCompleteness !== undefined || result.contractualPassThroughStates !== undefined || result.bta6NetOfTaxCompleteCandidate !== undefined;
+  if (contractualFieldsPresent && (result.vector !== "EE" || result.normalizedInput.customerCategory !== "NON_RESIDENTIAL" || result.contractualPassThroughCompleteness === undefined || result.contractualPassThroughStates === undefined || result.bta6NetOfTaxCompleteCandidate === undefined)) proposalFail("CALCULATION_CONTRACTUAL_METADATA_INVALID");
+  assertContractualSummary(contractualFieldsPresent ? { completeness: result.contractualPassThroughCompleteness, states: result.contractualPassThroughStates, bta6NetOfTaxComplete: result.bta6NetOfTaxCompleteCandidate } : undefined, result.supplyPeriod, result.costScope, result.vector, result.normalizedInput.customerCategory, "CALCULATION_CONTRACTUAL_METADATA_INVALID");
+  const domesticComplete = result.vector === "EE" && result.normalizedInput.customerCategory === "RESIDENTIAL" && result.normalizedInput.residency === "RESIDENT" && canonicalComponentSet(result.regulatedComponentsIncluded).join("|") === canonicalComponentSet(DOMESTIC_NET_OF_TAX_COMPLETE_COMPONENTS).join("|");
+  const bta6Complete = result.vector === "EE" && result.normalizedInput.customerCategory === "NON_RESIDENTIAL" && result.taxTreatment === "EXCLUDED" && result.bta6NetOfTaxCompleteCandidate === true && result.contractualPassThroughCompleteness === "COMPLETE" && result.totalRegulatedSubsetCost !== null && result.totalCommercialPlusRegulatedSubsetCost !== null && canonicalComponentSet(result.regulatedComponentsIncluded).join("|") === canonicalComponentSet(BTA6_COMPLETE_COMPONENTS).join("|");
+  if (result.costScope === "COMMERCIAL_PLUS_REGULATED_NET_OF_TAX_COMPLETE" && (!domesticComplete && !bta6Complete || result.totalRegulatedSubsetCost === null || result.totalCommercialPlusRegulatedSubsetCost === null)) proposalFail("CALCULATION_COST_SCOPE_INVALID");
+  if (result.bta6NetOfTaxCompleteCandidate === true && !bta6Complete) proposalFail("CALCULATION_CONTRACTUAL_METADATA_INVALID");
   if (result.totalRegulatedSubsetCost !== null) assertMoney(result.totalRegulatedSubsetCost, "CALCULATION_REGULATED_TOTAL_INVALID");
   if (result.totalCommercialPlusRegulatedSubsetCost !== null) assertMoney(result.totalCommercialPlusRegulatedSubsetCost, "CALCULATION_TOTAL_INVALID");
   const commercialTotal = result.components.filter((component) => !component.category.startsWith("REGULATED_")).reduce((sum, component) => sum + BigInt(component.sign === "DISCOUNT" ? -component.amount.minorUnits : component.amount.minorUnits), BigInt(0));
@@ -149,6 +209,8 @@ export function assertComparisonResult(value: unknown, tenantId: string): Compar
   if (result.comparisonCostBasis !== null && !["COMMERCIAL_ONLY", "COMMERCIAL_PLUS_REGULATED_PARTIAL", "COMMERCIAL_PLUS_REGULATED_NET_OF_TAX_COMPLETE"].includes(result.comparisonCostBasis)) proposalFail("COMPARISON_COST_BASIS_INVALID");
   assertRegulatedComponentSet(result.regulatedComponentsIncluded, "COMPARISON_REGULATED_COMPONENTS_INVALID");
   result.results.forEach((candidate) => { assertCalculationResult(candidate, tenantId); if (candidate.vector !== result.vector || canonical(candidate.normalizedInput) !== canonical(result.normalizedInput)) proposalFail("COMPARISON_RESULT_MISMATCH"); });
+  const completenessKeys = result.results.map(comparisonCompletenessKey);
+  if (completenessKeys.some((key) => key === null) || completenessKeys.some((key) => key !== completenessKeys[0])) proposalFail("COMPARISON_COMPLETENESS_MISMATCH");
   result.excludedOffers.forEach((exclusion) => assertExclusion(exclusion));
   const selections = result.results.map(calculationComparisonSelection);
   const validSelections = selections.filter((selection): selection is NonNullable<typeof selection> => selection !== null);

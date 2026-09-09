@@ -1,4 +1,4 @@
-import type { CalculationComponent, CalculationCostScope, CalculationExclusion, CalculationMarketReference, CalculationResult, RegulatedComponentIncluded, SimulationRequest } from "../calculation/types";
+import type { CalculationComponent, CalculationCostScope, CalculationExclusion, CalculationMarketReference, CalculationResult, ContractualPassThroughStatus, RegulatedComponentIncluded, SimulationRequest } from "../calculation/types";
 import type { ComparisonResult } from "../comparison/types";
 
 export const PROPOSAL_SCHEMA_VERSION = 1 as const;
@@ -69,6 +69,12 @@ export interface ProposalSelectedResultSummary {
   readonly tieGroup: string | null;
 }
 
+export interface ProposalContractualPassThroughSummary {
+  readonly completeness: "COMPLETE" | "PARTIAL";
+  readonly states: readonly ContractualPassThroughStatus[];
+  readonly bta6NetOfTaxComplete: boolean;
+}
+
 export interface ProposalCanonicalSnapshot {
   readonly schemaVersion: typeof PROPOSAL_SCHEMA_VERSION;
   readonly proposalId: string;
@@ -92,6 +98,7 @@ export interface ProposalCanonicalSnapshot {
   readonly baseline: CalculationResult["savingsVsBaseline"];
   readonly savings: CalculationResult["savingsVsBaseline"];
   readonly selectedResult: ProposalSelectedResultSummary;
+  readonly contractualPassThrough?: ProposalContractualPassThroughSummary;
   readonly exclusions: readonly CalculationExclusion[];
   readonly warnings: readonly string[];
   readonly currency: "EUR";

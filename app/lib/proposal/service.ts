@@ -1,7 +1,7 @@
 import type { CalculationResult } from "../calculation/types";
 import type { ComparisonResult } from "../comparison/types";
 // @ts-expect-error Node's strip-only test runner requires the explicit extension.
-import { assertCalculationResult, assertComparisonResult, assertComponent, assertExclusion, assertInputSize, assertMoney, assertPeriod, assertRegulatedComponentSet, canonical, dateOnly, fingerprint, normalizedNote, proposalFail, text } from "./integrity.ts";
+import { assertCalculationResult, assertComparisonResult, assertComponent, assertContractualSummary, assertExclusion, assertInputSize, assertMoney, assertPeriod, assertRegulatedComponentSet, canonical, dateOnly, fingerprint, normalizedNote, proposalFail, text } from "./integrity.ts";
 // @ts-expect-error Node's strip-only test runner requires the explicit extension.
 import { parseSimulationRequest } from "../calculation/input.ts";
 import type { ComparisonProposalRequest, ProposalCanonicalSnapshot, ProposalCustomerSummary, ProposalExportFormat, ProposalOfferIdentity, ProposalRequest, ProposalSupplySummary } from "./types";
@@ -73,6 +73,11 @@ function baselineFrom(calculation: CalculationResult): CalculationResult["saving
   return { amount: minorUnits / 100, minorUnits, currency: "EUR" };
 }
 
+function contractualNotCalculated(calculation: CalculationResult): readonly string[] {
+  const codes: Record<string, string> = { DISPATCHING: "CONTRACTUAL_DISPATCHING_NOT_QUANTIFIED", CAPACITY_MARKET: "CONTRACTUAL_CAPACITY_MARKET_NOT_QUANTIFIED", OTHER_CONTRACTUAL_PASS_THROUGH: "CONTRACTUAL_OTHER_PASS_THROUGH_NOT_QUANTIFIED" };
+  return [...new Set((calculation.contractualPassThroughStates ?? []).filter((state) => state.state === "UNRESOLVED_NOT_DECLARED" || state.state === "UNRESOLVED_EXTERNAL").map((state) => codes[state.kind]))].filter((code): code is string => code !== undefined);
+}
+
 export function generateProposal(rawRequest: unknown, tenantId: string, requiredSourceType?: "CALCULATION" | "COMPARISON"): ProposalCanonicalSnapshot {
   const request = parseProposalRequest(rawRequest, tenantId, requiredSourceType);
   const selected = request.sourceType === "CALCULATION"
@@ -90,6 +95,7 @@ export function generateProposal(rawRequest: unknown, tenantId: string, required
   const notCalculated = [
     ...(selected.calculation.taxTreatment === "EXCLUDED" ? ["VAT", "EXCISE", "OTHER_APPLICABLE_TAXES_OR_FISCAL_COMPONENTS"] : []),
     ...(selected.calculation.costScope === "COMMERCIAL_PLUS_REGULATED_NET_OF_TAX_COMPLETE" ? [] : ["REGULATED_COMPONENTS_NOT_INCLUDED_IN_CURRENT_SCOPE"]),
+    ...contractualNotCalculated(selected.calculation),
   ];
   const payload = {
     schemaVersion: 1 as const,
@@ -113,6 +119,7 @@ export function generateProposal(rawRequest: unknown, tenantId: string, required
     baseline,
     savings: selected.calculation.savingsVsBaseline,
     selectedResult: { calculationId: selected.calculation.calculationId, calculationFingerprint: selected.calculation.fingerprint, rankingPosition: selected.rankingPosition, tieGroup: selected.tieGroup },
+    ...(selected.calculation.contractualPassThroughCompleteness !== undefined && selected.calculation.contractualPassThroughStates !== undefined && selected.calculation.bta6NetOfTaxCompleteCandidate !== undefined ? { contractualPassThrough: { completeness: selected.calculation.contractualPassThroughCompleteness, states: selected.calculation.contractualPassThroughStates, bta6NetOfTaxComplete: selected.calculation.costScope === "COMMERCIAL_PLUS_REGULATED_NET_OF_TAX_COMPLETE" && selected.calculation.bta6NetOfTaxCompleteCandidate } } : {}),
     exclusions,
     warnings: [...new Set(warnings)],
     currency: selected.calculation.currency,
@@ -185,6 +192,8 @@ export function assertProposalSnapshot(value: unknown, tenantId: string): Propos
   assertMoney(proposal.commercialCost, "PROPOSAL_SNAPSHOT_INVALID");
   if (!["COMMERCIAL_ONLY", "COMMERCIAL_PLUS_REGULATED_PARTIAL", "COMMERCIAL_PLUS_REGULATED_NET_OF_TAX_COMPLETE"].includes(proposal.costScope) || proposal.comparisonCostBasis !== proposal.costScope) proposalFail("PROPOSAL_SNAPSHOT_INVALID");
   assertRegulatedComponentSet(proposal.regulatedComponentsIncluded, "PROPOSAL_SNAPSHOT_INVALID");
+  assertContractualSummary(proposal.contractualPassThrough, simulationPeriod, proposal.costScope, proposal.vector, proposal.customer.category, "PROPOSAL_CONTRACTUAL_METADATA_INVALID");
+  if (proposal.costScope === "COMMERCIAL_PLUS_REGULATED_NET_OF_TAX_COMPLETE" && proposal.customer.category === "NON_RESIDENTIAL" && canonical(proposal.regulatedComponentsIncluded.slice().sort()) !== canonical(["NETWORK_FIXED", "NETWORK_POWER", "NETWORK_ENERGY", "METERING_FIXED", "TRANSMISSION_ENERGY", "UC3_ENERGY", "UC6_ENERGY", "UC6_FIXED", "ARIM_FIXED", "ARIM_POWER", "ARIM_ENERGY", "ASOS_FIXED", "ASOS_POWER", "ASOS_ENERGY"].sort())) proposalFail("PROPOSAL_BTA6_COMPONENT_SET_INVALID");
   assertMoney(proposal.comparisonCost, "PROPOSAL_SNAPSHOT_INVALID");
   const commercialTotal = proposal.components.filter((component) => !component.category.startsWith("REGULATED_")).reduce((sum, component) => sum + BigInt(component.sign === "DISCOUNT" ? -component.amount.minorUnits : component.amount.minorUnits), BigInt(0));
   const componentTotal = proposal.components.reduce((sum, component) => sum + BigInt(component.sign === "DISCOUNT" ? -component.amount.minorUnits : component.amount.minorUnits), BigInt(0));
