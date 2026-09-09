@@ -1,5 +1,7 @@
 import type { ElectricitySupplyContext } from "./trusted-ee-supply-context.ts";
 import type { ElectricitySimulationRequest, CalculationComponent, RegulatoryDataReference, RegulatedComponentIncluded } from "./types.ts";
+// @ts-expect-error Node's strip-only test runner requires the explicit extension.
+import { DOMESTIC_NET_OF_TAX_COMPLETE_COMPONENTS } from "./types.ts";
 import type { RegulatoryVariant } from "../foundation/regulatory-types.ts";
 import type { ProductionRegulatoryPersistenceBridge } from "../regulatory-bridge.ts";
 // @ts-expect-error Node's strip-only test runner requires the explicit extension.
@@ -20,6 +22,11 @@ export const BTA6_REGULATED_SUBSET_PARTIAL_WARNING = "REGULATED_SUBSET_PARTIAL_B
 export const BTA6_ASOS_EXCLUDED_CLASS_UNKNOWN = "BTA6_ASOS_EXCLUDED_CLASS_UNKNOWN" as const;
 export const DOMESTIC_RESIDENT_REGULATED_SUBSET_PARTIAL_WARNING = "REGULATED_SUBSET_PARTIAL_DOMESTIC_NETWORK_UC3_UC6_ASOS_ARIM_ONLY" as const;
 export { CALCULATED_REGULATORY_DOMAINS };
+
+function canonicalComponentSet(values: readonly RegulatedComponentIncluded[]): readonly RegulatedComponentIncluded[] { return [...new Set(values)].sort() as RegulatedComponentIncluded[]; }
+export function isDomesticNetOfTaxCompleteComponents(values: readonly RegulatedComponentIncluded[]): boolean {
+  return canonicalComponentSet(values).join("|") === canonicalComponentSet(DOMESTIC_NET_OF_TAX_COMPLETE_COMPONENTS).join("|");
+}
 
 export interface RegulatedEeExecutionContext {
   readonly trustedElectricityContext: ElectricitySupplyContext;

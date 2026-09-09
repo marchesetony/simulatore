@@ -1,6 +1,8 @@
 import { createHash } from "node:crypto";
 import type { CalculationComponent, CalculationExclusion, CalculationResult, RegulatedComponentIncluded, SimulationRequest } from "../calculation/types";
 // @ts-expect-error Node's strip-only test runner requires the explicit extension.
+import { DOMESTIC_NET_OF_TAX_COMPLETE_COMPONENTS } from "../calculation/types.ts";
+// @ts-expect-error Node's strip-only test runner requires the explicit extension.
 import { EE_FISCAL_EXCLUSION_NOTICE } from "../calculation/economic-scope.ts";
 // @ts-expect-error Node's strip-only test runner requires the explicit extension.
 import { parseSimulationRequest } from "../calculation/input.ts";
@@ -49,7 +51,7 @@ export function assertComponent(value: unknown): asserts value is CalculationCom
   if (typeof item.formulaInputs !== "object" || item.formulaInputs === null || Array.isArray(item.formulaInputs)) proposalFail("PROPOSAL_COMPONENT_INVALID");
 }
 
-const REGULATED_COMPONENTS: readonly RegulatedComponentIncluded[] = ["UC3_ENERGY", "UC6_ENERGY", "UC6_POWER", "UC6_FIXED", "NETWORK_FIXED", "NETWORK_POWER", "NETWORK_ENERGY", "METERING_FIXED", "TRANSMISSION_ENERGY", "ARIM_FIXED", "ARIM_POWER", "ARIM_ENERGY", "ASOS_FIXED", "ASOS_POWER", "ASOS_ENERGY"];
+const REGULATED_COMPONENTS: readonly RegulatedComponentIncluded[] = ["UC3_ENERGY", "UC6_ENERGY", "UC6_POWER", "UC6_FIXED", "NETWORK_FIXED", "NETWORK_POWER", "NETWORK_ENERGY", "METERING_FIXED", "TRANSMISSION_ENERGY", "ARIM_FIXED", "ARIM_POWER", "ARIM_ENERGY", "ASOS_FIXED", "ASOS_POWER", "ASOS_ENERGY", "DISPATCHING_TOTAL_ENERGY"];
 function canonicalComponentSet(values: readonly RegulatedComponentIncluded[]): readonly RegulatedComponentIncluded[] { return [...new Set(values)].sort() as RegulatedComponentIncluded[]; }
 export function assertRegulatedComponentSet(value: unknown, code: string): asserts value is readonly RegulatedComponentIncluded[] {
   if (!Array.isArray(value) || value.some((item) => typeof item !== "string" || !REGULATED_COMPONENTS.includes(item as RegulatedComponentIncluded))) proposalFail(code);
@@ -58,9 +60,13 @@ export function assertRegulatedComponentSet(value: unknown, code: string): asser
 }
 function calculationComparisonSelection(result: CalculationResult): { readonly comparisonCost: CalculationResult["totalCommercialCost"]; readonly comparisonCostBasis: ComparisonCostBasis; readonly regulatedComponentsIncluded: readonly RegulatedComponentIncluded[] } | null {
   if (result.costScope === "COMMERCIAL_ONLY" && result.totalCommercialPlusRegulatedSubsetCost === null) return { comparisonCost: result.totalCommercialCost, comparisonCostBasis: "COMMERCIAL_ONLY", regulatedComponentsIncluded: [] };
+  if (result.costScope === "COMMERCIAL_PLUS_REGULATED_NET_OF_TAX_COMPLETE" && result.totalCommercialPlusRegulatedSubsetCost !== null) return { comparisonCost: result.totalCommercialPlusRegulatedSubsetCost, comparisonCostBasis: "COMMERCIAL_PLUS_REGULATED_NET_OF_TAX_COMPLETE", regulatedComponentsIncluded: canonicalComponentSet(result.regulatedComponentsIncluded) };
   if (result.costScope === "COMMERCIAL_PLUS_REGULATED_PARTIAL" && result.totalCommercialPlusRegulatedSubsetCost !== null) return { comparisonCost: result.totalCommercialPlusRegulatedSubsetCost, comparisonCostBasis: "COMMERCIAL_PLUS_REGULATED_PARTIAL", regulatedComponentsIncluded: canonicalComponentSet(result.regulatedComponentsIncluded) };
   return null;
 }
+function comparableMinor(result: CalculationResult): number { return (calculationComparisonSelection(result) ?? proposalFail("CALCULATION_COST_SCOPE_INVALID")).comparisonCost.minorUnits; }
+function baselineScope(result: CalculationResult): ComparisonCostBasis { return result.normalizedInput.baseline?.costScope ?? "COMMERCIAL_ONLY"; }
+function baselineComparableMinor(result: CalculationResult): number { const baseline = result.normalizedInput.baseline ?? proposalFail("CALCULATION_SAVINGS_INVALID"); return Math.round((baselineScope(result) === "COMMERCIAL_ONLY" ? baseline.totalCommercialCost : baseline.comparisonCost ?? proposalFail("CALCULATION_SAVINGS_INVALID")) * 100); }
 
 const EXCLUSION_CODES = ["TENANT_MISMATCH", "VECTOR_MISMATCH", "CTE_NOT_APPROVED", "CTE_EXPIRED", "CTE_VALIDITY_MISMATCH", "CUSTOMER_NOT_ELIGIBLE", "VOLTAGE_NOT_ELIGIBLE", "TAX_TREATMENT_INCOMPATIBLE", "CURRENCY_INCOMPATIBLE", "CALCULATION_READY_INVALID", "CALCULATION_INPUT_INVALID", "MONTHLY_PROFILE_REQUIRED", "MARKET_DATA_MISSING", "MARKET_DATA_INVALID", "CORRECTION_COEFFICIENT_REQUIRED", "FEE_UNIT_MISMATCH", "IMBALANCE_UNAVAILABLE", "ONE_OFF_FEE_UNIT_INVALID", "COMPARISON_INCOMPATIBLE"] as const;
 
@@ -96,10 +102,11 @@ function assertCalculationShape(result: CalculationResult, tenantId: string): Si
   if (!Array.isArray(result.components) || result.components.length === 0) proposalFail("CALCULATION_COMPONENTS_INVALID");
   result.components.forEach(assertComponent);
   assertMoney(result.totalCommercialCost, "CALCULATION_TOTAL_INVALID");
-  if (result.costScope !== "COMMERCIAL_ONLY" && result.costScope !== "COMMERCIAL_PLUS_REGULATED_PARTIAL") proposalFail("CALCULATION_COST_SCOPE_INVALID");
+  if (!["COMMERCIAL_ONLY", "COMMERCIAL_PLUS_REGULATED_PARTIAL", "COMMERCIAL_PLUS_REGULATED_NET_OF_TAX_COMPLETE"].includes(result.costScope)) proposalFail("CALCULATION_COST_SCOPE_INVALID");
   assertRegulatedComponentSet(result.regulatedComponentsIncluded, "CALCULATION_REGULATED_COMPONENTS_INVALID");
   if (result.costScope === "COMMERCIAL_ONLY" && (result.totalRegulatedSubsetCost !== null || result.totalCommercialPlusRegulatedSubsetCost !== null || result.regulatedComponentsIncluded.length !== 0)) proposalFail("CALCULATION_COST_SCOPE_INVALID");
   if (result.costScope === "COMMERCIAL_PLUS_REGULATED_PARTIAL" && (result.totalRegulatedSubsetCost === null || result.totalCommercialPlusRegulatedSubsetCost === null)) proposalFail("CALCULATION_COST_SCOPE_INVALID");
+  if (result.costScope === "COMMERCIAL_PLUS_REGULATED_NET_OF_TAX_COMPLETE" && (result.vector !== "EE" || result.normalizedInput.customerCategory !== "RESIDENTIAL" || result.normalizedInput.residency !== "RESIDENT" || result.totalRegulatedSubsetCost === null || result.totalCommercialPlusRegulatedSubsetCost === null || canonicalComponentSet(result.regulatedComponentsIncluded).join("|") !== canonicalComponentSet(DOMESTIC_NET_OF_TAX_COMPLETE_COMPONENTS).join("|"))) proposalFail("CALCULATION_COST_SCOPE_INVALID");
   if (result.totalRegulatedSubsetCost !== null) assertMoney(result.totalRegulatedSubsetCost, "CALCULATION_REGULATED_TOTAL_INVALID");
   if (result.totalCommercialPlusRegulatedSubsetCost !== null) assertMoney(result.totalCommercialPlusRegulatedSubsetCost, "CALCULATION_TOTAL_INVALID");
   const commercialTotal = result.components.filter((component) => !component.category.startsWith("REGULATED_")).reduce((sum, component) => sum + BigInt(component.sign === "DISCOUNT" ? -component.amount.minorUnits : component.amount.minorUnits), BigInt(0));
@@ -109,9 +116,12 @@ function assertCalculationShape(result: CalculationResult, tenantId: string): Si
   if (result.unitCost.unit !== (result.vector === "EE" ? "EUR_PER_KWH" : "EUR_PER_SMC")) proposalFail("CALCULATION_UNIT_COST_INVALID");
   if (result.savingsVsBaseline !== null) assertMoney(result.savingsVsBaseline, "CALCULATION_SAVINGS_INVALID");
   if (normalized.baseline === undefined && result.savingsVsBaseline !== null) proposalFail("CALCULATION_SAVINGS_INVALID");
-  if (normalized.baseline !== undefined && result.costScope === "COMMERCIAL_ONLY" && (result.savingsVsBaseline === null || result.savingsVsBaseline.minorUnits !== Math.round(normalized.baseline.totalCommercialCost * 100) - result.totalCommercialCost.minorUnits)) proposalFail("CALCULATION_SAVINGS_INVALID");
-  if (normalized.baseline !== undefined && result.costScope !== "COMMERCIAL_ONLY" && result.savingsVsBaseline !== null) proposalFail("CALCULATION_SAVINGS_INVALID");
-  const expectedWarnings = [...(normalized.sourceBill ? ["SOURCE_BILL_REFERENCE_RECORDED"] : []), ...(result.costScope === "COMMERCIAL_PLUS_REGULATED_PARTIAL" ? result.warnings.filter((warning) => warning.startsWith("REGULATED_SUBSET_PARTIAL_") || warning === "BTA6_ASOS_EXCLUDED_CLASS_UNKNOWN") : []), ...(normalized.baseline !== undefined && result.costScope !== "COMMERCIAL_ONLY" ? ["BASELINE_COST_SCOPE_MISMATCH"] : [])];
+  if (normalized.baseline !== undefined) {
+    const sameScope = baselineScope(result) === result.costScope;
+    if (sameScope && (result.savingsVsBaseline === null || result.savingsVsBaseline.minorUnits !== baselineComparableMinor(result) - comparableMinor(result))) proposalFail("CALCULATION_SAVINGS_INVALID");
+    if (!sameScope && result.savingsVsBaseline !== null) proposalFail("CALCULATION_SAVINGS_INVALID");
+  }
+  const expectedWarnings = [...(normalized.sourceBill ? ["SOURCE_BILL_REFERENCE_RECORDED"] : []), ...(result.costScope === "COMMERCIAL_PLUS_REGULATED_PARTIAL" ? result.warnings.filter((warning) => warning.startsWith("REGULATED_SUBSET_PARTIAL_") || warning === "BTA6_ASOS_EXCLUDED_CLASS_UNKNOWN") : []), ...(normalized.baseline !== undefined && baselineScope(result) !== result.costScope ? ["BASELINE_COST_SCOPE_MISMATCH"] : [])];
   if (!Array.isArray(result.warnings) || canonical(result.warnings) !== canonical(expectedWarnings)) proposalFail("CALCULATION_WARNINGS_MISMATCH");
   return normalized;
 }
@@ -136,7 +146,7 @@ export function assertComparisonResult(value: unknown, tenantId: string): Compar
   if (canonical(normalized) !== canonical(result.normalizedInput) || normalized.vector !== result.vector || result.taxTreatment !== normalized.taxTreatment) proposalFail("COMPARISON_RESULT_MISMATCH");
   if (result.vector === "EE" && result.taxTreatment !== "EXCLUDED") proposalFail("COMPARISON_TAX_POLICY_INVALID");
   if (result.fiscalExclusionNotice !== (result.taxTreatment === "EXCLUDED" ? EE_FISCAL_EXCLUSION_NOTICE : null)) proposalFail("COMPARISON_FISCAL_NOTICE_INVALID");
-  if (result.comparisonCostBasis !== null && result.comparisonCostBasis !== "COMMERCIAL_ONLY" && result.comparisonCostBasis !== "COMMERCIAL_PLUS_REGULATED_PARTIAL") proposalFail("COMPARISON_COST_BASIS_INVALID");
+  if (result.comparisonCostBasis !== null && !["COMMERCIAL_ONLY", "COMMERCIAL_PLUS_REGULATED_PARTIAL", "COMMERCIAL_PLUS_REGULATED_NET_OF_TAX_COMPLETE"].includes(result.comparisonCostBasis)) proposalFail("COMPARISON_COST_BASIS_INVALID");
   assertRegulatedComponentSet(result.regulatedComponentsIncluded, "COMPARISON_REGULATED_COMPONENTS_INVALID");
   result.results.forEach((candidate) => { assertCalculationResult(candidate, tenantId); if (candidate.vector !== result.vector || canonical(candidate.normalizedInput) !== canonical(result.normalizedInput)) proposalFail("COMPARISON_RESULT_MISMATCH"); });
   result.excludedOffers.forEach((exclusion) => assertExclusion(exclusion));

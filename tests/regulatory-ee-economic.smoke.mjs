@@ -117,10 +117,10 @@ const integrated = await calculatePreparedOffer(singleRequest, prepared, { trust
 assert.equal(integrated.totalCommercialCost.minorUnits, 10000);
 assert.equal(integrated.totalRegulatedSubsetCost?.minorUnits, 6851);
 assert.equal(integrated.totalCommercialPlusRegulatedSubsetCost?.minorUnits, 16851);
-assert.equal(integrated.costScope, "COMMERCIAL_PLUS_REGULATED_PARTIAL");
+assert.equal(integrated.costScope, "COMMERCIAL_PLUS_REGULATED_NET_OF_TAX_COMPLETE");
 assert.deepEqual(integrated.regulatedComponentsIncluded, ["UC3_ENERGY", "UC6_ENERGY", "UC6_POWER", "NETWORK_FIXED", "NETWORK_POWER", "TRANSMISSION_ENERGY", "DISPATCHING_TOTAL_ENERGY", "ASOS_ENERGY", "ARIM_ENERGY"]);
 assert.equal(integrated.regulatoryData.references.length, 9);
-assert.ok(integrated.warnings.includes("REGULATED_SUBSET_PARTIAL_DOMESTIC_NETWORK_UC3_UC6_ASOS_ARIM_ONLY"));
+assert.equal(integrated.warnings.includes("REGULATED_SUBSET_PARTIAL_DOMESTIC_NETWORK_UC3_UC6_ASOS_ARIM_ONLY"), false);
 assert.equal(integrated.components.filter((component) => component.category === "REGULATED_ENERGY").length, 6);
 assert.equal(integrated.components.filter((component) => component.category === "REGULATED_POWER").length, 2);
 assert.equal(integrated.components.filter((component) => component.category === "REGULATED_FIXED").length, 1);

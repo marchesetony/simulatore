@@ -18,6 +18,8 @@ export interface SourceBillReference {
 
 export interface SimulationBaseline {
   readonly totalCommercialCost: number;
+  readonly comparisonCost?: number;
+  readonly costScope?: CalculationCostScope;
   readonly currency: "EUR";
   readonly taxTreatment: TaxInclusionState;
   readonly supplyPeriod: SimulationPeriod;
@@ -154,8 +156,9 @@ export interface RegulatoryData {
   readonly references: readonly RegulatoryDataReference[];
 }
 
-export type CalculationCostScope = "COMMERCIAL_ONLY" | "COMMERCIAL_PLUS_REGULATED_PARTIAL";
+export type CalculationCostScope = "COMMERCIAL_ONLY" | "COMMERCIAL_PLUS_REGULATED_PARTIAL" | "COMMERCIAL_PLUS_REGULATED_NET_OF_TAX_COMPLETE";
 export type RegulatedComponentIncluded = "UC3_ENERGY" | "UC6_ENERGY" | "UC6_POWER" | "UC6_FIXED" | "NETWORK_FIXED" | "NETWORK_POWER" | "NETWORK_ENERGY" | "METERING_FIXED" | "TRANSMISSION_ENERGY" | "ARIM_FIXED" | "ARIM_POWER" | "ARIM_ENERGY" | "ASOS_FIXED" | "ASOS_POWER" | "ASOS_ENERGY" | "DISPATCHING_TOTAL_ENERGY";
+export const DOMESTIC_NET_OF_TAX_COMPLETE_COMPONENTS = ["NETWORK_FIXED", "NETWORK_POWER", "TRANSMISSION_ENERGY", "UC3_ENERGY", "UC6_ENERGY", "UC6_POWER", "ASOS_ENERGY", "ARIM_ENERGY", "DISPATCHING_TOTAL_ENERGY"] as const satisfies readonly RegulatedComponentIncluded[];
 
 export interface CalculationMarketReference {
   readonly recordId: string;

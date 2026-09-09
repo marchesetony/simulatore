@@ -68,7 +68,8 @@ function selectedComparisonCalculation(request: ComparisonProposalRequest): { re
 function proposalPayload(snapshot: ProposalCanonicalSnapshot | Omit<ProposalCanonicalSnapshot, "proposalId" | "proposalFingerprint">): unknown { const payload = { ...snapshot } as Record<string, unknown>; delete payload.proposalId; delete payload.proposalFingerprint; return payload; }
 function baselineFrom(calculation: CalculationResult): CalculationResult["savingsVsBaseline"] {
   if (calculation.normalizedInput.baseline === undefined) return null;
-  const minorUnits = Math.round(calculation.normalizedInput.baseline.totalCommercialCost * 100);
+  const baseline = calculation.normalizedInput.baseline;
+  const minorUnits = Math.round((baseline.costScope === undefined || baseline.costScope === "COMMERCIAL_ONLY" ? baseline.totalCommercialCost : baseline.comparisonCost ?? proposalFail("PROPOSAL_BASELINE_INVALID")) * 100);
   return { amount: minorUnits / 100, minorUnits, currency: "EUR" };
 }
 
@@ -88,7 +89,7 @@ export function generateProposal(rawRequest: unknown, tenantId: string, required
   const consumptionUnit = normalized.vector === "EE" ? normalized.consumption.unit : normalized.consumption.unit;
   const notCalculated = [
     ...(selected.calculation.taxTreatment === "EXCLUDED" ? ["VAT", "EXCISE", "OTHER_APPLICABLE_TAXES_OR_FISCAL_COMPONENTS"] : []),
-    "REGULATED_COMPONENTS_NOT_INCLUDED_IN_CURRENT_SCOPE",
+    ...(selected.calculation.costScope === "COMMERCIAL_PLUS_REGULATED_NET_OF_TAX_COMPLETE" ? [] : ["REGULATED_COMPONENTS_NOT_INCLUDED_IN_CURRENT_SCOPE"]),
   ];
   const payload = {
     schemaVersion: 1 as const,
@@ -182,7 +183,7 @@ export function assertProposalSnapshot(value: unknown, tenantId: string): Propos
   if (!Array.isArray(proposal.components) || proposal.components.length === 0) proposalFail("PROPOSAL_SNAPSHOT_INVALID");
   proposal.components.forEach((component) => assertComponent(component));
   assertMoney(proposal.commercialCost, "PROPOSAL_SNAPSHOT_INVALID");
-  if (proposal.costScope !== "COMMERCIAL_ONLY" && proposal.costScope !== "COMMERCIAL_PLUS_REGULATED_PARTIAL" || proposal.comparisonCostBasis !== proposal.costScope) proposalFail("PROPOSAL_SNAPSHOT_INVALID");
+  if (!["COMMERCIAL_ONLY", "COMMERCIAL_PLUS_REGULATED_PARTIAL", "COMMERCIAL_PLUS_REGULATED_NET_OF_TAX_COMPLETE"].includes(proposal.costScope) || proposal.comparisonCostBasis !== proposal.costScope) proposalFail("PROPOSAL_SNAPSHOT_INVALID");
   assertRegulatedComponentSet(proposal.regulatedComponentsIncluded, "PROPOSAL_SNAPSHOT_INVALID");
   assertMoney(proposal.comparisonCost, "PROPOSAL_SNAPSHOT_INVALID");
   const commercialTotal = proposal.components.filter((component) => !component.category.startsWith("REGULATED_")).reduce((sum, component) => sum + BigInt(component.sign === "DISCOUNT" ? -component.amount.minorUnits : component.amount.minorUnits), BigInt(0));
@@ -202,7 +203,7 @@ export function assertProposalSnapshot(value: unknown, tenantId: string): Propos
   if (!Array.isArray(proposal.warnings) || !Array.isArray(proposal.exclusions) || !Array.isArray(proposal.notes) || !Array.isArray(proposal.notCalculated) || !Array.isArray(proposal.unavailableInformation)) proposalFail("PROPOSAL_SNAPSHOT_INVALID");
   [...proposal.warnings, ...proposal.notes, ...proposal.notCalculated, ...proposal.unavailableInformation].forEach((item) => text(item, "PROPOSAL_SNAPSHOT_INVALID", 2000));
   text(proposal.disclaimer, "PROPOSAL_SNAPSHOT_INVALID", 2000);
-  if (proposal.notCalculated.includes("NETWORK_CHARGES") || proposal.notCalculated.includes("REGULATED_CHARGES") || (taxTreatment === "EXCLUDED" && (!["VAT", "EXCISE", "OTHER_APPLICABLE_TAXES_OR_FISCAL_COMPONENTS"].every((item) => proposal.notCalculated.includes(item))))) proposalFail("PROPOSAL_NOT_CALCULATED_INVALID");
+  if (proposal.notCalculated.includes("NETWORK_CHARGES") || proposal.notCalculated.includes("REGULATED_CHARGES") || (proposal.costScope === "COMMERCIAL_PLUS_REGULATED_NET_OF_TAX_COMPLETE" && proposal.notCalculated.includes("REGULATED_COMPONENTS_NOT_INCLUDED_IN_CURRENT_SCOPE")) || (taxTreatment === "EXCLUDED" && (!["VAT", "EXCISE", "OTHER_APPLICABLE_TAXES_OR_FISCAL_COMPONENTS"].every((item) => proposal.notCalculated.includes(item))))) proposalFail("PROPOSAL_NOT_CALCULATED_INVALID");
   proposal.exclusions.forEach((exclusion) => assertExclusion(exclusion, proposal.vector));
   const selectedResult = record(proposal.selectedResult, "PROPOSAL_SNAPSHOT_INVALID");
   const calculationFingerprint = text(proposal.calculationFingerprint, "PROPOSAL_SNAPSHOT_INVALID", 64);

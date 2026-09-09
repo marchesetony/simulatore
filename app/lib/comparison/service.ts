@@ -53,6 +53,7 @@ export interface ComparisonCostSelection {
 }
 export function comparisonCostOf(result: CalculationResult): ComparisonCostSelection | null {
   if (result.costScope === "COMMERCIAL_ONLY") return result.totalCommercialPlusRegulatedSubsetCost === null ? { comparisonCost: result.totalCommercialCost, comparisonCostBasis: "COMMERCIAL_ONLY", regulatedComponentsIncluded: [] } : null;
+  if (result.costScope === "COMMERCIAL_PLUS_REGULATED_NET_OF_TAX_COMPLETE" && result.totalCommercialPlusRegulatedSubsetCost !== null) return { comparisonCost: result.totalCommercialPlusRegulatedSubsetCost, comparisonCostBasis: "COMMERCIAL_PLUS_REGULATED_NET_OF_TAX_COMPLETE", regulatedComponentsIncluded: canonicalComponentSet(result.regulatedComponentsIncluded) };
   if (result.costScope === "COMMERCIAL_PLUS_REGULATED_PARTIAL" && result.totalCommercialPlusRegulatedSubsetCost !== null) return { comparisonCost: result.totalCommercialPlusRegulatedSubsetCost, comparisonCostBasis: "COMMERCIAL_PLUS_REGULATED_PARTIAL", regulatedComponentsIncluded: canonicalComponentSet(result.regulatedComponentsIncluded) };
   return null;
 }
