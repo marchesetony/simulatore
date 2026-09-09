@@ -10,6 +10,8 @@ import type { CustomerResidency, CustomerType } from "../energy/types";
 import type { ElectricitySimulationRequest } from "./types";
 // @ts-expect-error Node's strip-only test runner requires the explicit extension.
 import { buildTrustedElectricitySupplyContext, type ElectricitySupplyContext, type TrustedElectricitySupplyContextError } from "./trusted-ee-supply-context.ts";
+// @ts-expect-error Node's strip-only test runner requires the explicit extension.
+import { buildTrustedElectricityFiscalContext, type TrustedElectricityFiscalContext } from "./trusted-ee-fiscal-context.ts";
 
 export class SourceBillContextError extends Error {
   readonly code: string;
@@ -62,11 +64,11 @@ function trustedContextError(error: unknown): never {
   return fail("SOURCE_BILL_TRUST_CONTEXT_UNAVAILABLE");
 }
 
-export async function resolveTrustedElectricityContextFromSourceBill(
+async function resolveApprovedSourceBillContext(
   billRepository: Pick<BillRepository, "get">,
   tenantId: string,
   request: ElectricitySimulationRequest,
-): Promise<ElectricitySupplyContext | null> {
+): Promise<{ readonly supplyContext: ElectricitySupplyContext; readonly structuredBill: NonNullable<PublicBillDocument["structuredBill"]>; readonly billId: string; readonly approvedVersionId: string } | null> {
   if (!request.sourceBill) return null;
   const document = await billRepository.get(tenantId, request.sourceBill.billId);
   if (!document || document.tenantId !== tenantId) return fail("SOURCE_BILL_NOT_FOUND");
@@ -75,13 +77,43 @@ export async function resolveTrustedElectricityContextFromSourceBill(
   if (request.sourceBill.version !== approvedVersionId) return fail("SOURCE_BILL_VERSION_MISMATCH");
   const approved = publicApproved(document, approvedVersionId);
   const profile = profileFromApprovedStructuredBill(approved);
-  let context: ElectricitySupplyContext;
+  const structuredBill = approved.structuredBill;
+  if (!structuredBill) return fail("SOURCE_BILL_TRUST_CONTEXT_UNAVAILABLE");
+  let supplyContext: ElectricitySupplyContext;
   try {
-    context = buildTrustedElectricitySupplyContext(profile, {
+    supplyContext = buildTrustedElectricitySupplyContext(profile, {
       simulationPeriod: request.supplyPeriod,
       sourceBillBinding: { billId: document.id, approvedVersionId },
     });
   } catch (error) { return trustedContextError(error); }
-  reconcileClientRequest(request, context);
-  return context;
+  reconcileClientRequest(request, supplyContext);
+  return { supplyContext, structuredBill, billId: document.id, approvedVersionId };
+}
+
+export async function resolveTrustedElectricityContextFromSourceBill(
+  billRepository: Pick<BillRepository, "get">,
+  tenantId: string,
+  request: ElectricitySimulationRequest,
+): Promise<ElectricitySupplyContext | null> {
+  const resolved = await resolveApprovedSourceBillContext(billRepository, tenantId, request);
+  return resolved?.supplyContext ?? null;
+}
+
+export async function resolveTrustedElectricityFiscalContextFromSourceBill(
+  billRepository: Pick<BillRepository, "get">,
+  tenantId: string,
+  request: ElectricitySimulationRequest,
+): Promise<TrustedElectricityFiscalContext | null> {
+  const resolved = await resolveApprovedSourceBillContext(billRepository, tenantId, request);
+  if (!resolved) return null;
+  return buildTrustedElectricityFiscalContext({
+    supplyContext: resolved.supplyContext,
+    extendedFacts: resolved.structuredBill.extendedFacts,
+    simulationPeriod: request.supplyPeriod,
+    evidenceSource: {
+      sourceKind: "APPROVED_SOURCE_BILL",
+      sourceReference: `bill-document:${resolved.billId}`,
+      approvedBillBinding: { billId: resolved.billId, approvedVersionId: resolved.approvedVersionId },
+    },
+  });
 }
