@@ -1,4 +1,4 @@
-import type { CalculationComponent, CalculationExclusion, CalculationMarketReference, CalculationResult, SimulationRequest } from "../calculation/types";
+import type { CalculationComponent, CalculationCostScope, CalculationExclusion, CalculationMarketReference, CalculationResult, RegulatedComponentIncluded, SimulationRequest } from "../calculation/types";
 import type { ComparisonResult } from "../comparison/types";
 
 export const PROPOSAL_SCHEMA_VERSION = 1 as const;
@@ -83,6 +83,10 @@ export interface ProposalCanonicalSnapshot {
   readonly simulationPeriod: { readonly periodStart: string; readonly periodEnd: string };
   readonly normalizedConsumption: SimulationRequest["consumption"];
   readonly commercialCost: CalculationResult["totalCommercialCost"];
+  readonly comparisonCost: CalculationResult["totalCommercialCost"];
+  readonly comparisonCostBasis: CalculationCostScope;
+  readonly costScope: CalculationCostScope;
+  readonly regulatedComponentsIncluded: readonly RegulatedComponentIncluded[];
   readonly unitCost: CalculationResult["unitCost"];
   readonly components: readonly CalculationComponent[];
   readonly baseline: CalculationResult["savingsVsBaseline"];

@@ -1,12 +1,16 @@
 import type { CalculationResult } from "../calculation/types";
 import type { ComparisonResult } from "../comparison/types";
 // @ts-expect-error Node's strip-only test runner requires the explicit extension.
-import { assertCalculationResult, assertComparisonResult, assertComponent, assertExclusion, assertInputSize, assertMoney, assertPeriod, canonical, dateOnly, fingerprint, normalizedNote, proposalFail, text } from "./integrity.ts";
+import { assertCalculationResult, assertComparisonResult, assertComponent, assertExclusion, assertInputSize, assertMoney, assertPeriod, assertRegulatedComponentSet, canonical, dateOnly, fingerprint, normalizedNote, proposalFail, text } from "./integrity.ts";
 // @ts-expect-error Node's strip-only test runner requires the explicit extension.
 import { parseSimulationRequest } from "../calculation/input.ts";
 import type { ComparisonProposalRequest, ProposalCanonicalSnapshot, ProposalCustomerSummary, ProposalExportFormat, ProposalOfferIdentity, ProposalRequest, ProposalSupplySummary } from "./types";
 // @ts-expect-error Node's strip-only test runner requires the explicit extension.
 import { PROPOSAL_SCHEMA_VERSION } from "./types.ts";
+// @ts-expect-error Node's strip-only test runner requires the explicit extension.
+import { comparisonCostOf } from "../comparison/service.ts";
+// @ts-expect-error Node's strip-only test runner requires the explicit extension.
+import { EE_FISCAL_EXCLUSION_NOTICE } from "../calculation/economic-scope.ts";
 
 function record(value: unknown, code: string): Record<string, unknown> { if (typeof value !== "object" || value === null || Array.isArray(value)) return proposalFail(code); return value as Record<string, unknown>; }
 function enumValue<T extends string>(value: unknown, values: readonly T[], code: string): T { if (typeof value !== "string" || !values.includes(value as T)) return proposalFail(code); return value as T; }
@@ -63,7 +67,7 @@ function selectedComparisonCalculation(request: ComparisonProposalRequest): { re
 
 function proposalPayload(snapshot: ProposalCanonicalSnapshot | Omit<ProposalCanonicalSnapshot, "proposalId" | "proposalFingerprint">): unknown { const payload = { ...snapshot } as Record<string, unknown>; delete payload.proposalId; delete payload.proposalFingerprint; return payload; }
 function baselineFrom(calculation: CalculationResult): CalculationResult["savingsVsBaseline"] {
-  if (calculation.normalizedInput.baseline === undefined || calculation.savingsVsBaseline === null) return null;
+  if (calculation.normalizedInput.baseline === undefined) return null;
   const minorUnits = Math.round(calculation.normalizedInput.baseline.totalCommercialCost * 100);
   return { amount: minorUnits / 100, minorUnits, currency: "EUR" };
 }
@@ -80,7 +84,12 @@ export function generateProposal(rawRequest: unknown, tenantId: string, required
   const baseline = baselineFrom(selected.calculation);
   const warnings = [...selected.calculation.warnings, ...(selected.comparison?.warnings ?? [])];
   const exclusions = selected.comparison?.excludedOffers.filter((exclusion) => exclusion.vector === selected.calculation.vector) ?? [];
+  const comparisonSelection = comparisonCostOf(selected.calculation) ?? proposalFail("PROPOSAL_COMPARISON_COST_INVALID");
   const consumptionUnit = normalized.vector === "EE" ? normalized.consumption.unit : normalized.consumption.unit;
+  const notCalculated = [
+    ...(selected.calculation.taxTreatment === "EXCLUDED" ? ["VAT", "EXCISE", "OTHER_APPLICABLE_TAXES_OR_FISCAL_COMPONENTS"] : []),
+    "REGULATED_COMPONENTS_NOT_INCLUDED_IN_CURRENT_SCOPE",
+  ];
   const payload = {
     schemaVersion: 1 as const,
     tenantId,
@@ -94,6 +103,10 @@ export function generateProposal(rawRequest: unknown, tenantId: string, required
     simulationPeriod: selected.calculation.supplyPeriod,
     normalizedConsumption: normalized.consumption,
     commercialCost: selected.calculation.totalCommercialCost,
+    comparisonCost: comparisonSelection.comparisonCost,
+    comparisonCostBasis: comparisonSelection.comparisonCostBasis,
+    costScope: selected.calculation.costScope,
+    regulatedComponentsIncluded: comparisonSelection.regulatedComponentsIncluded,
     unitCost: selected.calculation.unitCost,
     components: selected.calculation.components,
     baseline,
@@ -109,7 +122,7 @@ export function generateProposal(rawRequest: unknown, tenantId: string, required
     generatedAt: `${request.proposalIssueDate}T00:00:00.000Z`,
     offerValidity: request.offerValidity,
     notes: request.commercialNotes ? [request.commercialNotes] : [],
-    notCalculated: ["NETWORK_CHARGES", "REGULATED_CHARGES", "TAXES_AND_DUTIES_NOT_REPRESENTED_IN_THE_APPROVED_COMMERCIAL_COMPONENTS"],
+    notCalculated,
      unavailableInformation: [
        ...(sourceBill ? [] : ["SOURCE_BILL_REFERENCE_NOT_SUPPLIED"]),
        ...(baseline ? [] : ["BASELINE_NOT_SUPPLIED"]),
@@ -117,7 +130,7 @@ export function generateProposal(rawRequest: unknown, tenantId: string, required
        ...(selected.calculation.vector === "EE" && !request.supply.pod ? ["POD_NOT_SUPPLIED"] : []),
        ...(selected.calculation.vector === "GAS" && !request.supply.pdr ? ["PDR_NOT_SUPPLIED"] : []),
      ],
-    disclaimer: "This proposal contains only the approved commercial supply components calculated by the Phase 4 engine. Network charges, regulated charges, taxes, duties and other components not explicitly represented in the calculation are excluded and must not be inferred from this document.",
+    disclaimer: selected.calculation.taxTreatment === "EXCLUDED" ? EE_FISCAL_EXCLUSION_NOTICE : "Tax-inclusive GAS proposal; fiscal amounts follow the approved offer.",
   } satisfies Omit<ProposalCanonicalSnapshot, "proposalId" | "proposalFingerprint">;
   const proposalFingerprint = fingerprint(proposalPayload(payload));
   const snapshot: ProposalCanonicalSnapshot = { ...payload, proposalId: `proposal_${proposalFingerprint.slice(0, 32)}`, proposalFingerprint };
@@ -148,6 +161,8 @@ export function assertProposalSnapshot(value: unknown, tenantId: string): Propos
   if (proposal.generatedAt !== `${generatedDate}T00:00:00.000Z` || offerValidity.periodStart > simulationPeriod.periodStart || offerValidity.periodEnd < simulationPeriod.periodEnd) proposalFail("PROPOSAL_SNAPSHOT_INVALID");
   if (proposal.currency !== "EUR" || proposal.roundingPolicy !== "ROUND_HALF_UP_TO_CENT_PER_COMPONENT") proposalFail("PROPOSAL_SNAPSHOT_INVALID");
   const taxTreatment = enumValue(proposal.taxTreatment, ["INCLUDED", "EXCLUDED", "NOT_APPLICABLE"], "PROPOSAL_SNAPSHOT_INVALID");
+  if (proposal.vector === "EE" && taxTreatment !== "EXCLUDED") proposalFail("PROPOSAL_TAX_POLICY_INVALID");
+  if (taxTreatment === "EXCLUDED" && proposal.disclaimer !== EE_FISCAL_EXCLUSION_NOTICE) proposalFail("PROPOSAL_FISCAL_DISCLAIMER_INVALID");
   const validationInput = {
     schemaVersion: 1 as const,
     tenantId,
@@ -167,11 +182,15 @@ export function assertProposalSnapshot(value: unknown, tenantId: string): Propos
   if (!Array.isArray(proposal.components) || proposal.components.length === 0) proposalFail("PROPOSAL_SNAPSHOT_INVALID");
   proposal.components.forEach((component) => assertComponent(component));
   assertMoney(proposal.commercialCost, "PROPOSAL_SNAPSHOT_INVALID");
+  if (proposal.costScope !== "COMMERCIAL_ONLY" && proposal.costScope !== "COMMERCIAL_PLUS_REGULATED_PARTIAL" || proposal.comparisonCostBasis !== proposal.costScope) proposalFail("PROPOSAL_SNAPSHOT_INVALID");
+  assertRegulatedComponentSet(proposal.regulatedComponentsIncluded, "PROPOSAL_SNAPSHOT_INVALID");
+  assertMoney(proposal.comparisonCost, "PROPOSAL_SNAPSHOT_INVALID");
+  const commercialTotal = proposal.components.filter((component) => !component.category.startsWith("REGULATED_")).reduce((sum, component) => sum + BigInt(component.sign === "DISCOUNT" ? -component.amount.minorUnits : component.amount.minorUnits), BigInt(0));
   const componentTotal = proposal.components.reduce((sum, component) => sum + BigInt(component.sign === "DISCOUNT" ? -component.amount.minorUnits : component.amount.minorUnits), BigInt(0));
-  if (componentTotal !== BigInt(proposal.commercialCost.minorUnits)) proposalFail("PROPOSAL_SNAPSHOT_INVALID");
+  if (commercialTotal !== BigInt(proposal.commercialCost.minorUnits) || componentTotal !== BigInt(proposal.comparisonCost.minorUnits)) proposalFail("PROPOSAL_SNAPSHOT_INVALID");
   if (proposal.unitCost.currency !== "EUR" || !Number.isFinite(proposal.unitCost.amount) || !["EUR_PER_KWH", "EUR_PER_SMC"].includes(proposal.unitCost.unit)) proposalFail("PROPOSAL_SNAPSHOT_INVALID");
   if (proposal.unitCost.unit !== (proposal.vector === "EE" ? "EUR_PER_KWH" : "EUR_PER_SMC") || proposal.units.unitCost !== proposal.unitCost.unit || proposal.units.consumption !== proposal.normalizedConsumption.unit) proposalFail("PROPOSAL_SNAPSHOT_INVALID");
-  if (proposal.baseline === null || proposal.savings === null) { if (proposal.baseline !== null || proposal.savings !== null) proposalFail("PROPOSAL_SNAPSHOT_INVALID"); } else { assertMoney(proposal.baseline, "PROPOSAL_SNAPSHOT_INVALID"); assertMoney(proposal.savings, "PROPOSAL_SNAPSHOT_INVALID"); if (proposal.savings.minorUnits !== proposal.baseline.minorUnits - proposal.commercialCost.minorUnits) proposalFail("PROPOSAL_SNAPSHOT_INVALID"); }
+  if (proposal.baseline === null) { if (proposal.savings !== null) proposalFail("PROPOSAL_SNAPSHOT_INVALID"); } else { assertMoney(proposal.baseline, "PROPOSAL_SNAPSHOT_INVALID"); if (proposal.savings !== null) { assertMoney(proposal.savings, "PROPOSAL_SNAPSHOT_INVALID"); if (proposal.savings.minorUnits !== proposal.baseline.minorUnits - proposal.comparisonCost.minorUnits) proposalFail("PROPOSAL_SNAPSHOT_INVALID"); } }
   if (!Array.isArray(proposal.marketData)) proposalFail("PROPOSAL_SNAPSHOT_INVALID");
   proposal.marketData.forEach((market) => {
     if (typeof market !== "object" || market === null || Array.isArray(market) || market.vector !== proposal.vector || market.index !== (proposal.vector === "EE" ? "PUN" : "PSV") || typeof market.month !== "string" || !/^\d{4}-\d{2}$/.test(market.month)) proposalFail("PROPOSAL_SNAPSHOT_INVALID");
@@ -183,6 +202,7 @@ export function assertProposalSnapshot(value: unknown, tenantId: string): Propos
   if (!Array.isArray(proposal.warnings) || !Array.isArray(proposal.exclusions) || !Array.isArray(proposal.notes) || !Array.isArray(proposal.notCalculated) || !Array.isArray(proposal.unavailableInformation)) proposalFail("PROPOSAL_SNAPSHOT_INVALID");
   [...proposal.warnings, ...proposal.notes, ...proposal.notCalculated, ...proposal.unavailableInformation].forEach((item) => text(item, "PROPOSAL_SNAPSHOT_INVALID", 2000));
   text(proposal.disclaimer, "PROPOSAL_SNAPSHOT_INVALID", 2000);
+  if (proposal.notCalculated.includes("NETWORK_CHARGES") || proposal.notCalculated.includes("REGULATED_CHARGES") || (taxTreatment === "EXCLUDED" && (!["VAT", "EXCISE", "OTHER_APPLICABLE_TAXES_OR_FISCAL_COMPONENTS"].every((item) => proposal.notCalculated.includes(item))))) proposalFail("PROPOSAL_NOT_CALCULATED_INVALID");
   proposal.exclusions.forEach((exclusion) => assertExclusion(exclusion, proposal.vector));
   const selectedResult = record(proposal.selectedResult, "PROPOSAL_SNAPSHOT_INVALID");
   const calculationFingerprint = text(proposal.calculationFingerprint, "PROPOSAL_SNAPSHOT_INVALID", 64);

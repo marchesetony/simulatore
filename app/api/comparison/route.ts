@@ -1,6 +1,8 @@
 import { jsonBody } from "../../lib/archive/api";
 import { requestPrincipal } from "../../lib/auth/request";
 import { calculationError } from "../../lib/calculation/api";
+import { resolveTrustedElectricityContextFromSourceBill } from "../../lib/calculation/source-bill-context";
+import { ProductionRegulatoryPersistenceBridge } from "../../lib/regulatory-bridge";
 import { parseSimulationRequest } from "../../lib/calculation/input";
 import { compareApprovedOffers } from "../../lib/comparison/service";
 import { runtimeRepositories } from "../../lib/persistence/adapter";
@@ -14,7 +16,13 @@ export async function POST(request: Request): Promise<Response> {
     const repositories = runtimeRepositories();
     const body = await jsonBody(request);
     const simulation = parseSimulationRequest(body.simulation ?? body, tenantId);
-    const result = await compareApprovedOffers(repositories.cteArchiveRepository, repositories.marketArchiveRepository, simulation);
+    let dependencies;
+    if (simulation.vector === "EE" && simulation.sourceBill) {
+      const trustedElectricityContext = await resolveTrustedElectricityContextFromSourceBill(repositories.billRepository, tenantId, simulation);
+      if (!trustedElectricityContext) throw new Error("REGULATORY_TRUST_CONTEXT_REQUIRED");
+      dependencies = { trustedElectricityContext, regulatoryBridge: new ProductionRegulatoryPersistenceBridge(repositories.regulatoryValues, repositories.approvalDomains), regulatoryRefreshState: repositories.regulatoryRefreshState };
+    }
+    const result = await compareApprovedOffers(repositories.cteArchiveRepository, repositories.marketArchiveRepository, simulation, dependencies);
     await repositories.comparisonResults.put({ tenantId, recordId: result.comparisonId, payload: { comparisonId: result.comparisonId, fingerprint: result.fingerprint, result }, idempotencyKey: result.fingerprint });
     await recordRuntimeAudit({ principal, action: "COMPARISON", resourceType: "COMPARISON", resourceId: result.comparisonId, outcome: "ALLOWED", correlationId: "comparison-v1", metadata: { fingerprint: result.fingerprint } });
     return Response.json({ result });

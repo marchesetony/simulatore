@@ -1,6 +1,7 @@
-import type { CalculationExclusion, CalculationResult, SimulationRequest } from "../calculation/types";
+import type { CalculationCostScope, CalculationExclusion, CalculationResult, RegulatedComponentIncluded, SimulationRequest } from "../calculation/types";
 
 export const COMPARISON_SCHEMA_VERSION = 1 as const;
+export type ComparisonCostBasis = CalculationCostScope;
 
 export interface ComparisonRankingEntry {
   readonly rank: number;
@@ -10,6 +11,9 @@ export interface ComparisonRankingEntry {
   readonly offerCode: string;
   readonly cteVersion: string;
   readonly totalCommercialCost: CalculationResult["totalCommercialCost"];
+  readonly comparisonCost: CalculationResult["totalCommercialCost"];
+  readonly comparisonCostBasis: ComparisonCostBasis;
+  readonly regulatedComponentsIncluded: readonly RegulatedComponentIncluded[];
 }
 
 export interface ComparisonResult {
@@ -23,5 +27,9 @@ export interface ComparisonResult {
   readonly results: readonly CalculationResult[];
   readonly excludedOffers: readonly CalculationExclusion[];
   readonly ranking: readonly ComparisonRankingEntry[];
+  readonly comparisonCostBasis: ComparisonCostBasis | null;
+  readonly regulatedComponentsIncluded: readonly RegulatedComponentIncluded[];
+  readonly taxTreatment: CalculationResult["taxTreatment"];
+  readonly fiscalExclusionNotice: string | null;
   readonly warnings: readonly string[];
 }
