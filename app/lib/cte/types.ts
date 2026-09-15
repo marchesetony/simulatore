@@ -38,7 +38,8 @@ export interface CtePrice {
   readonly taxTreatment: TaxInclusionState;
 }
 
-export type CteFeeUnit = "EUR_PER_KWH" | "EUR_PER_SMC" | "EUR_PER_MONTH" | "EUR_PER_YEAR" | "EUR_PER_CONTRACT";
+export type CteFeeUnit = "EUR_PER_KWH" | "EUR_PER_SMC" | "EUR_PER_POD" | "EUR_PER_MONTH" | "EUR_PER_YEAR" | "EUR_PER_CONTRACT";
+export type CteFeePeriod = "MONTH" | "YEAR" | "CONTRACT";
 
 export interface CteFeeComponent {
   readonly feeId: string;
@@ -46,7 +47,32 @@ export interface CteFeeComponent {
   readonly amount: number;
   readonly currency: "EUR";
   readonly unit: CteFeeUnit;
+  /** Optional semantic period for typed commercial fees. Legacy fees omit it. */
+  readonly period?: CteFeePeriod;
+  /** Derived display equivalent; never an additional billable fee. */
+  readonly monthlyEquivalent?: number;
   readonly taxTreatment: TaxInclusionState;
+}
+
+export interface CteEconomicDuration {
+  readonly value: number;
+  readonly unit: "MONTHS";
+  readonly sourceText: string;
+}
+
+export interface CteLossSemantics {
+  readonly present: true;
+  readonly rawText: string;
+  readonly appliesTo: "SPREAD" | "ENERGY_PRICE" | "NETWORK_LOSSES" | "UNSPECIFIED";
+  readonly provenance: string;
+}
+
+export interface CteExitFee {
+  readonly amount: number;
+  readonly currency: "EUR";
+  readonly condition: "EARLY_EXIT_BEFORE_DURATION";
+  readonly durationReference: CteEconomicDuration;
+  readonly sourceText: string;
 }
 
 export type CtePassThroughKind = "DISPATCHING" | "CAPACITY_MARKET" | "OTHER_CONTRACTUAL_PASS_THROUGH";
@@ -57,6 +83,9 @@ type CtePassThroughBase = {
   readonly kind: CtePassThroughKind;
   readonly effectiveFrom: string;
   readonly effectiveTo: string;
+  readonly documentPresence?: "DOCUMENT_STATED" | "NOT_STATED";
+  readonly amountStatus?: "DECLARED" | "NOT_DECLARED";
+  readonly sourceText?: string;
 };
 
 export type CtePassThroughComponent = CtePassThroughBase & ({
@@ -87,6 +116,9 @@ export interface CteCommercialTerms {
   readonly oneOffFees: readonly CteFeeComponent[];
   readonly commercialDiscounts: readonly CteFeeComponent[];
   readonly passThroughComponents?: readonly CtePassThroughComponent[];
+  readonly economicDuration?: CteEconomicDuration;
+  readonly lossSemantics?: CteLossSemantics;
+  readonly exitFee?: CteExitFee;
 }
 
 export type ElectricityPricing = {

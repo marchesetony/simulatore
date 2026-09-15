@@ -20,8 +20,9 @@ export async function POST(request: Request, context: Context): Promise<Response
       repository: repositories.cteArchives as CteIngestionRepository,
       archive: {
         create: (input) => createCteArchive(repositories.cteArchiveRepository, input),
-        approve: (tenantId, archiveId, versionId, actor, decisionId) => approveCteArchive(repositories.cteArchiveRepository, tenantId, archiveId, versionId, actor, decisionId),
+        approve: (tenantId, archiveId, versionId, actor, decisionId, audit) => approveCteArchive(repositories.cteArchiveRepository, tenantId, archiveId, versionId, actor, decisionId, undefined, audit),
       },
+      approvalAudit: async (event) => { await recordRuntimeAudit({ tenantId: event.tenantId, principal, action: "CTE_STATUS_CHANGE", resourceType: "CTE_ARCHIVE", resourceId: event.archiveId, outcome: "ALLOWED", correlationId: "cte-ocr-ingestion-v1", metadata: { cteId: event.cteId, versionId: event.versionId, previousState: event.previousState, newState: event.newState, actor: event.actor, timestamp: event.timestamp } }); },
     });
     await recordRuntimeAudit({ tenantId: principal.tenantId, principal, action: result.alreadyApproved ? "CTE_INGESTION_APPROVAL_IDEMPOTENT" : "CTE_INGESTION_APPROVAL", resourceType: "CTE_INGESTION", resourceId: id, outcome: "ALLOWED", correlationId: "cte-ocr-ingestion-v1" });
     return Response.json({ ingestion: toPublicCteIngestion(result.record), approval: result.alreadyApproved ? "already-approved" : "approved" }, { headers: CTE_INGESTION_HEADERS });

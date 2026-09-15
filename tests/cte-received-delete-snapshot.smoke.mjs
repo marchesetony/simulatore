@@ -1,8 +1,14 @@
 import assert from "node:assert/strict";
-import { readFile } from "node:fs/promises";
+import { readdir, readFile } from "node:fs/promises";
 import { deleteCteIngestion, toPublicCteIngestion } from "../app/lib/cte/ingestion.ts";
 
-const failed = JSON.parse(await readFile("var/phase6/cte-archives/tenant_local-demo/cte-ingestion-b10e5277-5a0b-4177-b82c-e5adce104f89.json", "utf8"));
+const archiveDirectory = "var/phase6/cte-archives/tenant_local-demo";
+const archiveNames = (await readdir(archiveDirectory)).filter((name) => name.endsWith(".json"));
+const failedCandidates = await Promise.all(archiveNames.map(async (name) => {
+  return JSON.parse(await readFile(`${archiveDirectory}/${name}`, "utf8"));
+}));
+const failed = failedCandidates.find((record) => record.payload?.status === "FAILED");
+assert.ok(failed, "a local failed CTE record is required");
 const approved = JSON.parse(await readFile("var/phase6/cte-archives/tenant_local-demo/cte-ingestion-c30431e0-11ab-460d-ad10-6a26eb23b63d.json", "utf8"));
 const records = new Map([[failed.recordId, failed], [approved.recordId, approved]]);
 const removed = [];

@@ -24,7 +24,7 @@ const areraSource = "https://www.arera.it/en/consumatori/offerte-standard-per-i-
 const monthWords = ["gennaio", "febbraio", "marzo", "aprile", "maggio", "giugno", "luglio", "agosto", "settembre", "ottobre", "novembre", "dicembre"];
 const repositories = () => ({ marketArchiveRepository: new (class { constructor() { this.records = []; } async get(_tenant, id) { return this.records.find((record) => record.archiveId === id) ?? null; } async list(_tenant) { return this.records; } async save(record) { this.records = this.records.filter((item) => item.archiveId !== record.archiveId); this.records.push(structuredClone(record)); } })(), marketRefreshState: new MemoryRepository(), marketRefreshRuns: new MemoryRepository(), marketRefreshLocks: new MemoryRepository() });
 const valuesFor = (month, offset = 0) => ({ monthly: 179.999 + offset, f1: 174.516 + offset, f2: 204.353 + offset, f3: 171.716 + offset, month });
-const recordFor = ({ month, offset = 0, authority = "GME" }) => { const value = valuesFor(month, offset); const source = authority === "GME" ? gmeSource : areraSource; const label = `${monthWords[Number(month.slice(5, 7)) - 1]} ${month.slice(0, 4)}`; const base = authority === "GME" ? { tenantId: tenant, referenceMonth: month, publicationText: `${label} PUNop ${value.monthly} EUR/MWh`, monthlyPublicationText: `${label} PUNop ${value.monthly} EUR/MWh`, bandsPublicationText: `${label} F1 (1 ore) ${value.f1} F2 (1 ore) ${value.f2} F3 (1 ore) ${value.f3} EUR/MWh`, sourceReference: source, retrievedAt: now } : { tenantId: tenant, referenceMonth: month, publicationText: `P_ING_M monorario (EUR/kWh) ${label} | ${value.monthly / 1000} P_ING_M per fasce (EUR/kWh) ${label} | ${value.f1 / 1000} | ${value.f2 / 1000} | ${value.f3 / 1000}`, sourceReference: source, retrievedAt: now }; return authority === "GME" ? parseGmeCompletePublication(base) : parseAreraPunPublication(base); };
+const recordFor = ({ month, offset = 0, authority = "GME" }) => { const value = valuesFor(month, offset); const source = authority === "GME" ? gmeSource : areraSource; const label = `${monthWords[Number(month.slice(5, 7)) - 1]} ${month.slice(0, 4)}`; const base = authority === "GME" ? { tenantId: tenant, referenceMonth: month, publicationText: `${label} PUN Index GME ${value.monthly} EUR/MWh`, monthlyPublicationText: `${label} PUN Index GME ${value.monthly} EUR/MWh`, bandsPublicationText: `${label} F1 (1 ore) ${value.f1} F2 (1 ore) ${value.f2} F3 (1 ore) ${value.f3} EUR/MWh`, sourceReference: source, retrievedAt: now } : { tenantId: tenant, referenceMonth: month, publicationText: `P_ING_M monorario (EUR/kWh) ${label} | ${value.monthly / 1000} P_ING_M per fasce (EUR/kWh) ${label} | ${value.f1 / 1000} | ${value.f2 / 1000} | ${value.f3 / 1000}`, sourceReference: source, retrievedAt: now }; return authority === "GME" ? parseGmeCompletePublication(base) : parseAreraPunPublication(base); };
 const sourceReader = (overrides = {}) => ({ async load({ referenceMonth }) { return { gme: { record: overrides[referenceMonth] ?? recordFor({ month: referenceMonth }) }, arera: { record: recordFor({ month: referenceMonth, authority: "ARERA" }) } }; } });
 const makeRepositories = () => { const marketArchiveRepository = new (class { constructor() { this.records = []; } async get(_tenant, id) { return this.records.find((record) => record.archiveId === id) ?? null; } async list(_tenant) { return this.records; } async save(record) { this.records = this.records.filter((item) => item.archiveId !== record.archiveId); this.records.push(structuredClone(record)); } })(); return { marketArchiveRepository, marketRefreshState: new MemoryRepository(), marketRefreshRuns: new MemoryRepository(), marketRefreshLocks: new MemoryRepository() }; };
 
@@ -32,9 +32,9 @@ assertPunRefreshCoverage(CALCULATED_PUN_DOMAINS);
 assert.deepEqual(AUTO_REFRESH_REGISTERED_PUN_DOMAINS, CALCULATED_PUN_DOMAINS);
 assert.equal(PUN_REFRESH_FREQUENCY, "DAILY");
 assert.equal(PUN_REFRESH_CRON, "15 4 * * *");
-assert.equal(MINIMUM_PUN_HISTORY_MONTHS, 6);
-assert.deepEqual(closedPunTargetMonths(now), ["2026-08", "2026-07", "2026-06", "2026-05", "2026-04", "2026-03"]);
-console.log("PUN_BACKFILL_MIN_6_MONTHS=PASS");
+assert.equal(MINIMUM_PUN_HISTORY_MONTHS, 4);
+assert.deepEqual(closedPunTargetMonths(now), ["2026-08", "2026-07", "2026-06", "2026-05"]);
+console.log("PUN_BACKFILL_MIN_4_MONTHS=PASS");
 console.log("PUN_YEAR_INDEPENDENT=PASS");
 console.log("PUN_COMPLETE_REQUIRES_MONO_F1_F2_F3=PASS");
 
@@ -52,8 +52,9 @@ console.log("PUN_YEAR_INDEPENDENT_DISCOVERY=PASS");
 
 const areraOnlyDryRepositories = makeRepositories();
 const areraOnly = await runPunMarketRefresh({ tenantId: tenant, repositories: areraOnlyDryRepositories, sourceReader: { async load({ referenceMonth }) { return { arera: { record: recordFor({ month: referenceMonth, authority: "ARERA" }) } }; } }, now, runId: "pun-arera-fallback", trigger: "TEST", dryRun: true });
-assert.equal(areraOnly.status, "SUCCESS");
-console.log("ARERA_OFFICIAL_FALLBACK=PASS");
+assert.equal(areraOnly.status, "FAILED");
+assert.equal(areraOnly.monthsFailed, 4);
+console.log("ARERA_CANONICAL_FALLBACK_BLOCKED=PASS");
 console.log("PUN_SOURCE_CROSS_CHECK=PASS");
 
 const dryRepositories = makeRepositories();
@@ -66,14 +67,14 @@ console.log("PUN_DRY_RUN_NO_WRITE=PASS");
 const firstRepositories = makeRepositories();
 const first = await runPunMarketRefresh({ tenantId: tenant, repositories: firstRepositories, sourceReader: sourceReader(), now, runId: "pun-initial", trigger: "TEST" });
 assert.equal(first.status, "SUCCESS");
-assert.equal(first.monthsCreated, 6);
-assert.equal(first.monthsComplete, 6);
-assert.equal((await firstRepositories.marketArchiveRepository.list(tenant)).filter((record) => record.status === "APPROVED").length, 6);
-console.log("PUN_APPROVED_COMPLETE_HISTORY_MONTHS=6");
+assert.equal(first.monthsCreated, 4);
+assert.equal(first.monthsComplete, 4);
+assert.equal((await firstRepositories.marketArchiveRepository.list(tenant)).filter((record) => record.status === "APPROVED").length, 4);
+console.log("PUN_APPROVED_COMPLETE_HISTORY_MONTHS=4");
 
 const second = await runPunMarketRefresh({ tenantId: tenant, repositories: firstRepositories, sourceReader: sourceReader(), now, runId: "pun-unchanged", trigger: "TEST" });
 assert.equal(second.status, "SUCCESS");
-assert.equal(second.monthsUnchanged, 6);
+assert.equal(second.monthsUnchanged, 4);
 assert.equal(second.monthsCreated, 0);
 assert.equal(second.monthsCorrected, 0);
 console.log("PUN_UNCHANGED_NO_NEW_VERSION=PASS");

@@ -1,5 +1,7 @@
 import type { CteContract } from "../types";
 
+export const CTE_ARCHIVE_APPROVAL_CAPABILITY = Symbol("CTE_ARCHIVE_APPROVAL_CAPABILITY");
+
 export type CteArchiveStatus = "DRAFT" | "REVIEWED" | "APPROVED" | "EXPIRED" | "REJECTED";
 export type CteArchiveEventType = "CREATED" | "CORRECTED" | "REVIEWED" | "APPROVED" | "REJECTED" | "EXPIRED" | "COMMERCIAL_BLOCKED" | "COMMERCIAL_REACTIVATED" | "COMMERCIAL_DELETED";
 export type CteCommercialStatus = "ACTIVE" | "BLOCKED" | "DELETED";
@@ -62,7 +64,7 @@ export interface CteArchiveRecord {
 export interface CteArchiveRepository {
   get(tenantId: string, archiveId: string): Promise<CteArchiveRecord | null>;
   list(tenantId: string): Promise<ReadonlyArray<CteArchiveRecord>>;
-  save(record: CteArchiveRecord): Promise<void>;
+  save(record: CteArchiveRecord, capability?: symbol): Promise<void>;
 }
 
 export interface CreateCteArchiveInput {

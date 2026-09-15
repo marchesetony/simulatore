@@ -76,6 +76,7 @@ const messages: Readonly<Record<string, string>> = {
   ANTHROPIC_API_KEY_MISSING: "Configurazione Anthropic incompleta: chiave server mancante",
   ANTHROPIC_MODEL_MISSING: "Configurazione Anthropic incompleta: modello server mancante",
   ANTHROPIC_CTE_MAX_TOKENS_INVALID: "Configurazione server Anthropic non valida",
+  ANTHROPIC_CTE_TIMEOUT_INVALID: "Configurazione timeout Anthropic non valida",
   CTE_OCR_PROVIDER_AUTH_FAILED: "Autenticazione del provider Anthropic non riuscita",
   CTE_OCR_PROVIDER_RATE_LIMITED: "Provider Anthropic temporaneamente limitato",
   CTE_OCR_PROVIDER_TIMEOUT: "Il provider Anthropic non ha risposto in tempo",

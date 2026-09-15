@@ -1,5 +1,6 @@
 import {
   approveDocumentVersion,
+  confirmBillFields,
   createManualCorrection,
   toPublicApprovedDocument,
   parseBillOperation,
@@ -50,9 +51,23 @@ export async function PATCH(request: Request, context: { params: Promise<{ id: s
     if (!document) return deny("DOCUMENT_NOT_FOUND", "Bill document not found", 404);
     const now = new Date().toISOString();
     const operation = parseBillOperation(body);
+    if (operation?.operation === "confirm-fields") {
+      const confirmed = confirmBillFields({ document, tenantId, sourceVersionId: operation.versionId, fields: operation.fields, at: now });
+      await repository.saveIfCurrentVersion(confirmed, operation.versionId, document.versions.find((version) => version.versionId === operation.versionId)!);
+      await recordRuntimeAudit({
+        principal,
+        action: "BILL_FIELD_CONFIRMATION",
+        resourceType: "BILL",
+        resourceId: id,
+        outcome: "ALLOWED",
+        correlationId: CORRELATION_ID,
+        metadata: { sourceVersionId: operation.versionId, resultVersionId: confirmed.currentVersionId, fields: operation.fields.join(",") },
+      });
+      return Response.json({ document: await attachOfficialPun(toPublicDocument(confirmed), repositories.marketArchiveRepository) }, { headers: NO_STORE_HEADERS });
+    }
     if (operation?.operation === "approve") {
       const approved = approveDocumentVersion({ document, tenantId, versionId: operation.versionId, at: now });
-      await repository.save(approved);
+      await repository.saveIfCurrentVersion(approved, operation.versionId, document.versions.find((version) => version.versionId === operation.versionId)!);
       await audit.record({ type: "APPROVAL", tenantId, documentId: id, outcome: "ALLOWED" });
       return Response.json({ document: await attachOfficialPun(toPublicDocument(approved), repositories.marketArchiveRepository) }, { headers: NO_STORE_HEADERS });
     }
@@ -65,7 +80,8 @@ export async function PATCH(request: Request, context: { params: Promise<{ id: s
         value: operation.value,
         at: now,
       });
-      await repository.save(corrected);
+      const sourceVersionId = operation.versionId ?? document.currentVersionId;
+      await repository.saveIfCurrentVersion(corrected, sourceVersionId, document.versions.find((version) => version.versionId === sourceVersionId)!);
       await audit.record({ type: "MANUAL_REVIEW", tenantId, documentId: id, outcome: "ALLOWED" });
       await audit.record({ type: "CORRECTION", tenantId, documentId: id, outcome: "ALLOWED" });
       return Response.json({ document: await attachOfficialPun(toPublicDocument(corrected), repositories.marketArchiveRepository) }, { headers: NO_STORE_HEADERS });
@@ -104,6 +120,9 @@ const INTERNAL_TO_PUBLIC_CODE: Readonly<Record<string, string>> = {
   DOCUMENT_VERSION_ALREADY_APPROVED: "DOCUMENT_VERSION_ALREADY_APPROVED",
   DOCUMENT_VERSION_NOT_FOUND: "DOCUMENT_VERSION_NOT_FOUND",
   DOCUMENT_NO_CHANGES: "DOCUMENT_NO_CHANGES",
+  FIELD_CONFIRMATION_INVALID: "FIELD_CONFIRMATION_INVALID",
+  BILL_REPOSITORY_CAS_UNAVAILABLE: "BILL_REPOSITORY_CAS_UNAVAILABLE",
+  BILL_REPOSITORY_BUSY: "BILL_REPOSITORY_BUSY",
   METADATA_INVALID: "METADATA_INVALID",
   CORRECTION_INVALID: "CORRECTION_INVALID",
   TENANT_ACCESS_DENIED: "TENANT_ACCESS_DENIED",
@@ -128,6 +147,7 @@ function statusFor(code: string): number {
   if (code === "TENANT_ACCESS_DENIED" || code === "AUTHORIZATION_DENIED") return 403;
   if (code === "AUTHENTICATION_REQUIRED" || code === "AUTHENTICATION_INVALID") return 401;
   if (code === "AUTH_CONFIGURATION_INVALID" || code === "AUTH_ADAPTER_UNAVAILABLE" || code === "AUTH_AUDIT_UNAVAILABLE") return 503;
+  if (code === "BILL_REPOSITORY_CAS_UNAVAILABLE" || code === "BILL_REPOSITORY_BUSY") return 503;
   if (["DOCUMENT_NOT_FOUND"].includes(code)) return 404;
   if (["BILL_APPROVED_DELETE_FORBIDDEN"].includes(code)) return 409;
   if (["DOCUMENT_VERSION_NOT_CURRENT", "DOCUMENT_VERSION_STALE", "DOCUMENT_VERSION_ALREADY_APPROVED", "DOCUMENT_NO_CHANGES", "METADATA_INVALID"].includes(code)) return 409;
@@ -150,6 +170,8 @@ function messageFor(code: string): string {
       return "The requested version does not exist";
     case "DOCUMENT_NO_CHANGES":
       return "The requested correction changes no fields";
+    case "FIELD_CONFIRMATION_INVALID":
+      return "Only existing, available bill fields can be confirmed";
     case "METADATA_INVALID":
       return "Bill metadata is invalid";
     case "CORRECTION_INVALID":

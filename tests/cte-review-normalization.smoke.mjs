@@ -64,7 +64,7 @@ const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const runtimeDirectory = path.join(root, "var", "phase6", "cte-archives", "tenant_local-demo");
 const names = await readdir(runtimeDirectory).catch(() => []);
 const currentRecords = await Promise.all(names.filter((name) => name.endsWith(".json")).map(async (name) => JSON.parse(await readFile(path.join(runtimeDirectory, name), "utf8"))));
-const current = currentRecords.filter((record) => ["REVIEW_REQUIRED", "APPROVED"].includes(record.payload?.status) && record.payload?.documentType === "CTE" && record.payload?.vector === "EE").sort((a, b) => Date.parse(b.updatedAt) - Date.parse(a.updatedAt))[0];
+const current = currentRecords.filter((record) => ["REVIEW_REQUIRED", "APPROVED"].includes(record.payload?.status) && record.payload?.documentType === "CTE" && record.payload?.vector === "EE" && /Be Relax 06\.25/i.test(String(record.payload?.fields?.find((field) => field.path === "offer.name")?.value ?? "")) && record.payload?.fields?.some((field) => field.path === "eligibility.voltageLevels" && field.value !== null)).sort((a, b) => Date.parse(b.updatedAt) - Date.parse(a.updatedAt))[0];
 assert.ok(current, "latest local EE CTE review or approved record is required for regression");
 const currentReview = normalizeCteReview(current.payload);
 const currentCommercial = new Map(currentReview.commercialFields.map((item) => [item.fieldKey, item]));

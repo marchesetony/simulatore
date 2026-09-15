@@ -3,6 +3,7 @@ import { buildBillAnalystReview } from "../app/lib/foundation/bill-analyst-revie
 import { ANALYST_SCHEMA_METRICS, ANALYST_WIRE_SCHEMA, ANALYST_WIRE_TOOL, BILL_ANALYST_TOOL_NAME, BILL_CORE_TOOL_NAME, CORE_SCHEMA_METRICS, CORE_WIRE_SCHEMA, CORE_WIRE_TOOL, mapBillAnalystItems, mapBillCoreToStructuredBill, mergeBillCoreAndAnalyst } from "../app/lib/ingestion/bill-two-stage.ts";
 import { AnthropicBillSdkError, AnthropicTwoStageBillSdkAdapter } from "../app/lib/ingestion/anthropic-bill-sdk.ts";
 import { BILL_WIRE_FIELD_NAMES } from "../app/lib/ingestion/bill-wire.ts";
+import { normalizeAnalystItemCode } from "../app/lib/ingestion/bill-extended-contract.ts";
 
 const found = (value) => ({ value: String(value), status: "FOUND" });
 const missing = () => ({ value: "NOT_FOUND", status: "NOT_FOUND" });
@@ -22,10 +23,29 @@ assert.equal(ANALYST_WIRE_TOOL.name, BILL_ANALYST_TOOL_NAME);
 assert.equal(CORE_WIRE_TOOL.strict, true);
 assert.equal(ANALYST_WIRE_TOOL.strict, true);
 assert.equal(Object.hasOwn(CORE_WIRE_SCHEMA.properties, "analystItems"), false);
+assert.equal(Object.hasOwn(CORE_WIRE_SCHEMA.properties, "monthlyBands"), false);
+assert.equal(Object.hasOwn(ANALYST_WIRE_SCHEMA.properties, "monthlyBands"), true);
+assert.equal(ANALYST_WIRE_SCHEMA.required.includes("monthlyBands"), false);
+assert.equal(ANALYST_WIRE_SCHEMA.properties.monthlyBands.items.properties.f1.type, "number");
+assert.equal(ANALYST_WIRE_SCHEMA.properties.monthlyBands.items.properties.f2.type, "number");
+assert.equal(ANALYST_WIRE_SCHEMA.properties.monthlyBands.items.properties.f3.type, "number");
+const unsupportedOutboundKeywords = new Set(["maxItems", "minimum", "maximum", "multipleOf", "minLength", "maxLength"]);
+const unsupportedOutboundHits = [];
+function inspectOutboundSchema(value, path) {
+  if (!value || typeof value !== "object") return;
+  if (Array.isArray(value)) return value.forEach((item, index) => inspectOutboundSchema(item, `${path}[${index}]`));
+  for (const [key, child] of Object.entries(value)) {
+    if (unsupportedOutboundKeywords.has(key)) unsupportedOutboundHits.push(`${path}.${key}`);
+    inspectOutboundSchema(child, `${path}.${key}`);
+  }
+}
+inspectOutboundSchema(CORE_WIRE_TOOL.input_schema, "core");
+inspectOutboundSchema(ANALYST_WIRE_TOOL.input_schema, "analyst");
+assert.deepEqual(unsupportedOutboundHits, []);
 assert.deepEqual(ANALYST_WIRE_SCHEMA.required, ["schemaVersion", "items"]);
 assert.deepEqual(ANALYST_WIRE_SCHEMA.properties.items.items.required, ["kind", "code", "label", "value", "unit", "quantity", "unitPrice", "amount", "period", "status"]);
 assert.equal(ANALYST_SCHEMA_METRICS.enumValues, 0);
-assert.equal(ANALYST_SCHEMA_METRICS.optional, 0);
+assert.equal(ANALYST_SCHEMA_METRICS.optional, 1);
 assert.equal(ANALYST_SCHEMA_METRICS.unions, 0);
 assert.ok(ANALYST_SCHEMA_METRICS.bytes < 7428);
 assert.ok(ANALYST_SCHEMA_METRICS.bytes < CORE_SCHEMA_METRICS.bytes);
@@ -64,6 +84,35 @@ const coreWithoutPeriod = mapBillCoreToStructuredBill(coreWire({ billingPeriod: 
 const periodFromAnalyst = mergeBillCoreAndAnalyst(coreWithoutPeriod, analyst);
 assert.equal(periodFromAnalyst.billingPeriod.value.from, "2026-07-01");
 assert.equal(periodFromAnalyst.billingPeriod.value.to, "2026-07-31");
+assert.equal(normalizeAnalystItemCode("BILLING_PERIOD"), "BILLING_PERIOD_RAW");
+const periodFromAlias = mergeBillCoreAndAnalyst(coreWithoutPeriod, analystWire([analystItem({ code: "BILLING_PERIOD", value: "01/07/2026 \u2013 31/08/2026" })]));
+assert.equal(periodFromAlias.billingPeriod.value.from, "2026-07-01");
+assert.equal(periodFromAlias.billingPeriod.value.to, "2026-08-31");
+const unicodeDashCore = mapBillCoreToStructuredBill(coreWire({ billingPeriod: found("01/07/2026 \u2013 31/07/2026") }));
+assert.equal(unicodeDashCore.billingPeriod.value.from, "2026-07-01");
+assert.equal(unicodeDashCore.billingPeriod.value.to, "2026-07-31");
+const compactUnicodeDashCore = mapBillCoreToStructuredBill(coreWire({ billingPeriod: found("01/07/2026\u201331/07/2026") }));
+assert.equal(compactUnicodeDashCore.billingPeriod.value.from, "2026-07-01");
+assert.equal(compactUnicodeDashCore.billingPeriod.value.to, "2026-07-31");
+const realShapeCore = mapBillCoreToStructuredBill(coreWire({
+  billingPeriod: found("LUGLIO 2026 - AGOSTO 2026"),
+  f1Consumption: found("183"),
+  f2Consumption: found("132"),
+  f3Consumption: found("162"),
+  billedConsumption: found("477"),
+}));
+assert.equal(realShapeCore.billingPeriod.value.from, "2026-07-01");
+assert.equal(realShapeCore.billingPeriod.value.to, "2026-09-01");
+assert.equal(realShapeCore.f1Consumption.value, 183);
+assert.equal(realShapeCore.f2Consumption.value, 132);
+assert.equal(realShapeCore.f3Consumption.value, 162);
+assert.equal(realShapeCore.billedConsumption.value, 477);
+const invalidNamedRangeCore = mapBillCoreToStructuredBill(coreWire({ billingPeriod: found("LUGLIO 2026 - non-un mese") }));
+assert.equal(invalidNamedRangeCore.billingPeriod.value, null);
+assert.equal(invalidNamedRangeCore.billingPeriod.status, "INVALID");
+const realShapeAnalyst = mergeBillCoreAndAnalyst(realShapeCore, analystWire([analystItem({ code: "MONTHLY_PROFILE_RAW", value: "477 KWH" })]));
+assert.equal(realShapeAnalyst.extendedFacts.find((item) => item.code === "MONTHLY_PROFILE_RAW").value, "477 KWH");
+assert.equal(Object.hasOwn(realShapeAnalyst, "monthlyConsumption"), false);
 const failedAnalyst = mergeBillCoreAndAnalyst(core, null, { analystExtractionStatus: "FAILED", diagnostic: { code: "BILL_OCR_PROVIDER_FAILED", requestId: null, message: "bounded" } });
 assert.equal(failedAnalyst.f1Consumption.value, 80);
 assert.equal(failedAnalyst.analystExtractionStatus, "FAILED");
@@ -82,6 +131,8 @@ assert.match(requests[1].messages[0].content[1].text, /kind FACT/);
 assert.match(requests[1].messages[0].content[1].text, /kind CHARGE/);
 assert.match(requests[1].messages[0].content[1].text, /UNKNOWN o INVALID/);
 assert.match(requests[1].messages[0].content[1].text, /PUN_SINGLE\/PUN_F1\/PUN_F2\/PUN_F3/);
+assert.match(requests[1].messages[0].content[1].text, /non arrotondare, non troncare/);
+assert.match(requests[1].messages[0].content[1].text, /ogni cifra decimale visibile esattamente/);
 assert.equal(extracted.analystExtractionStatus, "EXTRACTED");
 
 let failedCalls = 0;

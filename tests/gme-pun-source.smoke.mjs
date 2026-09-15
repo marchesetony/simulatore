@@ -43,6 +43,10 @@ const unsafeShape = () => parseGmeOfficialPublication({ ...input, publicationTex
 assert.throws(unsafeShape, /GME_PUBLICATION_VALUES_MISSING/);
 console.log("UNSAFE_LAST_THREE_VALUES_FALLBACK_REMOVED=OK");
 
+const punopCanonical = () => parseGmeOfficialPublication({ ...input, publicationText: "Luglio 2026 PUNop 157,038 EUR/MWh" });
+assert.throws(punopCanonical, /GME_PUBLICATION_VALUES_MISSING/);
+console.log("PUNOP_CANONICAL_REJECTED=OK");
+
 const blocked = await new GmePunSourceAdapter(repository, { GME_PUN_SOURCE_MODE: "GME_API" }).importOfficialPublication(input);
 assert.equal(blocked.status, "SOURCE_BLOCKED");
 assert.equal(blocked.reason, "GME_API_CREDENTIALS_NOT_CONFIGURED");

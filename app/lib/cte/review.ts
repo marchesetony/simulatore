@@ -1,9 +1,9 @@
 import type { CteExtractionField, CteExtractionFieldStatus, CteIngestionRecord } from "./ingestion";
-import type { CteContract, CtePassThroughComponent } from "./types";
+import type { CteContract, CteEconomicDuration, CteExitFee, CteLossSemantics, CtePassThroughComponent } from "./types";
 // @ts-expect-error Node's strip-only test runner requires the explicit extension.
 import { validateCteContract } from "./validation.ts";
 
-export type CteReviewValue = string | number | readonly string[] | readonly CtePassThroughComponent[] | null;
+export type CteReviewValue = string | number | readonly string[] | readonly CtePassThroughComponent[] | CteEconomicDuration | CteLossSemantics | CteExitFee | null;
 
 export interface CteReviewField {
   readonly fieldKey: string;
@@ -76,6 +76,9 @@ const labels: Record<string, string> = {
   "commercialTerms.oneOffFees": "Una tantum",
   "commercialTerms.commercialDiscounts": "Sconti commerciali",
   "commercialTerms.passThroughComponents": "Componenti contrattuali pass-through",
+  "commercialTerms.economicDuration": "Durata condizioni economiche",
+  "commercialTerms.lossSemantics": "Semantica perdite di rete",
+  "commercialTerms.exitFee": "Oneri di recesso anticipato",
   "eligibility.voltageLevels": "Livelli tensione",
   taxTreatment: "Trattamento fiscale",
 };
@@ -152,7 +155,8 @@ function reviewFieldMap(review: CteReviewModel): Map<string, CteReviewField> {
   return new Map([...review.commercialFields, ...review.notFoundFields].map((field) => [field.fieldKey, field]));
 }
 
-function feeUnit(value: string | undefined, vector: CteIngestionRecord["vector"], fallback: "EUR_PER_CONTRACT" | "EUR_PER_KWH" | "EUR_PER_SMC"): "EUR_PER_KWH" | "EUR_PER_SMC" | "EUR_PER_MONTH" | "EUR_PER_YEAR" | "EUR_PER_CONTRACT" | null {
+function feeUnit(value: string | undefined, vector: CteIngestionRecord["vector"], fallback: "EUR_PER_CONTRACT" | "EUR_PER_KWH" | "EUR_PER_SMC"): "EUR_PER_KWH" | "EUR_PER_SMC" | "EUR_PER_POD" | "EUR_PER_MONTH" | "EUR_PER_YEAR" | "EUR_PER_CONTRACT" | null {
+  if (value && /\/\s*pod/i.test(value)) return "EUR_PER_POD";
   if (value === "€/kWh") return "EUR_PER_KWH";
   if (value === "€/Smc") return "EUR_PER_SMC";
   if (value === "€/mese") return "EUR_PER_MONTH";
@@ -170,6 +174,10 @@ function asString(field: CteReviewField | undefined): string | null {
 
 function asNumber(field: CteReviewField | undefined): number | null {
   return field?.status !== "UNCERTAIN" && typeof field?.normalizedValue === "number" && Number.isFinite(field.normalizedValue) && field.normalizedValue >= 0 ? field.normalizedValue : null;
+}
+
+function asSemantic<T extends object>(field: CteReviewField | undefined): T | null {
+  return field?.status !== "UNCERTAIN" && field?.normalizedValue !== null && typeof field?.normalizedValue === "object" && !Array.isArray(field.normalizedValue) ? field.normalizedValue as T : null;
 }
 
 function customerTypes(field: CteReviewField | undefined): readonly ("RESIDENTIAL" | "NON_RESIDENTIAL")[] | null {
@@ -204,11 +212,24 @@ function taxTreatment(field: CteReviewField | undefined): "INCLUDED" | "EXCLUDED
   return null;
 }
 
+function fixedMonthlyEquivalent(field: CteReviewField | undefined): number | null {
+  const raw = field?.sourceTextComplete ?? field?.sourceText ?? "";
+  const match = raw.match(/([-+]?\d[\d.\s]*(?:,\d+)?)\s*(?:€|EUR|euro)\s*\/\s*(?:mese|month|mensil)/i);
+  return match ? numeric(match[1]) : null;
+}
+
 function feeComponent(field: CteReviewField | undefined, feeId: string, vector: CteIngestionRecord["vector"], tax: "INCLUDED" | "EXCLUDED" | "NOT_APPLICABLE", fallback: "EUR_PER_CONTRACT" | "EUR_PER_KWH" | "EUR_PER_SMC", label?: string): CteContract["commercialTerms"]["fixedFees"][number] | null {
   const amount = asNumber(field);
   if (amount === null) return null;
   const unit = feeUnit(field?.unit, vector, fallback);
   if (!unit) return null;
+  if (unit === "EUR_PER_POD") {
+    const raw = field?.sourceTextComplete ?? field?.sourceText ?? "";
+    if (field?.periodicity !== "anno" || !/\/\s*pod\s*\/??\s*(?:anno|year|annual)/i.test(raw) || /\/\s*pod\s*\/??\s*(?:mese|month|mensil)/i.test(raw)) return null;
+    const monthlyEquivalent = fixedMonthlyEquivalent(field);
+    if (monthlyEquivalent !== null && Math.abs(monthlyEquivalent - amount / 12) > 0.000001) return null;
+    return { feeId, label: label ?? field?.label ?? feeId, amount, currency: "EUR", unit, period: "YEAR", monthlyEquivalent: amount / 12, taxTreatment: tax };
+  }
   return { feeId, label: label ?? field?.label ?? feeId, amount, currency: "EUR", unit, taxTreatment: tax };
 }
 
@@ -265,11 +286,14 @@ export function tryBuildAuthoritativeCteContract(record: Pick<CteIngestionRecord
   const variable = feeComponent(fields.get("commercialTerms.variableFees"), `${record.ingestionId}-variable`, record.vector, tax, expectedUnit);
   const imbalance = feeComponent(fields.get("commercialTerms.imbalance"), `${record.ingestionId}-imbalance`, record.vector, tax, expectedUnit);
   const oneOff = feeComponent(fields.get("commercialTerms.oneOffFees"), `${record.ingestionId}-one-off`, record.vector, tax, "EUR_PER_CONTRACT", fields.get("commercialTerms.oneOffFees")?.description);
+  const economicDuration = asSemantic<CteEconomicDuration>(fields.get("commercialTerms.economicDuration"));
+  const lossSemantics = asSemantic<CteLossSemantics>(fields.get("commercialTerms.lossSemantics"));
+  const exitFee = asSemantic<CteExitFee>(fields.get("commercialTerms.exitFee"));
   const discountsField = fields.get("commercialTerms.commercialDiscounts");
   const discounts = discountsField && discountsField.status !== "NOT_FOUND" && discountsField.normalizedValue !== null
     ? feeComponent(discountsField, `${record.ingestionId}-discount`, record.vector, tax, expectedUnit)
     : null;
-  if ((fields.get("commercialTerms.fixedFees")?.normalizedValue !== null && !fixed) || (fields.get("commercialTerms.variableFees")?.normalizedValue !== null && !variable) || (fields.get("commercialTerms.imbalance")?.normalizedValue !== null && !imbalance) || (fields.get("commercialTerms.oneOffFees")?.normalizedValue !== null && !oneOff) || (discountsField && discountsField.normalizedValue !== null && !discounts)) return authoritativeFailure("CTE_AUTHORITATIVE_MAPPING_INVALID", ["commercialTerms"]);
+  if ((fields.get("commercialTerms.fixedFees")?.normalizedValue !== null && !fixed) || (fields.get("commercialTerms.variableFees")?.normalizedValue !== null && !variable) || (fields.get("commercialTerms.imbalance")?.normalizedValue !== null && !imbalance) || (fields.get("commercialTerms.oneOffFees")?.normalizedValue !== null && !oneOff) || (discountsField && discountsField.normalizedValue !== null && !discounts) || (fields.get("commercialTerms.economicDuration")?.normalizedValue !== null && !economicDuration) || (fields.get("commercialTerms.lossSemantics")?.normalizedValue !== null && !lossSemantics) || (fields.get("commercialTerms.exitFee")?.normalizedValue !== null && !exitFee)) return authoritativeFailure("CTE_AUTHORITATIVE_MAPPING_INVALID", ["commercialTerms"]);
   const pricing = mode === "Indicizzata"
     ? { mode: "INDEXED" as const, reference: expectedIndex(record.vector) as "PUN" | "PSV", spread: { amount: spread, currency: "EUR" as const, unit: expectedUnit, taxTreatment: tax } }
     : null;
@@ -294,7 +318,7 @@ export function tryBuildAuthoritativeCteContract(record: Pick<CteIngestionRecord
     taxTreatment: tax,
     eligibility: record.vector === "EE" ? { customerTypes: customer, voltageLevels: voltage } : { customerTypes: customer },
     pricing,
-    commercialTerms: { fixedFees: fixed ? [fixed] : [], variableFees: variable ? [variable] : [], imbalance: imbalance ? { status: "DECLARED" as const, component: imbalance } : { status: "NOT_DECLARED" as const, reason: "NOT_PROVIDED" as const }, oneOffFees: oneOff ? [oneOff] : [], commercialDiscounts: discounts ? [discounts] : [], ...(typedPassThroughComponents === null ? {} : { passThroughComponents: typedPassThroughComponents }) },
+    commercialTerms: { fixedFees: fixed ? [fixed] : [], variableFees: variable ? [variable] : [], imbalance: imbalance ? { status: "DECLARED" as const, component: imbalance } : { status: "NOT_DECLARED" as const, reason: "NOT_PROVIDED" as const }, oneOffFees: exitFee ? [] : oneOff ? [oneOff] : [], commercialDiscounts: discounts ? [discounts] : [], ...(typedPassThroughComponents === null ? {} : { passThroughComponents: typedPassThroughComponents }), ...(economicDuration ? { economicDuration } : {}), ...(lossSemantics ? { lossSemantics } : {}), ...(exitFee ? { exitFee } : {}) },
   } as CteContract;
   try { validateCteContract(contract); } catch { return authoritativeFailure("CTE_AUTHORITATIVE_SCHEMA_INVALID", ["contract"]); }
   return { contract, errorCode: null, validationPaths: [] };
@@ -315,7 +339,7 @@ function normalizeExclusion(value: string): string {
 function money(field: CteExtractionField | undefined, vector: CteIngestionRecord["vector"], defaultUnit: string): CteReviewField {
   const raw = text(field);
   const value = numeric(field?.value);
-  const unit = /\/\s*(?:kwh|kWh)/.test(raw) ? "\u20AC/kWh" : /\/\s*(?:smc|Smc)/.test(raw) ? "\u20AC/Smc" : /\/\s*(?:mese|month|mensil)/i.test(raw) ? "\u20AC/mese" : defaultUnit;
+  const unit = /\/\s*pod/i.test(raw) ? "\u20AC/POD" : /\/\s*(?:kwh|kWh)/.test(raw) ? "\u20AC/kWh" : /\/\s*(?:smc|Smc)/.test(raw) ? "\u20AC/Smc" : /\/\s*(?:mese|month|mensil)/i.test(raw) ? "\u20AC/mese" : defaultUnit;
   const periodicity = /annuo|anno/i.test(raw) ? "anno" : /mese|mensil/i.test(raw) ? "mese" : undefined;
   const conditions = [...raw.matchAll(/(?:al netto|incluse?|escluse?|secondo)[^.;]*/gi)].map((match) => match[0].trim()).filter(Boolean);
   return base(field?.path ?? "", value, field, { unit, periodicity, conditions: conditions.length ? conditions : undefined });
@@ -379,6 +403,7 @@ function reviewField(fieldKey: string, field: CteExtractionField | undefined, ve
   if (fieldKey === "commercialTerms.commercialDiscounts") return base(fieldKey, concise(text(field)), field);
   if (fieldKey === "commercialTerms.oneOffFees") { const result = money(field, vector, "\u20AC"); const description = oneOffDescription(text(field)); return description ? { ...result, description } : result; }
   if (fieldKey === "commercialTerms.passThroughComponents") return base(fieldKey, Array.isArray(field?.value) ? field.value as readonly CtePassThroughComponent[] : null, field);
+  if (fieldKey === "commercialTerms.economicDuration" || fieldKey === "commercialTerms.lossSemantics" || fieldKey === "commercialTerms.exitFee") return base(fieldKey, field?.value && typeof field.value === "object" && !Array.isArray(field.value) ? field.value as CteEconomicDuration | CteLossSemantics | CteExitFee : null, field);
   return null;
 }
 
@@ -423,6 +448,9 @@ export function normalizeCteReview(record: Pick<CteIngestionRecord, "fields" | "
     reviewField("commercialTerms.oneOffFees", byPath.get("commercialTerms.oneOffFees"), record.vector),
     reviewField("commercialTerms.commercialDiscounts", byPath.get("commercialTerms.commercialDiscounts"), record.vector),
     reviewField("commercialTerms.passThroughComponents", byPath.get("commercialTerms.passThroughComponents"), record.vector),
+    reviewField("commercialTerms.economicDuration", byPath.get("commercialTerms.economicDuration"), record.vector),
+    reviewField("commercialTerms.lossSemantics", byPath.get("commercialTerms.lossSemantics"), record.vector),
+    reviewField("commercialTerms.exitFee", byPath.get("commercialTerms.exitFee"), record.vector),
     voltage(byPath.get("eligibility.voltageLevels")),
     tax(byPath.get("taxTreatment")),
   ].filter((field): field is CteReviewField => field !== null);

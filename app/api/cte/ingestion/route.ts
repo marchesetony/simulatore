@@ -24,7 +24,7 @@ export async function POST(request: Request): Promise<Response> {
     if (!(file instanceof File)) return cteError(new Error("CTE_FILE_REQUIRED"));
     let provider;
     let providerErrorCode;
-    try { provider = getConfiguredCteOcrProvider(); } catch (error) { provider = undefined; const code = error instanceof Error ? error.message : ""; providerErrorCode = ["CTE_OCR_PROVIDER_NOT_CONFIGURED", "ANTHROPIC_API_KEY_MISSING", "ANTHROPIC_MODEL_MISSING", "ANTHROPIC_CTE_MAX_TOKENS_INVALID"].includes(code) ? code as "CTE_OCR_PROVIDER_NOT_CONFIGURED" | "ANTHROPIC_API_KEY_MISSING" | "ANTHROPIC_MODEL_MISSING" | "ANTHROPIC_CTE_MAX_TOKENS_INVALID" : "CTE_OCR_PROVIDER_NOT_CONFIGURED"; }
+    try { provider = getConfiguredCteOcrProvider(); } catch (error) { provider = undefined; const code = error instanceof Error ? error.message : ""; providerErrorCode = ["CTE_OCR_PROVIDER_NOT_CONFIGURED", "ANTHROPIC_API_KEY_MISSING", "ANTHROPIC_MODEL_MISSING", "ANTHROPIC_CTE_MAX_TOKENS_INVALID", "ANTHROPIC_CTE_TIMEOUT_INVALID"].includes(code) ? code as "CTE_OCR_PROVIDER_NOT_CONFIGURED" | "ANTHROPIC_API_KEY_MISSING" | "ANTHROPIC_MODEL_MISSING" | "ANTHROPIC_CTE_MAX_TOKENS_INVALID" | "ANTHROPIC_CTE_TIMEOUT_INVALID" : "CTE_OCR_PROVIDER_NOT_CONFIGURED"; }
     const repositories = runtimeRepositories();
     const ingestionRepository = repositories.cteArchives as CteIngestionRepository;
     const ingestion = await createCteIngestion({

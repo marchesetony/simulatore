@@ -1,16 +1,19 @@
 import { randomUUID } from "node:crypto";
-import type { CteContract, CtePassThroughComponent } from "./types";
+import type { CteContract, CteEconomicDuration, CteExitFee, CteLossSemantics, CtePassThroughComponent } from "./types";
 // @ts-expect-error Node's strip-only test runner requires the explicit extension.
 import { assertPassThroughComponents, validateCteContract } from "./validation.ts";
 import type { DocumentStoragePort } from "../foundation/real-bill";
 import type { DeletableTenantRecordRepository, TenantRecord } from "../persistence/types";
 // @ts-expect-error Node's strip-only test runner requires the explicit extension.
-import { createAnthropicCteOcrProvider } from "./anthropic.ts";
+import { createAnthropicCteOcrProvider, decodeCteProviderPayload } from "./anthropic.ts";
+// @ts-expect-error Node's strip-only test runner requires the explicit extension.
+import { writeRealDiag4Json, type CteDiagnosticCapture } from "../diagnostics/real-diag-4.ts";
 // @ts-expect-error Node's strip-only test runner requires the explicit extension.
 import { cteApprovalGate, normalizeCteReview, tryBuildAuthoritativeCteContract } from "./review.ts";
 import type { CteApprovedSnapshot } from "./approved-snapshot";
 // @ts-expect-error Node's strip-only test runner requires the explicit extension.
 import { createCteApprovedSnapshot } from "./approved-snapshot.ts";
+import type { CteApprovalAuditWriter } from "./archive/service.ts";
 
 export const CTE_INGESTION_SCHEMA_VERSION = 1 as const;
 export const CTE_MAX_DOCUMENT_BYTES = 10_000_000;
@@ -18,7 +21,7 @@ export const CTE_ALLOWED_CONTENT_TYPES = ["application/pdf", "image/jpeg", "imag
 export type CteDocumentContentType = typeof CTE_ALLOWED_CONTENT_TYPES[number];
 export type CteIngestionStatus = "UPLOADED" | "OCR_PROCESSING" | "EXTRACTION_PROCESSING" | "REVIEW_REQUIRED" | "PROVIDER_NOT_CONFIGURED" | "FAILED" | "APPROVED";
 export type CteExtractionFieldStatus = "CONFIRMED" | "UNCERTAIN" | "NOT_FOUND" | "CORRECTED";
-export type CteExtractionValue = string | number | null | readonly CtePassThroughComponent[];
+export type CteExtractionValue = string | number | null | readonly CtePassThroughComponent[] | CteEconomicDuration | CteLossSemantics | CteExitFee;
 
 export interface CteExtractionField {
   readonly path: string;
@@ -94,10 +97,11 @@ export interface CteIngestionRecord {
 }
 
 export type CteIngestionRepository = DeletableTenantRecordRepository<CteIngestionRecord>;
-export type CteProviderConfigurationError = "CTE_OCR_PROVIDER_NOT_CONFIGURED" | "ANTHROPIC_API_KEY_MISSING" | "ANTHROPIC_MODEL_MISSING" | "ANTHROPIC_CTE_MAX_TOKENS_INVALID";
+export type CteProviderConfigurationError = "CTE_OCR_PROVIDER_NOT_CONFIGURED" | "ANTHROPIC_API_KEY_MISSING" | "ANTHROPIC_MODEL_MISSING" | "ANTHROPIC_CTE_MAX_TOKENS_INVALID" | "ANTHROPIC_CTE_TIMEOUT_INVALID";
 
 export interface CteOcrProvider {
   extract(input: { readonly bytes: Uint8Array; readonly contentType: CteDocumentContentType; readonly fileName: string }): Promise<CteProviderExtraction>;
+  getDiagnosticCapture?: () => CteDiagnosticCapture | null;
 }
 
 const commonFieldPaths = [
@@ -105,6 +109,7 @@ const commonFieldPaths = [
   "validity.periodStart", "validity.periodEnd", "expiry.date", "eligibility.customerTypes",
   "pricing.mode", "currency", "taxTreatment", "commercialTerms.fixedFees", "commercialTerms.variableFees",
   "commercialTerms.oneOffFees", "commercialTerms.commercialDiscounts", "commercialTerms.imbalance", "commercialTerms.passThroughComponents",
+  "commercialTerms.economicDuration", "commercialTerms.lossSemantics", "commercialTerms.exitFee",
 ] as const;
 const eeFieldPaths = ["eligibility.voltageLevels", "pricing.reference", "pricing.spread.amount"] as const;
 const gasFieldPaths = ["pricing.reference", "pricing.spread.amount"] as const;
@@ -136,15 +141,26 @@ export function validateCteUpload(input: { readonly fileName: string; readonly c
 
 function sourcePage(value: unknown): number | null { return value === null ? null : typeof value === "number" && Number.isSafeInteger(value) && value > 0 ? value : fail("CTE_EXTRACTION_SCHEMA_INVALID"); }
 function sourceText(value: unknown): string | null { return value === null ? null : typeof value === "string" && value.length <= 500 ? value : fail("CTE_EXTRACTION_SCHEMA_INVALID"); }
+function semanticValue(path: string, value: unknown): CteExtractionValue | null {
+  if (value === null) return null;
+  if (!isRecord(value)) fail("CTE_EXTRACTION_SCHEMA_INVALID");
+  if (path === "commercialTerms.economicDuration" && Number.isSafeInteger(value.value) && Number(value.value) > 0 && value.unit === "MONTHS" && typeof value.sourceText === "string" && value.sourceText.length > 0 && value.sourceText.length <= 500) return value as unknown as CteEconomicDuration;
+  if (path === "commercialTerms.lossSemantics" && value.present === true && typeof value.rawText === "string" && value.rawText.length > 0 && value.rawText.length <= 500 && ["SPREAD", "ENERGY_PRICE", "NETWORK_LOSSES", "UNSPECIFIED"].includes(String(value.appliesTo)) && typeof value.provenance === "string" && value.provenance.length > 0 && value.provenance.length <= 500) return value as unknown as CteLossSemantics;
+  if (path === "commercialTerms.exitFee" && typeof value.amount === "number" && Number.isFinite(value.amount) && value.amount >= 0 && value.currency === "EUR" && value.condition === "EARLY_EXIT_BEFORE_DURATION" && semanticValue("commercialTerms.economicDuration", value.durationReference) !== null && typeof value.sourceText === "string" && value.sourceText.length > 0 && value.sourceText.length <= 500) return value as unknown as CteExitFee;
+  fail("CTE_EXTRACTION_SCHEMA_INVALID");
+}
 function extractionField(value: unknown): CteExtractionField {
   if (!isRecord(value) || typeof value.path !== "string" || value.path.length < 1 || value.path.length > 120) fail("CTE_EXTRACTION_SCHEMA_INVALID");
-  const structuredPassThrough = value.path === "commercialTerms.passThroughComponents" && Array.isArray(value.value) ? value.value : null;
+  const isPassThrough = value.path === "commercialTerms.passThroughComponents";
+  const isSemantic = value.path === "commercialTerms.economicDuration" || value.path === "commercialTerms.lossSemantics" || value.path === "commercialTerms.exitFee";
+  const structuredPassThrough = isPassThrough && Array.isArray(value.value) ? value.value : null;
   if (structuredPassThrough !== null) assertPassThroughComponents(structuredPassThrough);
-  if (!(value.value === null || typeof value.value === "string" || typeof value.value === "number" && Number.isFinite(value.value) || structuredPassThrough !== null)) fail("CTE_EXTRACTION_SCHEMA_INVALID");
+  const structuredSemantic = isSemantic ? semanticValue(value.path, value.value) : null;
+  if (!(isPassThrough ? value.value === null || structuredPassThrough !== null : isSemantic ? value.value === null || structuredSemantic !== null : value.value === null || typeof value.value === "string" || typeof value.value === "number" && Number.isFinite(value.value))) fail("CTE_EXTRACTION_SCHEMA_INVALID");
   if (typeof value.confidence !== "number" || !Number.isFinite(value.confidence) || value.confidence < 0 || value.confidence > 1) fail("CTE_EXTRACTION_SCHEMA_INVALID");
   const status = value.status === "CONFIRMED" || value.status === "UNCERTAIN" || value.status === "NOT_FOUND" || value.status === "CORRECTED" ? value.status : value.value === null ? "NOT_FOUND" : value.confidence < 0.8 ? "UNCERTAIN" : "CONFIRMED";
   if (status === "NOT_FOUND" && value.value !== null) fail("CTE_EXTRACTION_SCHEMA_INVALID");
-  return { path: value.path, value: structuredPassThrough === null ? value.value as CteExtractionValue : structuredPassThrough as readonly CtePassThroughComponent[], confidence: value.confidence, sourcePage: sourcePage(value.sourcePage), sourceText: sourceText(value.sourceText), status };
+  return { path: value.path, value: structuredPassThrough === null ? structuredSemantic === null ? value.value as CteExtractionValue : structuredSemantic : structuredPassThrough as readonly CtePassThroughComponent[], confidence: value.confidence, sourcePage: sourcePage(value.sourcePage), sourceText: sourceText(value.sourceText), status };
 }
 
 function extractionNotes(value: unknown): readonly string[] {
@@ -210,7 +226,7 @@ export function getConfiguredCteOcrProvider(env: NodeJS.ProcessEnv = process.env
       const response = await fetcher(endpoint, { method: "POST", headers: { authorization: `Bearer ${apiKey}`, "content-type": input.contentType, "x-file-name": encodeURIComponent(input.fileName) }, body: Buffer.from(input.bytes) });
       const body: unknown = await response.json().catch(() => null);
       if (!response.ok) fail("CTE_OCR_PROVIDER_FAILED");
-      return body as CteProviderExtraction;
+      return decodeCteProviderPayload(body);
     },
   };
 }
@@ -222,6 +238,17 @@ function errorCodeOf(error: unknown, fallback = "CTE_OCR_PROVIDER_FAILED"): stri
 }
 function diagnosticsOf(error: unknown): CteProviderDiagnostics | null {
   return isRecord(error) && isRecord(error.diagnostics) ? error.diagnostics as unknown as CteProviderDiagnostics : null;
+}
+
+async function persistCteDiagnostics(ingestionId: string, provider: CteOcrProvider | undefined): Promise<void> {
+  const capture = provider?.getDiagnosticCapture?.();
+  if (!capture) return;
+  try {
+    await writeRealDiag4Json(`cte-${ingestionId}-shape.json`, capture.shape);
+    await writeRealDiag4Json(`cte-${ingestionId}-validation.json`, capture.validation);
+  } catch {
+    console.error("[REAL_DIAG_4] cte diagnostic write failed");
+  }
 }
 function attempt(input: { readonly fromStatus: CteIngestionStatus; readonly toStatus: CteIngestionStatus; readonly outcome: CteIngestionAttempt["outcome"]; readonly errorCode: string | null; readonly startedAt: string; readonly completedAt: string; readonly providerDiagnostics: CteProviderDiagnostics | null }): CteIngestionAttempt {
   return { attemptId: "cte-attempt-" + randomUUID(), ...input };
@@ -283,6 +310,7 @@ export async function createCteIngestion(input: {
     }
     attempts.push(attempt({ fromStatus: "OCR_PROCESSING", toStatus: status, outcome: status === "REVIEW_REQUIRED" ? "SUCCEEDED" : "FAILED", errorCode, startedAt, completedAt: nowIso(), providerDiagnostics }));
   }
+  await persistCteDiagnostics(ingestionId, input.provider);
   return input.repository.append({ tenantId: input.tenantId, recordId: ingestionId, idempotencyKey: input.idempotencyKey, payload: { schemaVersion: CTE_INGESTION_SCHEMA_VERSION, ingestionId, documentId: ingestionId, objectKey, fileName: safeFileName(input.fileName), contentType, size: input.bytes.byteLength, status, documentType, vector, fields, extractionNotes: extractionNotesValue, candidate, reviewedCandidate: candidate, corrections: [], errorCode, providerDiagnostics, attempts, approvedArchiveId: null, approvedSnapshot: null }, now: nowIso() });
 }
 
@@ -349,6 +377,7 @@ export async function retryCteIngestion(input: {
         errorCode = errorCodeOf(error); providerDiagnostics = diagnosticsOf(error);
       }
     }
+    await persistCteDiagnostics(input.ingestionId, input.provider);
     const completedAt = nowIso();
     const nextAttempt = attempt({ fromStatus: previous.status, toStatus: status, outcome, errorCode, startedAt, completedAt, providerDiagnostics });
     return input.repository.put({ tenantId: input.tenantId, recordId: current.recordId, expectedVersion: current.version, payload: { ...previous, status, documentType, vector, fields, extractionNotes: extractionNotesValue, candidate, reviewedCandidate: status === "REVIEW_REQUIRED" ? candidate : previous.reviewedCandidate, errorCode, providerDiagnostics, attempts: [...history, nextAttempt], approvedArchiveId: status === "REVIEW_REQUIRED" ? null : previous.approvedArchiveId }, now: completedAt });
@@ -418,7 +447,7 @@ export interface ApproveCteIngestionResult {
   readonly alreadyApproved: boolean;
 }
 
-export async function approveCteIngestion(input: { readonly tenantId: string; readonly ingestionId: string; readonly actor: string; readonly repository: CteIngestionRepository; readonly archive: { create: (input: { readonly tenantId: string; readonly contract: CteContract; readonly actor: string }) => Promise<{ readonly archiveId: string; readonly currentWorkingVersionId: string }>; approve: (tenantId: string, archiveId: string, versionId: string, actor: string, decisionId: string) => Promise<unknown> } }): Promise<ApproveCteIngestionResult> {
+export async function approveCteIngestion(input: { readonly tenantId: string; readonly ingestionId: string; readonly actor: string; readonly repository: CteIngestionRepository; readonly archive: { create: (input: { readonly tenantId: string; readonly contract: CteContract; readonly actor: string }) => Promise<{ readonly archiveId: string; readonly currentWorkingVersionId: string }>; approve: (tenantId: string, archiveId: string, versionId: string, actor: string, decisionId: string, audit?: CteApprovalAuditWriter) => Promise<unknown> }; readonly approvalAudit?: CteApprovalAuditWriter }): Promise<ApproveCteIngestionResult> {
   return withCteIngestionLock(`${input.tenantId}:${input.ingestionId}`, async () => {
     const current = await input.repository.get(input.tenantId, input.ingestionId);
     if (!current) fail("CTE_INGESTION_NOT_FOUND");
@@ -429,7 +458,7 @@ export async function approveCteIngestion(input: { readonly tenantId: string; re
     if (!candidate) fail("CTE_REVIEW_REQUIRED");
     if (!cteApprovalGate({ ...payload, tenantId: input.tenantId }).approvalReady) fail("CTE_APPROVAL_BLOCKED");
     const created = await input.archive.create({ tenantId: input.tenantId, contract: candidate, actor: input.actor });
-    const approvedArchive = await input.archive.approve(input.tenantId, created.archiveId, created.currentWorkingVersionId, input.actor, "cte-ingestion-approval-" + input.ingestionId);
+    const approvedArchive = await input.archive.approve(input.tenantId, created.archiveId, created.currentWorkingVersionId, input.actor, "cte-ingestion-approval-" + input.ingestionId, input.approvalAudit);
     const archiveRecord = isRecord(approvedArchive) ? approvedArchive : null;
     const versions = archiveRecord && Array.isArray(archiveRecord.versions) ? archiveRecord.versions : [];
     const approvedVersion = versions.find((version) => isRecord(version) && version.versionId === archiveRecord?.currentApprovedVersionId && isRecord(version.contract));

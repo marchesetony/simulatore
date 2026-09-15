@@ -116,10 +116,9 @@ function candidateComplete(candidate: PunSourceCandidate | undefined): candidate
 function canonicalCandidate(bundle: PunSourceBundle, referenceMonth: string): PunSourceCandidate {
   const gme = candidateComplete(bundle.gme) && bundle.gme.record.month === referenceMonth ? bundle.gme : undefined;
   const arera = candidateComplete(bundle.arera) && bundle.arera.record.month === referenceMonth ? bundle.arera : undefined;
+  if (!gme) throw new Error(bundle.gmeError ?? "GME_CANONICAL_REQUIRED");
   if (gme && arera && !valuesEqual(gme.record, arera.record)) throw new Error("OFFICIAL_PUN_SOURCE_MISMATCH");
-  if (gme) return gme;
-  if (arera) return arera;
-  throw new Error(bundle.gmeError ?? bundle.areraError ?? "PUN_MONTH_INCOMPLETE");
+  return gme;
 }
 function nextVersion(records: readonly MarketArchiveRecord[]): number { return records.reduce((max, record) => Math.max(max, Number.parseInt(record.record.version, 10) || 0), 0) + 1; }
 function pendingVersion(candidate: ElectricityMonthlyPunRecord, current: MarketArchiveRecord | undefined, all: readonly MarketArchiveRecord[]): ElectricityMonthlyPunRecord {

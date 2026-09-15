@@ -225,6 +225,26 @@ export function buildBillSupplyProfile(facts: readonly StructuredBillExtendedFac
   };
 }
 
+function unavailableProfileField(): SupplyProfileField {
+  return { rawValue: null, normalizedValue: null, status: "NOT_FOUND" };
+}
+
+/**
+ * Reads profiles written before the power-basis fields were introduced.
+ * Missing fields are not inferred: they remain explicitly unavailable.
+ */
+export function normalizeBillSupplyProfile(value: unknown): BillSupplyProfile {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) throw new Error("BILL_SUPPLY_PROFILE_INVALID");
+  const profile = value as Record<string, unknown>;
+  const normalized = {
+    ...profile,
+    powerMaximumDrawn: Object.hasOwn(profile, "powerMaximumDrawn") ? profile.powerMaximumDrawn : unavailableProfileField(),
+    powerBillingBasis: Object.hasOwn(profile, "powerBillingBasis") ? profile.powerBillingBasis : { ...unavailableProfileField(), normalizedValue: "UNKNOWN" as const },
+  };
+  validateBillSupplyProfile(normalized);
+  return normalized as BillSupplyProfile;
+}
+
 export function validateBillSupplyProfile(value: unknown): asserts value is BillSupplyProfile {
   if (typeof value !== "object" || value === null || Array.isArray(value)) throw new Error("BILL_SUPPLY_PROFILE_INVALID");
   const profile = value as Record<string, unknown>;

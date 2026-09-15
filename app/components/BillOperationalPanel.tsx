@@ -11,7 +11,7 @@ import type { DomesticResidentMatrix, ExpectedComponent } from "../lib/foundatio
 import type { BillEconomicComponent } from "../lib/foundation/bill-economic-analysis";
 import type { RegulatedPassThroughItem } from "../lib/foundation/bill-regulated-pass-through";
 
-type BillAction = "upload" | "approve" | "correct" | "retry" | "delete";
+type BillAction = "upload" | "approve" | "confirm" | "correct" | "retry" | "delete";
 type CorrectionField = "supplier" | "pod" | "customerName" | "billingPeriod" | "annualConsumption" | "billedConsumption" | "totalAmount";
 type ReviewDefinition = [string, string, BillAnalystReviewField<unknown>, string?];
 type DisplayRow = { readonly label: string; readonly value: ReactNode; readonly detail?: ReactNode };
@@ -529,9 +529,22 @@ export default function BillOperationalPanel({ readonly, onUseInSimulation }: { 
   };
   const saveCorrections = async () => {
     if (!selected || approved || readonly || busyRef.current) return;
-    const entries = Object.entries(corrections).filter(([, value]) => value.trim()); if (!entries.length) { setEditing(false); return; }
-    busyRef.current = true; setPending("correct");
-    try { let current = selected; for (const [field, value] of entries) { const result = await requestJson<{ readonly document: BillDocumentModel }>("/api/bills/" + encodeURIComponent(current.id), { method: "PATCH", body: JSON.stringify({ operation: "correct", field, value, versionId: current.currentVersionId }) }); current = result.document; } setSelected(current); setCorrections({}); setEditing(false); await load(); setMessage("Modifiche registrate in una nuova versione."); }
+    const entries = Object.entries(corrections).filter(([, value]) => value.trim());
+    const unchangedFields = entries.filter(([field, value]) => value.trim() === (selected.fields[field]?.value ?? "") && !selected.fields[field]?.confirmed).map(([field]) => field);
+    const changedEntries = entries.filter(([field, value]) => value.trim() !== (selected.fields[field]?.value ?? ""));
+    if (!entries.length) {
+      const fields = Object.entries(selected.fields).filter(([, item]) => typeof item.value === "string" && item.value.trim().length > 0 && !item.confirmed).map(([field]) => field);
+      if (!fields.length) { setEditing(false); return; }
+      unchangedFields.push(...fields.filter((field) => !unchangedFields.includes(field)));
+    }
+    if (!unchangedFields.length && !changedEntries.length) { setEditing(false); return; }
+    busyRef.current = true; setPending(unchangedFields.length && !changedEntries.length ? "confirm" : "correct");
+    try {
+      let current = selected;
+      if (unchangedFields.length) { setPending("confirm"); const result = await requestJson<{ readonly document: BillDocumentModel }>("/api/bills/" + encodeURIComponent(current.id), { method: "PATCH", body: JSON.stringify({ operation: "confirm-fields", versionId: current.currentVersionId, fields: unchangedFields }) }); current = result.document; }
+      for (const [field, value] of changedEntries) { setPending("correct"); const result = await requestJson<{ readonly document: BillDocumentModel }>("/api/bills/" + encodeURIComponent(current.id), { method: "PATCH", body: JSON.stringify({ operation: "correct", field, value, versionId: current.currentVersionId }) }); current = result.document; }
+      setSelected(current); setCorrections({}); setEditing(false); await load(); setMessage(unchangedFields.length && !changedEntries.length ? "Dati estratti confermati dal revisore." : "Modifiche registrate in una nuova versione.");
+    }
     catch (cause) { setError(errorText(cause)); } finally { busyRef.current = false; setPending(null); }
   };
   const retry = async (documentId = selected?.id) => {

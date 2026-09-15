@@ -2,8 +2,11 @@ import type {
   CteCommercialTerms,
   CteContract,
   CteDeclaredComponent,
+  CteEconomicDuration,
   CteExpiry,
+  CteExitFee,
   CteFeeComponent,
+  CteLossSemantics,
   CteOffer,
   CtePassThroughComponent,
   CtePrice,
@@ -50,8 +53,38 @@ function assertFee(value: unknown): asserts value is CteFeeComponent {
   nonEmpty(item.label, "CTE_FEE_INVALID");
   nonNegative(item.amount, "CTE_FEE_INVALID");
   if (item.currency !== "EUR") fail("CURRENCY_INVALID");
-  enumValue(item.unit, ["EUR_PER_KWH", "EUR_PER_SMC", "EUR_PER_MONTH", "EUR_PER_YEAR", "EUR_PER_CONTRACT"], "CTE_FEE_UNIT_INVALID");
+  enumValue(item.unit, ["EUR_PER_KWH", "EUR_PER_SMC", "EUR_PER_POD", "EUR_PER_MONTH", "EUR_PER_YEAR", "EUR_PER_CONTRACT"], "CTE_FEE_UNIT_INVALID");
+  if (item.period !== undefined) enumValue(item.period, ["MONTH", "YEAR", "CONTRACT"], "CTE_FEE_PERIOD_INVALID");
+  if (item.monthlyEquivalent !== undefined) {
+    const monthly = nonNegative(item.monthlyEquivalent, "CTE_MONTHLY_EQUIVALENT_INVALID");
+    if (item.unit !== "EUR_PER_POD" || item.period !== "YEAR" || Math.abs(monthly - (Number(item.amount) / 12)) > 0.000001) fail("CTE_MONTHLY_EQUIVALENT_INVALID");
+  }
+  if (item.unit === "EUR_PER_POD" && (item.period !== "YEAR" || item.monthlyEquivalent === undefined)) fail("CTE_FIXED_FEE_CANONICAL_INVALID");
   enumValue(item.taxTreatment, ["INCLUDED", "EXCLUDED", "NOT_APPLICABLE"], "CTE_TAX_TREATMENT_INVALID");
+}
+
+function assertEconomicDuration(value: unknown): asserts value is CteEconomicDuration {
+  const item = record(value, "CTE_ECONOMIC_DURATION_INVALID");
+  const duration = nonNegative(item.value, "CTE_ECONOMIC_DURATION_INVALID");
+  if (!Number.isInteger(duration) || duration <= 0 || item.unit !== "MONTHS") fail("CTE_ECONOMIC_DURATION_INVALID");
+  nonEmpty(item.sourceText, "CTE_ECONOMIC_DURATION_INVALID");
+}
+
+function assertLossSemantics(value: unknown): asserts value is CteLossSemantics {
+  const item = record(value, "CTE_LOSS_SEMANTICS_INVALID");
+  if (item.present !== true) fail("CTE_LOSS_SEMANTICS_INVALID");
+  nonEmpty(item.rawText, "CTE_LOSS_SEMANTICS_INVALID");
+  enumValue(item.appliesTo, ["SPREAD", "ENERGY_PRICE", "NETWORK_LOSSES", "UNSPECIFIED"], "CTE_LOSS_SEMANTICS_INVALID");
+  nonEmpty(item.provenance, "CTE_LOSS_SEMANTICS_INVALID");
+}
+
+function assertExitFee(value: unknown): asserts value is CteExitFee {
+  const item = record(value, "CTE_EXIT_FEE_INVALID");
+  nonNegative(item.amount, "CTE_EXIT_FEE_INVALID");
+  if (item.currency !== "EUR") fail("CTE_EXIT_FEE_INVALID");
+  if (item.condition !== "EARLY_EXIT_BEFORE_DURATION") fail("CTE_EXIT_FEE_INVALID");
+  assertEconomicDuration(item.durationReference);
+  nonEmpty(item.sourceText, "CTE_EXIT_FEE_INVALID");
 }
 
 function assertPassThroughComponent(value: unknown, validity?: DatePeriod): asserts value is CtePassThroughComponent {
@@ -66,6 +99,10 @@ function assertPassThroughComponent(value: unknown, validity?: DatePeriod): asse
   if (validity && (effectiveFrom < validity.periodStart || effectiveTo > validity.periodEnd)) fail("CTE_PASS_THROUGH_PERIOD_OUTSIDE_CTE");
   const hasFee = Object.prototype.hasOwnProperty.call(item, "fee");
   const hasExternalReference = Object.prototype.hasOwnProperty.call(item, "externalReference");
+  if (item.documentPresence !== undefined) enumValue(item.documentPresence, ["DOCUMENT_STATED", "NOT_STATED"], "CTE_PASS_THROUGH_DOCUMENT_PRESENCE_INVALID");
+  if (item.amountStatus !== undefined) enumValue(item.amountStatus, ["DECLARED", "NOT_DECLARED"], "CTE_PASS_THROUGH_AMOUNT_STATUS_INVALID");
+  if (item.sourceText !== undefined) nonEmpty(item.sourceText, "CTE_PASS_THROUGH_SOURCE_INVALID");
+  if (item.componentId === "CDISPD" && item.amountStatus === "DECLARED" && declarationState !== "EXPLICIT_COMPONENT") fail("CTE_CDISPD_AMOUNT_INVALID");
   if (declarationState === "EXPLICIT_COMPONENT") {
     if (!hasFee || hasExternalReference) fail("CTE_PASS_THROUGH_DECLARATION_INVALID");
     assertFee(item.fee);
@@ -112,6 +149,10 @@ function assertCommercialTerms(value: unknown): asserts value is CteCommercialTe
     });
   }
   assertDeclaredComponent(item.imbalance);
+  if (item.economicDuration !== undefined) assertEconomicDuration(item.economicDuration);
+  if (item.lossSemantics !== undefined) assertLossSemantics(item.lossSemantics);
+  if (item.exitFee !== undefined) assertExitFee(item.exitFee);
+  if (item.exitFee !== undefined && Array.isArray(item.oneOffFees) && item.oneOffFees.length > 0) fail("CTE_EXIT_FEE_DUPLICATE");
 }
 
 function assertExpiry(value: unknown): asserts value is CteExpiry {

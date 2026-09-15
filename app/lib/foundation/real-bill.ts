@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { mkdir, readFile, unlink, writeFile } from "node:fs/promises";
+import { mkdir, readFile, rm, unlink, writeFile } from "node:fs/promises";
 import path from "node:path";
 // @ts-expect-error Node's strip-only test runner requires the explicit extension.
 import { atomicWriteJson } from "../archive/atomic.ts";
@@ -9,7 +9,7 @@ import type { BillContract } from "../energy/types.ts";
 // @ts-expect-error Node's strip-only test runner requires the explicit extension.
 import { billErrorCode, billErrorField, isBillErrorCode, BillIngestionError, type BillErrorCode, type BillExtractionField } from "../ingestion/errors.ts";
 // @ts-expect-error Next runtime resolves explicit TypeScript extensions.
-import { structuredBillContract, structuredBillFields, validateStructuredBillExtraction, type StructuredBillExtraction, type StructuredBillExtractionProvider, type StructuredBillField } from "../ingestion/structured-bill.ts";
+import { normalizeStoredStructuredBillExtraction, structuredBillContract, structuredBillFields, validateStructuredBillExtraction, type StructuredBillExtraction, type StructuredBillExtractionProvider, type StructuredBillField } from "../ingestion/structured-bill.ts";
 // @ts-expect-error Next runtime resolves explicit TypeScript extensions.
 import { resolveBillVectorFromEvidence, type ResolvedBillVector } from "../ingestion/vector-resolution.ts";
 import type { OfficialPunModel } from "../market/pun-reference";
@@ -20,6 +20,10 @@ import { resolveBillingAddressFromPdf } from "./bill-pdf-layout.ts";
 import { mergeBillCoreAndAnalyst, stripBillAnalystData, type BillAnalystWireExtraction } from "../ingestion/bill-two-stage.ts";
 // @ts-expect-error Node's strip-only test runner requires the explicit extension.
 import { buildBillAnalystReview, type BillAnalystReviewDTO } from "./bill-analyst-review.ts";
+// @ts-expect-error Node's strip-only test runner requires the explicit extension.
+import { extractDocumentMonthlyBandEvidence, reconcileMonthlyBandsWithDocumentEvidence } from "../ingestion/document-numeric-evidence.ts";
+// @ts-expect-error Node's strip-only test runner requires the explicit extension.
+import { selectMonthlyBandsForBillingPeriod, type StructuredBillMonthlyBand } from "../ingestion/monthly-bands.ts";
 
 export type ExtractionStatus = "EXTRACTED" | "OCR_PROVIDER_REQUIRED" | "FAILED" | "REVIEW_REQUIRED";
 export type FieldName = "supplier" | "pod" | "customerName" | "billingPeriod" | "annualConsumption" | "billedConsumption" | "totalAmount";
@@ -66,7 +70,8 @@ export type BillApprovalRecord = {
 };
 export type BillCorrectionOperation = { readonly operation: "correct"; readonly field: FieldName; readonly value: string; readonly versionId?: string };
 export type BillApprovalOperation = { readonly operation: "approve"; readonly versionId: string };
-export type BillOperation = BillCorrectionOperation | BillApprovalOperation;
+export type BillConfirmFieldsOperation = { readonly operation: "confirm-fields"; readonly versionId: string; readonly fields: readonly FieldName[] };
+export type BillOperation = BillCorrectionOperation | BillApprovalOperation | BillConfirmFieldsOperation;
 export type BillDocument = {
   readonly id: string;
   readonly tenantId: string;
@@ -161,6 +166,7 @@ export interface TextExtractionPort {
 }
 export interface BillRepository {
   save(document: BillDocument): Promise<void>;
+  saveIfCurrentVersion(document: BillDocument, expectedVersionId: string, expectedVersion: BillVersion): Promise<void>;
   get(tenantId: string, id: string): Promise<BillDocument | null>;
   list(tenantId: string): Promise<readonly BillDocument[]>;
   delete?(tenantId: string, id: string): Promise<void>;
@@ -373,6 +379,19 @@ export function assertLocalBillAccess(tenantId: string | null | undefined, local
 export function parseBillOperation(value: unknown): BillOperation | null {
   if (typeof value !== "object" || value === null) return null;
   const record = value as Record<string, unknown>;
+  const confirmationKeys = ["operation", "versionId", "fields"];
+  const confirmation = record.operation === "confirm-fields"
+    && typeof record.versionId === "string"
+    && record.versionId.trim().length > 0
+    && Array.isArray(record.fields)
+    && record.fields.length > 0
+    && Object.keys(record).every((key) => confirmationKeys.includes(key))
+    && record.fields.every((field) => typeof field === "string" && fieldNames.includes(field as FieldName));
+  if (confirmation) {
+    const fields = record.fields as string[];
+    if (new Set(fields).size !== fields.length) return null;
+    return { operation: "confirm-fields", versionId: record.versionId as string, fields: fields as FieldName[] };
+  }
   const correction = (record.operation === undefined || record.operation === "correct")
     && typeof record.field === "string"
     && fieldNames.includes(record.field as FieldName)
@@ -384,6 +403,51 @@ export function parseBillOperation(value: unknown): BillOperation | null {
   const approval = record.operation === "approve" && typeof record.versionId === "string" && record.versionId.trim().length > 0;
   if (approval) return { operation: "approve", versionId: record.versionId as string };
   return null;
+}
+
+function confirmableField(field: ExtractedField | undefined): field is ExtractedField {
+  if (!field) return false;
+  const normalizedValue = field.value?.trim().toUpperCase();
+  return field.source !== "unavailable"
+    && typeof field.value === "string"
+    && field.value.trim().length > 0
+    && normalizedValue !== "UNKNOWN"
+    && normalizedValue !== "NOT_FOUND"
+    && normalizedValue !== "NOT AVAILABLE"
+    && normalizedValue !== "NON DISPONIBILE";
+}
+
+export function confirmBillFields(input: {
+  readonly document: BillDocument;
+  readonly tenantId: string;
+  readonly sourceVersionId: string;
+  readonly fields: readonly FieldName[];
+  readonly at: string;
+}): BillDocument {
+  validateTenantId(input.tenantId);
+  if (input.document.tenantId !== input.tenantId) throw new Error("TENANT_ACCESS_DENIED");
+  if (input.document.currentVersionId !== input.sourceVersionId) throw new Error("DOCUMENT_VERSION_STALE");
+  if (input.document.currentApprovedVersionId === input.sourceVersionId) throw new Error("DOCUMENT_VERSION_ALREADY_APPROVED");
+  const rawFields: unknown = input.fields;
+  if (!Array.isArray(rawFields) || rawFields.length === 0 || new Set(rawFields).size !== rawFields.length || rawFields.some((field) => typeof field !== "string" || !fieldNames.includes(field as FieldName))) {
+    throw new Error("FIELD_CONFIRMATION_INVALID");
+  }
+  const requestedFields = rawFields as readonly FieldName[];
+
+  const source = currentVersion(input.document);
+  for (const field of requestedFields) {
+    if (!confirmableField(source.fields[field])) throw new Error("FIELD_CONFIRMATION_INVALID");
+  }
+
+  const fields = cloneFields(source.fields);
+  for (const field of requestedFields) fields[field] = { ...fields[field], confirmed: true };
+  const confirmedVersion: BillVersion = { ...source, fields };
+  return sanitizeDocument({
+    ...input.document,
+    updatedAt: input.at,
+    currentVersionId: source.versionId,
+    versions: input.document.versions.map((version) => version.versionId === source.versionId ? confirmedVersion : version),
+  });
 }
 
 function currentVersion(document: BillDocument): BillVersion {
@@ -547,11 +611,33 @@ export class LocalBillRepository implements BillRepository {
   }
 
   async save(document: BillDocument): Promise<void> {
-    const rootDir = path.dirname(this.file);
-    await mkdir(rootDir, { recursive: true });
-    const store = await this.readStore();
-    const documents = [...store.documents.filter((item) => !(item.id === document.id && item.tenantId === document.tenantId)), validateStoredDocument(document)];
-    await atomicWriteJson(this.file, { schemaVersion: 1, documents });
+    const release = await acquireDirectoryLock(`${this.file}.lock`);
+    try {
+      const rootDir = path.dirname(this.file);
+      await mkdir(rootDir, { recursive: true });
+      const store = await this.readStore();
+      const documents = [...store.documents.filter((item) => !(item.id === document.id && item.tenantId === document.tenantId)), validateStoredDocument(document)];
+      await atomicWriteJson(this.file, { schemaVersion: 1, documents });
+    } finally {
+      await release();
+    }
+  }
+
+  async saveIfCurrentVersion(document: BillDocument, expectedVersionId: string, expectedVersion: BillVersion): Promise<void> {
+    const release = await acquireDirectoryLock(`${this.file}.lock`);
+    try {
+      const rootDir = path.dirname(this.file);
+      await mkdir(rootDir, { recursive: true });
+      const store = await this.readStore();
+      const previous = store.documents.find((item) => item.id === document.id && item.tenantId === document.tenantId);
+      const previousVersion = previous?.versions.find((version) => version.versionId === expectedVersionId);
+      if (!previous || previous.currentVersionId !== expectedVersionId || !previousVersion || JSON.stringify(previousVersion) !== JSON.stringify(expectedVersion)) throw new Error("DOCUMENT_VERSION_STALE");
+      const valid = validateStoredDocument(document);
+      const documents = [...store.documents.filter((item) => !(item.id === valid.id && item.tenantId === valid.tenantId)), valid];
+      await atomicWriteJson(this.file, { schemaVersion: 1, documents });
+    } finally {
+      await release();
+    }
   }
 
   async get(tenantId: string, id: string): Promise<BillDocument | null> {
@@ -660,6 +746,32 @@ export function extractBillFields(text: string): BillFields {
   return result;
 }
 
+function applyDocumentGroundedMonthlyEvidence(bytes: Uint8Array, extraction: StructuredBillExtraction): StructuredBillExtraction {
+  const documentEvidence = extractDocumentMonthlyBandEvidence(bytes);
+  const hasProviderMonthlyBands = Array.isArray(extraction.monthlyBands) && extraction.monthlyBands.length > 0;
+  if (documentEvidence.status !== "AVAILABLE") return hasProviderMonthlyBands ? { ...extraction, monthlyBandDocumentEvidenceStatus: documentEvidence.status } : extraction;
+  const reconciled = reconcileMonthlyBandsWithDocumentEvidence(extraction.monthlyBands, documentEvidence.bands);
+  if (reconciled.status !== "DOCUMENT_GROUNDED" || !reconciled.monthlyBands) {
+    return { ...extraction, monthlyBandDocumentEvidenceStatus: "FAIL_CLOSED" };
+  }
+  let scopedMonthlyBands: readonly StructuredBillMonthlyBand[];
+  try {
+    scopedMonthlyBands = selectMonthlyBandsForBillingPeriod(extraction.billingPeriod.status === "FOUND" ? extraction.billingPeriod.value : null, reconciled.monthlyBands);
+  } catch {
+    return { ...extraction, detectedMonthlyBandEvidence: documentEvidence.bands, monthlyBandDocumentEvidenceStatus: "FAIL_CLOSED" };
+  }
+  const scopedMonths = new Set(scopedMonthlyBands.map((band) => band.month));
+  const scopedEvidence = reconciled.evidence.filter((evidence) => scopedMonths.has(evidence.month));
+  return {
+    ...extraction,
+    monthlyBands: scopedMonthlyBands,
+    monthlyBandEvidence: scopedEvidence,
+    detectedMonthlyBandEvidence: documentEvidence.bands,
+    monthlyBandDocumentEvidenceStatus: "DOCUMENT_GROUNDED",
+    monthlyBandPrecisionMismatch: reconciled.precisionMismatch,
+  };
+}
+
 export async function ingestBill(input: {
   readonly tenantId: string;
   readonly fileName: string;
@@ -686,7 +798,7 @@ export async function ingestBill(input: {
     let energyContract: BillContract | undefined;
     let structuredBill: StructuredBillExtraction | undefined;
     if (input.structuredExtractor) {
-      structuredBill = await input.structuredExtractor.extract({ bytes: input.bytes, contentType: input.contentType });
+      structuredBill = applyDocumentGroundedMonthlyEvidence(input.bytes, await input.structuredExtractor.extract({ bytes: input.bytes, contentType: input.contentType }));
       validateStructuredBillExtraction(structuredBill);
       fields = structuredBillFields(structuredBill);
       energyContract = structuredBillContract({ extraction: structuredBill, tenantId, billId: id, versionId }) ?? undefined;
@@ -768,7 +880,7 @@ export async function retryBill(input: {
     let structuredBill: StructuredBillExtraction | undefined;
     if (input.structuredExtractor) {
       const contentType = /\.png$/i.test(input.document.fileName) ? "image/png" : /\.(?:jpe?g)$/i.test(input.document.fileName) ? "image/jpeg" : "application/pdf";
-      structuredBill = await input.structuredExtractor.extract({ bytes, contentType });
+      structuredBill = applyDocumentGroundedMonthlyEvidence(bytes, await input.structuredExtractor.extract({ bytes, contentType }));
       validateStructuredBillExtraction(structuredBill);
       fields = structuredBillFields(structuredBill);
       energyContract = structuredBillContract({ extraction: structuredBill, tenantId, billId: input.document.id, versionId }) ?? undefined;
@@ -1282,9 +1394,9 @@ function parseBillVersion(value: unknown, tenantId: string, documentId: string):
   }
   let structuredBill: StructuredBillExtraction | undefined;
   if (value.structuredBill !== undefined) {
-    validateStructuredBillExtraction(value.structuredBill);
-    structuredBill = value.structuredBill;
+    structuredBill = normalizeStoredStructuredBillExtraction(value.structuredBill);
   }
+
   const errorCode = readOptionalBillErrorCode(value.errorCode);
   const errorField = readOptionalBillErrorField(value.errorField);
   return {
@@ -1300,6 +1412,20 @@ function parseBillVersion(value: unknown, tenantId: string, documentId: string):
     ...(energyContract ? { energyContract } : {}),
     ...(structuredBill ? { structuredBill } : {}),
   };
+}
+
+async function acquireDirectoryLock(lockPath: string): Promise<() => Promise<void>> {
+  await mkdir(path.dirname(lockPath), { recursive: true });
+  for (let attempt = 0; attempt < 200; attempt += 1) {
+    try {
+      await mkdir(lockPath);
+      return async () => { await rm(lockPath, { recursive: true, force: false }); };
+    } catch (error) {
+      if (!(error instanceof Error && "code" in error && error.code === "EEXIST")) throw error;
+      await new Promise((resolve) => setTimeout(resolve, 5));
+    }
+  }
+  throw new Error("BILL_REPOSITORY_BUSY");
 }
 
 function parseBillApproval(value: unknown, tenantId: string, documentId: string): BillApprovalRecord {

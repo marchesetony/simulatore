@@ -6,10 +6,12 @@ import type { ProductionStorageAdapter } from "../persistence/adapter.ts";
 import type { DeleteRecordInput, PutRecordInput, TenantRecord, TenantRecordRepository, UnscopedAppendRepository, UnscopedRecord } from "../persistence/types.ts";
 // @ts-expect-error Node's strip-only test runner requires the explicit extension.
 import { PERSISTENCE_SCHEMA_VERSION } from "../persistence/types.ts";
-import type { BillDocument, BillRepository, DocumentStoragePort } from "../foundation/real-bill.ts";
+import type { BillDocument, BillRepository, BillVersion, DocumentStoragePort } from "../foundation/real-bill.ts";
 // @ts-expect-error Node's strip-only test runner requires the explicit extension.
 import { validateStoredDocument } from "../foundation/real-bill.ts";
 import type { CteArchiveRecord, CteArchiveRepository } from "../cte/archive/types.ts";
+// @ts-expect-error Node's strip-only test runner requires the explicit extension.
+import { CTE_ARCHIVE_APPROVAL_CAPABILITY } from "../cte/archive/types.ts";
 // @ts-expect-error Node's strip-only test runner requires the explicit extension.
 import { validateStoredCteArchive } from "../cte/archive/validation.ts";
 import type { MarketArchiveRecord, MarketArchiveRepository } from "../market/types.ts";
@@ -223,6 +225,14 @@ class SupabaseBillRepository implements BillRepository {
     const previous = await this.records.get(valid.tenantId, valid.id);
     await this.records.put({ tenantId: valid.tenantId, recordId: valid.id, payload: valid, expectedVersion: previous?.version });
   }
+  async saveIfCurrentVersion(document: BillDocument, expectedVersionId: string, expectedVersion: BillVersion): Promise<void> {
+    const valid = validateStoredDocument(document);
+    const previous = await this.records.get(valid.tenantId, valid.id);
+    const previousDocument = previous ? validateStoredDocument(previous.payload) : null;
+    const previousVersion = previousDocument?.versions.find((version) => version.versionId === expectedVersionId);
+    if (!previous || previousDocument?.currentVersionId !== expectedVersionId || !previousVersion || JSON.stringify(previousVersion) !== JSON.stringify(expectedVersion)) throw new Error("DOCUMENT_VERSION_STALE");
+    await this.records.put({ tenantId: valid.tenantId, recordId: valid.id, payload: valid, expectedVersion: previous.version });
+  }
   async get(tenantId: string, id: string): Promise<BillDocument | null> { const record = await this.records.get(tenantId, id); return record ? validateStoredDocument(record.payload) : null; }
   async list(tenantId: string): Promise<readonly BillDocument[]> { const records = await this.records.list(tenantId); return records.map((record) => validateStoredDocument(record.payload)).sort((left, right) => left.createdAt.localeCompare(right.createdAt) || left.id.localeCompare(right.id)); }
   async delete(tenantId: string, id: string): Promise<void> { const record = await this.records.get(tenantId, id); if (record) await this.records.delete({ tenantId, recordId: id, expectedVersion: record.version }); }
@@ -233,7 +243,7 @@ class SupabaseCteArchiveRepository implements CteArchiveRepository {
   constructor(client: ProviderClient) { this.records = new SupabaseRecordRepository(client, "cte-archives"); }
   async get(tenantId: string, archiveId: string): Promise<CteArchiveRecord | null> { const record = await this.records.get(tenantId, archiveId); return record ? validateStoredCteArchive(record.payload) : null; }
   async list(tenantId: string): Promise<ReadonlyArray<CteArchiveRecord>> { const records = await this.records.list(tenantId); return records.map((record) => validateStoredCteArchive(record.payload)); }
-  async save(record: CteArchiveRecord): Promise<void> { const valid = validateStoredCteArchive(record); const previous = await this.records.get(valid.tenantId, valid.archiveId); await this.records.put({ tenantId: valid.tenantId, recordId: valid.archiveId, payload: valid, expectedVersion: previous?.version }); }
+  async save(record: CteArchiveRecord, capability?: symbol): Promise<void> { const valid = validateStoredCteArchive(record); const previous = await this.records.get(valid.tenantId, valid.archiveId); const previousArchive = previous ? validateStoredCteArchive(previous.payload) : null; if (valid.currentApprovedVersionId !== (previousArchive?.currentApprovedVersionId ?? null) && capability !== CTE_ARCHIVE_APPROVAL_CAPABILITY) throw new Error("CTE_APPROVAL_WORKFLOW_REQUIRED"); await this.records.put({ tenantId: valid.tenantId, recordId: valid.archiveId, payload: valid, expectedVersion: previous?.version }); }
 }
 
 class SupabaseMarketArchiveRepository implements MarketArchiveRepository {

@@ -196,11 +196,12 @@ function BillIngestionBench() {
     setBusy(true);
     setError(null);
     setNotice(null);
+    const unchanged = value === (bill.fields[field]?.value ?? '');
     try {
       const response = await fetch(`/api/bills/${bill.id}`, {
         method: 'PATCH',
         headers: { 'content-type': 'application/json', 'x-foundation-tenant-id': 'tenant_local-demo' },
-        body: JSON.stringify({ operation: 'correct', field, value, versionId: bill.currentVersionId }),
+        body: JSON.stringify(unchanged ? { operation: 'confirm-fields', fields: [field], versionId: bill.currentVersionId } : { operation: 'correct', field, value, versionId: bill.currentVersionId }),
       });
       const body: unknown = await response.json();
       if (!response.ok || typeof body !== 'object' || body === null || !('document' in body)) {

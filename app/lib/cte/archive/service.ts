@@ -3,8 +3,9 @@ import type { CteContract } from "../types";
 import type { CteApprovedSnapshot } from "../approved-snapshot";
 // @ts-expect-error Node's strip-only test runner requires the explicit extension.
 import { assertCalculationReadyFees, toCalculationReadyOffer } from "../calculation-ready.ts";
-import type { CteArchiveApproval, CteArchiveRecord, CteArchiveStatus, CteArchiveVersion, CteCommercialStatus, CorrectCteArchiveInput, CreateCteArchiveInput } from "./types";
-import type { CteArchiveRepository } from "./types";
+import type { CteArchiveApproval, CteArchiveRecord, CteArchiveStatus, CteArchiveVersion, CteCommercialStatus, CorrectCteArchiveInput, CreateCteArchiveInput, CteArchiveRepository } from "./types";
+// @ts-expect-error Node's strip-only test runner requires the explicit extension.
+import { CTE_ARCHIVE_APPROVAL_CAPABILITY } from "./types.ts";
 // @ts-expect-error Node's strip-only test runner requires the explicit extension.
 import { assertApprovalReady, assertArchiveContract, assertTenantId, intervalsOverlap } from "./validation.ts";
 
@@ -27,6 +28,19 @@ export interface PublicCteApprovedArchiveDetail {
   readonly blockReason: string | null;
   readonly contract: Record<string, unknown>;
 }
+
+export interface CteApprovalAuditContext {
+  readonly tenantId: string;
+  readonly archiveId: string;
+  readonly cteId: string;
+  readonly versionId: string;
+  readonly actor: string;
+  readonly timestamp: string;
+  readonly previousState: CteArchiveStatus;
+  readonly newState: "APPROVED";
+}
+
+export type CteApprovalAuditWriter = (context: CteApprovalAuditContext) => Promise<void>;
 
 const nowValue = (value?: string): string => {
   const result = value ?? new Date().toISOString();
@@ -170,7 +184,7 @@ export async function createCteArchive(repository: CteArchiveRepository, input: 
     history: [event({ archiveId, tenantId: input.tenantId, cteId: input.contract.cteId, vector: input.contract.vector, createdAt: now, updatedAt: now, currentWorkingVersionId: versionId, currentApprovedVersionId: version.status === "APPROVED" ? versionId : null, versions: [version], approvals: [], history: [] }, "CREATED", version, now, actor, null, null)],
     commercialStatus: "ACTIVE", blockedAt: null, blockedBy: null, blockReason: null, reactivatedAt: null, reactivatedBy: null, deletedAt: null, deletedBy: null,
   };
-  await repository.save(record);
+  await repository.save(record, version.status === "APPROVED" ? CTE_ARCHIVE_APPROVAL_CAPABILITY : undefined);
   return structuredClone(record);
 }
 
@@ -215,13 +229,15 @@ export async function reviewCteArchive(repository: CteArchiveRepository, tenantI
   await repository.save(next); return structuredClone(next);
 }
 
-export async function approveCteArchive(repository: CteArchiveRepository, tenantId: string, archiveId: string, versionId: string, reviewer: string, decisionId: string, at?: string): Promise<CteArchiveRecord> {
+export async function approveCteArchive(repository: CteArchiveRepository, tenantId: string, archiveId: string, versionId: string, reviewer: string, decisionId: string, at?: string, audit?: CteApprovalAuditWriter): Promise<CteArchiveRecord> {
   assertTenantId(tenantId);
   const record = await repository.get(tenantId, archiveId);
   if (!record) throw new Error("CTE_ARCHIVE_NOT_FOUND");
   if (record.currentWorkingVersionId !== versionId) throw new Error("CTE_VERSION_NOT_CURRENT");
   const source = versionFor(record, versionId);
   if (source.status === "APPROVED") throw new Error("CTE_VERSION_ALREADY_APPROVED");
+  if (source.status !== "REVIEWED" || source.contract.approval.status !== "NEEDS_REVIEW") throw new Error("CTE_VERSION_NOT_APPROVABLE");
+  if (!audit) throw new Error("APPROVAL_AUDIT_REQUIRED");
   const when = nowValue(at);
   const actor = actorValue(reviewer);
   const approvedMetadata = { status: "APPROVED" as const, reviewer: actor, reviewedAt: when, decisionId: actorValue(decisionId) };
@@ -236,7 +252,8 @@ export async function approveCteArchive(repository: CteArchiveRepository, tenant
   if (overlap) throw new Error("CTE_APPROVED_VALIDITY_OVERLAP");
   const approval = approvalFor(approvedVersion, actor, when, "APPROVED", record.approvals.at(-1)?.approvalId ?? null);
   const next: CteArchiveRecord = { ...record, updatedAt: when, currentApprovedVersionId: approvedVersion.versionId, versions: sortVersions(versions), approvals: [...record.approvals, approval], history: [...record.history, ...(previous ? [event(record, "EXPIRED", previous, when, actor, "SUPERSEDED_BY_APPROVAL", null)] : []), event(record, "APPROVED", approvedVersion, when, actor, null, source.supersedesVersionId)] };
-  await repository.save(next);
+  await audit({ tenantId, archiveId, cteId: record.cteId, versionId: approvedVersion.versionId, actor, timestamp: when, previousState: source.status, newState: "APPROVED" });
+  await repository.save(next, CTE_ARCHIVE_APPROVAL_CAPABILITY);
   return structuredClone(next);
 }
 
@@ -321,7 +338,7 @@ export class CteArchiveService {
   import(input: CreateCteArchiveInput): Promise<CteArchiveRecord> { return createCteArchive(this.repository, input); }
   correct(input: CorrectCteArchiveInput): Promise<CteArchiveRecord> { return createCteCorrection(this.repository, input); }
   review(tenantId: string, archiveId: string, versionId: string, reviewer: string, at?: string): Promise<CteArchiveRecord> { return reviewCteArchive(this.repository, tenantId, archiveId, versionId, reviewer, at); }
-  approve(tenantId: string, archiveId: string, versionId: string, reviewer: string, decisionId: string, at?: string): Promise<CteArchiveRecord> { return approveCteArchive(this.repository, tenantId, archiveId, versionId, reviewer, decisionId, at); }
+  approve(tenantId: string, archiveId: string, versionId: string, reviewer: string, decisionId: string, at?: string, audit?: CteApprovalAuditWriter): Promise<CteArchiveRecord> { return approveCteArchive(this.repository, tenantId, archiveId, versionId, reviewer, decisionId, at, audit); }
   reject(tenantId: string, archiveId: string, versionId: string, reviewer: string, reason: string, at?: string): Promise<CteArchiveRecord> { return rejectCteArchive(this.repository, tenantId, archiveId, versionId, reviewer, reason, at); }
   history(tenantId: string, archiveId: string): Promise<ReadonlyArray<CteArchiveRecord["history"][number]>> { return getCteArchiveHistory(this.repository, tenantId, archiveId); }
 }

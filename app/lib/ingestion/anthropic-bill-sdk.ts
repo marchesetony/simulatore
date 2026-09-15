@@ -9,12 +9,15 @@ import type { BillOcrErrorCode } from "./errors.ts";
 import { ANTHROPIC_BILL_DEFAULT_MAX_TOKENS, ANTHROPIC_BILL_DEFAULT_TIMEOUT_MS, ANTHROPIC_BILL_MAX_MAX_TOKENS, ANTHROPIC_BILL_MAX_TIMEOUT_MS, ANTHROPIC_BILL_MIN_MAX_TOKENS, ANTHROPIC_BILL_MIN_TIMEOUT_MS, ANTHROPIC_DEFAULT_BASE_URL } from "../cte/anthropic.ts";
 import type { StructuredBillExtraction } from "./structured-bill.ts";
 // @ts-expect-error Node's strip-only test runner requires the explicit extension.
+import { buildBillStageShapeDiagnostic, realDiag4Enabled, type BillStageShapeDiagnostic } from "../diagnostics/real-diag-4.ts";
+// @ts-expect-error Node's strip-only test runner requires the explicit extension.
 import { BILL_WIRE_TOOL, BILL_WIRE_TOOL_NAME, BillWireValidationError, mapBillWireToStructuredBill, parseBillWireExtraction, type BillWireExtraction } from "./bill-wire.ts";
 // @ts-expect-error Node's strip-only test runner requires the explicit extension.
 import { ANALYST_STAGE_PROMPT, ANALYST_WIRE_TOOL, BILL_ANALYST_TOOL_NAME, BILL_CORE_TOOL_NAME, CORE_WIRE_TOOL, mapBillCoreToStructuredBill, mergeBillCoreAndAnalyst, parseBillAnalystWireExtraction, parseBillCoreWireExtraction, type BillAnalystWireExtraction } from "./bill-two-stage.ts";
 
 export interface BillExtractionProvider {
   extract(input: { readonly bytes: Uint8Array; readonly contentType: string }): Promise<StructuredBillExtraction>;
+  getDiagnosticSnapshots?: () => readonly BillStageShapeDiagnostic[];
 }
 
 export interface AnthropicBillSdkClient {
@@ -310,18 +313,30 @@ export class AnthropicTwoStageBillSdkAdapter implements BillExtractionProvider {
   readonly #model: string;
   readonly #maxTokens: number;
   readonly #observe: BillStageObserver | undefined;
+  readonly #diagnosticsEnabled: boolean;
+  readonly #diagnosticSnapshots: BillStageShapeDiagnostic[] = [];
 
-  constructor(client: AnthropicBillSdkClient, model: string, maxTokens: number, observe?: BillStageObserver) {
+  constructor(client: AnthropicBillSdkClient, model: string, maxTokens: number, observe?: BillStageObserver, diagnosticsEnabled = false) {
     this.#client = client;
     this.#model = model;
     this.#maxTokens = maxTokens;
     this.#observe = observe;
+    this.#diagnosticsEnabled = diagnosticsEnabled;
+  }
+
+  getDiagnosticSnapshots(): readonly BillStageShapeDiagnostic[] { return [...this.#diagnosticSnapshots]; }
+
+  #capture(stage: BillExtractionStage, message: Message, toolName: string): void {
+    if (!this.#diagnosticsEnabled || this.#diagnosticSnapshots.length >= 2) return;
+    const tool = allTools(message).find((candidate) => candidate.name === toolName);
+    this.#diagnosticSnapshots.push(buildBillStageShapeDiagnostic(stage, toolName, tool?.input ?? null));
   }
 
   async extractAnalystOnly(input: { readonly bytes: Uint8Array; readonly contentType: string }): Promise<BillAnalystWireExtraction> {
     let analystMessage: Message | null = null;
     try {
       analystMessage = await this.#request("ANALYST", SDK_ANALYST_TOOL, BILL_ANALYST_TOOL_NAME, input.bytes, input.contentType);
+      this.#capture("ANALYST", analystMessage, BILL_ANALYST_TOOL_NAME);
       const analyst = parseAnalystStageMessage(analystMessage);
       this.#observe?.(stageMessageResult("ANALYST", analystMessage, BILL_ANALYST_TOOL_NAME, "OK"));
       return analyst;
@@ -355,6 +370,7 @@ export class AnthropicTwoStageBillSdkAdapter implements BillExtractionProvider {
 
   async extract(input: { readonly bytes: Uint8Array; readonly contentType: string }): Promise<StructuredBillExtraction> {
     const coreMessage = await this.#request("CORE", SDK_CORE_TOOL, BILL_CORE_TOOL_NAME, input.bytes, input.contentType);
+    this.#capture("CORE", coreMessage, BILL_CORE_TOOL_NAME);
     let core: StructuredBillExtraction;
     try {
       core = parseCoreStageMessage(coreMessage);
@@ -368,6 +384,7 @@ export class AnthropicTwoStageBillSdkAdapter implements BillExtractionProvider {
     let analystMessage: Message | null = null;
     try {
       analystMessage = await this.#request("ANALYST", SDK_ANALYST_TOOL, BILL_ANALYST_TOOL_NAME, input.bytes, input.contentType);
+      this.#capture("ANALYST", analystMessage, BILL_ANALYST_TOOL_NAME);
       const analyst = parseAnalystStageMessage(analystMessage);
       this.#observe?.(stageMessageResult("ANALYST", analystMessage, BILL_ANALYST_TOOL_NAME, "OK"));
       return mergeBillCoreAndAnalyst(core, analyst, { analystExtractionStatus: "EXTRACTED" });
@@ -418,5 +435,5 @@ export function createAnthropicTwoStageBillSdkAdapter(env: NodeJS.ProcessEnv = p
     throw new AnthropicBillSdkError("BILL_OCR_PROVIDER_CONFIGURATION_INVALID");
   }
   const sdkClient = client ?? new Anthropic({ apiKey, baseURL, timeout, maxRetries: 0 });
-  return new AnthropicTwoStageBillSdkAdapter(sdkClient, model, maxTokens, observe);
+  return new AnthropicTwoStageBillSdkAdapter(sdkClient, model, maxTokens, observe, realDiag4Enabled(env));
 }

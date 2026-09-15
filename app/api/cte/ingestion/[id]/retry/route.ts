@@ -9,7 +9,7 @@ type Context = { readonly params: Promise<{ readonly id: string }> };
 
 function providerConfigurationCode(error: unknown): CteProviderConfigurationError {
   const code = error instanceof Error ? error.message : "CTE_OCR_PROVIDER_NOT_CONFIGURED";
-  return ["CTE_OCR_PROVIDER_NOT_CONFIGURED", "ANTHROPIC_API_KEY_MISSING", "ANTHROPIC_MODEL_MISSING", "ANTHROPIC_CTE_MAX_TOKENS_INVALID"].includes(code)
+  return ["CTE_OCR_PROVIDER_NOT_CONFIGURED", "ANTHROPIC_API_KEY_MISSING", "ANTHROPIC_MODEL_MISSING", "ANTHROPIC_CTE_MAX_TOKENS_INVALID", "ANTHROPIC_CTE_TIMEOUT_INVALID"].includes(code)
     ? code as CteProviderConfigurationError
     : "CTE_OCR_PROVIDER_NOT_CONFIGURED";
 }

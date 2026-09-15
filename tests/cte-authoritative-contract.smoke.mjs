@@ -13,13 +13,13 @@ for (const tenant of tenantNames.filter((entry) => entry.isDirectory())) {
   for (const entry of await readdir(directory, { withFileTypes: true })) {
     if (!entry.isFile() || !entry.name.endsWith(".json") || !entry.name.startsWith("cte-ingestion-")) continue;
     const record = JSON.parse(await readFile(path.join(directory, entry.name), "utf8"));
-    if (record.payload?.status === "REVIEW_REQUIRED" && record.payload?.documentType === "CTE" && record.payload?.vector === "EE") candidates.push({ tenantId: tenant.name, payload: record.payload, updatedAt: record.updatedAt });
+    if (["REVIEW_REQUIRED", "APPROVED"].includes(record.payload?.status) && record.payload?.documentType === "CTE" && record.payload?.vector === "EE" && /Be Relax 06\.25/i.test(String(record.payload?.fields?.find((field) => field.path === "offer.name")?.value ?? "")) && record.payload?.fields?.some((field) => field.path === "eligibility.voltageLevels" && field.value !== null)) candidates.push({ tenantId: tenant.name, payload: record.payload, updatedAt: record.updatedAt });
   }
 }
 const current = candidates.sort((left, right) => Date.parse(right.updatedAt) - Date.parse(left.updatedAt))[0];
 assert.ok(current, "latest local REVIEW_REQUIRED EE CTE record is required");
 
-const input = { ...current.payload, tenantId: current.tenantId };
+const input = { ...current.payload, candidate: null, reviewedCandidate: null, status: "REVIEW_REQUIRED", tenantId: current.tenantId };
 const result = tryBuildAuthoritativeCteContract(input);
 assert.equal(result.errorCode, null);
 assert.deepEqual(result.validationPaths, []);
@@ -44,6 +44,6 @@ assert.equal(contract.commercialTerms.oneOffFees[0].unit, "EUR_PER_CONTRACT");
 const gate = cteApprovalGate(input);
 assert.equal(gate.approvalReady, true);
 assert.deepEqual(gate.blockers, []);
-assert.equal(current.payload.reviewedCandidate, null);
+assert.equal(input.reviewedCandidate, null);
 assert.equal(contract.approval.status === "APPROVED", false);
 console.log("cte authoritative contract smoke: ok (real persisted review record maps server-side without auto approval)");

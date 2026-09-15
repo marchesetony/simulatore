@@ -13,11 +13,28 @@ import type { BillExtractionProvider } from "./anthropic-bill-sdk";
 import type { EnergyContractMapper, EnergyContractMapperInput } from "../foundation/real-bill";
 // @ts-expect-error Node's strip-only test runner requires the explicit extension.
 import { resolveBillVectorFromEvidence } from "./vector-resolution.ts";
+// @ts-expect-error Node's strip-only test runner requires the explicit extension.
+import { realDiag4Enabled, writeRealDiag4Json } from "../diagnostics/real-diag-4.ts";
 
 const unknownClassification: BillClassification = { vector: "UNKNOWN", evidence: [] };
 
 function structuredProviderWithClassification(provider: BillExtractionProvider, onVector: (vector: "EE" | "GAS") => void): BillExtractionProvider {
-  return { async extract(input) { const extraction = await provider.extract(input); const resolved = resolveBillVectorFromEvidence(extraction); if (resolved.vector !== "UNKNOWN") onVector(resolved.vector); return extraction; } };
+  return {
+    async extract(input) { const extraction = await provider.extract(input); const resolved = resolveBillVectorFromEvidence(extraction); if (resolved.vector !== "UNKNOWN") onVector(resolved.vector); return extraction; },
+    ...(provider.getDiagnosticSnapshots ? { getDiagnosticSnapshots: () => provider.getDiagnosticSnapshots?.() ?? [] } : {}),
+  };
+}
+
+async function persistBillDiagnostics(documentId: string, provider: BillExtractionProvider | undefined): Promise<void> {
+  if (!realDiag4Enabled() || !provider?.getDiagnosticSnapshots) return;
+  try {
+    for (const snapshot of provider.getDiagnosticSnapshots()) {
+      const stage = snapshot.stage === "CORE" ? "a" : "b";
+      await writeRealDiag4Json(`bill-${documentId}-stage-${stage}-shape.json`, snapshot);
+    }
+  } catch {
+    console.error("[REAL_DIAG_4] bill diagnostic write failed");
+  }
 }
 
 function hybridExtractor(ocrProvider: OcrProvider | undefined, ocrProviderFactory: (() => OcrProvider) | undefined, onSource: (source: "embedded-text" | "ocr") => void): TextExtractionPort {
@@ -98,6 +115,7 @@ export async function ingestEnergyBill(input: {
       }
     }) as EnergyContractMapper }),
   });
+  await persistBillDiagnostics(document.id, structuredProvider);
   const version = document.versions.find((candidate) => candidate.versionId === document.currentVersionId);
   const contract = version?.energyContract ?? null;
   const errorCode = version?.errorCode ?? extractionErrorCode ?? mappingError ?? (document.versions[0].status === "OCR_PROVIDER_REQUIRED" ? "BILL_OCR_PROVIDER_NOT_CONFIGURED" : document.versions[0].status === "FAILED" ? "BILL_MAPPING_FAILED" : null);
@@ -158,6 +176,7 @@ export async function retryEnergyBill(input: {
       }
     }) as EnergyContractMapper }),
   });
+  await persistBillDiagnostics(document.id, structuredProvider);
   const version = document.versions.find((candidate) => candidate.versionId === document.currentVersionId);
   const contract = version?.energyContract ?? null;
   const errorCode = version?.errorCode ?? extractionErrorCode ?? mappingError ?? (version?.status === "OCR_PROVIDER_REQUIRED" ? "BILL_OCR_PROVIDER_NOT_CONFIGURED" : version?.status === "FAILED" ? "BILL_MAPPING_FAILED" : null);

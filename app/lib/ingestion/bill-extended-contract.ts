@@ -28,6 +28,7 @@ export type BillAnalystItemCode = typeof BILL_ANALYST_ITEM_CODES[number];
 
 // Domain compatibility aliases remain server-side only and are normalized before persistence.
 const BILL_ANALYST_CODE_ALIASES: Readonly<Record<string, BillAnalystItemCode>> = {
+  BILLING_PERIOD: "BILLING_PERIOD_RAW",
   SUPPLY_USE_CATEGORY: "SUPPLY_USE_CATEGORY_RAW",
   DOMESTIC_RESIDENCE_STATUS: "DOMESTIC_RESIDENCE_STATUS_RAW",
   CONTRACTUAL_TARIFF_CATEGORY: "CONTRACTUAL_TARIFF_CATEGORY_RAW",
