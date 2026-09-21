@@ -76,6 +76,7 @@ const messages: Readonly<Record<string, string>> = {
   ANTHROPIC_API_KEY_MISSING: "Configurazione Anthropic incompleta: chiave server mancante",
   ANTHROPIC_MODEL_MISSING: "Configurazione Anthropic incompleta: modello server mancante",
   ANTHROPIC_CTE_MAX_TOKENS_INVALID: "Configurazione server Anthropic non valida",
+  ANTHROPIC_CTE_TIMEOUT_INVALID: "Configurazione timeout Anthropic non valida",
   CTE_OCR_PROVIDER_AUTH_FAILED: "Autenticazione del provider Anthropic non riuscita",
   CTE_OCR_PROVIDER_RATE_LIMITED: "Provider Anthropic temporaneamente limitato",
   CTE_OCR_PROVIDER_TIMEOUT: "Il provider Anthropic non ha risposto in tempo",
@@ -91,6 +92,9 @@ const messages: Readonly<Record<string, string>> = {
   CTE_VECTOR_FIELD_MIXED: "Campi EE/GAS incompatibili",
   CTE_APPROVAL_BLOCKED: "Approvazione non disponibile: completare i campi obbligatori e la revisione",
   PROPOSAL_RESPONSE_INVALID: "Risposta proposta non valida",
+  PROPOSAL_ID_REQUIRED: "La proposta archiviata non è disponibile",
+  PROPOSAL_NOT_FOUND: "Proposta non trovata",
+  PROPOSAL_RECORD_INVALID: "La proposta archiviata non è coerente",
   CALCULATION_RESPONSE_INVALID: "Risposta calcolo non valida",
   COMPARISON_RESPONSE_INVALID: "Risposta confronto non valida",
   EXPORT_CONTENT_TYPE_INVALID: "Tipo contenuto export non valido",
@@ -146,16 +150,16 @@ function safeFilename(value: string | null, extension: string): string {
   return value;
 }
 
-export async function downloadExport(path: string, payload: unknown, format: "JSON" | "CSV" | "HTML"): Promise<void> {
+export async function downloadExport(path: string, payload: unknown, format: "JSON" | "CSV" | "HTML" | "PDF"): Promise<void> {
   const response = await fetch(path, { method: "POST", body: JSON.stringify(payload), credentials: "same-origin", headers: { "content-type": "application/json" } });
   if (!response.ok) {
     const body: unknown = await response.json().catch(() => null);
     const errorBody = typeof body === "object" && body !== null && "error" in body ? (body as { readonly error?: unknown }).error : body;
     throw errorFrom(errorBody, `HTTP_${response.status}`);
   }
-  const expected = format === "JSON" ? "application/json" : format === "CSV" ? "text/csv" : "text/html";
+  const expected = format === "JSON" ? "application/json" : format === "CSV" ? "text/csv" : format === "HTML" ? "text/html" : "application/pdf";
   if (!(response.headers.get("content-type") ?? "").toLowerCase().startsWith(expected)) throw new UiApiError("EXPORT_CONTENT_TYPE_INVALID", "Tipo contenuto export non valido");
-  const extension = format === "JSON" ? ".json" : format === "CSV" ? ".csv" : ".html";
+  const extension = format === "JSON" ? ".json" : format === "CSV" ? ".csv" : format === "HTML" ? ".html" : ".pdf";
   const contentDisposition = response.headers.get("content-disposition") ?? "";
   const match = /filename="([^"]+)"/i.exec(contentDisposition);
   const filename = safeFilename(match?.[1] ?? null, extension);

@@ -2,6 +2,7 @@ export const ENERGY_DATA_SCHEMA_VERSION = 1 as const;
 
 export type EnergyVector = "EE" | "GAS";
 export type CustomerType = "RESIDENTIAL" | "NON_RESIDENTIAL";
+export type CustomerResidency = "RESIDENT" | "NON_RESIDENT";
 export type TaxInclusionState = "INCLUDED" | "EXCLUDED" | "NOT_APPLICABLE";
 export type QuantityUnit = "KWH" | "SMC";
 export type MoneyUnit = "EUR";

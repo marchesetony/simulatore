@@ -1,4 +1,7 @@
-import type { CustomerType, TaxInclusionState, VoltageLevel } from "../energy/types";
+import type { CustomerResidency, CustomerType, TaxInclusionState, VoltageLevel } from "../energy/types";
+import type { RegulatoryValueComponentCode, RegulatoryCustomerScope, RegulatoryVariant } from "../foundation/regulatory-types";
+import type { CtePassThroughKind } from "../cte/types";
+import type { EligibilityOverrideProvenance } from "../eligibility/override";
 
 export const CALCULATION_SCHEMA_VERSION = 1 as const;
 export const CALCULATION_ENGINE_VERSION = "1" as const;
@@ -11,11 +14,14 @@ export interface SimulationPeriod {
 
 export interface SourceBillReference {
   readonly billId: string;
+  /** Compatibility field: canonical BillVersion.versionId, never versionNumber. */
   readonly version: string;
 }
 
 export interface SimulationBaseline {
   readonly totalCommercialCost: number;
+  readonly comparisonCost?: number;
+  readonly costScope?: CalculationCostScope;
   readonly currency: "EUR";
   readonly taxTreatment: TaxInclusionState;
   readonly supplyPeriod: SimulationPeriod;
@@ -27,11 +33,13 @@ export interface SimulationRequestBase {
   readonly calculationDate: string;
   readonly supplyPeriod: SimulationPeriod;
   readonly customerCategory: CustomerType;
-  readonly residency?: CustomerType;
+  readonly residency?: CustomerResidency;
   readonly currency: "EUR";
   readonly taxTreatment: TaxInclusionState;
   readonly sourceBill?: SourceBillReference;
   readonly baseline?: SimulationBaseline;
+  /** Server-issued provenance only; never accepted from the browser execution payload. */
+  readonly eligibilityOverride?: EligibilityOverrideProvenance;
 }
 
 export interface ElectricityMonthlyProfile {
@@ -123,13 +131,38 @@ export interface CalculationMoney {
 
 export interface CalculationComponent {
   readonly componentId: string;
-  readonly category: "ENERGY" | "FIXED_FEE" | "VARIABLE_FEE" | "IMBALANCE" | "ONE_OFF_FEE" | "DISCOUNT";
+  readonly category: "ENERGY" | "FIXED_FEE" | "VARIABLE_FEE" | "IMBALANCE" | "ONE_OFF_FEE" | "DISCOUNT" | "REGULATED_ENERGY" | "REGULATED_POWER" | "REGULATED_FIXED";
   readonly label: string;
   readonly sign: "CHARGE" | "DISCOUNT";
   readonly amount: CalculationMoney;
   readonly formulaId: string;
   readonly formulaInputs: Readonly<Record<string, string | number | boolean>>;
 }
+
+export interface RegulatoryDataReference {
+  readonly componentCode: RegulatoryValueComponentCode;
+  readonly customerScope: RegulatoryCustomerScope;
+  readonly normalizedUnit: string;
+  readonly regulatoryVariant?: RegulatoryVariant;
+  readonly normalizedValue: number;
+  readonly applicationBasis: string;
+  readonly regulatoryRecordId: string;
+  readonly checksum: string;
+  readonly officialIdentifier: string;
+  readonly sourceReference: string;
+  readonly segmentStart: string;
+  readonly segmentEnd: string;
+  readonly sourceSha256?: string;
+  readonly publicationDate?: string;
+}
+
+export interface RegulatoryData {
+  readonly references: readonly RegulatoryDataReference[];
+}
+
+export type CalculationCostScope = "COMMERCIAL_ONLY" | "COMMERCIAL_PLUS_REGULATED_PARTIAL" | "COMMERCIAL_PLUS_REGULATED_NET_OF_TAX_COMPLETE";
+export type RegulatedComponentIncluded = "UC3_ENERGY" | "UC6_ENERGY" | "UC6_POWER" | "UC6_FIXED" | "NETWORK_FIXED" | "NETWORK_POWER" | "NETWORK_ENERGY" | "METERING_FIXED" | "TRANSMISSION_ENERGY" | "ARIM_FIXED" | "ARIM_POWER" | "ARIM_ENERGY" | "ASOS_FIXED" | "ASOS_POWER" | "ASOS_ENERGY" | "DISPATCHING_TOTAL_ENERGY";
+export const DOMESTIC_NET_OF_TAX_COMPLETE_COMPONENTS = ["NETWORK_FIXED", "NETWORK_POWER", "TRANSMISSION_ENERGY", "UC3_ENERGY", "UC6_ENERGY", "UC6_POWER", "ASOS_ENERGY", "ARIM_ENERGY", "DISPATCHING_TOTAL_ENERGY"] as const satisfies readonly RegulatedComponentIncluded[];
 
 export interface CalculationMarketReference {
   readonly recordId: string;
@@ -160,8 +193,25 @@ export interface CalculationResult {
   readonly marketData: readonly CalculationMarketReference[];
   readonly components: readonly CalculationComponent[];
   readonly totalCommercialCost: CalculationMoney;
+  readonly totalRegulatedSubsetCost: CalculationMoney | null;
+  readonly totalCommercialPlusRegulatedSubsetCost: CalculationMoney | null;
+  readonly costScope: CalculationCostScope;
+  readonly regulatedComponentsIncluded: readonly RegulatedComponentIncluded[];
+  readonly regulatoryData: RegulatoryData;
   readonly unitCost: { readonly amount: number; readonly unit: "EUR_PER_KWH" | "EUR_PER_SMC"; readonly currency: "EUR" };
   readonly savingsVsBaseline: CalculationMoney | null;
   readonly warnings: readonly string[];
   readonly roundingPolicy: "ROUND_HALF_UP_TO_CENT_PER_COMPONENT";
+  readonly contractualPassThroughCompleteness?: "COMPLETE" | "PARTIAL";
+  readonly contractualPassThroughStates?: readonly ContractualPassThroughStatus[];
+  readonly bta6NetOfTaxCompleteCandidate?: boolean;
+}
+
+export type ContractualPassThroughState = "RESOLVED_EXPLICIT" | "RESOLVED_INCLUDED" | "RESOLVED_NOT_APPLICABLE" | "UNRESOLVED_NOT_DECLARED" | "UNRESOLVED_EXTERNAL";
+
+export interface ContractualPassThroughStatus {
+  readonly kind: CtePassThroughKind;
+  readonly state: ContractualPassThroughState;
+  readonly effectiveFrom: string;
+  readonly effectiveTo: string;
 }

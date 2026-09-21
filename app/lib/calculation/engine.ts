@@ -4,17 +4,26 @@ import type { CteArchiveRecord, CteArchiveVersion } from "../cte/archive/types";
 import { commercialStatusOf, currentApprovedCteVersion } from "../cte/archive/service.ts";
 // @ts-expect-error Node's strip-only test runner requires the explicit extension.
 import { toCalculationReadyOffer, assertCalculationReadyFees } from "../cte/calculation-ready.ts";
-import type { CalculationReadyOffer, CteDeclaredComponent, CteFeeComponent, ElectricityPricing, GasPricing } from "../cte/types";
+import type { CalculationReadyOffer, CteDeclaredComponent, CteFeeComponent, CtePassThroughComponent, CtePassThroughKind, ElectricityPricing, GasPricing } from "../cte/types";
 import type { MarketArchiveRepository, MarketArchiveRecord } from "../market/types";
 import type { ElectricityMonthlyPunRecord, GasMonthlyPsvRecord } from "../energy/market-data";
 // @ts-expect-error Node's strip-only test runner requires the explicit extension.
 import { queryApprovedHistoricalMarketData } from "../market/service.ts";
 import type { CteArchiveRepository } from "../cte/archive/types";
-import type { CalculationComponent, CalculationExclusion, CalculationExclusionCode, CalculationMarketReference, CalculationMoney, CalculationResult, ElectricitySimulationRequest, GasSimulationRequest, SimulationRequest } from "./types";
+import type { CalculationComponent, CalculationExclusion, CalculationExclusionCode, CalculationMarketReference, CalculationMoney, CalculationResult, ContractualPassThroughState, ContractualPassThroughStatus, ElectricitySimulationRequest, GasSimulationRequest, SimulationRequest, SimulationPeriod } from "./types";
+import type { ElectricitySupplyContext } from "./trusted-ee-supply-context.ts";
+// @ts-expect-error Node's strip-only test runner requires the explicit extension.
+import { resolveCteRegulatoryRuntime, type CteRegulatoryRuntimeResolver, type CteRuntimeResolution } from "./regulatory-runtime-resolvers.ts";
+import type { ProductionRegulatoryPersistenceBridge } from "../regulatory-bridge.ts";
+import type { TenantRecordRepository } from "../persistence/types.ts";
+// @ts-expect-error Node's strip-only test runner requires the explicit extension.
+import { deterministicRecordId } from "../persistence/types.ts";
 // @ts-expect-error Node's strip-only test runner requires the explicit extension.
 import { add, divide, fromNumber, multiply, rational, roundCents, toDecimal, type Rational } from "./decimal.ts";
 // @ts-expect-error Node's strip-only test runner requires the explicit extension.
 import { monthsInSimulationPeriod } from "./input.ts";
+// @ts-expect-error Node's strip-only test runner requires the explicit extension.
+import { BTA6_REGULATED_COMPONENTS_INCLUDED, calculateRegulatedEeSubset, isDomesticNetOfTaxCompleteComponents, type RegulatedEeExecutionContext } from "./regulated-ee.ts";
 
 export class CalculationEngineError extends Error {
   readonly code: string;
@@ -40,23 +49,29 @@ function canonical(value: unknown): string {
 function fingerprint(value: unknown): string { return createHash("sha256").update(canonical(value), "utf8").digest("hex"); }
 function money(minorUnits: number): CalculationMoney { return { amount: minorUnits / 100, minorUnits, currency: "EUR" }; }
 function monthCount(request: SimulationRequest): Rational { return fromNumber(monthsInSimulationPeriod(request.supplyPeriod).length); }
-function quantityForFee(unit: CteFeeComponent["unit"], request: SimulationRequest, totalQuantity: Rational, months: Rational): Rational {
+function quantityForFee(fee: Pick<CteFeeComponent, "unit" | "period">, request: SimulationRequest, totalQuantity: Rational, months: Rational): Rational {
+  const unit = fee.unit;
   if (unit === "EUR_PER_KWH" && request.vector !== "EE") fail("FEE_UNIT_MISMATCH");
   if (unit === "EUR_PER_SMC" && request.vector !== "GAS") fail("FEE_UNIT_MISMATCH");
   if (unit === "EUR_PER_KWH" || unit === "EUR_PER_SMC") return totalQuantity;
+  if (unit === "EUR_PER_POD") {
+    if (fee.period === "YEAR") return divide(months, fromNumber(12));
+    if (fee.period === "MONTH") return months;
+    return fail("FEE_PERIOD_REQUIRED");
+  }
   if (unit === "EUR_PER_MONTH") return months;
   if (unit === "EUR_PER_YEAR") return divide(months, fromNumber(12));
   return rational(BigInt(1));
 }
 function addFeeComponents(target: ComponentDraft[], fees: readonly CteFeeComponent[], category: CalculationComponent["category"], request: SimulationRequest, totalQuantity: Rational, months: Rational): void {
   fees.forEach((fee) => {
-    const multiplier = quantityForFee(fee.unit, request, totalQuantity, months);
-    target.push({ componentId: `${category.toLowerCase()}:${fee.feeId}`, category, label: fee.label, sign: category === "DISCOUNT" ? "DISCOUNT" : "CHARGE", value: multiply(fromNumber(fee.amount), multiplier), formulaId: "FEE_RATE_TIMES_BASIS", formulaInputs: { feeId: fee.feeId, feeUnit: fee.unit, feeRate: fee.amount, basisQuantity: toDecimal(multiplier, 6), taxTreatment: fee.taxTreatment } });
+    const multiplier = quantityForFee(fee, request, totalQuantity, months);
+    target.push({ componentId: `${category.toLowerCase()}:${fee.feeId}`, category, label: fee.label, sign: category === "DISCOUNT" ? "DISCOUNT" : "CHARGE", value: multiply(fromNumber(fee.amount), multiplier), formulaId: "FEE_RATE_TIMES_BASIS", formulaInputs: { feeId: fee.feeId, feeUnit: fee.unit, ...(fee.period === undefined ? {} : { feePeriod: fee.period }), feeRate: fee.amount, basisQuantity: toDecimal(multiplier, 6), taxTreatment: fee.taxTreatment } });
   });
 }
 function addDeclaredComponent(target: ComponentDraft[], declared: CteDeclaredComponent, category: "IMBALANCE", request: SimulationRequest, totalQuantity: Rational, months: Rational): void {
   if (declared.status === "NOT_DECLARED") { if (declared.reason === "NOT_PROVIDED") fail("IMBALANCE_UNAVAILABLE"); return; }
-  const multiplier = quantityForFee(declared.component.unit, request, totalQuantity, months);
+  const multiplier = quantityForFee(declared.component, request, totalQuantity, months);
   target.push({ componentId: `${category.toLowerCase()}:${declared.component.feeId}`, category, label: declared.component.label, sign: "CHARGE", value: multiply(fromNumber(declared.component.amount), multiplier), formulaId: "IMBALANCE_RATE_TIMES_BASIS", formulaInputs: { feeId: declared.component.feeId, feeUnit: declared.component.unit, feeRate: declared.component.amount, basisQuantity: toDecimal(multiplier, 6), taxTreatment: declared.component.taxTreatment } });
 }
 function addOneOffComponents(target: ComponentDraft[], fees: readonly CteFeeComponent[]): void {
@@ -69,6 +84,95 @@ function totalMinor(components: readonly CalculationComponent[]): number {
   return Number(total);
 }
 function componentWarning(request: SimulationRequest): readonly string[] { return request.sourceBill ? ["SOURCE_BILL_REFERENCE_RECORDED"] : []; }
+function assertEeNetTaxPolicy(request: SimulationRequest): void { if (request.vector === "EE" && request.taxTreatment !== "EXCLUDED") fail("TAX_TREATMENT_INCOMPATIBLE"); }
+
+const CONTRACTUAL_REQUIRED_KINDS = ["DISPATCHING", "CAPACITY_MARKET"] as const;
+function contractualStateOf(state: CtePassThroughComponent["declarationState"]): ContractualPassThroughState {
+  if (state === "EXPLICIT_COMPONENT") return "RESOLVED_EXPLICIT";
+  if (state === "INCLUDED_IN_ENERGY_PRICE") return "RESOLVED_INCLUDED";
+  if (state === "NOT_APPLICABLE") return "RESOLVED_NOT_APPLICABLE";
+  if (state === "EXTERNAL_PASS_THROUGH") return "UNRESOLVED_EXTERNAL";
+  return "UNRESOLVED_NOT_DECLARED";
+}
+function statusFor(kind: CtePassThroughKind, state: ContractualPassThroughState, effectiveFrom: string, effectiveTo: string): ContractualPassThroughStatus { return { kind, state, effectiveFrom, effectiveTo }; }
+
+export interface ContractualPassThroughEvaluation {
+  readonly completeness: "COMPLETE" | "PARTIAL";
+  readonly states: readonly ContractualPassThroughStatus[];
+}
+
+export function evaluateContractualPassThrough(offer: Pick<CalculationReadyOffer, "passThroughComponents">, period: SimulationPeriod): ContractualPassThroughEvaluation {
+  const components = [...(offer.passThroughComponents ?? [])];
+  const kinds: CtePassThroughKind[] = [...CONTRACTUAL_REQUIRED_KINDS, ...new Set(components.map((component) => component.kind).filter((kind) => !CONTRACTUAL_REQUIRED_KINDS.some((required) => required === kind)))];
+  const states: ContractualPassThroughStatus[] = [];
+  for (const kind of kinds) {
+    const relevant = components.filter((component) => component.kind === kind).sort((left, right) => left.effectiveFrom.localeCompare(right.effectiveFrom));
+    let cursor = period.periodStart;
+    for (const component of relevant) {
+      if (component.effectiveTo <= period.periodStart || component.effectiveFrom >= period.periodEnd) continue;
+      const effectiveFrom = component.effectiveFrom > period.periodStart ? component.effectiveFrom : period.periodStart;
+      const effectiveTo = component.effectiveTo < period.periodEnd ? component.effectiveTo : period.periodEnd;
+      if (effectiveFrom > cursor) states.push(statusFor(kind, "UNRESOLVED_NOT_DECLARED", cursor, effectiveFrom));
+      if (effectiveTo > cursor) {
+        states.push(statusFor(kind, contractualStateOf(component.declarationState), effectiveFrom, effectiveTo));
+        cursor = effectiveTo;
+      }
+    }
+    if (cursor < period.periodEnd) states.push(statusFor(kind, "UNRESOLVED_NOT_DECLARED", cursor, period.periodEnd));
+  }
+  const complete = states.length > 0 && states.every((state) => state.state !== "UNRESOLVED_NOT_DECLARED" && state.state !== "UNRESOLVED_EXTERNAL");
+  return { completeness: complete ? "COMPLETE" : "PARTIAL", states };
+}
+
+function monthAligned(value: string): boolean { return /^\d{4}-\d{2}-01$/.test(value); }
+function passThroughQuantity(request: ElectricitySimulationRequest, component: CtePassThroughComponent, effectiveFrom: string, effectiveTo: string, totalQuantity: Rational): Rational {
+  if (!monthAligned(request.supplyPeriod.periodStart) || !monthAligned(request.supplyPeriod.periodEnd) || !monthAligned(effectiveFrom) || !monthAligned(effectiveTo)) fail("CONTRACTUAL_PASS_THROUGH_PERIOD_UNSUPPORTED");
+  if (component.effectiveFrom <= request.supplyPeriod.periodStart && component.effectiveTo >= request.supplyPeriod.periodEnd) return totalQuantity;
+  return monthsInSimulationPeriod({ periodStart: effectiveFrom, periodEnd: effectiveTo }).reduce((total, month) => {
+    const item = request.consumption.monthlyProfile?.find((candidate) => candidate.month === month);
+    if (!item) return fail("CONTRACTUAL_PASS_THROUGH_PROFILE_REQUIRED");
+    const { f1, f2, f3 } = item;
+    return add(total, add(add(fromNumber(f1), fromNumber(f2)), fromNumber(f3)));
+  }, fromNumber(0));
+}
+function contractualComponentId(offer: CalculationReadyOffer, component: CtePassThroughComponent, effectiveFrom: string, effectiveTo: string): string { return `contractual-pass-through:${offer.sourceCteId}:${offer.sourceCteVersion}:${component.componentId}:${effectiveFrom}:${effectiveTo}`; }
+function addPassThroughComponents(target: ComponentDraft[], offer: CalculationReadyOffer, request: SimulationRequest, totalQuantity: Rational): void {
+  if (request.vector !== "EE" || !offer.passThroughComponents) return;
+  const period = request.supplyPeriod;
+  for (const component of offer.passThroughComponents) {
+    const effectiveFrom = component.effectiveFrom > period.periodStart ? component.effectiveFrom : period.periodStart;
+    const effectiveTo = component.effectiveTo < period.periodEnd ? component.effectiveTo : period.periodEnd;
+    if (effectiveFrom >= effectiveTo || component.declarationState !== "EXPLICIT_COMPONENT") continue;
+    const fee = component.fee;
+    if (fee.unit === "EUR_PER_KWH") {
+      const quantity = passThroughQuantity(request, component, effectiveFrom, effectiveTo, totalQuantity);
+      target.push({ componentId: contractualComponentId(offer, component, effectiveFrom, effectiveTo), category: "VARIABLE_FEE", label: `Pass-through contrattuale ${component.kind}`, sign: "CHARGE", value: multiply(fromNumber(fee.amount), quantity), formulaId: "CONTRACTUAL_PASS_THROUGH_ENERGY_RATE_TIMES_KWH", formulaInputs: { sourceCteId: offer.sourceCteId, sourceCteVersion: offer.sourceCteVersion, passThroughComponentId: component.componentId, kind: component.kind, declarationState: component.declarationState, effectiveFrom, effectiveTo, feeUnit: fee.unit, feeRate: fee.amount, basisQuantity: toDecimal(quantity, 6), taxTreatment: fee.taxTreatment } });
+    } else if (fee.unit === "EUR_PER_MONTH") {
+      if (!monthAligned(effectiveFrom) || !monthAligned(effectiveTo) || !monthAligned(period.periodStart) || !monthAligned(period.periodEnd)) fail("CONTRACTUAL_PASS_THROUGH_PERIOD_UNSUPPORTED");
+      const applicableMonths = monthsInSimulationPeriod({ periodStart: effectiveFrom, periodEnd: effectiveTo });
+      target.push({ componentId: contractualComponentId(offer, component, effectiveFrom, effectiveTo), category: "VARIABLE_FEE", label: `Pass-through contrattuale ${component.kind}`, sign: "CHARGE", value: multiply(fromNumber(fee.amount), fromNumber(applicableMonths.length)), formulaId: "CONTRACTUAL_PASS_THROUGH_MONTHLY_RATE_TIMES_MONTHS", formulaInputs: { sourceCteId: offer.sourceCteId, sourceCteVersion: offer.sourceCteVersion, passThroughComponentId: component.componentId, kind: component.kind, declarationState: component.declarationState, effectiveFrom, effectiveTo, feeUnit: fee.unit, feeRate: fee.amount, basisMonths: applicableMonths.length, taxTreatment: fee.taxTreatment } });
+    }
+  }
+}
+
+function isBta6CompleteCandidate(context: ElectricitySupplyContext | undefined, regulated: Awaited<ReturnType<typeof calculateRegulatedEeSubset>> | null, contractual: ContractualPassThroughEvaluation | null, request: SimulationRequest): boolean {
+  return request.vector === "EE" && request.taxTreatment === "EXCLUDED" && context?.regulatoryCustomerScope === "NON_DOMESTIC_BT_BTA6" && context.asosClassTemporalStatus === "VALID" && context.asosClass !== "UNKNOWN" && contractual?.completeness === "COMPLETE" && regulated !== null && [...regulated.includedComponents].sort().join("|") === [...BTA6_REGULATED_COMPONENTS_INCLUDED].sort().join("|");
+}
+
+export interface CalculationDependencies {
+  readonly trustedElectricityContext?: ElectricitySupplyContext;
+  readonly regulatoryBridge?: Pick<ProductionRegulatoryPersistenceBridge, "list">;
+  readonly regulatoryRefreshState?: Pick<TenantRecordRepository<unknown>, "get">;
+  readonly regulatoryRuntimeResolver?: CteRegulatoryRuntimeResolver;
+}
+
+export async function assertNoKnownDomesticTierDivergence(repository: Pick<TenantRecordRepository<unknown>, "get"> | undefined, tenantId: string): Promise<void> {
+  if (!repository) return;
+  const stored = await repository.get(tenantId, deterministicRecordId("regulatory-refresh-state", tenantId, "regulatory-refresh"));
+  const payload = stored?.payload;
+  const errors = payload && typeof payload === "object" && !Array.isArray(payload) && Array.isArray((payload as { readonly errors?: unknown }).errors) ? (payload as { readonly errors: readonly unknown[] }).errors : [];
+  if (errors.some((error) => typeof error === "string" && error.includes("DOMESTIC_TIER_RATE_DIVERGENCE_UNSUPPORTED"))) throw new CalculationEngineError("DOMESTIC_TIER_RATE_DIVERGENCE_UNSUPPORTED");
+}
 
 function profileForEe(request: ElectricitySimulationRequest, month: string): { readonly f1: number; readonly f2: number; readonly f3: number } {
   if (request.consumption.monthlyProfile) return request.consumption.monthlyProfile.find((profile) => profile.month === month) ?? fail("MONTHLY_PROFILE_INVALID");
@@ -104,6 +208,7 @@ function assertPriceCurrency(offer: CalculationReadyOffer, request: SimulationRe
     ...offer.oneOffFees,
     ...offer.commercialDiscounts,
     ...(offer.imbalance.status === "DECLARED" ? [offer.imbalance.component] : []),
+    ...(offer.passThroughComponents ?? []).flatMap((component) => component.declarationState === "EXPLICIT_COMPONENT" ? [component.fee] : []),
   ].map((component) => component.taxTreatment);
   const pricingTaxTreatments = offer.pricing.mode === "FIXED"
     ? [offer.pricing.fixedPrice.taxTreatment, ...(offer.pricing.spread.status === "DECLARED" ? [offer.pricing.spread.component.taxTreatment] : [])]
@@ -160,11 +265,12 @@ export interface EligibleOffer {
 }
 
 export async function prepareApprovedOffer(cteRepository: CteArchiveRepository, marketRepository: MarketArchiveRepository, request: SimulationRequest, archiveId: string): Promise<EligibleOffer> {
+  assertEeNetTaxPolicy(request);
   const record = await cteRepository.get(request.tenantId, archiveId);
   if (record === null) return fail("CTE_NOT_FOUND");
   if (record.vector !== request.vector) fail("VECTOR_MISMATCH");
   const version = readyVersion(record);
-  const offer: CalculationReadyOffer = (() => { try { const result = toCalculationReadyOffer(version.contract); assertCalculationReadyFees([...result.fixedFees, ...result.variableFees, ...result.oneOffFees, ...(result.imbalance.status === "DECLARED" ? [result.imbalance.component] : []), ...result.commercialDiscounts]); return result; } catch { return fail("CALCULATION_READY_INVALID"); } })();
+  const offer: CalculationReadyOffer = (() => { try { const result = toCalculationReadyOffer(version.contract); assertCalculationReadyFees([...result.fixedFees, ...result.variableFees, ...result.oneOffFees, ...(result.imbalance.status === "DECLARED" ? [result.imbalance.component] : []), ...result.commercialDiscounts, ...(result.passThroughComponents ?? []).flatMap((component) => component.declarationState === "EXPLICIT_COMPONENT" ? [component.fee] : [])]); return result; } catch { return fail("CALCULATION_READY_INVALID"); } })();
   assertPriceCurrency(offer, request);
   if (offer.validity.periodStart > request.supplyPeriod.periodStart || offer.validity.periodEnd < request.supplyPeriod.periodEnd || request.calculationDate < offer.validity.periodStart || request.calculationDate >= offer.validity.periodEnd) fail("CTE_VALIDITY_MISMATCH");
   if (offer.expiry.status === "EXPIRES_ON" && offer.expiry.date < request.supplyPeriod.periodEnd) fail("CTE_EXPIRED");
@@ -189,17 +295,60 @@ export async function assertCommerciallyActive(cteRepository: CteArchiveReposito
   if (version === null || version.versionId !== versionId || version.status !== "APPROVED" || version.contract.approval.status !== "APPROVED") return fail("CTE_NOT_APPROVED");
 }
 
-export async function calculatePreparedOffer(request: SimulationRequest, prepared: EligibleOffer): Promise<CalculationResult> {
-  const drafts: ComponentDraft[] = []; const totalQuantity = request.vector === "EE" ? add(add(fromNumber(request.consumption.f1), fromNumber(request.consumption.f2)), fromNumber(request.consumption.f3)) : multiply(fromNumber(request.consumption.smc), request.consumption.correctionCoefficient.value === undefined ? fromNumber(1) : fromNumber(request.consumption.correctionCoefficient.value)); const months = monthCount(request);
+export async function calculatePreparedOffer(request: SimulationRequest, prepared: EligibleOffer, dependencies: CalculationDependencies = {}): Promise<CalculationResult> {
+  assertEeNetTaxPolicy(request);
+  let cteRuntime: CteRuntimeResolution | null = null;
+  if (request.vector === "EE" && (prepared.offer.dispatchingReference !== undefined || prepared.offer.lossReference !== undefined || (prepared.offer.capacityMarketSchedule ?? []).some((entry) => entry.mode === "OFFICIAL_PASS_THROUGH"))) {
+    cteRuntime = await resolveCteRegulatoryRuntime(prepared.version.contract, { tenantId: request.tenantId, effectiveAt: request.calculationDate, customerScope: dependencies.trustedElectricityContext?.regulatoryCustomerScope ?? "ALL_ELECTRICITY", voltageLevel: request.voltageLevel }, dependencies.regulatoryRuntimeResolver);
+    if (!cteRuntime.ready) throw new CalculationEngineError(cteRuntime.blockers[0] ?? "REGULATORY_RUNTIME_VALUE_MISSING");
+  }
+  let regulated: Awaited<ReturnType<typeof calculateRegulatedEeSubset>> | null = null;
+  if (request.vector === "EE" && request.sourceBill) {
+    const trustedElectricityContext = dependencies.trustedElectricityContext;
+    const regulatoryBridge = dependencies.regulatoryBridge;
+    if (!trustedElectricityContext) throw new CalculationEngineError("REGULATORY_TRUST_CONTEXT_REQUIRED");
+    if (!regulatoryBridge) throw new CalculationEngineError("REGULATORY_BRIDGE_REQUIRED");
+    await assertNoKnownDomesticTierDivergence(dependencies.regulatoryRefreshState, request.tenantId);
+    const execution: RegulatedEeExecutionContext = { trustedElectricityContext, regulatoryBridge };
+    regulated = await calculateRegulatedEeSubset(request, execution);
+  }
+  const drafts: ComponentDraft[] = [];
+  const totalQuantity = request.vector === "EE" ? add(add(fromNumber(request.consumption.f1), fromNumber(request.consumption.f2)), fromNumber(request.consumption.f3)) : multiply(fromNumber(request.consumption.smc), request.consumption.correctionCoefficient.value === undefined ? fromNumber(1) : fromNumber(request.consumption.correctionCoefficient.value));
+  const months = monthCount(request);
   if (request.vector === "EE") addElectricityEnergy(drafts, request, prepared.offer, prepared.markets); else addGasEnergy(drafts, request, prepared.offer, prepared.markets);
   addFeeComponents(drafts, prepared.offer.fixedFees, "FIXED_FEE", request, totalQuantity, months);
   addFeeComponents(drafts, prepared.offer.variableFees, "VARIABLE_FEE", request, totalQuantity, months);
   addDeclaredComponent(drafts, prepared.offer.imbalance, "IMBALANCE", request, totalQuantity, months);
   addOneOffComponents(drafts, prepared.offer.oneOffFees);
   addFeeComponents(drafts, prepared.offer.commercialDiscounts, "DISCOUNT", request, totalQuantity, months);
-  const components = convertDrafts(drafts); const total = totalMinor(components); if (totalQuantity.numerator <= BigInt(0)) fail("CALCULATION_ZERO_CONSUMPTION"); const unit: "EUR_PER_KWH" | "EUR_PER_SMC" = request.vector === "EE" ? "EUR_PER_KWH" : "EUR_PER_SMC"; const unitCost = { amount: toDecimal(divide(rational(BigInt(total), BigInt(100)), totalQuantity), 6), unit, currency: "EUR" as const }; const baseline = request.baseline ? roundCents(fromNumber(request.baseline.totalCommercialCost)) : null; const marketData = prepared.markets.map(referenceOf); const normalizedInput = request; const payload = { schemaVersion: 1 as const, engineVersion: "1" as const, normalizedInput, sourceCte: { archiveId: prepared.record.archiveId, cteId: prepared.record.cteId, versionId: prepared.version.versionId, version: prepared.version.contract.version, supplier: prepared.version.contract.supplier.name, offerCode: prepared.offer.offerCode }, marketData, components, totalCommercialCost: money(total), unitCost, roundingPolicy: "ROUND_HALF_UP_TO_CENT_PER_COMPONENT" as const }; const resultFingerprint = fingerprint(payload); return { ...payload, calculationId: `calc_${resultFingerprint.slice(0, 32)}`, fingerprint: resultFingerprint, calculatedAt: `${request.calculationDate}T00:00:00.000Z`, tenantId: request.tenantId, vector: request.vector, customerCategory: request.customerCategory, ...(request.vector === "EE" ? { voltageLevel: request.voltageLevel } : {}), calculationDate: request.calculationDate, supplyPeriod: request.supplyPeriod, currency: "EUR", taxTreatment: request.taxTreatment, savingsVsBaseline: baseline === null ? null : money(baseline - total), warnings: componentWarning(request) };
+  const bta6 = request.vector === "EE" && dependencies.trustedElectricityContext?.regulatoryCustomerScope === "NON_DOMESTIC_BT_BTA6";
+  const contractual = bta6 ? evaluateContractualPassThrough(prepared.offer, request.supplyPeriod) : null;
+  if (bta6) addPassThroughComponents(drafts, prepared.offer, request, totalQuantity);
+  const commercialComponents = convertDrafts(drafts);
+  const regulatedComponents = regulated?.components ?? [];
+  const components = [...commercialComponents, ...regulatedComponents];
+  const totalCommercial = totalMinor(commercialComponents);
+  const totalRegulated = regulated === null ? null : totalMinor(regulatedComponents);
+  const totalPlusRegulated = totalRegulated === null ? null : totalCommercial + totalRegulated;
+  if (totalQuantity.numerator <= BigInt(0)) fail("CALCULATION_ZERO_CONSUMPTION");
+  const unit: "EUR_PER_KWH" | "EUR_PER_SMC" = request.vector === "EE" ? "EUR_PER_KWH" : "EUR_PER_SMC";
+  const unitCost = { amount: toDecimal(divide(rational(BigInt(totalCommercial), BigInt(100)), totalQuantity), 6), unit, currency: "EUR" as const };
+  const marketData = prepared.markets.map(referenceOf);
+  const normalizedInput = request;
+  const domesticComplete = request.vector === "EE" && dependencies.trustedElectricityContext?.regulatoryCustomerScope === "DOMESTIC_RESIDENT_BT" && regulated !== null && isDomesticNetOfTaxCompleteComponents(regulated.includedComponents);
+  const bta6CompleteCandidate = isBta6CompleteCandidate(dependencies.trustedElectricityContext, regulated, contractual, request);
+  const netOfTaxComplete = domesticComplete || bta6CompleteCandidate;
+  const costScope = regulated === null ? "COMMERCIAL_ONLY" as const : netOfTaxComplete ? "COMMERCIAL_PLUS_REGULATED_NET_OF_TAX_COMPLETE" as const : "COMMERCIAL_PLUS_REGULATED_PARTIAL" as const;
+  const baselineScope = request.baseline?.costScope ?? "COMMERCIAL_ONLY";
+  const baselineComparable = request.baseline === undefined ? null : roundCents(fromNumber(baselineScope === "COMMERCIAL_ONLY" ? request.baseline.totalCommercialCost : request.baseline.comparisonCost ?? fail("CALCULATION_SAVINGS_INVALID")));
+  const resultComparable = costScope === "COMMERCIAL_ONLY" ? totalCommercial : totalPlusRegulated ?? fail("CALCULATION_SAVINGS_INVALID");
+  const comparableSavings = baselineComparable === null || baselineScope !== costScope ? null : money(baselineComparable - resultComparable);
+  const contractualMetadata = contractual === null ? {} : { contractualPassThroughCompleteness: contractual.completeness, contractualPassThroughStates: contractual.states, bta6NetOfTaxCompleteCandidate: bta6CompleteCandidate };
+  const payload = { schemaVersion: 1 as const, engineVersion: "1" as const, normalizedInput, sourceCte: { archiveId: prepared.record.archiveId, cteId: prepared.record.cteId, versionId: prepared.version.versionId, version: prepared.version.contract.version, supplier: prepared.version.contract.supplier.name, offerCode: prepared.offer.offerCode }, marketData, components, totalCommercialCost: money(totalCommercial), totalRegulatedSubsetCost: totalRegulated === null ? null : money(totalRegulated), totalCommercialPlusRegulatedSubsetCost: totalPlusRegulated === null ? null : money(totalPlusRegulated), costScope, regulatedComponentsIncluded: regulated === null ? [] : [...regulated.includedComponents], regulatoryData: { references: regulated?.references ?? [] }, unitCost, roundingPolicy: "ROUND_HALF_UP_TO_CENT_PER_COMPONENT" as const, ...contractualMetadata };
+  const resultFingerprint = fingerprint(payload);
+  return { ...payload, calculationId: `calc_${resultFingerprint.slice(0, 32)}`, fingerprint: resultFingerprint, calculatedAt: `${request.calculationDate}T00:00:00.000Z`, tenantId: request.tenantId, vector: request.vector, customerCategory: request.customerCategory, ...(request.vector === "EE" ? { voltageLevel: request.voltageLevel } : {}), calculationDate: request.calculationDate, supplyPeriod: request.supplyPeriod, currency: "EUR", taxTreatment: request.taxTreatment, savingsVsBaseline: comparableSavings, warnings: [...componentWarning(request), ...(regulated === null || netOfTaxComplete ? [] : [regulated.partialWarning]), ...(request.baseline !== undefined && baselineScope !== costScope ? ["BASELINE_COST_SCOPE_MISMATCH"] : [])] };
 }
 
-export async function calculateApprovedOffer(cteRepository: CteArchiveRepository, marketRepository: MarketArchiveRepository, request: SimulationRequest, archiveId: string): Promise<CalculationResult> { const prepared = await prepareApprovedOffer(cteRepository, marketRepository, request, archiveId); return calculatePreparedOffer(request, prepared); }
+export async function calculateApprovedOffer(cteRepository: CteArchiveRepository, marketRepository: MarketArchiveRepository, request: SimulationRequest, archiveId: string, dependencies: CalculationDependencies = {}): Promise<CalculationResult> { const prepared = await prepareApprovedOffer(cteRepository, marketRepository, request, archiveId); return calculatePreparedOffer(request, prepared, dependencies); }
 
 export function exclusionFor(record: CteArchiveRecord, code: CalculationExclusionCode, message: string): CalculationExclusion { const version = record.currentApprovedVersionId ? record.versions.find((candidate) => candidate.versionId === record.currentApprovedVersionId) : null; const contract = version?.contract ?? record.versions[0]?.contract; return { archiveId: record.archiveId, cteId: record.cteId, vector: record.vector, supplier: contract?.supplier.name ?? "", offerCode: contract?.offer.code ?? "", cteVersion: version?.contract.version ?? null, code, message }; }

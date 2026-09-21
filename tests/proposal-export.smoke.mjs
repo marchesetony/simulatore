@@ -14,6 +14,8 @@ import { calculateApprovedOffer } from "../app/lib/calculation/engine.ts";
 import { compareApprovedOffers } from "../app/lib/comparison/service.ts";
 import { generateProposal } from "../app/lib/proposal/service.ts";
 import { exportCsv, exportHtml, exportJson } from "../app/lib/export/serialization.ts";
+import { exportPdf } from "../app/lib/export/pdf.ts";
+import { EE_FISCAL_EXCLUSION_NOTICE } from "../app/lib/calculation/economic-scope.ts";
 
 const tenant = "tenant_proposal-smoke";
 const approval = { status: "APPROVED", reviewer: "proposal-smoke", reviewedAt: "2026-01-02T00:00:00.000Z", decisionId: "proposal-smoke-approval" };
@@ -50,7 +52,7 @@ try {
   const fixedProposal = generateProposal(proposalRequest(fixedCalculation), tenant);
   assert.deepEqual(fixedProposal, generateProposal(proposalRequest(fixedCalculation), tenant));
   assert.equal(fixedProposal.baseline, null);
-  assert.match(fixedProposal.disclaimer, /Network charges/);
+  assert.equal(fixedProposal.disclaimer, EE_FISCAL_EXCLUSION_NOTICE);
   assert.equal(fixedProposal.marketData.length, 0);
   const indexedProposal = generateProposal(proposalRequest(indexedCalculation), tenant);
   assert.equal(indexedProposal.marketData[0].index, "PUN");
@@ -72,6 +74,7 @@ try {
   const json = exportJson(fixedProposal, tenant);
   const csv = exportCsv(fixedProposal, tenant);
   const html = exportHtml(fixedProposal, tenant);
+  const pdf = exportPdf(fixedProposal, tenant);
   assert.equal(json.contentType, "application/json; charset=utf-8");
   assert.equal(json.body, exportJson(fixedProposal, tenant).body);
   assert.match(csv.body.split("\r\n")[0], /^rowType,proposalId,tenantId,vector,/);
@@ -79,13 +82,27 @@ try {
   assert.match(csv.body, /"Nota <non trusted>, con testo"/);
   assert.match(html.body, /&lt;Test&gt;/);
   assert.doesNotMatch(html.body, /<script|https?:\/\//i);
-  assert.match(html.body, /Network charges/);
+  assert.ok(html.body.includes(EE_FISCAL_EXCLUSION_NOTICE));
   assert.match(json.filename, /^commercial-proposal-proposal_[a-f0-9]{32}\.json$/);
+  assert.equal(pdf.contentType, "application/pdf");
+  assert.match(pdf.filename, /^commercial-proposal-proposal_[a-f0-9]{32}\.pdf$/);
+  assert.ok(pdf.body instanceof Uint8Array);
+  const pdfText = Buffer.from(pdf.body).toString("latin1");
+  const normalizedPdfText = pdfText.replace(/\s+/g, " ");
+  assert.ok(pdfText.startsWith("%PDF-1.4"));
+  assert.ok(pdfText.includes("Commercial proposal"));
+  assert.ok(pdfText.includes(fixedProposal.proposalId));
+  assert.ok(pdfText.includes(fixedProposal.selectedOffer.supplier));
+  assert.ok(normalizedPdfText.includes("I valori indicati sono calcolati al netto"));
+  assert.ok(normalizedPdfText.includes("Tali importi non sono inclusi nella simulazione"));
+  assert.ok(normalizedPdfText.includes("confronto"));
+  assert.ok(normalizedPdfText.includes("delle offerte."));
+  assert.deepEqual(pdf.body, exportPdf(fixedProposal, tenant).body);
 
   assert.throws(() => generateProposal(proposalRequest({ ...fixedCalculation, fingerprint: "altered" }), tenant), /CALCULATION_FINGERPRINT_MISMATCH/);
   assert.throws(() => generateProposal({ ...proposalRequest(fixedCalculation), selectedOffer: { ...selectedOffer(fixedCalculation), version: "wrong" } }, tenant), /PROPOSAL_OFFER_MISMATCH/);
   assert.throws(() => generateProposal(proposalRequest(fixedCalculation), "tenant_other"), /TENANT_MISMATCH/);
-  assert.throws(() => generateProposal({ ...proposalRequest(fixedCalculation), sourceType: "COMPARISON", comparison: { ...comparison, results: [], ranking: [] }, selectedCalculationId: fixedCalculation.calculationId }, tenant), /PROPOSAL_OFFER_EXCLUDED|COMPARISON_FINGERPRINT_MISMATCH/);
+  assert.throws(() => generateProposal({ ...proposalRequest(fixedCalculation), sourceType: "COMPARISON", comparison: { ...comparison, results: [], ranking: [] }, selectedCalculationId: fixedCalculation.calculationId }, tenant), /PROPOSAL_OFFER_EXCLUDED|COMPARISON_FINGERPRINT_MISMATCH|COMPARISON_COST_BASIS_INVALID/);
   assert.equal(await cteRepository.get(tenant, draft.archiveId) !== null, true);
   console.log("proposal-export smoke: ok");
 } finally {

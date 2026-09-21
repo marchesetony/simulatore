@@ -78,7 +78,9 @@ function offlinePreflight() {
   assert.equal(CORE_WIRE_TOOL.name, BILL_CORE_TOOL_NAME);
   assert.equal(ANALYST_WIRE_TOOL.name, BILL_ANALYST_TOOL_NAME);
   assert.notEqual(JSON.stringify(CORE_WIRE_TOOL.input_schema).includes("analystItems"), true);
-  assert.equal(ANALYST_SCHEMA_METRICS.optional, 0);
+  assert.notEqual(JSON.stringify(CORE_WIRE_TOOL.input_schema).includes("monthlyBands"), true);
+  assert.equal(Object.hasOwn(ANALYST_WIRE_TOOL.input_schema.properties, "monthlyBands"), true);
+  assert.equal(ANALYST_SCHEMA_METRICS.optional, 1);
   assert.equal(ANALYST_SCHEMA_METRICS.unions, 0);
   assert.equal(ANALYST_SCHEMA_METRICS.enumValues, 0);
   assert.ok(ANALYST_SCHEMA_METRICS.bytes < COMPACT_ONE_CALL_BYTES);

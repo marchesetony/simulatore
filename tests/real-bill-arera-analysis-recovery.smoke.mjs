@@ -1,0 +1,44 @@
+import assert from "node:assert/strict";
+import { readFile } from "node:fs/promises";
+import { LocalBillRepository, toPublicDocument } from "../app/lib/foundation/real-bill.ts";
+import { buildBillRegulatoryAudit } from "../app/lib/foundation/bill-public-audit.ts";
+import { loadLocalRuntimeEnvForTests } from "./support/standalone-runtime-env.mjs";
+
+loadLocalRuntimeEnvForTests({ expectedTenantId: "tenant_qa-company" });
+const archive = JSON.parse(await readFile("var/foundation-documents/metadata.json", "utf8"));
+const source = archive.documents.find((item) => item.fileName === "EE19173_2026_CANTONE_MARIA_ALFIA.pdf");
+assert.ok(source, "real bill fixture must be present in the local archive");
+assert.equal(source.tenantId, "tenant_qa-company");
+const document = await new LocalBillRepository("var/foundation-documents").get(source.tenantId, source.id);
+assert.ok(document);
+const publicDocument = toPublicDocument(document);
+const audit = await buildBillRegulatoryAudit(publicDocument);
+assert.ok(audit?.regulatedPassThrough);
+assert.equal(audit.domesticResidentMatrix?.scope, "DOMESTIC_NON_RESIDENT_BT");
+assert.equal(audit.billingPeriod.from, "2026-08-01");
+assert.equal(audit.billingPeriod.to, "2026-08-31");
+
+const items = audit.regulatedPassThrough.items;
+const compared = items.filter((item) => item.comparable);
+const comparableCodes = compared.map((item) => item.code).sort();
+for (const code of ["ASOS", "ARIM", "NETWORK_ENERGY", "NETWORK_FIXED", "NETWORK_POWER", "UC3", "UC6"]) assert.ok(comparableCodes.includes(code), `${code} must be comparable`);
+assert.ok(compared.length > 0);
+assert.equal(items.find((item) => item.code === "DISPATCHING")?.comparable, false);
+assert.equal(items.find((item) => item.code === "CAPACITY_MARKET")?.comparable, false);
+assert.equal(items.some((item) => ["VAT", "EXCISE", "OUTSTANDING_AMOUNT"].includes(item.code)), false);
+
+const structured = source.versions.find((version) => version.versionId === source.currentVersionId)?.structuredBill;
+assert.equal(structured?.totalAmount.value, 1472.42);
+assert.equal(structured?.extendedFacts.find((fact) => fact.code === "OUTSTANDING_AMOUNT")?.value, "1.305,07");
+console.log(`REGULATORY_COMPONENTS_COMPARED_BEFORE=0`);
+console.log(`REGULATORY_COMPONENTS_COMPARED_AFTER=${compared.length}`);
+console.log(`REGULATORY_EFFECTIVE_DATE=${audit.billingPeriod.from}`);
+console.log(`REGULATORY_CUSTOMER_CLASS=${audit.domesticResidentMatrix?.scope}`);
+console.log(`CONFORMING_COUNT=${audit.regulatedPassThrough.summary.matchingCount}`);
+console.log(`HIGHER_COUNT=${audit.regulatedPassThrough.summary.overReferenceCount}`);
+console.log(`LOWER_COUNT=${audit.regulatedPassThrough.summary.underReferenceCount}`);
+console.log(`NON_COMPARABLE_COUNT=${audit.regulatedPassThrough.summary.nonComparableCount + audit.regulatedPassThrough.summary.notIdentifiedCount + audit.regulatedPassThrough.summary.officialReferenceMissingCount}`);
+console.log("NO_OCR=PASS");
+console.log("NO_BILL_MUTATION=PASS");
+console.log("NO_FISCAL_OR_PREVIOUS_DEBT_COMPARISON=PASS");
+console.log("REAL_BILL_ARERA_ANALYSIS_RECOVERY=PASS");

@@ -19,7 +19,8 @@ export interface BillEconomicComponentInput {
 }
 
 export interface BillEconomicComponent {
-  readonly code: string; readonly classification: BillEconomicClassification; readonly group: BillEconomicGroup; readonly accountingRole: BillAccountingRole; readonly includedInReconciliation: boolean;
+  readonly lineId: string; readonly code: string; readonly normalizedCode: string; readonly classification: BillEconomicClassification; readonly group: BillEconomicGroup; readonly accountingRole: BillAccountingRole; readonly includedInReconciliation: boolean;
+  readonly aggregate: boolean; readonly atomic: boolean; readonly parentComponent: string | null; readonly childComponents: readonly string[];
   readonly description: string; readonly quantity: string | null; readonly unitPrice: string | null; readonly unit: string | null; readonly amount: string | null; readonly period: string | null;
   readonly rawDescription: string; readonly rawValue: string; readonly rawUnit: string; readonly rawQuantity: string; readonly rawUnitPrice: string; readonly rawAmount: string; readonly rawPeriod: string;
   readonly documentEvidence: string; readonly calculationCheck: BillCalculationCheck; readonly status: string;
@@ -30,6 +31,8 @@ export interface BillEconomicTotals {
   readonly regulatedNetworkTotal: number | null; readonly systemChargesTotal: number | null; readonly taxTotal: number | null; readonly otherItemsTotal: number | null;
   readonly reconstructedCurrentSupplyTotal: number | null; readonly currentPeriodTotal: number | null; readonly priorBalanceTotal: number | null; readonly tvFeeTotal: number | null;
   readonly billTotal: number | null; readonly amountDue: number | null; readonly currentBillReconstructedTotal: number | null; readonly reconciliationDifference: number | null;
+  readonly currentInvoiceAtomicTotal: number | null; readonly currentInvoiceAggregateTotal: number | null; readonly fiscalTotal: number | null; readonly extraordinaryTotal: number | null;
+  readonly totalExcludingTvFee: number | null; readonly totalToPay: number | null; readonly previousDebtIncludedInCurrentInvoiceTotal: boolean | null;
   readonly reconciliationStatus: "RECONCILED" | "DIFFERENCE" | "NOT_RECONCILABLE";
 }
 
@@ -121,14 +124,29 @@ function accountingRole(classification: BillEconomicClassification, description:
   if (classification === "AMOUNT_DUE") return "TOTAL";
   if (classification === "PRIOR_BALANCE") return "PRIOR_BALANCE";
   if (classification === "TAX_SUBTOTAL" || key.includes("SUBTOTALE") || key.includes("TOTALE_SEZIONE")) return "SUBTOTAL";
+  if (aggregateDescription(key)) return "SUBTOTAL";
   return "ATOMIC";
+}
+
+function aggregateDescription(key: string): boolean {
+  return key.includes("TOTALE_VENDITA") || key.includes("TOTALE_TARIFFA") || key.includes("TOTALE_ONERI") || key === "TOTALE_IMPOSTE" || key === "TOTALE_FORNITURA" || key === "TOTALE_BOLLETTA" || key === "TOTALE_DA_PAGARE";
+}
+
+function isDuplicatedSectionSummary(component: BillEconomicComponent): boolean {
+  const key = keyOf(component.description);
+  return key.startsWith("DI_CUI_SPESA_PER_VENDITA_ENERGIA_ELETTRICA")
+    || key.startsWith("DI_CUI_SPESA_PER_LA_RETE_E_ONERI_GENERALI_DI_SISTEMA")
+    || key === "QUOTA_FISSA_TOTALE"
+    || key === "QUOTA_POTENZA"
+    || key === "ENERGIA_REATTIVA";
 }
 
 export function normalizeBillEconomicComponent(input: BillEconomicComponentInput): BillEconomicComponent {
   const description = text(input.description ?? input.rawDescription); const quantity = text(input.quantity ?? input.rawQuantity) || null; const unit = text(input.unit ?? input.rawUnit) || null; const unitPrice = text(input.unitPrice ?? input.rawUnitPrice) || null; const amount = text(input.amount ?? input.rawAmount) || null; const period = text(input.period ?? input.rawPeriod) || null;
   const rawDescription = text(input.rawDescription ?? description); const rawValue = text(input.rawValue ?? input.value ?? input.amount ?? input.unitPrice ?? ""); const rawUnit = text(input.rawUnit ?? unit); const rawQuantity = text(input.rawQuantity ?? quantity); const rawUnitPrice = text(input.rawUnitPrice ?? unitPrice); const rawAmount = text(input.rawAmount ?? amount); const rawPeriod = text(input.rawPeriod ?? period);
-  const classification = classifyBillEconomicComponent(input.code, description); const role = accountingRole(classification, description);
-  return { code: text(input.code) || "UNCLASSIFIED_BILL_CHARGE", classification, group: groupOf(classification), accountingRole: role, includedInReconciliation: role === "ATOMIC", description: description || rawDescription || "Voce economica non descritta", quantity, unitPrice, unit, amount, period, rawDescription, rawValue, rawUnit, rawQuantity, rawUnitPrice, rawAmount, rawPeriod, documentEvidence: text(input.documentEvidence ?? rawDescription), calculationCheck: calculationCheck({ quantity: rawQuantity, unitPrice: rawUnitPrice, unit: rawUnit, amount: rawAmount }), status: text(input.status) || "FOUND" };
+  const code = text(input.code) || "UNCLASSIFIED_BILL_CHARGE"; const key = keyOf(description); const classification = classifyBillEconomicComponent(code, description); const role = accountingRole(classification, description);
+  const normalizedCode = code !== "UNCLASSIFIED_BILL_CHARGE" ? code : key.includes("TOTALE_VENDITA") ? "TOTAL_SELLER_ENERGY" : key.includes("TOTALE_TARIFFA") ? "TOTAL_NETWORK_TARIFF" : key.includes("TOTALE_ONERI") ? "TOTAL_SYSTEM_CHARGES" : key === "TOTALE_IMPOSTE" ? "TAX_SUBTOTAL" : key === "TOTALE_FORNITURA" ? "TOTAL_SUPPLY" : key === "TOTALE_BOLLETTA" ? "BILL_TOTAL" : key === "TOTALE_DA_PAGARE" ? "AMOUNT_DUE" : code;
+  return { lineId: "", code, normalizedCode, classification, group: groupOf(classification), accountingRole: role, includedInReconciliation: role === "ATOMIC", aggregate: role !== "ATOMIC" && role !== "PRIOR_BALANCE", atomic: role === "ATOMIC", parentComponent: null, childComponents: [], description: description || rawDescription || "Voce economica non descritta", quantity, unitPrice, unit, amount, period, rawDescription, rawValue, rawUnit, rawQuantity, rawUnitPrice, rawAmount, rawPeriod, documentEvidence: text(input.documentEvidence ?? rawDescription), calculationCheck: calculationCheck({ quantity: rawQuantity, unitPrice: rawUnitPrice, unit: rawUnit, amount: rawAmount }), status: text(input.status) || "FOUND" };
 }
 
 const sum = (items: readonly BillEconomicComponent[]): number | null => { const values = items.filter((item) => item.includedInReconciliation).map((item) => numberFrom(item.amount)).filter((value): value is number => value !== null); return values.length ? round(values.reduce((a, b) => a + b, 0)) : null; };
@@ -141,10 +159,42 @@ function priceType(items: readonly BillEconomicComponent[]): BillEconomicAnalysi
 
 export interface BillEconomicAnalysisOptions { readonly sourceBillTotal?: string | number | null; readonly sourceAmountDue?: string | number | null; readonly priorBalance?: string | number | null; }
 
+function ownership(components: readonly BillEconomicComponent[]): readonly BillEconomicComponent[] {
+  const result = components.map((component, index) => ({ ...component, lineId: `LINE_${String(index + 1).padStart(3, "0")}` }));
+  const key = (component: BillEconomicComponent): string => keyOf(component.description);
+  const find = (matcher: (value: string) => boolean): BillEconomicComponent | null => result.find((component) => matcher(key(component))) ?? null;
+  const seller = find((value) => value.includes("TOTALE_VENDITA"));
+  const network = find((value) => value.includes("TOTALE_TARIFFA"));
+  const system = find((value) => value.includes("TOTALE_ONERI"));
+  const tax = find((value) => value === "TOTALE_IMPOSTE");
+  const supply = find((value) => value === "TOTALE_FORNITURA");
+  const bill = find((value) => value === "TOTALE_BOLLETTA");
+  const due = find((value) => value === "TOTALE_DA_PAGARE");
+  const parentByLine = new Map<string, string>();
+  const childrenByLine = new Map<string, string[]>();
+  const assign = (parent: BillEconomicComponent | null, children: readonly BillEconomicComponent[]): void => {
+    if (!parent) return;
+    const childIds = children.filter((child) => child.lineId !== parent.lineId).map((child) => child.lineId);
+    childrenByLine.set(parent.lineId, childIds);
+    for (const child of children.filter((candidate) => candidate.lineId !== parent.lineId)) parentByLine.set(child.lineId, parent.lineId);
+  };
+  const indexOf = (item: BillEconomicComponent | null): number => item ? result.findIndex((candidate) => candidate.lineId === item.lineId) : -1;
+  const between = (from: number, to: number): BillEconomicComponent[] => result.slice(from < 0 ? 0 : from + 1, to < 0 ? result.length : to).filter((item) => !item.aggregate);
+  assign(seller, between(-1, indexOf(seller)));
+  assign(network, between(indexOf(seller), indexOf(network)));
+  assign(system, between(indexOf(network), indexOf(system)));
+  assign(tax, between(indexOf(system), indexOf(tax)));
+  assign(supply, [seller, network, system, tax].filter((item): item is BillEconomicComponent => item !== null));
+  assign(bill, [supply, ...between(indexOf(supply), indexOf(bill))].filter((item): item is BillEconomicComponent => item !== null));
+  assign(due, bill ? [bill] : []);
+  return result.map((item) => ({ ...item, parentComponent: parentByLine.get(item.lineId) ?? null, childComponents: childrenByLine.get(item.lineId) ?? [] }));
+}
+
 export function buildCurrentBillEconomicAnalysis(inputs: readonly BillEconomicComponentInput[], billTotal: string | number | null | undefined = null, options: BillEconomicAnalysisOptions = {}): BillEconomicAnalysis {
-  let components = inputs.map(normalizeBillEconomicComponent);
-  const hasNetworkParent = components.some((item) => item.classification === "ARERA_NETWORK" && keyOf(item.description).includes("ONERI_GENERALI_DI_SISTEMA"));
-  if (hasNetworkParent) components = components.map((item) => item.classification === "ARERA_SYSTEM_CHARGES" && ["ASOS", "ARIM", "UC3", "UC6"].includes(keyOf(item.code)) ? { ...item, accountingRole: "DETAIL_INCLUDED_IN_SUBTOTAL", includedInReconciliation: false } : item);
+  let components = ownership(inputs.map(normalizeBillEconomicComponent));
+  const hasExpandedAtomicBreakdown = components.some((item) => /UC3|UC6|DISTRIBUZIONE_ELETTRICA|TARIFFA_DI_TRASMISSIONE/.test(keyOf(item.description)))
+    && components.some((item) => keyOf(item.description) === "TOTALE_TARIFFA_PER_L_USO_DELLA_RETE_ELETTRICA");
+  if (hasExpandedAtomicBreakdown) components = components.map((item) => isDuplicatedSectionSummary(item) ? { ...item, accountingRole: "DETAIL_INCLUDED_IN_SUBTOTAL", includedInReconciliation: false } : item);
   const seller = { ENERGY_PRICE: components.filter((i) => i.group === "ENERGY_PRICE"), COMMERCIALIZATION: components.filter((i) => i.group === "COMMERCIALIZATION"), DISPATCHING_OR_PASS_THROUGH: components.filter((i) => i.group === "DISPATCHING_OR_PASS_THROUGH"), CAPACITY_MARKET: components.filter((i) => i.group === "CAPACITY_MARKET"), OTHER_SELLER_CHARGES: components.filter((i) => i.group === "OTHER_SELLER_CHARGES") } as const;
   const regulatedAndSystemCosts = { ARERA_NETWORK: components.filter((i) => i.group === "REGULATED_NETWORK"), ARERA_SYSTEM_CHARGES: components.filter((i) => i.group === "SYSTEM_CHARGES"), TERNA_DISPATCHING_REFERENCES: components.filter((i) => i.classification === "TERNA_DISPATCHING_REFERENCES"), GME_MARKET_REFERENCE: components.filter((i) => i.classification === "GME_MARKET_REFERENCE") } as const;
   const taxesAndOtherItems = { TAXES: components.filter((i) => i.group === "TAX"), OTHER_ITEMS: components.filter((i) => i.group === "OTHER_ITEMS") } as const;
@@ -155,8 +205,13 @@ export function buildCurrentBillEconomicAnalysis(inputs: readonly BillEconomicCo
   const tvFeeTotal = sumClass(components, ["CANONE_RAI"]); const currentPeriodTotal = reconstructedCurrentSupplyTotal === null ? null : round(reconstructedCurrentSupplyTotal + (tvFeeTotal ?? 0));
   const reconciliationBase = sourceTotal !== null && reconstructedCurrentSupplyTotal !== null && Math.abs(reconstructedCurrentSupplyTotal - sourceTotal) <= 0.02 ? reconstructedCurrentSupplyTotal : currentPeriodTotal;
   const reconciliationDifference = sourceTotal !== null && reconciliationBase !== null ? round(reconciliationBase - sourceTotal) : null;
+  const fiscalTotal = sumClass(components, ["IVA", "ACCISE"]);
+  const extraordinaryTotal = sumClass(components, ["BONUS", "CANONE_RAI", "INTERESSI_MORA", "CMOR", "ADMINISTRATIVE_FEES", "DELIVERY_DISCOUNT", "SERVIZI_AGGIUNTIVI", "RICALCOLI", "RESTITUZIONI", "ADDEBITI", "ACCREDITI", "ALTRE_PARTITE"]);
+  const totalExcludingTvFee = sourceTotal === null ? null : round(sourceTotal - (tvFeeTotal ?? 0));
+  const totalToPay = amountDue ?? sourceTotal;
+  const previousDebtIncludedInCurrentInvoiceTotal = priorBalance === null || totalToPay === null || sourceTotal === null ? null : totalToPay > sourceTotal + 0.02;
   return { priceType: priceType(components), components, currentSellerCostBreakdown: seller, regulatedAndSystemCosts, taxesAndOtherItems, totals: {
     sellerEnergyTotal: sum(seller.ENERGY_PRICE), sellerCommercializationTotal: sum(seller.COMMERCIALIZATION), sellerOtherTotal: [seller.DISPATCHING_OR_PASS_THROUGH, seller.CAPACITY_MARKET, seller.OTHER_SELLER_CHARGES].flat().length ? sum([...seller.DISPATCHING_OR_PASS_THROUGH, ...seller.CAPACITY_MARKET, ...seller.OTHER_SELLER_CHARGES]) : null,
-    regulatedNetworkTotal: sum(regulatedAndSystemCosts.ARERA_NETWORK), systemChargesTotal: sum(regulatedAndSystemCosts.ARERA_SYSTEM_CHARGES), taxTotal: sum(taxesAndOtherItems.TAXES), otherItemsTotal: sum(taxesAndOtherItems.OTHER_ITEMS.filter((item) => item.classification !== "CANONE_RAI")), reconstructedCurrentSupplyTotal, currentPeriodTotal, priorBalanceTotal: priorBalance, tvFeeTotal, billTotal: sourceTotal, amountDue, currentBillReconstructedTotal: currentPeriodTotal, reconciliationDifference, reconciliationStatus: reconciliationDifference === null ? "NOT_RECONCILABLE" : Math.abs(reconciliationDifference) <= 0.02 ? "RECONCILED" : "DIFFERENCE",
+    regulatedNetworkTotal: sum(regulatedAndSystemCosts.ARERA_NETWORK), systemChargesTotal: sum(regulatedAndSystemCosts.ARERA_SYSTEM_CHARGES), taxTotal: fiscalTotal, otherItemsTotal: sum(taxesAndOtherItems.OTHER_ITEMS.filter((item) => item.classification !== "CANONE_RAI")), reconstructedCurrentSupplyTotal, currentPeriodTotal, priorBalanceTotal: priorBalance, tvFeeTotal, billTotal: sourceTotal, amountDue, currentBillReconstructedTotal: currentPeriodTotal, reconciliationDifference, currentInvoiceAtomicTotal: reconstructedCurrentSupplyTotal, currentInvoiceAggregateTotal: currentPeriodTotal, fiscalTotal, extraordinaryTotal, totalExcludingTvFee, totalToPay, previousDebtIncludedInCurrentInvoiceTotal, reconciliationStatus: reconciliationDifference === null ? "NOT_RECONCILABLE" : Math.abs(reconciliationDifference) <= 0.02 ? "RECONCILED" : "DIFFERENCE",
   } };
 }

@@ -3,6 +3,8 @@ import { readJsonFile, atomicWriteJson } from "../../archive/atomic.ts";
 import path from "node:path";
 import type { CteArchiveRecord, CteArchiveRepository } from "./types";
 // @ts-expect-error Node's strip-only test runner requires the explicit extension.
+import { CTE_ARCHIVE_APPROVAL_CAPABILITY } from "./types.ts";
+// @ts-expect-error Node's strip-only test runner requires the explicit extension.
 import { assertTenantId, validateStoredCteArchive } from "./validation.ts";
 
 type CteArchiveStore = { readonly schemaVersion: 1; readonly records: readonly CteArchiveRecord[] };
@@ -58,10 +60,11 @@ export class LocalCteArchiveRepository implements CteArchiveRepository {
     return store.records.filter((candidate) => candidate.tenantId === tenantId).map((candidate) => structuredClone(candidate));
   }
 
-  async save(record: CteArchiveRecord): Promise<void> {
+  async save(record: CteArchiveRecord, capability?: symbol): Promise<void> {
     validateStoredCteArchive(record);
     const store = await this.readStore();
     const previous = store.records.find((candidate) => candidate.tenantId === record.tenantId && candidate.archiveId === record.archiveId);
+    if (record.currentApprovedVersionId !== (previous?.currentApprovedVersionId ?? null) && capability !== CTE_ARCHIVE_APPROVAL_CAPABILITY) throw new Error("CTE_APPROVAL_WORKFLOW_REQUIRED");
     if (previous) assertAppendOnly(previous, record);
     const records = store.records.filter((candidate) => !(candidate.tenantId === record.tenantId && candidate.archiveId === record.archiveId));
     await atomicWriteJson(this.file, { schemaVersion: 1, records: [...records, structuredClone(record)] });

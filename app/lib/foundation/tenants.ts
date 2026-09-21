@@ -1,9 +1,13 @@
-import { ImmutablePermissions } from "./types";
-import type { Identity, Membership, MembershipId, Permission, Role, TenantId, UserId } from "./types";
+// @ts-expect-error Node's strip-only test runner requires the explicit extension.
+import { ImmutablePermissions } from "./types.ts";
+import type { Identity, Membership, MembershipId, Permission, Role, TenantId, UserId } from "./types.ts";
 
 class VerifiedMembershipEvidenceImpl {
   private readonly proof = "SERVER_VERIFIED_MEMBERSHIP";
-  private constructor(private readonly membership: Membership) {
+  private readonly membership: Membership;
+
+  private constructor(membership: Membership) {
+    this.membership = membership;
     Object.freeze(this);
   }
 
@@ -34,7 +38,10 @@ export class TenantContext {
   readonly membershipStatus: "ACTIVE";
   private readonly immutablePermissions: ImmutablePermissions;
 
-  private constructor(private readonly evidence: VerifiedMembershipEvidenceImpl) {
+  private readonly evidence: VerifiedMembershipEvidenceImpl;
+
+  private constructor(evidence: VerifiedMembershipEvidenceImpl) {
+    this.evidence = evidence;
     this.userId = evidence.userId;
     this.tenantId = evidence.tenantId;
     this.membershipId = evidence.membershipId;

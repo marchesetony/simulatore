@@ -4,3 +4,4 @@ export * from "./config";
 export * from "./adapter";
 export * from "./authorization";
 export * from "./request";
+export * from "./roles";

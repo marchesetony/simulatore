@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import { getConfiguredCteOcrProvider, normalizeProviderExtraction } from "../app/lib/cte/ingestion.ts";
-import { createAnthropicBillOcrProvider, ANTHROPIC_BILL_DEFAULT_TIMEOUT_MS, ANTHROPIC_BILL_MAX_TIMEOUT_MS, ANTHROPIC_BILL_MIN_TIMEOUT_MS, ANTHROPIC_BILL_TOOL_NAME, ANTHROPIC_CTE_SYSTEM_PROMPT, ANTHROPIC_TOOL_NAME } from "../app/lib/cte/anthropic.ts";
+import { createAnthropicBillOcrProvider, ANTHROPIC_BILL_DEFAULT_TIMEOUT_MS, ANTHROPIC_BILL_MAX_TIMEOUT_MS, ANTHROPIC_BILL_MIN_TIMEOUT_MS, ANTHROPIC_BILL_TOOL_NAME, ANTHROPIC_CTE_DEFAULT_TIMEOUT_MS, ANTHROPIC_CTE_MAX_TIMEOUT_MS, ANTHROPIC_CTE_MIN_TIMEOUT_MS, ANTHROPIC_CTE_SYSTEM_PROMPT, ANTHROPIC_TOOL_NAME } from "../app/lib/cte/anthropic.ts";
 import { billOcrErrorCode, billOcrPublicError } from "../app/lib/ingestion/errors.ts";
 
 const env = { CTE_OCR_PROVIDER: "anthropic", ANTHROPIC_API_KEY: "unit-test-key-only", ANTHROPIC_MODEL: "unit-test-model", ANTHROPIC_BASE_URL: "https://api.anthropic.com" };
@@ -18,7 +18,7 @@ const originalCteSetTimeout = globalThis.setTimeout;
 globalThis.setTimeout = (callback, delay, ...args) => { observedCteTimeout = delay; return originalCteSetTimeout(callback, delay, ...args); };
 const extracted = await provider.extract({ bytes: pdf, contentType: "application/pdf", fileName: "contract.pdf" });
 globalThis.setTimeout = originalCteSetTimeout;
-assert.equal(observedCteTimeout, 60000);
+assert.equal(observedCteTimeout, ANTHROPIC_CTE_DEFAULT_TIMEOUT_MS);
 const { providerDiagnostics, ...extractedPayload } = extracted;
 assert.deepEqual(extractedPayload, validInput);
 assert.deepEqual(providerDiagnostics, { model: "unit-test-model", httpStatus: 200, stopReason: "tool_use", inputTokens: 123, outputTokens: 456, contentBlockTypes: ["text", "tool_use"], toolName: ANTHROPIC_TOOL_NAME, internalErrorCode: null });
@@ -139,6 +139,39 @@ await overrideProvider.extract({ bytes: pdf, contentType: "application/pdf", fil
 assert.equal(JSON.parse(lastRequest.init.body).max_tokens, 8192);
 for (const value of ["8191", "128001", "not-a-number", ""]) {
   assert.throws(() => getConfiguredCteOcrProvider({ ...env, ANTHROPIC_CTE_MAX_TOKENS: value }, mockedFetch), /ANTHROPIC_CTE_MAX_TOKENS_INVALID/);
+}
+for (const value of ["59999", "600001", "not-a-number", "60000.5", ""]) {
+  assert.throws(() => getConfiguredCteOcrProvider({ ...env, ANTHROPIC_CTE_TIMEOUT_MS: value }, mockedFetch), /ANTHROPIC_CTE_TIMEOUT_INVALID/);
+}
+assert.equal(ANTHROPIC_CTE_MIN_TIMEOUT_MS, 60000);
+assert.equal(ANTHROPIC_CTE_MAX_TIMEOUT_MS, 600000);
+
+const lifecycle = [];
+const savedSetTimeout = globalThis.setTimeout;
+const savedClearTimeout = globalThis.clearTimeout;
+globalThis.setTimeout = (_callback, delay) => { lifecycle.push(`set:${delay}`); return "synthetic-timer"; };
+globalThis.clearTimeout = (timer) => { lifecycle.push(`clear:${timer}`); };
+try {
+  const lifecycleProvider = getConfiguredCteOcrProvider(env, async () => ({ status: 200, ok: true, json: async () => { lifecycle.push("json"); return { stop_reason: "tool_use", content: [{ type: "tool_use", name: ANTHROPIC_TOOL_NAME, input: validInput }] }; } }));
+  await lifecycleProvider.extract({ bytes: pdf, contentType: "application/pdf", fileName: "contract.pdf" });
+} finally {
+  globalThis.setTimeout = savedSetTimeout;
+  globalThis.clearTimeout = savedClearTimeout;
+}
+assert.deepEqual(lifecycle, [`set:${ANTHROPIC_CTE_DEFAULT_TIMEOUT_MS}`, "json", "clear:synthetic-timer"]);
+
+let timeoutTimerCallback;
+globalThis.setTimeout = (callback) => { timeoutTimerCallback = callback; return "timeout-timer"; };
+globalThis.clearTimeout = () => {};
+try {
+  const bodyHangProvider = getConfiguredCteOcrProvider({ ...env, ANTHROPIC_CTE_TIMEOUT_MS: "60000" }, async () => ({ status: 200, ok: true, json: async () => new Promise(() => {}) }));
+  const pending = bodyHangProvider.extract({ bytes: pdf, contentType: "application/pdf", fileName: "contract.pdf" });
+  await Promise.resolve();
+  timeoutTimerCallback();
+  await assert.rejects(() => pending, /CTE_OCR_PROVIDER_TIMEOUT/);
+} finally {
+  globalThis.setTimeout = savedSetTimeout;
+  globalThis.clearTimeout = savedClearTimeout;
 }
 
 assert.throws(() => createAnthropicBillOcrProvider({}, mockedFetch), /BILL_OCR_PROVIDER_NOT_CONFIGURED/);

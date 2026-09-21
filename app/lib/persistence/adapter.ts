@@ -1,4 +1,6 @@
 import type { BillRepository, DocumentStoragePort } from "../foundation/real-bill";
+import type { RegulatoryValueRecord } from "../foundation/regulatory-types.ts";
+import type { RegulatoryApprovalDomainState } from "../regulatory-approval-domain.ts";
 import type { CteArchiveRepository as DomainCteArchiveRepository } from "../cte/archive/types";
 import type { MarketArchiveRepository as DomainMarketArchiveRepository } from "../market/types";
 // @ts-expect-error Node's strip-only test runner requires the explicit extension.
@@ -11,7 +13,7 @@ import { LocalMarketArchiveRepository } from "../market/repository.ts";
 import { getRuntimeConfig } from "../auth/config.ts";
 // @ts-expect-error Node's strip-only test runner requires the explicit extension.
 import { LocalFilesystemAdapter } from "./local.ts";
-import type { AuditEventRepository, CalculationResultRepository, CommercialProposalRepository, ComparisonResultRepository, DeletableTenantRecordRepository, ExportMetadataRepository, BillIngestionMetadata, NormalizedBillSnapshot, TenantRecordRepository } from "./types";
+import type { AuditEventRepository, CalculationResultRepository, CommercialProposalRepository, ComparisonResultRepository, DeletableTenantRecordRepository, ExportMetadataRepository, FoundationInvitationRecord, FoundationMembershipRecord, BillIngestionMetadata, NormalizedBillSnapshot, TenantRecordRepository, JobIncidentRecord, JobRunRecord, EligibilityOverrideRepository, BillFeaturePermissionRecord } from "./types";
 
 export interface ProductionStorageAdapter {
   readonly kind: "provider";
@@ -23,11 +25,24 @@ export interface ProductionStorageAdapter {
   readonly normalizedBillSnapshots: TenantRecordRepository<NormalizedBillSnapshot>;
   readonly cteArchives: DeletableTenantRecordRepository<unknown>;
   readonly marketDataArchives: TenantRecordRepository<unknown>;
+  readonly regulatoryValues: TenantRecordRepository<RegulatoryValueRecord>;
+  readonly approvalDomains: TenantRecordRepository<RegulatoryApprovalDomainState>;
   readonly calculationResults: CalculationResultRepository;
   readonly comparisonResults: ComparisonResultRepository;
   readonly proposals: CommercialProposalRepository;
   readonly exports: ExportMetadataRepository;
+  readonly foundationInvitations: DeletableTenantRecordRepository<FoundationInvitationRecord>;
+  readonly foundationMemberships: DeletableTenantRecordRepository<FoundationMembershipRecord>;
+  readonly billFeaturePermissions: TenantRecordRepository<BillFeaturePermissionRecord>;
   readonly auditEvents: AuditEventRepository;
+  readonly eligibilityOverrides?: EligibilityOverrideRepository;
+  readonly regulatoryRefreshState: TenantRecordRepository<unknown>;
+  readonly regulatoryRefreshRuns: TenantRecordRepository<unknown>;
+  readonly marketRefreshState?: TenantRecordRepository<unknown>;
+  readonly marketRefreshRuns?: TenantRecordRepository<unknown>;
+  readonly marketRefreshLocks?: TenantRecordRepository<unknown>;
+  readonly jobRuns: TenantRecordRepository<JobRunRecord>;
+  readonly jobIncidents: TenantRecordRepository<JobIncidentRecord>;
 }
 
 export interface RuntimeRepositories {
@@ -39,11 +54,24 @@ export interface RuntimeRepositories {
   readonly normalizedBillSnapshots: TenantRecordRepository<NormalizedBillSnapshot>;
   readonly cteArchives: DeletableTenantRecordRepository<unknown>;
   readonly marketDataArchives: TenantRecordRepository<unknown>;
+  readonly regulatoryValues: TenantRecordRepository<RegulatoryValueRecord>;
+  readonly approvalDomains: TenantRecordRepository<RegulatoryApprovalDomainState>;
   readonly calculationResults: CalculationResultRepository;
   readonly comparisonResults: ComparisonResultRepository;
   readonly proposals: CommercialProposalRepository;
   readonly exports: ExportMetadataRepository;
+  readonly foundationInvitations: DeletableTenantRecordRepository<FoundationInvitationRecord>;
+  readonly foundationMemberships: DeletableTenantRecordRepository<FoundationMembershipRecord>;
+  readonly billFeaturePermissions: TenantRecordRepository<BillFeaturePermissionRecord>;
   readonly auditEvents: AuditEventRepository;
+  readonly eligibilityOverrides: EligibilityOverrideRepository;
+  readonly regulatoryRefreshState: TenantRecordRepository<unknown>;
+  readonly regulatoryRefreshRuns: TenantRecordRepository<unknown>;
+  readonly marketRefreshState: TenantRecordRepository<unknown>;
+  readonly marketRefreshRuns: TenantRecordRepository<unknown>;
+  readonly marketRefreshLocks: TenantRecordRepository<unknown>;
+  readonly jobRuns: TenantRecordRepository<JobRunRecord>;
+  readonly jobIncidents: TenantRecordRepository<JobIncidentRecord>;
 }
 
 let productionStorageAdapter: ProductionStorageAdapter | null = null;
@@ -57,10 +85,14 @@ function isProductionStorageAdapter(adapter: unknown): adapter is ProductionStor
   const item = adapter as Record<string, unknown>;
   return hasMethods(item.cteArchiveRepository, ["get", "list", "save"])
     && hasMethods(item.marketArchiveRepository, ["get", "list", "save"])
-    && hasMethods(item.billRepository, ["get", "list", "save"])
+    && hasMethods(item.billRepository, ["get", "list", "save", "saveIfCurrentVersion"])
     && hasMethods(item.documentStorage, ["store", "read", "remove"])
     && hasMethods(item.cteArchives, ["get", "list", "put", "append", "delete"])
-    && ["billIngestionMetadata", "normalizedBillSnapshots", "marketDataArchives", "calculationResults", "comparisonResults", "proposals", "exports", "auditEvents"].every((name) => hasMethods(item[name], ["get", "list", "put", "append"]));
+    && ["billIngestionMetadata", "normalizedBillSnapshots", "marketDataArchives", "regulatoryValues", "approvalDomains", "calculationResults", "comparisonResults", "proposals", "exports", "auditEvents", "regulatoryRefreshState", "regulatoryRefreshRuns"].every((name) => hasMethods(item[name], ["get", "list", "put", "append"]))
+    && hasMethods(item.foundationInvitations, ["get", "list", "put", "append", "delete"])
+    && hasMethods(item.foundationMemberships, ["get", "list", "put", "append", "delete"])
+    && hasMethods(item.billFeaturePermissions, ["get", "list", "put", "append"]);
+
 }
 
 export function registerProductionStorageAdapter(adapter: ProductionStorageAdapter): void {
@@ -75,7 +107,7 @@ export function runtimeRepositories(): RuntimeRepositories {
   const config = getRuntimeConfig();
   if (config.runtimeMode === "production") {
     if (!productionStorageAdapter) throw new Error("PERSISTENCE_ADAPTER_UNAVAILABLE");
-    return productionStorageAdapter;
+    return { ...productionStorageAdapter, eligibilityOverrides: productionStorageAdapter.eligibilityOverrides ?? productionStorageAdapter.cteArchives as EligibilityOverrideRepository, marketRefreshState: productionStorageAdapter.marketRefreshState ?? productionStorageAdapter.marketDataArchives, marketRefreshRuns: productionStorageAdapter.marketRefreshRuns ?? productionStorageAdapter.marketDataArchives, marketRefreshLocks: productionStorageAdapter.marketRefreshLocks ?? productionStorageAdapter.marketDataArchives };
   }
   const local = new LocalFilesystemAdapter("var/phase6");
   return {
@@ -87,10 +119,23 @@ export function runtimeRepositories(): RuntimeRepositories {
     normalizedBillSnapshots: local.collection("normalized-bill-snapshots"),
     cteArchives: local.collection("cte-archives"),
     marketDataArchives: local.collection("market-data-archives"),
+    regulatoryValues: local.collection<RegulatoryValueRecord>("regulatory-values"),
+    approvalDomains: local.collection<RegulatoryApprovalDomainState>("regulatory-approval-domains"),
     calculationResults: local.collection("calculations"),
     comparisonResults: local.collection("comparisons"),
     proposals: local.collection("proposals"),
     exports: local.collection("exports"),
+    foundationInvitations: local.collection<FoundationInvitationRecord>("foundation-invitations"),
+    foundationMemberships: local.collection<FoundationMembershipRecord>("foundation-memberships"),
+    billFeaturePermissions: local.collection<BillFeaturePermissionRecord>("bill-feature-permissions"),
     auditEvents: local.collection("audit-events"),
+    eligibilityOverrides: local.collection("eligibility-overrides"),
+    regulatoryRefreshState: local.collection("regulatory-refresh-state"),
+    regulatoryRefreshRuns: local.collection("regulatory-refresh-runs"),
+    marketRefreshState: local.collection("market-refresh-state"),
+    marketRefreshRuns: local.collection("market-refresh-runs"),
+    marketRefreshLocks: local.collection("market-refresh-locks"),
+    jobRuns: local.collection<JobRunRecord>("job-runs"),
+    jobIncidents: local.collection<JobIncidentRecord>("job-incidents"),
   };
 }

@@ -104,7 +104,7 @@ const expectedSchemaExtraction = {
 const response = await new Response(JSON.stringify({ stop_reason: "tool_use", content: [{ type: "tool_use", name: ANTHROPIC_BILL_STRUCTURED_TOOL.name, input: schemaWireExtraction }] }), { status: 200, headers: { "content-type": "application/json" } }).json();
 assert.deepEqual(parseAnthropicStructuredBillResponse(response), expectedSchemaExtraction);
 assert.equal(ANTHROPIC_BILL_STRUCTURED_TOOL.input_schema.properties.f1Consumption.properties.status.enum.includes("FOUND"), true);
-const unsupportedSchemaKeywords = new Set(["minimum", "maximum", "minLength", "maxLength", "pattern", "format", "default", "oneOf", "anyOf", "allOf"]);
+const unsupportedSchemaKeywords = new Set(["minimum", "maximum", "multipleOf", "minLength", "maxLength", "format", "oneOf", "anyOf", "allOf"]);
 const schemaKeywordHits = [];
 function inspectSchema(value, path = "schema") {
   if (!value || typeof value !== "object") return;

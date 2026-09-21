@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { inflateRawSync } from "node:zlib";
 import type { RegulatoryRepository } from "./regulatory-ports";
-import type { RegulatoryCustomerScope, RegulatoryValueComponentCode, RegulatoryValueRecord, RegulatoryValueSourceType } from "./regulatory-types";
+import type { RegulatoryCustomerScope, RegulatoryValueComponentCode, RegulatoryValueRecord, RegulatoryValueSourceType, RegulatoryVariant } from "./regulatory-types";
 // @ts-expect-error Node's strip-only test runner requires the explicit extension.
 import { referenceDomainForComponent } from "./regulatory-domains.ts";
 // @ts-expect-error Node's strip-only test runner requires the explicit extension.
@@ -10,12 +10,22 @@ import { checksumFor } from "./regulatory-validation.ts";
 export const ARERA_ALLOWED_HOSTS = new Set(["arera.it", "www.arera.it"]);
 export const TERNA_ALLOWED_HOSTS = new Set(["terna.it", "www.terna.it", "dati.terna.it"]);
 export const ARERA_575_PAGE = "https://www.arera.it/area-operatori/prezzi-e-tariffe/tariffe-trasmissione-distribuzione-e-misura-clienti-domestici";
+export const ARERA_DOMESTIC_FREE_MARKET_VALUES_PAGE = "https://www.arera.it/consumatori/valori-rete-oneri-domestici-ee";
+export const ARERA_DISTRIBUTION_PAGE = "https://www.arera.it/area-operatori/prezzi-e-tariffe/distr";
+export const ARERA_MEASUREMENT_PAGE = "https://www.arera.it/area-operatori/prezzi-e-tariffe/tariffa-per-il-servizio-di-misura";
 export const ARERA_227_PAGE = "https://www.arera.it/atti-e-provvedimenti/dettaglio/26/227-26";
 export const ARERA_SYSTEM_CHARGES_PAGE = "https://www.arera.it/area-operatori/prezzi-e-tariffe/oneri-generali-di-sistema-e-ulteriori-componenti";
 export const ARERA_575_IDENTIFIER = "575/2025/R/eel";
+export const ARERA_575_TIT_TABLES_URL = "https://www.arera.it/fileadmin/allegati/docs/25/575-2025-R-eel-TABELLE_TIT.xlsx";
+export const ARERA_575_TIME_TABLES_URL = "https://www.arera.it/fileadmin/allegati/docs/25/575-2025-R-eel-TABELLE_TIME.xlsx";
+export const ARERA_TRANSMISSION_PAGE = "https://www.arera.it/area-operatori/prezzi-e-tariffe/tariffa-per-il-servizio-di-trasmissione";
 export const ARERA_227_IDENTIFIER = "227/2026/R/com";
 export const ARERA_588_IDENTIFIER = "588/2025/R/com";
+export const ARERA_588_PDF_URL = "https://www.arera.it/fileadmin/allegati/docs/25/588-2025-R-com.pdf";
 export const ARERA_588_TABLES_URL = "https://www.arera.it/fileadmin/allegati/docs/25/588-2025-R-com-TABELLE.xlsx";
+export const ARERA_98_PDF_URL = "https://www.arera.it/fileadmin/allegati/docs/26/98-2026-R-com.pdf";
+export const ARERA_98_TABLES_URL = "https://www.arera.it/fileadmin/allegati/docs/26/98-2026-R-com-TABELLE.xlsx";
+export const ARERA_98_IDENTIFIER = "98/2026/R/com";
 export const ARERA_227_PDF_URL = "https://www.arera.it/fileadmin/allegati/docs/26/227-2026-R-com.pdf";
 export const ARERA_587_PAGE = "https://www.arera.it/atti-e-provvedimenti/dettaglio/25/587-25";
 export const ARERA_587_PDF_URL = "https://www.arera.it/fileadmin/allegati/docs/25/587-2025-R-eel.pdf";
@@ -34,6 +44,10 @@ export interface UnitNormalization {
   readonly unit: string;
   readonly provenance: readonly string[];
 }
+
+export const DOMESTIC_EQUAL_RATE_APPLICATION_BASIS = "DOMESTIC_ALL_FORMAL_CONSUMPTION_TIERS_EQUAL_RATE" as const;
+export const DOMESTIC_FORMAL_TIER_PROVENANCE = "FORMAL_TIERS:0-1800_KWH_PER_YEAR|GT_1800_KWH_PER_YEAR" as const;
+export const DOMESTIC_TIER_RATE_DIVERGENCE_ERROR = "DOMESTIC_TIER_RATE_DIVERGENCE_UNSUPPORTED" as const;
 
 const sourceHash = (bytes: Uint8Array): string => createHash("sha256").update(bytes).digest("hex");
 const textHash = (text: string): string => sourceHash(new TextEncoder().encode(text));
@@ -95,7 +109,7 @@ const tableRows = (html: string): readonly TableRow[] => [...html.matchAll(/<tr\
 const recordId = (identityKey: string): string => `arera_${createHash("sha256").update(identityKey).digest("hex").slice(0, 24)}`;
 const scopeFor = (value: string | undefined): RegulatoryCustomerScope => {
   const scope = clean(value ?? "DOMESTIC_BT").toUpperCase().replace(/\s+/g, "_") as RegulatoryCustomerScope;
-  if (!["DOMESTIC_BT", "DOMESTIC_RESIDENT_BT", "DOMESTIC_NON_RESIDENT_BT", "NON_DOMESTIC_BT", "ALL_ELECTRICITY"].includes(scope)) throw new Error("ARERA_CUSTOMER_SCOPE_INVALID");
+  if (!["DOMESTIC_BT", "DOMESTIC_RESIDENT_BT", "DOMESTIC_NON_RESIDENT_BT", "NON_DOMESTIC_BT", "NON_DOMESTIC_BT_BTA6", "ALL_ELECTRICITY"].includes(scope)) throw new Error("ARERA_CUSTOMER_SCOPE_INVALID");
   return scope;
 };
 
@@ -143,6 +157,7 @@ export function createRegulatoryValue(input: {
   readonly effectiveTo: string | null;
   readonly componentCode: RegulatoryValueComponentCode;
   readonly customerScope?: string;
+  readonly regulatoryVariant?: RegulatoryVariant;
   readonly originalValue: number;
   readonly originalUnit: string;
   readonly applicationBasis: string;
@@ -158,14 +173,17 @@ export function createRegulatoryValue(input: {
   readonly referenceDomain?: RegulatoryValueRecord["referenceDomain"];
 }): RegulatoryValueRecord {
   if (!isAllowedOfficialRegulatoryUrl(input.sourceReference)) throw new Error("OFFICIAL_REGULATORY_DOMAIN_NOT_ALLOWED");
+  assertTernaDispatchingRegime(input);
   const normalized = normalizeRegulatoryUnit(input.originalValue, input.originalUnit);
-  const identityKey = [input.tenantId, input.officialIdentifier, input.componentCode, scopeFor(input.customerScope), input.effectiveFrom, normalized.unit].join("|");
+  const identityParts = [input.tenantId, input.officialIdentifier, input.componentCode, scopeFor(input.customerScope), input.effectiveFrom, normalized.unit];
+  if (input.regulatoryVariant !== undefined) identityParts.push(input.regulatoryVariant);
+  const identityKey = identityParts.join("|");
   const base = {
     tenantId: input.tenantId, id: recordId(identityKey), identityKey, version: "1", parentVersionId: null,
     authority: input.authority ?? "ARERA", sourceType: input.sourceType, sourceReference: input.sourceReference, officialIdentifier: input.officialIdentifier,
     publishedBy: input.publishedBy ?? input.authority ?? "ARERA", calculatedBy: input.calculatedBy ?? input.authority ?? "ARERA", officialName: input.officialName ?? input.componentCode, contractPassThroughRequired: input.contractPassThroughRequired ?? false,
     publicationDate: input.publicationDate, retrievedAt: input.retrievedAt, effectiveFrom: input.effectiveFrom, effectiveTo: input.effectiveTo,
-    vector: "EE" as const, customerScope: scopeFor(input.customerScope), componentCode: input.componentCode, referenceDomain: input.referenceDomain ?? referenceDomainForComponent(input.componentCode) ?? undefined,
+    vector: "EE" as const, customerScope: scopeFor(input.customerScope), componentCode: input.componentCode, ...(input.regulatoryVariant === undefined ? {} : { regulatoryVariant: input.regulatoryVariant }), referenceDomain: input.referenceDomain ?? referenceDomainForComponent(input.componentCode) ?? undefined,
     originalValue: input.originalValue, originalUnit: canonicalUnit(input.originalUnit), normalizedValue: normalized.value, normalizedUnit: normalized.unit,
     applicationBasis: input.applicationBasis, sourceSha256: input.sourceSha256, approvalStatus: "IMPORTED" as const, reviewStatus: "NEEDS_REVIEW" as const,
     ...(input.carriedForwardFrom === undefined ? {} : { carriedForwardFrom: input.carriedForwardFrom }),
@@ -177,6 +195,22 @@ export function createRegulatoryValue(input: {
 
 const createValue = createRegulatoryValue;
 
+const TERNA_DISPATCHING_COMPONENTS: readonly RegulatoryValueComponentCode[] = [
+  "DISPATCHING", "DISPATCHING_TOTAL", "DISPATCHING_UPLIFT", "DISPATCHING_UPLIFT_ATT_MSDMB",
+  "DISPATCHING_UPLIFT_ATT_DED", "DISPATCHING_UPLIFT_RUPL", "DISPATCHING_ESSENTIAL_UNITS",
+  "DISPATCHING_ESSENTIAL_UNITS_ORDINARY", "DISPATCHING_ESSENTIAL_UNITS_REINTEGRATION",
+  "DISPATCHING_TERNA_OPERATION", "DISPATCHING_EXTRAORDINARY_MODULATION",
+  "DISPATCHING_WIND_COMPENSATION", "DISPATCHING_OTHER_ITEMS",
+];
+
+function assertTernaDispatchingRegime(input: { readonly authority?: "ARERA" | "TERNA"; readonly componentCode: RegulatoryValueComponentCode; readonly regulatoryVariant?: RegulatoryVariant; readonly effectiveFrom: string }): void {
+  if (input.authority !== "TERNA" || !TERNA_DISPATCHING_COMPONENTS.includes(input.componentCode)) return;
+  const year = Number(input.effectiveFrom.slice(0, 4));
+  if (!Number.isInteger(year)) throw new Error("TERNA_EFFECTIVE_DATE_INVALID");
+  const expected = year >= 2025 ? "TIDE" : "LEGACY_111_06";
+  if (input.regulatoryVariant !== expected) throw new Error(`TERNA_DISPATCHING_REGIME_MISMATCH:${expected}`);
+}
+
 export type AreraInfrastructureImport = {
   readonly source: { readonly sourceReference: string; readonly officialIdentifier: string; readonly publicationDate: string; readonly retrievedAt: string; readonly sourceSha256: string };
   readonly records: readonly RegulatoryValueRecord[];
@@ -187,11 +221,13 @@ export function parseArera575DomesticInfrastructure(input: { readonly html: stri
   const publicationDate = input.publicationDate ?? "2025-12-30";
   const tenantId = input.tenantId ?? "tenant_local-demo";
   const rows = tableRows(input.html);
-  const row = rows.find((cells) => cells[0] === "2026");
-  if (!row || row.length < 5) throw new Error("ARERA_575_2026_ROW_MISSING");
+  const candidateRows = rows.filter((cells) => /^20\d{2}$/.test(cells[0] ?? "") && cells.length >= 5).sort((left, right) => Number(right[0]) - Number(left[0]));
+  const row = candidateRows.find((cells) => cells.slice(1, 5).every((value) => { if (!clean(value)) return false; try { parseItalianNumber(value); return true; } catch { return false; } }));
+  if (!row) throw new Error("ARERA_575_EFFECTIVE_YEAR_ROW_MISSING");
+  const year = Number(row[0]);
   const values = row.slice(1, 5).map(parseItalianNumber);
   const sourceSha256 = input.sourceSha256 ?? textHash(input.html);
-  const base = { tenantId, sourceType: "OFFICIAL_WEB_PAGE" as const, sourceReference, officialIdentifier: ARERA_575_IDENTIFIER, publicationDate, retrievedAt: input.retrievedAt, effectiveFrom: "2026-01-01", effectiveTo: "2027-01-01", customerScope: "DOMESTIC_BT", sourceSha256 };
+  const base = { tenantId, sourceType: "OFFICIAL_WEB_PAGE" as const, sourceReference, officialIdentifier: ARERA_575_IDENTIFIER, publicationDate, retrievedAt: input.retrievedAt, effectiveFrom: `${year}-01-01`, effectiveTo: `${year + 1}-01-01`, customerScope: "DOMESTIC_BT", sourceSha256 };
   const records = [
     createValue({ ...base, componentCode: "S1_TOTAL", originalValue: values[0], originalUnit: "CENT_EUR/POD/YEAR", applicationBasis: "componente s1 - totale quota fissa per punto di prelievo per anno" }),
     createValue({ ...base, componentCode: "S1_MEASURE", originalValue: values[1], originalUnit: "CENT_EUR/POD/YEAR", applicationBasis: "componente s1 - di cui misura" }),
@@ -201,11 +237,181 @@ export function parseArera575DomesticInfrastructure(input: { readonly html: stri
   return { source: { sourceReference, officialIdentifier: ARERA_575_IDENTIFIER, publicationDate, retrievedAt: input.retrievedAt, sourceSha256 }, records };
 }
 
+export type AreraBta6SourceValues = {
+  readonly fixed: RegulatoryValueRecord;
+  readonly power: RegulatoryValueRecord;
+  readonly energy: RegulatoryValueRecord;
+  readonly metering: RegulatoryValueRecord;
+  readonly transmission: RegulatoryValueRecord;
+};
+
+function rowsFromCells(cells: readonly XlsxCell[]): readonly number[] {
+  return [...new Set(cells.map((cell) => cell.row))].sort((a, b) => a - b);
+}
+
+function annualYear(cells: readonly XlsxCell[]): number {
+  const years = cells.flatMap((cell) => [...cell.value.matchAll(/\b(20\d{2})\b/g)].map((match) => Number(match[1]))).filter((year) => year >= 2000 && year <= 2200);
+  const year = Math.max(...years);
+  if (!Number.isFinite(year)) throw new Error("ARERA_EFFECTIVE_YEAR_MISSING");
+  return year;
+}
+
+function bta6DistributionValues(body: Uint8Array): { readonly fixed: number; readonly power: number; readonly energy: number; readonly year: number } {
+  const shared = xlsxSharedStrings(body);
+  let cells: readonly XlsxCell[] = [];
+  for (let sheetNumber = 1; sheetNumber <= 12; sheetNumber += 1) {
+    try {
+      const candidate = xlsxSheet(body, `xl/worksheets/sheet${sheetNumber}.xml`, shared);
+      if (candidate.some((cell) => cell.value.trim().toUpperCase() === "BTA6") && candidate.some((cell) => /potenza disponibile superiore a 16,5/i.test(cell.value))) { cells = candidate; break; }
+    } catch (error) {
+      if (error instanceof Error && error.message.startsWith("ARERA_XLSX_ENTRY_MISSING")) break;
+      throw error;
+    }
+  }
+  if (!cells.length) throw new Error("ARERA_BTA6_DISTRIBUTION_SHEET_MISSING");
+  const row = rowsFromCells(cells).find((rowNumber) => {
+    const values = cells.filter((cell) => cell.row === rowNumber).map((cell) => cell.value);
+    return values.some((value) => value.trim().toUpperCase() === "BTA6") && values.some((value) => /potenza disponibile superiore a 16,5/i.test(value));
+  });
+  if (row === undefined) throw new Error("ARERA_BTA6_DISTRIBUTION_ROW_MISSING");
+  const columnNumber = (column: string): number => [...column].reduce((total, character) => total * 26 + character.charCodeAt(0) - 64, 0);
+  const columnName = (value: number): string => { let result = ""; let current = value; while (current > 0) { const remainder = (current - 1) % 26; result = String.fromCharCode(65 + remainder) + result; current = Math.floor((current - 1) / 26); } return result; };
+  const yearColumns = new Map<number, number>();
+  for (const cell of cells) { const match = /^Anno\s+(20\d{2})$/i.exec(clean(cell.value)); if (match && !yearColumns.has(Number(match[1]))) yearColumns.set(Number(match[1]), columnNumber(cell.column)); }
+  for (const [year, fixedColumn] of [...yearColumns.entries()].sort(([left], [right]) => right - left)) {
+    const fixed = xlsxNumeric(cells, row, columnName(fixedColumn));
+    const power = xlsxNumeric(cells, row, columnName(fixedColumn + 4));
+    const energy = xlsxNumeric(cells, row, columnName(fixedColumn + 8));
+    if (fixed !== null && power !== null && energy !== null) return { fixed, power, energy, year };
+  }
+  throw new Error("ARERA_BTA6_DISTRIBUTION_VALUE_MISSING");
+}
+
+export function parseArera575Bta6DistributionXlsx(input: { readonly body: Uint8Array; readonly sourceReference?: string; readonly officialIdentifier?: string; readonly publicationDate?: string; readonly retrievedAt: string; readonly sourceSha256?: string; readonly tenantId?: string; readonly effectiveFrom?: string; readonly effectiveTo?: string | null; readonly requiredYear?: number }): readonly RegulatoryValueRecord[] {
+  const sourceReference = input.sourceReference ?? ARERA_575_TIT_TABLES_URL;
+  const sourceSha256 = input.sourceSha256 ?? sourceHash(input.body);
+  const tenantId = input.tenantId ?? "tenant_local-demo";
+  const values = bta6DistributionValues(input.body);
+  if (input.requiredYear !== undefined && values.year !== input.requiredYear) throw new Error("SOURCE_YEAR_NOT_AVAILABLE");
+  const year = values.year;
+  const base = { tenantId, sourceType: "OFFICIAL_ATTACHMENT" as const, sourceReference, officialIdentifier: input.officialIdentifier ?? `${ARERA_575_IDENTIFIER}:TIT:Tabella 3:BTA6`, publicationDate: input.publicationDate ?? "2025-12-30", retrievedAt: input.retrievedAt, effectiveFrom: input.effectiveFrom ?? `${year}-01-01`, effectiveTo: input.effectiveTo === undefined ? `${year + 1}-01-01` : input.effectiveTo, customerScope: "NON_DOMESTIC_BT_BTA6", sourceSha256 };
+  return [
+    createValue({ ...base, componentCode: "NETWORK_FIXED", originalValue: values.fixed, originalUnit: "CENT_EUR/POD/YEAR", applicationBasis: `TIT Tabella 3, BTA6 - Altre utenze in bassa tensione con potenza disponibile superiore a 16,5 kW; quota fissa tariffa ${year}` }),
+    createValue({ ...base, componentCode: "NETWORK_POWER", originalValue: values.power, originalUnit: "CENT_EUR/KW/YEAR", applicationBasis: `TIT Tabella 3, BTA6 - Altre utenze in bassa tensione con potenza disponibile superiore a 16,5 kW; quota potenza tariffa ${year}` }),
+    createValue({ ...base, componentCode: "NETWORK_ENERGY", originalValue: values.energy, originalUnit: "CENT_EUR/KWH", applicationBasis: `TIT Tabella 3, BTA6 - Altre utenze in bassa tensione con potenza disponibile superiore a 16,5 kW; quota energia tariffa ${year}` }),
+  ];
+}
+
+function bta6MeteringValue(body: Uint8Array): { readonly value: number; readonly year: number } {
+  const shared = xlsxSharedStrings(body);
+  const cells = xlsxSheet(body, "xl/worksheets/sheet2.xml", shared);
+  const row = rowsFromCells(cells).find((rowNumber) => cells.some((cell) => cell.row === rowNumber && /^Altre utenze in bassa tensione$/i.test(clean(cell.value))));
+  if (row === undefined) throw new Error("ARERA_BTA6_METERING_ROW_MISSING");
+  const columnNumber = (column: string): number => [...column].reduce((total, character) => total * 26 + character.charCodeAt(0) - 64, 0);
+  const columnName = (value: number): string => { let result = ""; let current = value; while (current > 0) { const remainder = (current - 1) % 26; result = String.fromCharCode(65 + remainder) + result; current = Math.floor((current - 1) / 26); } return result; };
+  const yearColumns = new Map<number, number>();
+  for (const cell of cells) {
+    const match = /^Anno\s+(20\d{2})$/i.exec(clean(cell.value));
+    if (match && !yearColumns.has(Number(match[1]))) yearColumns.set(Number(match[1]), columnNumber(cell.column));
+  }
+  for (const [year, column] of [...yearColumns.entries()].sort(([left], [right]) => right - left)) {
+    const value = xlsxNumeric(cells, row, columnName(column));
+    if (value !== null) return { value, year };
+  }
+  const fallback = xlsxNumeric(cells, row, "E");
+  if (fallback === null) throw new Error("ARERA_BTA6_METERING_VALUE_MISSING");
+  return { value: fallback, year: annualYear(cells) };
+}
+
+export function parseArera575Bta6MeasurementXlsx(input: { readonly body: Uint8Array; readonly sourceReference?: string; readonly officialIdentifier?: string; readonly publicationDate?: string; readonly retrievedAt: string; readonly sourceSha256?: string; readonly tenantId?: string; readonly effectiveFrom?: string; readonly effectiveTo?: string | null }): RegulatoryValueRecord {
+  const sourceReference = input.sourceReference ?? ARERA_575_TIME_TABLES_URL;
+  const sourceSha256 = input.sourceSha256 ?? sourceHash(input.body);
+  const metering = bta6MeteringValue(input.body);
+  return createValue({ tenantId: input.tenantId ?? "tenant_local-demo", sourceType: "OFFICIAL_ATTACHMENT", sourceReference, officialIdentifier: input.officialIdentifier ?? `${ARERA_575_IDENTIFIER}:TIME:Tabella 1:MIS1`, publicationDate: input.publicationDate ?? "2025-12-30", retrievedAt: input.retrievedAt, effectiveFrom: input.effectiveFrom ?? `${metering.year}-01-01`, effectiveTo: input.effectiveTo === undefined ? `${metering.year + 1}-01-01` : input.effectiveTo, componentCode: "METERING_FIXED", customerScope: "NON_DOMESTIC_BT_BTA6", originalValue: metering.value, originalUnit: "CENT_EUR/POD/YEAR", applicationBasis: `TABELLE TIME Tabella 1 MIS1; tariffa ${metering.year} uniforme per l'intera categoria ufficiale Altre utenze in bassa tensione, sottoclasse BTA6`, sourceSha256 });
+}
+
+export function parseAreraBta6MeasurementHtml(input: { readonly html: string; readonly sourceReference?: string; readonly officialIdentifier?: string; readonly publicationDate?: string; readonly retrievedAt: string; readonly sourceSha256?: string; readonly tenantId?: string; readonly requiredYear?: number }): RegulatoryValueRecord {
+  const sourceReference = input.sourceReference ?? ARERA_MEASUREMENT_PAGE;
+  const rows = tableRows(input.html);
+  let rowIndex = rows.findIndex((row) => /^Altre utenze in bassa tensione$/i.test(clean(row[0] ?? "")));
+  let row = rowIndex < 0 ? undefined : rows[rowIndex];
+  let rowHtml = "";
+  if (!row) {
+    const rowMatch = /<tr\b[^>]*>[\s\S]*?Altre\s+utenze\s+in\s+bassa\s+tensione[\s\S]*?<\/tr>/i.exec(input.html);
+    if (rowMatch) {
+      rowHtml = rowMatch[0];
+      const values = [...rowMatch[0].matchAll(/<t[dh]\b[^>]*>([\s\S]*?)<\/t[dh]>/gi)].map((match) => stripTags(match[1]));
+      row = values;
+      rowIndex = -1;
+    }
+  }
+  if (!row) throw new Error("ARERA_BTA6_METERING_ROW_MISSING");
+  const yearPositions = new Map<number, number>();
+  if (rowIndex >= 0) for (const header of rows.slice(Math.max(0, rowIndex - 4), rowIndex)) for (const [index, value] of header.entries()) {
+    const year = /\b(20\d{2})\b/.exec(value)?.[1];
+    if (year) yearPositions.set(Number(year), index);
+  }
+  if (!yearPositions.size) {
+    if (!rowHtml) rowHtml = /<tr\b[^>]*>[\s\S]*?Altre\s+utenze\s+in\s+bassa\s+tensione[\s\S]*?<\/tr>/i.exec(input.html)?.[0] ?? "";
+    const rowStart = rowHtml ? input.html.indexOf(rowHtml) : -1;
+    const before = rowStart >= 0 ? input.html.slice(Math.max(0, input.html.lastIndexOf("<table", rowStart)), rowStart) : input.html;
+    const years = [...new Set([...before.matchAll(/\b(20\d{2})\b/g)].map((match) => Number(match[1])))].filter((year) => year >= 2000 && year <= 2200).slice(-4);
+    years.forEach((year, index) => yearPositions.set(year, index + 1));
+  }
+  const orderedYears = [...yearPositions.keys()].sort((left, right) => left - right).slice(0, 4);
+  const available = orderedYears.map((year, index) => [year, index + 1] as const).filter(([, index]) => index < row.length && row[index] && row[index].trim() !== "-").sort(([left], [right]) => right - left);
+  if (!available.length) throw new Error("ARERA_BTA6_METERING_VALUE_MISSING");
+  const [year, index] = available[0];
+  if (input.requiredYear !== undefined && year !== input.requiredYear) throw new Error("SOURCE_YEAR_NOT_AVAILABLE");
+  const value = parseItalianNumber(row[index]);
+  if (!Number.isFinite(value)) throw new Error("ARERA_BTA6_METERING_VALUE_MISSING");
+  return createValue({ tenantId: input.tenantId ?? "tenant_local-demo", sourceType: "OFFICIAL_WEB_PAGE", sourceReference, officialIdentifier: input.officialIdentifier ?? `ARERA_MIS_PAGE:${year}:Altre utenze in bassa tensione`, publicationDate: input.publicationDate ?? `${year - 1}-11-30`, retrievedAt: input.retrievedAt, effectiveFrom: `${year}-01-01`, effectiveTo: `${year + 1}-01-01`, componentCode: "METERING_FIXED", customerScope: "NON_DOMESTIC_BT_BTA6", originalValue: value, originalUnit: "CENT_EUR/POD/YEAR", applicationBasis: `Tariffa MIS ufficiale ${year} uniforme per l'intera categoria Altre utenze in bassa tensione, sottoclasse BTA6`, sourceSha256: input.sourceSha256 ?? textHash(input.html) });
+}
+
+function yearFromText(value: string): number {
+  const years = [...value.matchAll(/\b(20\d{2})\b/g)].map((match) => Number(match[1])).filter((year) => year >= 2000 && year <= 2200);
+  const year = Math.max(...years);
+  if (!Number.isFinite(year)) throw new Error("ARERA_EFFECTIVE_YEAR_MISSING");
+  return year;
+}
+
+export function parseAreraBta6TransmissionHtml(input: { readonly html: string; readonly sourceReference?: string; readonly officialIdentifier?: string; readonly publicationDate?: string; readonly retrievedAt: string; readonly sourceSha256?: string; readonly tenantId?: string; readonly effectiveFrom?: string; readonly effectiveTo?: string | null; readonly requiredYear?: number }): RegulatoryValueRecord {
+  const sourceReference = input.sourceReference ?? ARERA_TRANSMISSION_PAGE;
+  const rows = tableRows(input.html);
+  const row = rows.find((cells) => /^d\)\s*Altre utenze in bassa tensione$/i.test(cells[0] ?? ""));
+  if (!row) throw new Error("ARERA_BTA6_TRANSMISSION_ROW_MISSING");
+  const values = row.slice(1).filter((value) => value.trim() && value.trim() !== "-").map(parseItalianNumber);
+  if (values.length < 3) throw new Error("ARERA_BTA6_TRANSMISSION_VALUE_MISSING");
+  const year = input.requiredYear ?? yearFromText(input.html);
+  return createValue({ tenantId: input.tenantId ?? "tenant_local-demo", sourceType: "OFFICIAL_WEB_PAGE", sourceReference, officialIdentifier: input.officialIdentifier ?? `ARERA_TRAS_${year}:Altre utenze in bassa tensione`, publicationDate: input.publicationDate ?? "2025-12-29", retrievedAt: input.retrievedAt, effectiveFrom: input.effectiveFrom ?? `${year}-01-01`, effectiveTo: input.effectiveTo === undefined ? `${year + 1}-01-01` : input.effectiveTo, componentCode: "TRANSMISSION_ENERGY", customerScope: "NON_DOMESTIC_BT_BTA6", originalValue: values.at(-1) as number, originalUnit: "CENT_EUR/KWH", applicationBasis: `Tariffa ufficiale di trasmissione ${year}, TRAS_E per l'intera categoria Altre utenze in bassa tensione, sottoclasse BTA6; TRAS_P non applicabile alla bassa tensione`, sourceSha256: input.sourceSha256 ?? textHash(input.html) });
+}
+
+export async function fetchOfficialBta6Sources(input: { readonly retrievedAt: string; readonly fetcher?: AreraFetcher; readonly tenantId?: string }): Promise<AreraBta6SourceValues> {
+  const fetcher = input.fetcher ?? (fetch as unknown as AreraFetcher);
+  const requiredYear = new Date(input.retrievedAt).getUTCFullYear();
+  const distributionPage = await fetchOfficialAreraSource(ARERA_DISTRIBUTION_PAGE, fetcher);
+  const titAttachment = discoverAreraAttachments(new TextDecoder().decode(distributionPage.bytes), distributionPage.url).find((item) => item.extension === "XLSX" && (/2024\s*[-–]\s*2027/i.test(item.anchorText) || /TIT/i.test(item.url)));
+  if (!titAttachment) throw new Error("ARERA_DISTRIBUTION_ATTACHMENT_NOT_FOUND");
+  let tit: { readonly url: string; readonly bytes: Uint8Array; readonly contentType: string };
+  try { tit = await fetchOfficialAreraSource(titAttachment.url, fetcher); } catch (error) { throw error; }
+  try { parseArera575Bta6DistributionXlsx({ body: tit.bytes, sourceReference: tit.url, retrievedAt: input.retrievedAt, sourceSha256: sourceHash(tit.bytes), tenantId: input.tenantId, requiredYear }); }
+  catch (error) {
+    if (!(error instanceof Error) || !(error.message.includes("DISTRIBUTION_VALUE_MISSING") || error.message === "SOURCE_YEAR_NOT_AVAILABLE")) throw error;
+    tit = await fetchOfficialAreraSource(ARERA_575_TIT_TABLES_URL, fetcher);
+  }
+  const measurementPage = await fetchOfficialAreraSource(ARERA_MEASUREMENT_PAGE, fetcher);
+  const transmission = await fetchOfficialAreraSource(ARERA_TRANSMISSION_PAGE, fetcher);
+  const distribution = parseArera575Bta6DistributionXlsx({ body: tit.bytes, sourceReference: tit.url, officialIdentifier: `ARERA_TIT_ATTACHMENT:${new URL(tit.url).pathname.split("/").pop() ?? "current"}`, retrievedAt: input.retrievedAt, sourceSha256: sourceHash(tit.bytes), tenantId: input.tenantId, requiredYear });
+  const metering = parseAreraBta6MeasurementHtml({ html: new TextDecoder().decode(measurementPage.bytes), sourceReference: measurementPage.url, retrievedAt: input.retrievedAt, sourceSha256: sourceHash(measurementPage.bytes), tenantId: input.tenantId, requiredYear });
+  const transmissionRecord = parseAreraBta6TransmissionHtml({ html: new TextDecoder().decode(transmission.bytes), sourceReference: transmission.url, retrievedAt: input.retrievedAt, sourceSha256: sourceHash(transmission.bytes), tenantId: input.tenantId, requiredYear });
+  return { fixed: distribution[0], power: distribution[1], energy: distribution[2], metering, transmission: transmissionRecord };
+}
+
 export type AreraAttachment = { readonly url: string; readonly extension: "XLS" | "XLSX" | "CSV" | "PDF" | "HTML"; readonly anchorText: string };
-export function discoverAreraAttachments(html: string): readonly AreraAttachment[] {
+export function discoverAreraAttachments(html: string, baseUrl: string = ARERA_227_PAGE): readonly AreraAttachment[] {
   const results: AreraAttachment[] = [];
   for (const match of html.matchAll(/<a\b[^>]*href=["']([^"']+)["'][^>]*>([\s\S]*?)<\/a>/gi)) {
-    const url = new URL(match[1], ARERA_227_PAGE).toString();
+    const url = new URL(match[1], baseUrl).toString();
     if (!isAllowedAreraUrl(url)) continue;
     const path = new URL(url).pathname.toLowerCase();
     const extension = path.endsWith(".xlsx") ? "XLSX" : path.endsWith(".xls") ? "XLS" : path.endsWith(".csv") ? "CSV" : path.endsWith(".pdf") ? "PDF" : path.endsWith(".html") || path.endsWith(".htm") ? "HTML" : null;
@@ -290,9 +496,199 @@ const xlsxNumeric = (cells: readonly XlsxCell[], row: number, column: string): n
   return Number.isFinite(parsed) ? parsed : null;
 };
 
-function parseArera227Xlsx(input: { readonly body: Uint8Array; readonly sourceReference: string; readonly publicationDate: string; readonly retrievedAt: string; readonly sourceSha256: string; readonly tenantId: string }): readonly RegulatoryValueRecord[] {
+export function assertDomesticFormalTierRatesEqual(componentCode: "ASOS" | "ARIM", rates: readonly number[]): number | null {
+  if (rates.length === 0) return null;
+  const first = rates[0];
+  if (rates.some((rate) => Math.abs(rate - first) > 1e-12)) throw new Error(`${DOMESTIC_TIER_RATE_DIVERGENCE_ERROR}:${componentCode}`);
+  return first;
+}
+
+function domesticResidentEnergyRow(cells: readonly XlsxCell[]): { readonly row: number; readonly value: number } | null {
+  for (const row of rowsFromCells(cells)) {
+    const values = cells.filter((cell) => cell.row === row).map((cell) => clean(cell.value));
+    const resident = values.some((value) => /\bresidenti?\b/i.test(value)) && !values.some((value) => /\bnon\s*residenti?\b/i.test(value));
+    const energy = xlsxNumeric(cells, row, "E");
+    if (resident && energy !== null) return { row, value: energy };
+  }
+  return null;
+}
+
+function domesticFormalTierEnergyRates(cells: readonly XlsxCell[]): readonly number[] {
+  return rowsFromCells(cells).flatMap((row) => {
+    const labels = cells.filter((cell) => cell.row === row).map((cell) => clean(cell.value)).join(" ");
+    if (!/(?:scaglion|0\s*(?:-|\u2013|\u2014)\s*1800|oltre\s*1800|1801)/i.test(labels)) return [];
+    const energy = xlsxNumeric(cells, row, "E");
+    return energy === null ? [] : [energy];
+  });
+}
+
+const asosVariantFromTitle = (title: string): RegulatoryVariant | null => {
+  const normalized = clean(title).toUpperCase();
+  if (/CLASSE DI AGEVOLAZIONE:\s*0\b/.test(normalized)) return "ASOS_CLASS_0";
+  if (/CLASSE DI AGEVOLAZIONE:\s*ASOS1\b/.test(normalized)) return "ASOS_CLASS_1";
+  if (/CLASSE DI AGEVOLAZIONE:\s*ASOS2\b/.test(normalized)) return "ASOS_CLASS_2";
+  if (/CLASSE DI AGEVOLAZIONE:\s*ASOS3\b/.test(normalized)) return "ASOS_CLASS_3";
+  return null;
+};
+
+export function parseAreraAsosBta6ClassesXlsx(input: {
+  readonly body: Uint8Array;
+  readonly sourceReference: string;
+  readonly officialIdentifier: string;
+  readonly publicationDate: string;
+  readonly retrievedAt: string;
+  readonly sourceSha256?: string;
+  readonly tenantId?: string;
+  readonly effectiveFrom: string;
+  readonly effectiveTo?: string | null;
+}): readonly RegulatoryValueRecord[] {
+  const shared = xlsxSharedStrings(input.body);
+  const tenantId = input.tenantId ?? "tenant_local-demo";
+  const sourceSha256 = input.sourceSha256 ?? sourceHash(input.body);
+  const records: RegulatoryValueRecord[] = [];
+  for (let sheetNumber = 1; sheetNumber <= 12; sheetNumber += 1) {
+    let cells: readonly XlsxCell[];
+    try { cells = xlsxSheet(input.body, `xl/worksheets/sheet${sheetNumber}.xml`, shared); } catch (error) {
+      if (error instanceof Error && error.message.startsWith("ARERA_XLSX_ENTRY_MISSING")) break;
+      throw error;
+    }
+    const title = `${xlsxCell(cells, 2, "A")} ${xlsxCell(cells, 3, "A")} ${xlsxCell(cells, 6, "C")}`;
+    const regulatoryVariant = asosVariantFromTitle(title);
+    if (regulatoryVariant === null) continue;
+    const fixed = xlsxNumeric(cells, 20, "C");
+    const power = xlsxNumeric(cells, 20, "D");
+    const energy = xlsxNumeric(cells, 20, "E");
+    if (fixed === null || power === null || energy === null) throw new Error(`ARERA_ASOS_BTA6_CLASS_ROW_MISSING:${regulatoryVariant}`);
+    const basis = `Tabella ASOS ufficiale ${sheetNumber}, ${regulatoryVariant}; riga Altre utenze in bassa tensione con potenza disponibile superiore a 16,5 kW`;
+    const base = { tenantId, sourceType: "OFFICIAL_ATTACHMENT" as const, sourceReference: input.sourceReference, officialIdentifier: input.officialIdentifier, publicationDate: input.publicationDate, retrievedAt: input.retrievedAt, effectiveFrom: input.effectiveFrom, effectiveTo: input.effectiveTo === undefined ? null : input.effectiveTo, componentCode: "ASOS" as const, customerScope: "NON_DOMESTIC_BT_BTA6" as const, regulatoryVariant, applicationBasis: basis, sourceSha256 };
+    records.push(createValue({ ...base, originalValue: fixed, originalUnit: "CENT_EUR/POD/YEAR" }));
+    records.push(createValue({ ...base, originalValue: power, originalUnit: "CENT_EUR/KW/YEAR" }));
+    records.push(createValue({ ...base, originalValue: energy, originalUnit: "CENT_EUR/KWH" }));
+  }
+  if (records.length === 0) throw new Error("ARERA_ASOS_BTA6_CLASS_ROWS_MISSING");
+  return records;
+}
+
+export function parseAreraDomesticAsosArimXlsx(input: {
+  readonly body: Uint8Array;
+  readonly sourceReference: string;
+  readonly officialIdentifier: string;
+  readonly publicationDate: string;
+  readonly retrievedAt: string;
+  readonly sourceSha256: string;
+  readonly tenantId: string;
+  readonly effectiveFrom: string;
+  readonly effectiveTo?: string | null;
+  readonly confirmationSource?: string | null;
+}): readonly RegulatoryValueRecord[] {
   const shared = xlsxSharedStrings(input.body);
   const records: RegulatoryValueRecord[] = [];
+  for (let sheetNumber = 1; sheetNumber <= 12; sheetNumber += 1) {
+    let cells: readonly XlsxCell[];
+    try { cells = xlsxSheet(input.body, `xl/worksheets/sheet${sheetNumber}.xml`, shared); } catch (error) {
+      if (error instanceof Error && error.message.startsWith("ARERA_XLSX_ENTRY_MISSING")) break;
+      throw error;
+    }
+    const title = `${xlsxCell(cells, 2, "A")} ${xlsxCell(cells, 3, "A")} ${xlsxCell(cells, 6, "C")}`.toUpperCase();
+    const componentCode = title.includes("ARIM") ? "ARIM" : title.includes("ASOS") ? "ASOS" : null;
+    if (!componentCode) continue;
+    const tierRates = domesticFormalTierEnergyRates(cells);
+    assertDomesticFormalTierRatesEqual(componentCode, tierRates);
+    const resident = domesticResidentEnergyRow(cells);
+    if (!resident) continue;
+    const applicationBasis = `${DOMESTIC_EQUAL_RATE_APPLICATION_BASIS}; ${DOMESTIC_FORMAL_TIER_PROVENANCE}; ${componentCode} quota energia domestica residente; Tabella ufficiale ${sheetNumber}`;
+    records.push(createValue({
+      tenantId: input.tenantId,
+      sourceType: "OFFICIAL_ATTACHMENT",
+      sourceReference: input.sourceReference,
+      officialIdentifier: input.officialIdentifier,
+      publicationDate: input.publicationDate,
+      retrievedAt: input.retrievedAt,
+      effectiveFrom: input.effectiveFrom,
+      effectiveTo: input.effectiveTo === undefined ? null : input.effectiveTo,
+      componentCode,
+      customerScope: "DOMESTIC_RESIDENT_BT",
+      originalValue: resident.value,
+      originalUnit: "CENT_EUR/KWH",
+      applicationBasis,
+      sourceSha256: input.sourceSha256,
+      confirmationSource: input.confirmationSource,
+    }));
+  }
+  // Table B in the official 588/2025 workbook is the ARIM table but does not
+  // repeat the component name in the sheet title. Resolve its domestic row by
+  // structure, while retaining the same equal-rate divergence guard.
+  if (!records.some((record) => record.componentCode === "ARIM")) {
+    let cells: readonly XlsxCell[];
+    try { cells = xlsxSheet(input.body, "xl/worksheets/sheet6.xml", shared); } catch (error) {
+      if (error instanceof Error && error.message.startsWith("ARERA_XLSX_ENTRY_MISSING")) cells = [];
+      else throw error;
+    }
+    if (cells.length > 0) {
+      assertDomesticFormalTierRatesEqual("ARIM", domesticFormalTierEnergyRates(cells));
+      const resident = domesticResidentEnergyRow(cells);
+      if (resident) records.push(createValue({
+        tenantId: input.tenantId,
+        sourceType: "OFFICIAL_ATTACHMENT",
+        sourceReference: input.sourceReference,
+        officialIdentifier: input.officialIdentifier,
+        publicationDate: input.publicationDate,
+        retrievedAt: input.retrievedAt,
+        effectiveFrom: input.effectiveFrom,
+        effectiveTo: input.effectiveTo === undefined ? null : input.effectiveTo,
+        componentCode: "ARIM",
+        customerScope: "DOMESTIC_RESIDENT_BT",
+        originalValue: resident.value,
+        originalUnit: "CENT_EUR/KWH",
+        applicationBasis: `${DOMESTIC_EQUAL_RATE_APPLICATION_BASIS}; ${DOMESTIC_FORMAL_TIER_PROVENANCE}; ARIM quota energia domestica residente; Tabella B ufficiale`,
+        sourceSha256: input.sourceSha256,
+        confirmationSource: input.confirmationSource,
+      }));
+    }
+  }
+  return records;
+}
+
+export function parseArera588DomesticAsosArimXlsx(input: {
+  readonly body: Uint8Array;
+  readonly sourceReference?: string;
+  readonly publicationDate?: string;
+  readonly retrievedAt: string;
+  readonly sourceSha256?: string;
+  readonly tenantId?: string;
+  readonly effectiveTo?: string | null;
+}): readonly RegulatoryValueRecord[] {
+  return parseAreraDomesticAsosArimXlsx({
+    body: input.body,
+    sourceReference: input.sourceReference ?? ARERA_588_TABLES_URL,
+    officialIdentifier: `${ARERA_588_IDENTIFIER}:DOMESTIC_RESIDENT_BT`,
+    publicationDate: input.publicationDate ?? "2025-12-30",
+    retrievedAt: input.retrievedAt,
+    sourceSha256: input.sourceSha256 ?? sourceHash(input.body),
+    tenantId: input.tenantId ?? "tenant_local-demo",
+    effectiveFrom: "2026-01-01",
+    effectiveTo: input.effectiveTo,
+    confirmationSource: `${ARERA_98_PDF_URL};${ARERA_227_PDF_URL}`,
+  });
+}
+
+export function discoverAreraCurrentEffectiveFrom(html: string, retrievedAt: string): string {
+  const at = Date.parse(retrievedAt);
+  if (!Number.isFinite(at)) throw new Error("ARERA_RETRIEVAL_DATE_INVALID");
+  const dates = [...html.matchAll(/\bdal\s+0?(\d{1,2})[./](0?\d{1,2})[./](\d{2,4})/gi)].map((match) => {
+    const year = Number(match[3].length === 2 ? `20${match[3]}` : match[3]);
+    const month = Number(match[2]);
+    const day = Number(match[1]);
+    const iso = `${String(year).padStart(4, "0")}-${String(month).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
+    return { iso, time: Date.parse(`${iso}T00:00:00.000Z`) };
+  }).filter((item) => Number.isFinite(item.time) && item.time <= at).sort((left, right) => right.time - left.time);
+  if (dates.length === 0) throw new Error("ARERA_EFFECTIVE_FROM_NOT_DISCOVERED");
+  return dates[0].iso;
+}
+
+function parseArera227Xlsx(input: { readonly body: Uint8Array; readonly sourceReference: string; readonly publicationDate: string; readonly retrievedAt: string; readonly sourceSha256: string; readonly tenantId: string; readonly effectiveFrom: string }): readonly RegulatoryValueRecord[] {
+  const shared = xlsxSharedStrings(input.body);
+  const records: RegulatoryValueRecord[] = [...parseAreraAsosBta6ClassesXlsx({ ...input, officialIdentifier: ARERA_227_IDENTIFIER, effectiveFrom: input.effectiveFrom, effectiveTo: null })];
   for (let sheetNumber = 1; sheetNumber <= 12; sheetNumber += 1) {
     const sheetName = `xl/worksheets/sheet${sheetNumber}.xml`;
     let cells: readonly XlsxCell[];
@@ -303,14 +699,17 @@ function parseArera227Xlsx(input: { readonly body: Uint8Array; readonly sourceRe
     const title = `${xlsxCell(cells, 2, "A")} ${xlsxCell(cells, 6, "C")}`;
     const componentCode = title.includes("ARIM") ? "ARIM" : title.includes("ASOS") ? "ASOS" : null;
     if (!componentCode) continue;
+    assertDomesticFormalTierRatesEqual(componentCode, domesticFormalTierEnergyRates(cells));
     for (const [row, scope, fixedColumn] of [[10, "DOMESTIC_RESIDENT_BT", "C"], [11, "DOMESTIC_NON_RESIDENT_BT", "C"]] as const) {
       const energy = xlsxNumeric(cells, row, "E");
       const fixed = xlsxNumeric(cells, row, fixedColumn);
-      const applicationBasis = componentCode === "ARIM"
-        ? `Tabella B ufficiale ${componentCode}; valori confermati dal 01/07/2026, precedentemente in vigore secondo la fonte richiamata ${ARERA_227_IDENTIFIER}`
-        : `Tabella A ufficiale ${componentCode}; classe di agevolazione 0; riga ${scope}`;
-      if (fixed !== null) records.push(createValue({ tenantId: input.tenantId, sourceType: "OFFICIAL_ATTACHMENT", sourceReference: input.sourceReference, officialIdentifier: ARERA_227_IDENTIFIER, publicationDate: input.publicationDate, retrievedAt: input.retrievedAt, effectiveFrom: "2026-07-01", effectiveTo: null, componentCode, customerScope: scope, originalValue: fixed, originalUnit: "CENT_EUR/POD/YEAR", applicationBasis, sourceSha256: input.sourceSha256 }));
-      if (energy !== null) records.push(createValue({ tenantId: input.tenantId, sourceType: "OFFICIAL_ATTACHMENT", sourceReference: input.sourceReference, officialIdentifier: ARERA_227_IDENTIFIER, publicationDate: input.publicationDate, retrievedAt: input.retrievedAt, effectiveFrom: "2026-07-01", effectiveTo: null, componentCode, customerScope: scope, originalValue: energy, originalUnit: "CENT_EUR/KWH", applicationBasis, sourceSha256: input.sourceSha256 }));
+      const applicationBasis = scope === "DOMESTIC_RESIDENT_BT"
+        ? `${DOMESTIC_EQUAL_RATE_APPLICATION_BASIS}; ${DOMESTIC_FORMAL_TIER_PROVENANCE}; Tabella ufficiale ${componentCode}; riga ${scope}`
+        : componentCode === "ARIM"
+          ? `Tabella B ufficiale ${componentCode}; valori confermati dal 01/07/2026, precedentemente in vigore secondo la fonte richiamata ${ARERA_227_IDENTIFIER}`
+          : `Tabella A ufficiale ${componentCode}; classe di agevolazione 0; riga ${scope}`;
+      if (fixed !== null) records.push(createValue({ tenantId: input.tenantId, sourceType: "OFFICIAL_ATTACHMENT", sourceReference: input.sourceReference, officialIdentifier: ARERA_227_IDENTIFIER, publicationDate: input.publicationDate, retrievedAt: input.retrievedAt, effectiveFrom: input.effectiveFrom, effectiveTo: null, componentCode, customerScope: scope, originalValue: fixed, originalUnit: "CENT_EUR/POD/YEAR", applicationBasis, sourceSha256: input.sourceSha256 }));
+      if (energy !== null) records.push(createValue({ tenantId: input.tenantId, sourceType: "OFFICIAL_ATTACHMENT", sourceReference: input.sourceReference, officialIdentifier: ARERA_227_IDENTIFIER, publicationDate: input.publicationDate, retrievedAt: input.retrievedAt, effectiveFrom: input.effectiveFrom, effectiveTo: null, componentCode, customerScope: scope, originalValue: energy, originalUnit: "CENT_EUR/KWH", applicationBasis, sourceSha256: input.sourceSha256 }));
     }
   }
   if (records.length === 0) throw new Error("ARERA_227_XLSX_STRUCTURED_ROWS_MISSING");
@@ -378,7 +777,7 @@ const julyUnitForColumn = (column: string, row: number): string | null => {
 };
 
 const julyCodeForColumn = (column: string, row: number): RegulatoryValueComponentCode | null => {
-  if (column === "C" && row === 14) return "DISPATCHING";
+  if (column === "C" && row === 14) return "DISPATCHING_TOTAL";
   if (column === "D" && row === 15) return "NETWORK_FIXED";
   if (column === "E" && row === 16) return "NETWORK_POWER";
   if (column === "F" && row === 14) return "TRANSMISSION_ENERGY";
@@ -433,14 +832,15 @@ export function parseAreraDomesticJuly2026Xlsx(body: Uint8Array): AreraDomesticJ
   return { sheetName: sheet.name, rowCount: rows.length, componentCount: rows.length, unmappedCount: rows.filter((row) => row.componentCode === null).length, rows };
 }
 
-export function parseArera227StructuredAttachment(input: { readonly body: string | Uint8Array; readonly contentType?: string; readonly sourceReference: string; readonly publicationDate: string; readonly retrievedAt: string; readonly sourceSha256?: string; readonly tenantId?: string }): readonly RegulatoryValueRecord[] {
+export function parseArera227StructuredAttachment(input: { readonly body: string | Uint8Array; readonly contentType?: string; readonly sourceReference: string; readonly publicationDate: string; readonly retrievedAt: string; readonly sourceSha256?: string; readonly tenantId?: string; readonly effectiveFrom?: string }): readonly RegulatoryValueRecord[] {
   const type = (input.contentType ?? "").toLowerCase();
   const isSpreadsheet = type.includes("spreadsheet") || /\.(?:xls|xlsx)(?:$|\?)/i.test(input.sourceReference);
   const tenantId = input.tenantId ?? "tenant_local-demo";
   const sourceSha256 = input.sourceSha256 ?? textHash(typeof input.body === "string" ? input.body : new TextDecoder().decode(input.body));
   if (isSpreadsheet) {
     if (!(input.body instanceof Uint8Array) || !/\.xlsx(?:$|\?)/i.test(input.sourceReference)) throw new Error("ARERA_227_STRUCTURED_PARSE_BLOCKED");
-    return parseArera227Xlsx({ body: input.body, sourceReference: input.sourceReference, publicationDate: input.publicationDate, retrievedAt: input.retrievedAt, sourceSha256, tenantId });
+    if (!input.effectiveFrom) throw new Error("ARERA_EFFECTIVE_FROM_REQUIRED");
+    return parseArera227Xlsx({ body: input.body, sourceReference: input.sourceReference, publicationDate: input.publicationDate, retrievedAt: input.retrievedAt, sourceSha256, tenantId, effectiveFrom: input.effectiveFrom });
   }
   if (type.includes("pdf") || /\.pdf(?:$|\?)/i.test(input.sourceReference)) throw new Error("ARERA_227_STRUCTURED_PARSE_BLOCKED");
   if (typeof input.body !== "string") throw new Error("ARERA_227_STRUCTURED_PARSE_BLOCKED");
@@ -457,8 +857,9 @@ export function parseArera227StructuredAttachment(input: { readonly body: string
   const basisIndex = indexOf(["applicationbasis", "basis", "applicazione"], 6);
   return rows.slice(1).filter((row) => row[codeIndex]).map((row) => {
     const code = componentFor(row[codeIndex]);
-    const effectiveFrom = clean(row[fromIndex] ?? "") || (code === "ASOS" ? "2026-07-01" : "2026-01-01");
-    return createValue({ tenantId, sourceType: "OFFICIAL_ATTACHMENT", sourceReference: input.sourceReference, officialIdentifier: ARERA_227_IDENTIFIER, publicationDate: input.publicationDate, retrievedAt: input.retrievedAt, effectiveFrom, effectiveTo: clean(row[toIndex] ?? "") || null, componentCode: code, customerScope: row[scopeIndex], originalValue: parseItalianNumber(row[valueIndex]), originalUnit: row[unitIndex], applicationBasis: clean(row[basisIndex] ?? "") || (code === "ARIM" ? "ARIM confermata dalla precedente decorrenza 01/01/2026" : `componente ${code} dal ${effectiveFrom}`), sourceSha256 });
+    const effectiveFrom = clean(row[fromIndex] ?? "") || input.effectiveFrom || "";
+    if (!effectiveFrom) throw new Error("ARERA_EFFECTIVE_FROM_REQUIRED");
+    return createValue({ tenantId, sourceType: "OFFICIAL_ATTACHMENT", sourceReference: input.sourceReference, officialIdentifier: ARERA_227_IDENTIFIER, publicationDate: input.publicationDate, retrievedAt: input.retrievedAt, effectiveFrom, effectiveTo: clean(row[toIndex] ?? "") || null, componentCode: code, customerScope: row[scopeIndex], originalValue: parseItalianNumber(row[valueIndex]), originalUnit: row[unitIndex], applicationBasis: clean(row[basisIndex] ?? "") || (code === "ARIM" ? "ARIM confermata dalla precedente decorrenza ufficiale" : `componente ${code} dal ${effectiveFrom}`), sourceSha256 });
   });
 }
 
@@ -494,6 +895,184 @@ export function parseArera588Uc3Uc6Xlsx(input: { readonly body: Uint8Array; read
   return parseArera588Uc3Uc6TableRows({ ...input, rows, sourceSha256: input.sourceSha256 ?? sourceHash(input.body) });
 }
 
+export interface AreraDomesticCdispdImport {
+  readonly source: { readonly sourceReference: string; readonly officialIdentifier: string; readonly publicationDate: string; readonly retrievedAt: string; readonly sourceSha256: string };
+  readonly sheetNames: readonly string[];
+  readonly records: readonly RegulatoryValueRecord[];
+}
+
+const italianMonths: Readonly<Record<string, number>> = Object.freeze({ gennaio: 1, febbraio: 2, marzo: 3, aprile: 4, maggio: 5, giugno: 6, luglio: 7, agosto: 8, settembre: 9, ottobre: 10, novembre: 11, dicembre: 12 });
+
+function domesticMonthInterval(sheetName: string): { readonly year: number; readonly month: number; readonly effectiveFrom: string; readonly effectiveTo: string } {
+  const match = /^(gennaio|febbraio|marzo|aprile|maggio|giugno|luglio|agosto|settembre|ottobre|novembre|dicembre)\s+(20\d{2})$/i.exec(clean(sheetName));
+  if (!match) throw new Error(`ARERA_DOMESTIC_CDISPD_SHEET_NAME_AMBIGUOUS:${sheetName}`);
+  const month = italianMonths[match[1].toLowerCase()];
+  const year = Number(match[2]);
+  const effectiveFrom = `${String(year).padStart(4, "0")}-${String(month).padStart(2, "0")}-01`;
+  const next = new Date(Date.UTC(year, month, 1));
+  const effectiveTo = next.toISOString().slice(0, 10);
+  return { year, month, effectiveFrom, effectiveTo };
+}
+
+function domesticCdispdSheetValue(cells: readonly XlsxCell[], sheetName: string, row: number): number {
+  const title = clean(`${xlsxCell(cells, 4, "A")} ${xlsxCell(cells, 4, "B")}`).toUpperCase();
+  if (!title.includes("CLIENTI DOMESTICI") || !title.includes("MERCATO LIBERO")) throw new Error(`ARERA_DOMESTIC_CDISPD_SCOPE_INVALID:${sheetName}`);
+  const header = clean(`${xlsxCell(cells, 11, "C")} ${xlsxCell(cells, 12, "C")}`).toLowerCase();
+  if (!header.includes("dispacciamento")) throw new Error(`ARERA_DOMESTIC_CDISPD_HEADER_MISSING:${sheetName}`);
+  const value = xlsxNumeric(cells, row, "C");
+  if (value === null) throw new Error(`ARERA_DOMESTIC_CDISPD_VALUE_MISSING:${sheetName}`);
+  return value;
+}
+
+export function discoverAreraDomesticWorkbookUrl(html: string, baseUrl: string = ARERA_DOMESTIC_FREE_MARKET_VALUES_PAGE): string {
+  const candidates = discoverAreraAttachments(html, baseUrl)
+    .filter((attachment) => attachment.extension === "XLSX")
+    .map((attachment) => ({ ...attachment, year: Number(/Corrispettivi_libero_elettrico_domestico_(20\d{2})\.xlsx$/i.exec(attachment.url)?.[1] ?? "0") }))
+    .filter((attachment) => attachment.year > 0)
+    .sort((left, right) => right.year - left.year || left.url.localeCompare(right.url));
+  if (candidates.length === 0) throw new Error("ARERA_DOMESTIC_CDISPD_WORKBOOK_NOT_DISCOVERED");
+  return candidates[0].url;
+}
+
+export async function fetchAreraDomesticCdispdWorkbook(fetcher?: AreraFetcher): Promise<{ readonly url: string; readonly bytes: Uint8Array; readonly contentType: string; readonly discoveryUrl: string }> {
+  const page = await fetchOfficialAreraSource(ARERA_DOMESTIC_FREE_MARKET_VALUES_PAGE, fetcher);
+  const workbookUrl = discoverAreraDomesticWorkbookUrl(new TextDecoder().decode(page.bytes), page.url);
+  const workbook = await fetchOfficialAreraSource(workbookUrl, fetcher);
+  return { ...workbook, discoveryUrl: page.url };
+}
+
+export function parseAreraDomesticCdispdXlsx(input: { readonly body: Uint8Array; readonly sourceReference: string; readonly retrievedAt: string; readonly publicationDate?: string; readonly sourceSha256?: string; readonly tenantId?: string; readonly discoveryReference?: string }): AreraDomesticCdispdImport {
+  const shared = xlsxSharedStrings(input.body);
+  const sheets = xlsxSheetNames(input.body);
+  const monthSheets = sheets.filter((sheet) => /\b20\d{2}\b/.test(sheet.name));
+  if (monthSheets.length === 0) throw new Error("ARERA_DOMESTIC_CDISPD_MONTHLY_SHEETS_MISSING");
+  const sourceSha256 = input.sourceSha256 ?? sourceHash(input.body);
+  const tenantId = input.tenantId ?? "tenant_local-demo";
+  const records: RegulatoryValueRecord[] = [];
+  const years = new Set<number>();
+  for (const sheet of monthSheets) {
+    const interval = domesticMonthInterval(sheet.name);
+    years.add(interval.year);
+    const cells = xlsxSheet(input.body, sheet.path, shared);
+    const resident = domesticCdispdSheetValue(cells, sheet.name, 14);
+    const nonResident = domesticCdispdSheetValue(cells, sheet.name, 24);
+    if (Math.abs(resident - nonResident) > 1e-12) throw new Error(`ARERA_DOMESTIC_CDISPD_RESIDENCY_DIVERGENCE:${sheet.name}`);
+    const officialIdentifier = `ARERA_DOMESTIC_FREE_CDISPD_${interval.year}`;
+    records.push(createRegulatoryValue({
+      tenantId,
+      sourceType: "OFFICIAL_ATTACHMENT",
+      sourceReference: input.sourceReference,
+      officialIdentifier,
+      publicationDate: input.publicationDate ?? interval.effectiveFrom,
+      retrievedAt: input.retrievedAt,
+      effectiveFrom: interval.effectiveFrom,
+      effectiveTo: interval.effectiveTo,
+      componentCode: "DISPATCHING_TOTAL",
+      customerScope: "DOMESTIC_RESIDENT_BT",
+      originalValue: resident,
+      originalUnit: "EUR/KWH",
+      applicationBasis: `ARERA workbook retail mercato libero domestico; CDISPD aggregato dispacciamento + mercato della capacità; sheet=${sheet.name}; cell=C14; ${input.discoveryReference ? `discovery=${input.discoveryReference}; ` : ""}referenceDomain=DISPATCHING; contractPassThroughRequired=false`,
+      sourceSha256,
+      confirmationSource: input.discoveryReference ?? ARERA_DOMESTIC_FREE_MARKET_VALUES_PAGE,
+      authority: "ARERA",
+      publishedBy: "ARERA",
+      calculatedBy: "ARERA",
+      officialName: "CDISPD",
+      contractPassThroughRequired: false,
+      referenceDomain: "DISPATCHING",
+    }));
+  }
+  if (years.size !== 1) throw new Error("ARERA_DOMESTIC_CDISPD_MULTIPLE_YEARS_UNSUPPORTED");
+  return { source: { sourceReference: input.sourceReference, officialIdentifier: `ARERA_DOMESTIC_FREE_CDISPD_${[...years][0]}`, publicationDate: input.publicationDate ?? records[0].publicationDate, retrievedAt: input.retrievedAt, sourceSha256 }, sheetNames: monthSheets.map((sheet) => sheet.name), records };
+}
+
+export function parseArera588Bta6Uc3Uc6TableRows(input: { readonly rows: readonly (readonly string[])[]; readonly sourceReference?: string; readonly publicationDate?: string; readonly retrievedAt: string; readonly sourceSha256: string; readonly tenantId?: string; readonly effectiveFrom?: string; readonly effectiveTo?: string | null }): readonly RegulatoryValueRecord[] {
+  const sourceReference = input.sourceReference ?? ARERA_588_TABLES_URL;
+  const publicationDate = input.publicationDate ?? "2025-12-30";
+  const tenantId = input.tenantId ?? "tenant_local-demo";
+  const effectiveFrom = input.effectiveFrom ?? "2026-01-01";
+  const effectiveTo = input.effectiveTo === undefined ? null : input.effectiveTo;
+  const row = input.rows.find((candidate) => /altre utenze in bassa tensione con potenza disponibile superiore a 16,5 kw/i.test(clean(candidate[1] ?? "")));
+  if (!row) throw new Error("ARERA_588_BTA6_UC3_UC6_ROW_MISSING");
+  const parseTableNumber = (value: string): number => {
+    const parsed = Number(clean(value).replace(/,/g, "."));
+    if (!Number.isFinite(parsed)) throw new Error("ARERA_NUMBER_INVALID");
+    return parsed;
+  };
+  const uc3 = parseTableNumber(row[2] ?? "");
+  const uc6Fixed = parseTableNumber(row[3] ?? "");
+  const uc6Power = clean(row[4] ?? "");
+  const uc6Energy = parseTableNumber(row[5] ?? "");
+  if (uc6Power) throw new Error("ARERA_588_BTA6_UC6_POWER_UNEXPECTED");
+  const base = {
+    tenantId, sourceType: "OFFICIAL_ATTACHMENT" as const, sourceReference, officialIdentifier: `${ARERA_588_IDENTIFIER}:Tabella 7:BTA6:OPEN_UNTIL_SUPERSEDED`,
+    publicationDate, retrievedAt: input.retrievedAt, effectiveFrom, effectiveTo, customerScope: "NON_DOMESTIC_BT_BTA6" as const,
+    sourceSha256: input.sourceSha256,
+    confirmationSource: ARERA_227_PDF_URL,
+    applicationBasis: "Tabella 7 della deliberazione 588/2025/R/com, riga \"Altre utenze in bassa tensione con potenza disponibile superiore a 16,5 kW\"; valori UC3/UC6 vigenti dal 01/01/2026 e confermati dalla deliberazione 227/2026/R/com dal 01/07/2026",
+  };
+  return [
+    createValue({ ...base, componentCode: "UC3", originalValue: uc3, originalUnit: "CENT_EUR/KWH", applicationBasis: `${base.applicationBasis}; UC3 quota energia` }),
+    createValue({ ...base, componentCode: "UC6", originalValue: uc6Energy, originalUnit: "CENT_EUR/KWH", applicationBasis: `${base.applicationBasis}; UC6 quota energia` }),
+    createValue({ ...base, componentCode: "UC6", originalValue: uc6Fixed, originalUnit: "CENT_EUR/POD/YEAR", applicationBasis: `${base.applicationBasis}; UC6 quota fissa per punto di prelievo/anno; la colonna quota potenza BTA6 è priva di aliquota` }),
+  ];
+}
+
+export function parseArera588Bta6Uc3Uc6Xlsx(input: { readonly body: Uint8Array; readonly sourceReference?: string; readonly publicationDate?: string; readonly retrievedAt: string; readonly sourceSha256?: string; readonly tenantId?: string; readonly effectiveFrom?: string; readonly effectiveTo?: string | null }): readonly RegulatoryValueRecord[] {
+  const shared = xlsxSharedStrings(input.body);
+  const cells = xlsxSheet(input.body, "xl/worksheets/sheet7.xml", shared);
+  const rowNumbers = rowsFromCells(cells);
+  const candidateRows = rowNumbers.map((row) => ["", xlsxCell(cells, row, "B"), xlsxCell(cells, row, "C"), xlsxCell(cells, row, "D"), xlsxCell(cells, row, "E"), xlsxCell(cells, row, "F")]);
+  const headerEnergy = clean(xlsxCell(cells, 7, "C")).toLowerCase();
+  const headerFixed = clean(xlsxCell(cells, 7, "D")).toLowerCase();
+  const headerPower = clean(xlsxCell(cells, 7, "E")).toLowerCase();
+  const headerEnergyUc6 = clean(xlsxCell(cells, 7, "F")).toLowerCase();
+  if (!headerEnergy.includes("centesimi di euro/kwh") || !headerFixed.includes("punto di prelievo/anno") || !headerPower.includes("kw per anno") || !headerEnergyUc6.includes("centesimi di euro/kwh")) throw new Error("ARERA_588_BTA6_UC3_UC6_UNIT_HEADERS_INVALID");
+  return parseArera588Bta6Uc3Uc6TableRows({ ...input, rows: candidateRows, sourceSha256: input.sourceSha256 ?? sourceHash(input.body) });
+}
+
+export function parseArera588Bta6ArimTableRows(input: { readonly rows: readonly (readonly string[])[]; readonly sourceReference?: string; readonly publicationDate?: string; readonly retrievedAt: string; readonly sourceSha256: string; readonly tenantId?: string; readonly effectiveFrom?: string; readonly effectiveTo?: string | null }): readonly RegulatoryValueRecord[] {
+  const sourceReference = input.sourceReference ?? ARERA_588_TABLES_URL;
+  const publicationDate = input.publicationDate ?? "2025-12-30";
+  const tenantId = input.tenantId ?? "tenant_local-demo";
+  const effectiveFrom = input.effectiveFrom ?? "2026-01-01";
+  const effectiveTo = input.effectiveTo === undefined ? null : input.effectiveTo;
+  const row = input.rows.find((candidate) => /altre utenze in bassa tensione con potenza disponibile superiore a 16,5 kw/i.test(clean(candidate[1] ?? "")));
+  if (!row) throw new Error("ARERA_588_BTA6_ARIM_ROW_MISSING");
+  const parseTableNumber = (value: string): number => {
+    const parsed = Number(clean(value).replace(/,/g, "."));
+    if (!Number.isFinite(parsed)) throw new Error("ARERA_NUMBER_INVALID");
+    return parsed;
+  };
+  const fixed = parseTableNumber(row[2] ?? "");
+  const power = parseTableNumber(row[3] ?? "");
+  const energy = parseTableNumber(row[4] ?? "");
+  const confirmationSource = `${ARERA_98_PDF_URL};${ARERA_227_PDF_URL}`;
+  const base = {
+    tenantId, sourceType: "OFFICIAL_ATTACHMENT" as const, sourceReference, officialIdentifier: `${ARERA_588_IDENTIFIER}:Tabella B:BTA6:OPEN_UNTIL_SUPERSEDED`,
+    publicationDate, retrievedAt: input.retrievedAt, effectiveFrom, effectiveTo, customerScope: "NON_DOMESTIC_BT_BTA6" as const,
+    sourceSha256: input.sourceSha256, confirmationSource,
+    applicationBasis: "Tabella B ARIM della deliberazione 588/2025/R/com; riga \"Altre utenze in bassa tensione con potenza disponibile superiore a 16,5 kW\"; ARIM indifferenziata rispetto alle classi di agevolazione; valori dal 01/01/2026 confermati dalle deliberazioni 98/2026/R/com e 227/2026/R/com",
+  };
+  return [
+    createValue({ ...base, componentCode: "ARIM", originalValue: fixed, originalUnit: "CENT_EUR/POD/YEAR", applicationBasis: `${base.applicationBasis}; quota fissa` }),
+    createValue({ ...base, componentCode: "ARIM", originalValue: power, originalUnit: "CENT_EUR/KW/YEAR", applicationBasis: `${base.applicationBasis}; quota potenza` }),
+    createValue({ ...base, componentCode: "ARIM", originalValue: energy, originalUnit: "CENT_EUR/KWH", applicationBasis: `${base.applicationBasis}; quota energia` }),
+  ];
+}
+
+export function parseArera588Bta6ArimXlsx(input: { readonly body: Uint8Array; readonly sourceReference?: string; readonly publicationDate?: string; readonly retrievedAt: string; readonly sourceSha256?: string; readonly tenantId?: string; readonly effectiveFrom?: string; readonly effectiveTo?: string | null }): readonly RegulatoryValueRecord[] {
+  const shared = xlsxSharedStrings(input.body);
+  const cells = xlsxSheet(input.body, "xl/worksheets/sheet6.xml", shared);
+  const rowNumbers = rowsFromCells(cells);
+  const candidateRows = rowNumbers.map((row) => ["", xlsxCell(cells, row, "B"), xlsxCell(cells, row, "C"), xlsxCell(cells, row, "D"), xlsxCell(cells, row, "E")]);
+  const headerFixed = clean(xlsxCell(cells, 7, "C")).toLowerCase();
+  const headerPower = clean(xlsxCell(cells, 7, "D")).toLowerCase();
+  const headerEnergy = clean(xlsxCell(cells, 7, "E")).toLowerCase();
+  if (!headerFixed.includes("centesimi di euro/punto di prelievo/anno") || !headerPower.includes("centesimi di euro/kw per anno") || !headerEnergy.includes("centesimi di euro/kwh")) throw new Error("ARERA_588_BTA6_ARIM_UNIT_HEADERS_INVALID");
+  return parseArera588Bta6ArimTableRows({ ...input, rows: candidateRows, sourceSha256: input.sourceSha256 ?? sourceHash(input.body) });
+}
+
 export function parseArera587Annual2026Values(input: { readonly retrievedAt: string; readonly sourceSha256: string; readonly tenantId?: string; readonly publicationDate?: string }): readonly RegulatoryValueRecord[] {
   const base = { tenantId: input.tenantId ?? "tenant_local-demo", sourceType: "OFFICIAL_PROVVEDIMENTO" as const, sourceReference: ARERA_587_PDF_URL, officialIdentifier: ARERA_587_IDENTIFIER, publicationDate: input.publicationDate ?? "2025-12-23", retrievedAt: input.retrievedAt, effectiveFrom: "2026-01-01", effectiveTo: "2027-01-01", customerScope: "ALL_ELECTRICITY", originalUnit: "CENT_EUR/KWH", sourceSha256: input.sourceSha256, authority: "ARERA" as const, publishedBy: "ARERA" as const, calculatedBy: "ARERA" as const, contractPassThroughRequired: true };
   return [
@@ -527,9 +1106,9 @@ export function resolveAreraEffectiveValue(records: readonly RegulatoryValueReco
 
 export class AreraElectricityRegulatorySourceAdapter {
   private readonly repository: RegulatoryRepository;
-  private readonly options: { readonly fetcher?: AreraFetcher; readonly regulatoryRoot?: string; readonly tenantId?: string };
+  private readonly options: { readonly fetcher?: AreraFetcher; readonly regulatoryRoot?: string; readonly tenantId?: string; readonly systemChargesPage?: string; readonly includeBta6Uc?: boolean; readonly includeBta6Arim?: boolean };
 
-  constructor(repository: RegulatoryRepository, options: { readonly fetcher?: AreraFetcher; readonly regulatoryRoot?: string; readonly tenantId?: string } = {}) {
+  constructor(repository: RegulatoryRepository, options: { readonly fetcher?: AreraFetcher; readonly regulatoryRoot?: string; readonly tenantId?: string; readonly systemChargesPage?: string; readonly includeBta6Uc?: boolean; readonly includeBta6Arim?: boolean } = {}) {
     this.repository = repository;
     this.options = options;
   }
@@ -539,20 +1118,24 @@ export class AreraElectricityRegulatorySourceAdapter {
     const tenantId = this.options.tenantId ?? "tenant_local-demo";
     const infrastructurePayload = await fetchOfficialAreraSource(ARERA_575_PAGE, fetcher);
     const infrastructure = parseArera575DomesticInfrastructure({ html: new TextDecoder().decode(infrastructurePayload.bytes), sourceReference: infrastructurePayload.url, retrievedAt: input.retrievedAt, sourceSha256: sourceHash(infrastructurePayload.bytes), tenantId });
-    const decisionPayload = await fetchOfficialAreraSource(ARERA_227_PAGE, fetcher);
+    const decisionPayload = await fetchOfficialAreraSource(this.options.systemChargesPage ?? ARERA_227_PAGE, fetcher);
     const attachments = discoverAreraAttachments(new TextDecoder().decode(decisionPayload.bytes));
     const structuredAttachments = attachments.filter((item) => ["XLSX", "CSV", "HTML"].includes(item.extension));
     const attachment = structuredAttachments[0] ?? attachments.find((item) => ["XLSX", "XLS", "CSV", "HTML", "PDF"].includes(item.extension)) ?? null;
+    let currentEffectiveFrom: string | undefined;
+    try { currentEffectiveFrom = discoverAreraCurrentEffectiveFrom(new TextDecoder().decode(decisionPayload.bytes), input.retrievedAt); } catch (error) {
+      if (!(error instanceof Error) || error.message !== "ARERA_EFFECTIVE_FROM_NOT_DISCOVERED") throw error;
+    }
     let systemChargeRecords: RegulatoryValueRecord[] = [];
     let structuredParse: "PARSED" | "BLOCKED" | "MISSING" = "MISSING";
     for (const currentAttachment of structuredAttachments) {
       try {
         if (currentAttachment.extension === "XLSX") {
           const attachmentPayload = await fetchOfficialAreraSource(currentAttachment.url, fetcher);
-          systemChargeRecords = [...systemChargeRecords, ...parseArera227StructuredAttachment({ body: attachmentPayload.bytes, contentType: attachmentPayload.contentType, sourceReference: attachmentPayload.url, publicationDate: "2026-06-25", retrievedAt: input.retrievedAt, sourceSha256: sourceHash(attachmentPayload.bytes), tenantId })];
+          systemChargeRecords = [...systemChargeRecords, ...parseArera227StructuredAttachment({ body: attachmentPayload.bytes, contentType: attachmentPayload.contentType, sourceReference: attachmentPayload.url, publicationDate: "2026-06-25", retrievedAt: input.retrievedAt, sourceSha256: sourceHash(attachmentPayload.bytes), tenantId, effectiveFrom: currentEffectiveFrom })];
         } else {
           const attachmentPayload = await fetchOfficialAreraSource(currentAttachment.url, fetcher);
-          systemChargeRecords = [...systemChargeRecords, ...parseArera227StructuredAttachment({ body: new TextDecoder().decode(attachmentPayload.bytes), contentType: currentAttachment.extension === "HTML" ? "text/html" : "text/csv", sourceReference: attachmentPayload.url, publicationDate: "2026-06-25", retrievedAt: input.retrievedAt, sourceSha256: sourceHash(attachmentPayload.bytes), tenantId })];
+          systemChargeRecords = [...systemChargeRecords, ...parseArera227StructuredAttachment({ body: new TextDecoder().decode(attachmentPayload.bytes), contentType: currentAttachment.extension === "HTML" ? "text/html" : "text/csv", sourceReference: attachmentPayload.url, publicationDate: "2026-06-25", retrievedAt: input.retrievedAt, sourceSha256: sourceHash(attachmentPayload.bytes), tenantId, effectiveFrom: currentEffectiveFrom })];
         }
         structuredParse = "PARSED";
       } catch (error) {
@@ -578,9 +1161,14 @@ export class AreraElectricityRegulatorySourceAdapter {
     }
     let uc3SourceStrategy: "DIRECT_227" | "OFFICIAL_CARRY_FORWARD" | "UNRESOLVED" = initialKnownCodes.has("UC3") ? "DIRECT_227" : "UNRESOLVED";
     let uc6SourceStrategy: "DIRECT_227" | "OFFICIAL_CARRY_FORWARD" | "UNRESOLVED" = initialKnownCodes.has("UC6") ? "DIRECT_227" : "UNRESOLVED";
-    if (!initialKnownCodes.has("UC3") || !initialKnownCodes.has("UC6")) {
+    if (this.options.includeBta6Uc || this.options.includeBta6Arim || !initialKnownCodes.has("UC3") || !initialKnownCodes.has("UC6")) {
       const priorPayload = await fetchOfficialAreraSource(ARERA_588_TABLES_URL, fetcher);
-      const priorRecords = parseArera588Uc3Uc6Xlsx({ body: priorPayload.bytes, sourceReference: priorPayload.url, retrievedAt: input.retrievedAt, sourceSha256: sourceHash(priorPayload.bytes), tenantId });
+      const priorRecords = [
+        ...parseArera588Uc3Uc6Xlsx({ body: priorPayload.bytes, sourceReference: priorPayload.url, retrievedAt: input.retrievedAt, sourceSha256: sourceHash(priorPayload.bytes), tenantId }),
+        ...parseArera588DomesticAsosArimXlsx({ body: priorPayload.bytes, sourceReference: priorPayload.url, retrievedAt: input.retrievedAt, sourceSha256: sourceHash(priorPayload.bytes), tenantId }),
+        ...(this.options.includeBta6Uc ? parseArera588Bta6Uc3Uc6Xlsx({ body: priorPayload.bytes, sourceReference: priorPayload.url, retrievedAt: input.retrievedAt, sourceSha256: sourceHash(priorPayload.bytes), tenantId }) : []),
+        ...(this.options.includeBta6Arim ? parseArera588Bta6ArimXlsx({ body: priorPayload.bytes, sourceReference: priorPayload.url, retrievedAt: input.retrievedAt, sourceSha256: sourceHash(priorPayload.bytes), tenantId }) : []),
+      ];
       systemChargeRecords = [...systemChargeRecords, ...priorRecords];
       if (!initialKnownCodes.has("UC3")) uc3SourceStrategy = "OFFICIAL_CARRY_FORWARD";
       if (!initialKnownCodes.has("UC6")) uc6SourceStrategy = "OFFICIAL_CARRY_FORWARD";

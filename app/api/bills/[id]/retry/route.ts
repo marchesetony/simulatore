@@ -6,6 +6,8 @@ import { runtimeRepositories } from "../../../../lib/persistence/adapter";
 import { recordRuntimeAudit } from "../../../../lib/persistence/audit";
 import { toPublicDocument } from "../../../../lib/foundation/real-bill";
 import { attachOfficialPun } from "../../../../lib/market/pun-reference";
+import { billVisibilityScope, getBillInScope } from "../../../../lib/foundation/bill-visibility";
+import { resolveBillFeaturePermissions, sanitizeBillForFeatureAccess } from "../../../../lib/foundation/bill-feature-permissions";
 
 const HEADERS = { "cache-control": "no-store, private", "vary": "Cookie, Authorization", "x-content-type-options": "nosniff" };
 
@@ -14,7 +16,9 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
   try {
     const principal = await requestPrincipal(request, "WRITE");
     const repositories = runtimeRepositories();
-    const document = await repositories.billRepository.get(principal.tenantId, id);
+    const scope = await billVisibilityScope(principal, repositories);
+    const access = await resolveBillFeaturePermissions(principal, repositories, scope);
+    const document = await getBillInScope(principal, repositories, id);
     if (!document) return Response.json({ error: { code: "DOCUMENT_NOT_FOUND", message: "Bill document not found" } }, { status: 404, headers: HEADERS });
     const result = await retryEnergyBill({ tenantId: principal.tenantId, document, storage: repositories.documentStorage, repository: repositories.billRepository, authenticated: true, structuredProviderFactory: () => createAnthropicTwoStageBillSdkAdapter(), audit: { async record(event) { await recordRuntimeAudit({ principal, action: `BILL_${event.type}`, resourceType: "BILL", resourceId: event.documentId, outcome: event.outcome === "ALLOWED" ? "ALLOWED" : "FAILED", correlationId: "foundation-bills" }); } } });
     const currentVersion = result.document.versions.find((version) => version.versionId === result.document.currentVersionId);
@@ -22,9 +26,9 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
     if (result.status === "FAILED") {
       const code = errorCode && billPublicError(errorCode) ? errorCode : "BILL_MAPPING_FAILED";
       const publicError = billPublicError(code)!;
-      return Response.json({ error: { code: publicError.code, message: publicError.message }, document: await attachOfficialPun(toPublicDocument(result.document), repositories.marketArchiveRepository), status: result.status, errorCode: publicError.code }, { status: publicError.status, headers: HEADERS });
+      return Response.json({ error: { code: publicError.code, message: publicError.message }, document: sanitizeBillForFeatureAccess(await attachOfficialPun(toPublicDocument(result.document), repositories.marketArchiveRepository), access), status: result.status, errorCode: publicError.code }, { status: publicError.status, headers: HEADERS });
     }
-    return Response.json({ document: await attachOfficialPun(toPublicDocument(result.document), repositories.marketArchiveRepository), status: result.status, errorCode: result.errorCode }, { headers: HEADERS });
+    return Response.json({ document: sanitizeBillForFeatureAccess(await attachOfficialPun(toPublicDocument(result.document), repositories.marketArchiveRepository), access), status: result.status, errorCode: result.errorCode }, { headers: HEADERS });
   } catch (error) {
     const providerCode = billOcrErrorCode(error);
     const publicError = providerCode ? billOcrPublicError(providerCode) : null;

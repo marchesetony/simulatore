@@ -3,10 +3,11 @@ import type { CteContract } from "../types";
 import type { CteApprovedSnapshot } from "../approved-snapshot";
 // @ts-expect-error Node's strip-only test runner requires the explicit extension.
 import { assertCalculationReadyFees, toCalculationReadyOffer } from "../calculation-ready.ts";
-import type { CteArchiveApproval, CteArchiveRecord, CteArchiveStatus, CteArchiveVersion, CteCommercialStatus, CorrectCteArchiveInput, CreateCteArchiveInput } from "./types";
-import type { CteArchiveRepository } from "./types";
+import type { CteArchiveApproval, CteArchiveRecord, CteArchiveStatus, CteArchiveVersion, CteCommercialStatus, CorrectCteArchiveInput, CreateCteArchiveInput, CteArchiveRepository } from "./types";
 // @ts-expect-error Node's strip-only test runner requires the explicit extension.
-import { assertApprovalReady, assertArchiveContract, assertTenantId, intervalsOverlap } from "./validation.ts";
+import { CTE_ARCHIVE_APPROVAL_CAPABILITY } from "./types.ts";
+// @ts-expect-error Node's strip-only test runner requires the explicit extension.
+import { assertApprovalReady, assertArchiveContract, assertNotExpiredAt, assertTenantId, intervalsOverlap, isExpiredAt } from "./validation.ts";
 
 export interface PublicCteApprovedArchiveSummary {
   readonly archiveId: string;
@@ -27,6 +28,19 @@ export interface PublicCteApprovedArchiveDetail {
   readonly blockReason: string | null;
   readonly contract: Record<string, unknown>;
 }
+
+export interface CteApprovalAuditContext {
+  readonly tenantId: string;
+  readonly archiveId: string;
+  readonly cteId: string;
+  readonly versionId: string;
+  readonly actor: string;
+  readonly timestamp: string;
+  readonly previousState: CteArchiveStatus;
+  readonly newState: "APPROVED";
+}
+
+export type CteApprovalAuditWriter = (context: CteApprovalAuditContext) => Promise<void>;
 
 const nowValue = (value?: string): string => {
   const result = value ?? new Date().toISOString();
@@ -68,6 +82,7 @@ function approvedVersionForPublic(record: CteArchiveRecord): CteArchiveVersion |
 }
 
 export function commercialStatusOf(record: CteArchiveRecord): CteCommercialStatus { return record.commercialStatus ?? "ACTIVE"; }
+function isSyntheticQaContract(contract: CteContract): boolean { return contract.sourceProvenance === "SYNTHETIC_QA"; }
 function approvedLifecycleVersion(record: CteArchiveRecord): CteArchiveVersion {
   const version = approvedVersionForPublic(record);
   if (!version) throw new Error("CTE_NOT_APPROVED");
@@ -78,16 +93,24 @@ function commercialReason(value: string): string {
   return value.trim();
 }
 
-function publicPrice(value: { readonly amount: number; readonly currency: "EUR"; readonly unit: string; readonly taxTreatment: string }): Record<string, unknown> {
-  return { amount: value.amount, currency: value.currency, unit: value.unit, taxTreatment: value.taxTreatment };
+function publicPrice(value: { readonly amount: number; readonly currency: "EUR"; readonly unit: string; readonly taxTreatment: string; readonly lossTreatment?: string }): Record<string, unknown> {
+  return { amount: value.amount, currency: value.currency, unit: value.unit, taxTreatment: value.taxTreatment, ...(value.lossTreatment === undefined ? {} : { lossTreatment: value.lossTreatment }) };
 }
 
-function publicFee(value: { readonly label: string; readonly amount: number; readonly currency: "EUR"; readonly unit: string; readonly taxTreatment: string }): Record<string, unknown> {
-  return { label: value.label, ...publicPrice(value) };
+function publicFee(value: { readonly label: string; readonly amount: number; readonly currency: "EUR"; readonly unit: string; readonly taxTreatment: string; readonly period?: string; readonly monthlyEquivalent?: number; readonly lossTreatment?: string }): Record<string, unknown> {
+  return { label: value.label, ...publicPrice(value), ...(value.period === undefined ? {} : { period: value.period }), ...(value.monthlyEquivalent === undefined ? {} : { monthlyEquivalent: value.monthlyEquivalent }) };
 }
 
 function publicDeclared(value: CteContract["commercialTerms"]["imbalance"]): Record<string, unknown> {
   return value.status === "DECLARED" ? { status: value.status, component: publicFee(value.component) } : { status: value.status, reason: value.reason };
+}
+
+function publicPassThrough(value: NonNullable<CteContract["commercialTerms"]["passThroughComponents"]>[number]): Record<string, unknown> {
+  return { ...value, ...(value.declarationState === "EXPLICIT_COMPONENT" ? { fee: publicFee(value.fee) } : {}) };
+}
+
+function publicExitFee(value: NonNullable<CteContract["commercialTerms"]["exitFee"]>): Record<string, unknown> {
+  return { amount: value.amount, currency: value.currency, condition: value.condition, durationReference: value.durationReference, sourceText: value.sourceText };
 }
 
 function publicContract(contract: CteContract, snapshot?: CteApprovedSnapshot): Record<string, unknown> {
@@ -102,7 +125,9 @@ function publicContract(contract: CteContract, snapshot?: CteApprovedSnapshot): 
     expiry: contract.expiry,
     currency: contract.currency,
     taxTreatment: contract.taxTreatment,
-    eligibility: contract.vector === "EE" ? { customerTypes: contract.eligibility.customerTypes, voltageLevels: contract.eligibility.voltageLevels } : { customerTypes: contract.eligibility.customerTypes },
+    eligibility: contract.vector === "EE"
+      ? { customerTypes: contract.eligibility.customerTypes, ...(contract.eligibility.customerScopes ? { customerScopes: contract.eligibility.customerScopes } : {}), voltageLevels: contract.eligibility.voltageLevels }
+      : { customerTypes: contract.eligibility.customerTypes, ...(contract.eligibility.customerScopes ? { customerScopes: contract.eligibility.customerScopes } : {}) },
     pricing,
     commercialTerms: {
       fixedFees: contract.commercialTerms.fixedFees.map(publicFee),
@@ -110,6 +135,14 @@ function publicContract(contract: CteContract, snapshot?: CteApprovedSnapshot): 
       imbalance: publicDeclared(contract.commercialTerms.imbalance),
       oneOffFees: contract.commercialTerms.oneOffFees.map(publicFee),
       commercialDiscounts: contract.commercialTerms.commercialDiscounts.map(publicFee),
+      ...(contract.commercialTerms.passThroughComponents === undefined ? {} : { passThroughComponents: contract.commercialTerms.passThroughComponents.map(publicPassThrough) }),
+      ...(contract.commercialTerms.economicDuration === undefined ? {} : { economicDuration: contract.commercialTerms.economicDuration }),
+      ...(contract.commercialTerms.lossSemantics === undefined ? {} : { lossSemantics: contract.commercialTerms.lossSemantics }),
+      ...(contract.commercialTerms.exitFee === undefined ? {} : { exitFee: publicExitFee(contract.commercialTerms.exitFee) }),
+      ...(contract.commercialTerms.punRule === undefined ? {} : { punRule: contract.commercialTerms.punRule }),
+      ...(contract.commercialTerms.capacityMarketSchedule === undefined ? {} : { capacityMarketSchedule: contract.commercialTerms.capacityMarketSchedule }),
+      ...(contract.commercialTerms.dispatchingReference === undefined ? {} : { dispatchingReference: contract.commercialTerms.dispatchingReference }),
+      ...(contract.commercialTerms.lossReference === undefined ? {} : { lossReference: contract.commercialTerms.lossReference }),
     },
     ...(snapshot ? { reviewFields: snapshot.reviewFields, notFoundFields: snapshot.notFoundFields, sources: snapshot.sources, approvedAt: snapshot.approvedAt, approvedVersion: snapshot.approvedVersion } : {}),
     ...(snapshot ? { documentType: snapshot.documentType, documentSize: snapshot.documentSize } : {}),
@@ -158,7 +191,7 @@ export async function createCteArchive(repository: CteArchiveRepository, input: 
   const versionId = randomUUID();
   const version: CteArchiveVersion = { versionId, versionNumber: 1, supersedesVersionId: null, status: statusForContract(input.contract), contract: input.contract, createdAt: now };
   if (version.status === "APPROVED") {
-    ensureCalculationReady(input.contract);
+    ensureCalculationReady(input.contract, undefined, now);
     const overlap = (await repository.list(input.tenantId)).some((candidate) => { const approved = candidate.currentApprovedVersionId ? candidate.versions.find((item) => item.versionId === candidate.currentApprovedVersionId) : null; return approved !== null && approved !== undefined && sameOffer(approved.contract, input.contract) && intervalsOverlap(approved.contract.validity.periodStart, approved.contract.validity.periodEnd, input.contract.validity.periodStart, input.contract.validity.periodEnd); });
     if (overlap) throw new Error("CTE_APPROVED_VALIDITY_OVERLAP");
   }
@@ -170,13 +203,14 @@ export async function createCteArchive(repository: CteArchiveRepository, input: 
     history: [event({ archiveId, tenantId: input.tenantId, cteId: input.contract.cteId, vector: input.contract.vector, createdAt: now, updatedAt: now, currentWorkingVersionId: versionId, currentApprovedVersionId: version.status === "APPROVED" ? versionId : null, versions: [version], approvals: [], history: [] }, "CREATED", version, now, actor, null, null)],
     commercialStatus: "ACTIVE", blockedAt: null, blockedBy: null, blockReason: null, reactivatedAt: null, reactivatedBy: null, deletedAt: null, deletedBy: null,
   };
-  await repository.save(record);
+  await repository.save(record, version.status === "APPROVED" ? CTE_ARCHIVE_APPROVAL_CAPABILITY : undefined);
   return structuredClone(record);
 }
 
-function ensureCalculationReady(contract: CteContract, approval?: CteContract["approval"]): void {
+function ensureCalculationReady(contract: CteContract, approval?: CteContract["approval"], asOf?: string): void {
   const candidate = approval ? contractWithApproval(contract, approval) : contract;
   assertApprovalReady(candidate);
+  if (asOf) assertNotExpiredAt(candidate, asOf);
   const ready = toCalculationReadyOffer(candidate);
   assertCalculationReadyFees([...ready.fixedFees, ...ready.variableFees, ...ready.oneOffFees, ...ready.commercialDiscounts]);
   if (ready.imbalance.status === "DECLARED") assertCalculationReadyFees([ready.imbalance.component]);
@@ -215,17 +249,19 @@ export async function reviewCteArchive(repository: CteArchiveRepository, tenantI
   await repository.save(next); return structuredClone(next);
 }
 
-export async function approveCteArchive(repository: CteArchiveRepository, tenantId: string, archiveId: string, versionId: string, reviewer: string, decisionId: string, at?: string): Promise<CteArchiveRecord> {
+export async function approveCteArchive(repository: CteArchiveRepository, tenantId: string, archiveId: string, versionId: string, reviewer: string, decisionId: string, at?: string, audit?: CteApprovalAuditWriter): Promise<CteArchiveRecord> {
   assertTenantId(tenantId);
   const record = await repository.get(tenantId, archiveId);
   if (!record) throw new Error("CTE_ARCHIVE_NOT_FOUND");
   if (record.currentWorkingVersionId !== versionId) throw new Error("CTE_VERSION_NOT_CURRENT");
   const source = versionFor(record, versionId);
   if (source.status === "APPROVED") throw new Error("CTE_VERSION_ALREADY_APPROVED");
+  if (source.status !== "REVIEWED" || source.contract.approval.status !== "NEEDS_REVIEW") throw new Error("CTE_VERSION_NOT_APPROVABLE");
+  if (!audit) throw new Error("APPROVAL_AUDIT_REQUIRED");
   const when = nowValue(at);
   const actor = actorValue(reviewer);
   const approvedMetadata = { status: "APPROVED" as const, reviewer: actor, reviewedAt: when, decisionId: actorValue(decisionId) };
-  ensureCalculationReady(source.contract, approvedMetadata);
+  ensureCalculationReady(source.contract, approvedMetadata, when);
   const previous = currentApproved(record);
   const versions = record.versions.map((version) => version.versionId === source.versionId
     ? { ...version, status: "APPROVED" as const, contract: contractWithApproval(version.contract, approvedMetadata) }
@@ -236,7 +272,8 @@ export async function approveCteArchive(repository: CteArchiveRepository, tenant
   if (overlap) throw new Error("CTE_APPROVED_VALIDITY_OVERLAP");
   const approval = approvalFor(approvedVersion, actor, when, "APPROVED", record.approvals.at(-1)?.approvalId ?? null);
   const next: CteArchiveRecord = { ...record, updatedAt: when, currentApprovedVersionId: approvedVersion.versionId, versions: sortVersions(versions), approvals: [...record.approvals, approval], history: [...record.history, ...(previous ? [event(record, "EXPIRED", previous, when, actor, "SUPERSEDED_BY_APPROVAL", null)] : []), event(record, "APPROVED", approvedVersion, when, actor, null, source.supersedesVersionId)] };
-  await repository.save(next);
+  await audit({ tenantId, archiveId, cteId: record.cteId, versionId: approvedVersion.versionId, actor, timestamp: when, previousState: source.status, newState: "APPROVED" });
+  await repository.save(next, CTE_ARCHIVE_APPROVAL_CAPABILITY);
   return structuredClone(next);
 }
 
@@ -280,9 +317,55 @@ export async function deleteCteArchive(repository: CteArchiveRepository, tenantI
   const approved = approvedLifecycleVersion(record);
   const actor = actorValue(actorValueInput);
   const when = nowValue(at);
+  if (!isSyntheticQaContract(approved.contract) && !isExpiredAt(approved.contract, when)) throw new Error("CTE_RETENTION_NOT_DUE");
   const next: CteArchiveRecord = { ...record, updatedAt: when, commercialStatus: "DELETED", deletedAt: when, deletedBy: actor, history: [...record.history, event(record, "COMMERCIAL_DELETED", approved, when, actor, record.blockReason ?? null, null)] };
   await repository.save(next);
   return structuredClone(next);
+}
+
+export interface CteExpiryRunResult {
+  readonly tenantId: string;
+  readonly scanned: number;
+  readonly expired: number;
+  readonly unchanged: number;
+}
+
+/**
+ * Marks expired CTE versions as historical and removes the authoritative pointer.
+ * The contract and approval history remain readable; no physical archive deletion occurs.
+ */
+export async function expireCteArchive(repository: CteArchiveRepository, tenantId: string, archiveId: string, actorValueInput: string, at?: string): Promise<CteArchiveRecord> {
+  assertTenantId(tenantId);
+  const record = await repository.get(tenantId, archiveId);
+  if (!record) throw new Error("CTE_ARCHIVE_NOT_FOUND");
+  const when = nowValue(at);
+  const actor = actorValue(actorValueInput);
+  const approvedId = record.currentApprovedVersionId;
+  const approved = approvedId ? record.versions.find((version) => version.versionId === approvedId) ?? null : null;
+  const working = record.versions.find((version) => version.versionId === record.currentWorkingVersionId) ?? null;
+  const target = approved && isExpiredAt(approved.contract, when) ? approved : !approved && working && isExpiredAt(working.contract, when) ? working : null;
+  if (!target || (target.status === "EXPIRED" && (record.currentApprovedVersionId === null || record.currentApprovedVersionId !== target.versionId))) return structuredClone(record);
+  const versions = record.versions.map((version) => version.versionId === target.versionId ? { ...version, status: "EXPIRED" as const } : version);
+  const next: CteArchiveRecord = {
+    ...record,
+    updatedAt: when,
+    currentApprovedVersionId: approved?.versionId === target.versionId ? null : record.currentApprovedVersionId,
+    versions: sortVersions(versions),
+    history: [...record.history, event(record, "EXPIRED", target, when, actor, "VALIDITY_EXPIRED", null)],
+  };
+  await repository.save(next, approved?.versionId === target.versionId ? CTE_ARCHIVE_APPROVAL_CAPABILITY : undefined);
+  return structuredClone(next);
+}
+
+export async function expireCteArchives(repository: CteArchiveRepository, tenantId: string, actor: string, at?: string): Promise<CteExpiryRunResult> {
+  assertTenantId(tenantId);
+  const records = await repository.list(tenantId);
+  let expired = 0;
+  for (const record of records) {
+    const next = await expireCteArchive(repository, tenantId, record.archiveId, actor, at);
+    if (next.history.length !== record.history.length) expired += 1;
+  }
+  return { tenantId, scanned: records.length, expired, unchanged: records.length - expired };
 }
 
 export async function rejectCteArchive(repository: CteArchiveRepository, tenantId: string, archiveId: string, versionId: string, reviewer: string, reason: string, at?: string): Promise<CteArchiveRecord> {
@@ -321,7 +404,8 @@ export class CteArchiveService {
   import(input: CreateCteArchiveInput): Promise<CteArchiveRecord> { return createCteArchive(this.repository, input); }
   correct(input: CorrectCteArchiveInput): Promise<CteArchiveRecord> { return createCteCorrection(this.repository, input); }
   review(tenantId: string, archiveId: string, versionId: string, reviewer: string, at?: string): Promise<CteArchiveRecord> { return reviewCteArchive(this.repository, tenantId, archiveId, versionId, reviewer, at); }
-  approve(tenantId: string, archiveId: string, versionId: string, reviewer: string, decisionId: string, at?: string): Promise<CteArchiveRecord> { return approveCteArchive(this.repository, tenantId, archiveId, versionId, reviewer, decisionId, at); }
+  approve(tenantId: string, archiveId: string, versionId: string, reviewer: string, decisionId: string, at?: string, audit?: CteApprovalAuditWriter): Promise<CteArchiveRecord> { return approveCteArchive(this.repository, tenantId, archiveId, versionId, reviewer, decisionId, at, audit); }
   reject(tenantId: string, archiveId: string, versionId: string, reviewer: string, reason: string, at?: string): Promise<CteArchiveRecord> { return rejectCteArchive(this.repository, tenantId, archiveId, versionId, reviewer, reason, at); }
+  expire(tenantId: string, archiveId: string, actor: string, at?: string): Promise<CteArchiveRecord> { return expireCteArchive(this.repository, tenantId, archiveId, actor, at); }
   history(tenantId: string, archiveId: string): Promise<ReadonlyArray<CteArchiveRecord["history"][number]>> { return getCteArchiveHistory(this.repository, tenantId, archiveId); }
 }

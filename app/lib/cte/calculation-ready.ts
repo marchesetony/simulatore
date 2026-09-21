@@ -23,11 +23,20 @@ export function toCalculationReadyOffer(value: unknown): CalculationReadyOffer {
     taxTreatment: contract.taxTreatment,
     validity: contract.validity,
     expiry: contract.expiry,
+    eligibility: contract.eligibility,
     fixedFees: fees.fixedFees,
     variableFees: fees.variableFees,
     imbalance: fees.imbalance,
     oneOffFees: fees.oneOffFees,
     commercialDiscounts: fees.commercialDiscounts,
+    ...(fees.passThroughComponents === undefined ? {} : { passThroughComponents: fees.passThroughComponents }),
+    ...(fees.economicDuration === undefined ? {} : { economicDuration: fees.economicDuration }),
+    ...(fees.lossSemantics === undefined ? {} : { lossSemantics: fees.lossSemantics }),
+    ...(fees.exitFee === undefined ? {} : { exitFee: fees.exitFee }),
+    ...(fees.punRule === undefined ? {} : { punRule: fees.punRule }),
+    ...(fees.capacityMarketSchedule === undefined ? {} : { capacityMarketSchedule: fees.capacityMarketSchedule }),
+    ...(fees.dispatchingReference === undefined ? {} : { dispatchingReference: fees.dispatchingReference }),
+    ...(fees.lossReference === undefined ? {} : { lossReference: fees.lossReference }),
   };
   return contract.vector === "EE"
     ? { ...base, vector: "EE", pricing: contract.pricing }

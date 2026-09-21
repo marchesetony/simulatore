@@ -18,24 +18,22 @@ const deleteCore = async (tenantId, id) => {
   const document = await repository.get(tenantId, id);
   if (!document) return { status: 200, deleted: true };
   if (document.currentApprovedVersionId !== null) return { status: 409, code: "BILL_APPROVED_DELETE_FORBIDDEN" };
-  await storage.remove(document.objectKey);
-  await repository.delete(tenantId, id);
-  return { status: 200, deleted: true };
+  return { status: 409, code: "BILL_RETENTION_NOT_DUE" };
 };
 const seedFailure = (seedTenant, error) => ingestBill({ tenantId: seedTenant, fileName: "offline.pdf", contentType: "application/pdf", bytes: pdf, maxBytes: 100_000, storage, repository, audit, extractor: { async extract() { throw new Error(error); } } });
 
 try {
   const failed = await seedFailure(tenant, "BILL_EXTRACTION_REQUIRED_FIELD_MISSING");
   const failedKey = failed.objectKey;
-  assert.deepEqual(await deleteCore(tenant, failed.id), { status: 200, deleted: true });
-  assert.equal(await repository.get(tenant, failed.id), null);
-  assert.equal(await exists(failedKey), false);
+  assert.deepEqual(await deleteCore(tenant, failed.id), { status: 409, code: "BILL_RETENTION_NOT_DUE" });
+  assert.ok(await repository.get(tenant, failed.id));
+  assert.equal(await exists(failedKey), true);
 
   const legacy = await seedFailure(tenant, "OCR_PROVIDER_REQUIRED");
   const legacyKey = legacy.objectKey;
-  assert.deepEqual(await deleteCore(tenant, legacy.id), { status: 200, deleted: true });
-  assert.equal(await repository.get(tenant, legacy.id), null);
-  assert.equal(await exists(legacyKey), false);
+  assert.deepEqual(await deleteCore(tenant, legacy.id), { status: 409, code: "BILL_RETENTION_NOT_DUE" });
+  assert.ok(await repository.get(tenant, legacy.id));
+  assert.equal(await exists(legacyKey), true);
 
   const approvedSeed = await ingestBill({ tenantId: tenant, fileName: "approved.pdf", contentType: "application/pdf", bytes: pdf, maxBytes: 100_000, storage, repository, audit, extractor: { async extract() { return { text: "Supplier: S; POD: IT001E12345678; Customer: C; Periodo: 01/01/2026 - 31/01/2026; Consumo annuo: 100; Consumo fatturato: 10; Totale da pagare: 20", pages: 1 }; } } });
   let working = approvedSeed;
@@ -56,8 +54,9 @@ try {
   const panel = await (await import("node:fs/promises")).readFile(new URL("../app/components/BillOperationalPanel.tsx", import.meta.url), "utf8");
   assert.match(source, /export async function DELETE/);
   assert.match(source, /requestPrincipal\(request, "WRITE"\)/);
-  assert.match(source, /documentStorage\.remove\(document\.objectKey\)/);
-  assert.match(source, /billRepository\.delete\(principal\.tenantId, id\)/);
+  assert.match(source, /BILL_RETENTION_NOT_DUE/);
+  assert.doesNotMatch(source, /documentStorage\.remove\(principal\.tenantId, document\.id\)/);
+  assert.doesNotMatch(source, /billRepository\.delete\(principal\.tenantId, id\)/);
   assert.match(panel, /requestJson\("\/api\/bills\/" \+ encodeURIComponent\(id\), \{ method: "DELETE" \}\)/);
   assert.match(panel, /setSelected\(null\)/);
   assert.match(panel, /await load\(\)/);

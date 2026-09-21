@@ -196,6 +196,8 @@ export interface BillDocumentModel {
   readonly resolvedVector: "EE" | "GAS" | "UNKNOWN";
   readonly invoicePunReferences: import("../market/pun-reference").OfficialPunModel;
   readonly regulatoryAudit: import("../foundation/bill-regulatory-audit").BillRegulatoryAuditDTO | null;
+  readonly featurePermissions?: import("../foundation/bill-feature-permissions").BillFeatureAccessSnapshot;
+  readonly verificationSummary?: import("../foundation/bill-feature-permissions").BillVerificationSummary | null;
   readonly analystReview: import("../foundation/bill-analyst-review").BillAnalystReviewDTO;
 }
 
@@ -266,6 +268,9 @@ export interface ProposalModel {
 }
 
 export interface SimulationDraft {
+  readonly archiveId?: string;
+  readonly billId?: string;
+  readonly billVersion?: string;
   readonly vector: UiVector;
   readonly calculationDate: string;
   readonly periodStart: string;
@@ -282,4 +287,5 @@ export interface SimulationDraft {
   readonly correctionRequired: boolean;
   readonly correctionCoefficient: string;
   readonly baseline: string;
+  readonly monthlyProfile?: readonly { readonly month: string; readonly f1: number; readonly f2: number; readonly f3: number }[];
 }

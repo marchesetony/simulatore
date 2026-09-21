@@ -13,7 +13,9 @@ const css = await read("app/globals.css");
 
 for (const label of ["Dashboard", "Bollette", "Archivio CTE", "Dati di mercato", "Simulazioni", "Proposte", "Stato sistema"]) assert.ok(shell.includes(label), `missing navigation label: ${label}`);
 for (const endpoint of ["/api/foundation/context", "/api/health/readiness", "/api/bills", "/api/cte/archive", "/api/cte/ingestion", "/api/market/archive", "/api/calculation", "/api/comparison", "/api/proposal", "/api/proposal/comparison", "/api/proposal/export/"]) assert.match(shell + cte, new RegExp(endpoint.replaceAll("/", "\\/")));
-for (const format of ["json", "csv", "html"]) assert.equal(await read(`app/api/proposal/export/${format}/route.ts`).then(() => true), true);
+for (const format of ["json", "csv", "html", "pdf"]) assert.equal(await read(`app/api/proposal/export/${format}/route.ts`).then(() => true), true);
+assert.match(await read("app/api/proposal/route.ts"), /export async function GET/);
+assert.match(await read("app/api/proposal/[id]/route.ts"), /export async function GET/);
 for (const label of ["Energia elettrica (EE)", "Gas (GAS)", "F1 (kWh)", "Consumo GAS", "Fingerprint", "Carica CTE", "Seleziona documento", "Provider Anthropic non configurato", "Pagina", "Non trovato", "Salva correzione", "Approva CTE"]) assert.ok((shell + cte).includes(label), `missing UI contract: ${label}`);
 
 assert.match(page, /OperationalShell/);
@@ -30,7 +32,9 @@ assert.match(shell, /method: "PATCH"/);
 assert.match(shell, /operation, field/);
 assert.match(shell, /\/api\/proposal\/comparison/);
 assert.match(shell, /comparisonSource\?"\/api\/proposal\/comparison":"\/api\/proposal"/);
-assert.match(shell, /comparison,selectedCalculationId:selectedId/);
+assert.match(shell, /comparisonId:comparison\?\.comparisonId/);
+assert.match(shell, /comparisonFingerprint:comparison\?\.fingerprint/);
+assert.match(shell, /selectedCalculationId:selectedId/);
 assert.match(shell, /validateProposalResponse/);
 assert.match(shell, /selectedResult\.calculationFingerprint/);
 assert.match(shell, /expectedRanking/); assert.match(shell, /selectedResult\.rankingPosition === expectedRanking\.rank/); assert.match(shell, /selectedResult\.tieGroup === expectedRanking\.tieGroup/); assert.match(shell, /selectedResult\.rankingPosition === null/); assert.match(shell, /selectedResult\.tieGroup === null/); assert.match(shell, /comparison\?\.ranking\.find/);
@@ -38,6 +42,9 @@ assert.match(shell, /comparison\.fingerprint/); assert.match(shell, /comparison\
 assert.match(shell, /archiveId:selected\.sourceCte\.archiveId/);
 for (const mismatch of [/proposal\.tenantId\s*!==\s*tenantId/, /proposal\.vector\s*!==\s*selected\.vector/, /proposal\.calculationFingerprint\s*!==\s*selected\.fingerprint/, /(?:proposal\.)?selectedResult\.calculationId\s*!==\s*selected\.calculationId/, /(?:proposal\.)?selectedResult\.calculationFingerprint\s*!==\s*selected\.fingerprint/]) assert.match(shell, mismatch);
 assert.match(shell, /proposalFingerprint\.slice\(0, 32\)/);
+assert.match(shell, /exportProposal\("PDF"\)/);
+assert.match(shell, /proposalId:proposal\.proposalId/);
+assert.match(await read("app/lib/proposal/api.ts"), /body\.proposalId/);
 assert.doesNotMatch(shell, /fingerprint\(/);
 assert.doesNotMatch(shell, /bill\.vector/);
 for (const field of ["documentType", "vector", "supplier.name", "offer.name", "validity.periodStart", "pricing.reference", "pricing.spread.amount", "commercialTerms.fixedFees"]) assert.match(cte, new RegExp(field.replaceAll(".", "\\.")));

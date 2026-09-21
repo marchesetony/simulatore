@@ -43,7 +43,7 @@ export function assertArchiveContract(contract: unknown, tenantId: string, expec
   assertArchiveDate(candidate.validity.periodEnd, "CTE_VALIDITY_INVALID");
   if (candidate.expiry.status === "EXPIRES_ON") {
     assertArchiveDate(candidate.expiry.date, "CTE_EXPIRY_INVALID");
-    if (candidate.expiry.date < candidate.validity.periodStart) fail("CTE_EXPIRY_INVALID");
+    if (candidate.expiry.date < candidate.validity.periodStart || candidate.expiry.date > candidate.validity.periodEnd) fail("CTE_EXPIRY_INVALID");
   }
 }
 
@@ -53,6 +53,20 @@ export function assertApprovalReady(contract: CteContract): void {
   // A correction is approved only after the service replaces the review metadata.
   if (contract.approval.status === "DRAFT" || contract.approval.status === "NEEDS_REVIEW" || contract.approval.status === "REJECTED") return;
   fail("CTE_APPROVAL_NOT_READY");
+}
+
+export function assertNotExpiredAt(contract: CteContract, at: string): void {
+  const timestamp = Date.parse(at);
+  if (!Number.isFinite(timestamp)) fail("DATE_TIME_INVALID");
+  if (isExpiredAt(contract, at)) fail("CTE_EXPIRED");
+}
+
+export function isExpiredAt(contract: CteContract, at: string): boolean {
+  const timestamp = Date.parse(at);
+  if (!Number.isFinite(timestamp)) fail("DATE_TIME_INVALID");
+  const date = at.slice(0, 10);
+  if (contract.expiry.status === "EXPIRES_ON") return date > contract.expiry.date;
+  return date >= contract.validity.periodEnd;
 }
 
 export function intervalsOverlap(leftStart: string, leftEnd: string, rightStart: string, rightEnd: string): boolean {

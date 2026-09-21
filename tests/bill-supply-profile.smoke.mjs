@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { buildBillSupplyProfile } from "../app/lib/ingestion/bill-supply-profile.ts";
+import { buildBillSupplyProfile, normalizeBillSupplyProfile } from "../app/lib/ingestion/bill-supply-profile.ts";
 
 const fact = (code, value, status = "FOUND") => ({ code, value, status });
 const resident = buildBillSupplyProfile([
@@ -35,6 +35,23 @@ const noInference = buildBillSupplyProfile([fact("SUPPLY_USE_CATEGORY_RAW", "RES
 assert.equal(noInference.supplyUseCategory.normalizedValue, "UNKNOWN");
 assert.equal(noInference.domesticResidenceStatus.normalizedValue, "UNKNOWN");
 
+const legacyProfile = {
+  supplyUseCategory: { rawValue: null, normalizedValue: "UNKNOWN", status: "NOT_FOUND" },
+  domesticResidenceStatus: { rawValue: "Domestico residente", normalizedValue: "RESIDENT", status: "FOUND" },
+  contractualTariffCategory: { rawValue: "TD", normalizedValue: "TD", status: "FOUND" },
+  marketRegime: { rawValue: "Mercato libero", normalizedValue: "MERCATO_LIBERO", status: "FOUND" },
+  voltageClass: { rawValue: "220 V", normalizedValue: null, status: "FOUND" },
+  nominalVoltage: { rawValue: "220", normalizedValue: null, status: "FOUND" },
+  powerCommitted: { rawValue: "3", normalizedValue: null, status: "FOUND" },
+  powerAvailable: { rawValue: "3.3", normalizedValue: null, status: "FOUND" },
+};
+const normalizedLegacyProfile = normalizeBillSupplyProfile(legacyProfile);
+assert.equal(normalizedLegacyProfile.powerMaximumDrawn.status, "NOT_FOUND");
+assert.equal(normalizedLegacyProfile.powerBillingBasis.normalizedValue, "UNKNOWN");
+assert.throws(() => normalizeBillSupplyProfile({ ...legacyProfile, powerAvailable: { rawValue: 3.3, normalizedValue: null, status: "FOUND" } }), /BILL_SUPPLY_PROFILE_INVALID/);
+assert.throws(() => normalizeBillSupplyProfile({ ...legacyProfile, powerAvailable: null }), /BILL_SUPPLY_PROFILE_INVALID/);
+
 console.log("BILL_SUPPLY_PROFILE_NORMALIZATION=OK");
 console.log("BILL_SUPPLY_PROFILE_RAW_PRESERVED=OK");
 console.log("BILL_SUPPLY_PROFILE_NO_INFERENCE=OK");
+console.log("BILL_SUPPLY_PROFILE_LEGACY_COMPATIBILITY=OK");

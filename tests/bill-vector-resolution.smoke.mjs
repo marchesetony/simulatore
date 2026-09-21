@@ -35,4 +35,10 @@ const contract = structuredBillContract({ extraction: corrected, tenantId: "tena
 assert.equal(contract?.vector, "EE");
 assert.equal(contract?.supply.pod, "IT001E12345678");
 
+const roundedDisplay = extraction({ ...eeBands, pod: found("IT001E12345678"), f1Consumption: found(100.11), f2Consumption: found(50.11), f3Consumption: found(25.10), billedConsumption: found(175) });
+const roundedContract = structuredBillContract({ extraction: roundedDisplay, tenantId: "tenant_alpha", billId: "bill-rounded-display", versionId: "v1" });
+assert.equal(roundedContract?.consumption.total.value, 175.32);
+const conflictingDisplay = extraction({ ...eeBands, pod: found("IT001E12345678"), billedConsumption: found(176) });
+assert.equal(structuredBillContract({ extraction: conflictingDisplay, tenantId: "tenant_alpha", billId: "bill-conflicting-display", versionId: "v1" }), null);
+
 console.log("bill vector resolution smoke: ok (hard POD/PDR priority, secondary evidence, advisory model, conflict review and PUN exclusion)");

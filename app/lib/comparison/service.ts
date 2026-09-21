@@ -3,8 +3,11 @@ import type { CteArchiveRepository } from "../cte/archive/types";
 import type { MarketArchiveRepository } from "../market/types";
 // @ts-expect-error Node's strip-only test runner requires the explicit extension.
 import { calculatePreparedOffer, exclusionFor, prepareApprovedOffer } from "../calculation/engine.ts";
-import type { CalculationExclusionCode, CalculationResult, SimulationRequest } from "../calculation/types";
-import type { ComparisonRankingEntry, ComparisonResult } from "./types";
+import type { CalculationDependencies } from "../calculation/engine";
+import type { CalculationExclusionCode, CalculationResult, ContractualPassThroughState, ContractualPassThroughStatus, RegulatedComponentIncluded, SimulationRequest } from "../calculation/types";
+// @ts-expect-error Node's strip-only test runner requires the explicit extension.
+import { EE_FISCAL_EXCLUSION_NOTICE } from "../calculation/economic-scope.ts";
+import type { ComparisonCostBasis, ComparisonRankingEntry, ComparisonResult } from "./types";
 
 function canonical(value: unknown): string {
   if (value === null || typeof value !== "object") return JSON.stringify(value);
@@ -42,38 +45,88 @@ function codeOf(error: unknown): CalculationExclusionCode {
   const code = error instanceof Error && error.message in exclusionMessages ? error.message as CalculationExclusionCode : "CALCULATION_READY_INVALID";
   return code;
 }
+function canonicalComponentSet(values: readonly RegulatedComponentIncluded[]): readonly RegulatedComponentIncluded[] { return [...new Set(values)].sort() as RegulatedComponentIncluded[]; }
+const RESOLVED_CONTRACTUAL_STATES = new Set<ContractualPassThroughState>(["RESOLVED_EXPLICIT", "RESOLVED_INCLUDED", "RESOLVED_NOT_APPLICABLE"]);
+function normalizedContractualState(state: ContractualPassThroughState): "RESOLVED" | "UNRESOLVED_NOT_DECLARED" | "UNRESOLVED_EXTERNAL" { if (RESOLVED_CONTRACTUAL_STATES.has(state)) return "RESOLVED"; return state === "UNRESOLVED_NOT_DECLARED" ? state : "UNRESOLVED_EXTERNAL"; }
+function canonicalContractualCoverage(states: readonly ContractualPassThroughStatus[]): string {
+  const byKind = new Map<string, Array<{ state: ReturnType<typeof normalizedContractualState>; effectiveFrom: string; effectiveTo: string }>>();
+  states.forEach((status) => { const list = byKind.get(status.kind) ?? []; list.push({ state: normalizedContractualState(status.state), effectiveFrom: status.effectiveFrom, effectiveTo: status.effectiveTo }); byKind.set(status.kind, list); });
+  return [...byKind.keys()].sort().map((kind) => {
+    const merged: Array<{ state: ReturnType<typeof normalizedContractualState>; effectiveFrom: string; effectiveTo: string }> = [];
+    for (const segment of (byKind.get(kind) ?? []).sort((left, right) => left.effectiveFrom.localeCompare(right.effectiveFrom) || left.effectiveTo.localeCompare(right.effectiveTo))) {
+      const previous = merged.at(-1);
+      if (previous && previous.state === segment.state && previous.effectiveTo === segment.effectiveFrom) previous.effectiveTo = segment.effectiveTo;
+      else merged.push({ ...segment });
+    }
+    return `${kind}=${merged.map((segment) => `${segment.state}:${segment.effectiveFrom}:${segment.effectiveTo}`).join(",")}`;
+  }).join("|");
+}
+export function contractualCoverageKey(result: CalculationResult): string | null {
+  if (result.contractualPassThroughStates === undefined) return result.contractualPassThroughCompleteness === undefined ? null : "INVALID_CONTRACTUAL_METADATA";
+  return canonicalContractualCoverage(result.contractualPassThroughStates);
+}
+export interface ComparisonCostSelection {
+  readonly comparisonCost: CalculationResult["totalCommercialCost"];
+  readonly comparisonCostBasis: ComparisonCostBasis;
+  readonly regulatedComponentsIncluded: readonly RegulatedComponentIncluded[];
+}
+export function comparisonCostOf(result: CalculationResult): ComparisonCostSelection | null {
+  if (result.costScope === "COMMERCIAL_ONLY") return result.totalCommercialPlusRegulatedSubsetCost === null ? { comparisonCost: result.totalCommercialCost, comparisonCostBasis: "COMMERCIAL_ONLY", regulatedComponentsIncluded: [] } : null;
+  if (result.costScope === "COMMERCIAL_PLUS_REGULATED_NET_OF_TAX_COMPLETE" && result.totalCommercialPlusRegulatedSubsetCost !== null) return { comparisonCost: result.totalCommercialPlusRegulatedSubsetCost, comparisonCostBasis: "COMMERCIAL_PLUS_REGULATED_NET_OF_TAX_COMPLETE", regulatedComponentsIncluded: canonicalComponentSet(result.regulatedComponentsIncluded) };
+  if (result.costScope === "COMMERCIAL_PLUS_REGULATED_PARTIAL" && result.totalCommercialPlusRegulatedSubsetCost !== null) return { comparisonCost: result.totalCommercialPlusRegulatedSubsetCost, comparisonCostBasis: "COMMERCIAL_PLUS_REGULATED_PARTIAL", regulatedComponentsIncluded: canonicalComponentSet(result.regulatedComponentsIncluded) };
+  return null;
+}
+export function comparisonCompletenessKey(result: CalculationResult): string | null { const selection = comparisonCostOf(result); if (selection === null) return null; const contractual = contractualCoverageKey(result); return `${selection.comparisonCostBasis}|${selection.regulatedComponentsIncluded.join(",")}${contractual === null ? "" : `|CONTRACTUAL=${contractual}`}`; }
 function compareResults(left: CalculationResult, right: CalculationResult): number {
-  return compareInteger(left.totalCommercialCost.minorUnits, right.totalCommercialCost.minorUnits)
+  const leftCost = comparisonCostOf(left)?.comparisonCost.minorUnits ?? Number.MAX_SAFE_INTEGER;
+  const rightCost = comparisonCostOf(right)?.comparisonCost.minorUnits ?? Number.MAX_SAFE_INTEGER;
+  return compareInteger(leftCost, rightCost)
     || compareText(left.sourceCte.supplier, right.sourceCte.supplier)
     || compareText(left.sourceCte.offerCode, right.sourceCte.offerCode)
     || compareText(left.sourceCte.version, right.sourceCte.version)
     || compareText(left.sourceCte.archiveId, right.sourceCte.archiveId);
 }
 
-export async function compareApprovedOffers(cteRepository: CteArchiveRepository, marketRepository: MarketArchiveRepository, request: SimulationRequest): Promise<ComparisonResult> {
+export function buildComparisonResult(request: SimulationRequest, results: readonly CalculationResult[], excludedOffers: readonly ReturnType<typeof exclusionFor>[] = []): ComparisonResult {
+  if (request.vector === "EE" && request.taxTreatment !== "EXCLUDED") throw new Error("TAX_TREATMENT_INCOMPATIBLE");
+  const keys = results.map(comparisonCompletenessKey);
+  if (keys.some((key) => key === null) || keys.some((key) => key !== keys[0])) throw new Error("COMPARISON_INCOMPATIBLE");
+  const ordered = [...results].sort(compareResults);
+  const ranking: ComparisonRankingEntry[] = [];
+  let previousTotal: number | null = null;
+  let tieGroupNumber = 0;
+  ordered.forEach((result, index) => {
+    const selection = comparisonCostOf(result);
+    if (selection === null) throw new Error("COMPARISON_INCOMPATIBLE");
+    if (previousTotal === null || previousTotal !== selection.comparisonCost.minorUnits) tieGroupNumber += 1;
+    previousTotal = selection.comparisonCost.minorUnits;
+    const previousSelection = index > 0 ? comparisonCostOf(ordered[index - 1]) : null;
+    ranking.push({ rank: previousSelection?.comparisonCost.minorUnits === selection.comparisonCost.minorUnits ? ranking[index - 1].rank : index + 1, tieGroup: `tie-${tieGroupNumber}`, calculationId: result.calculationId, supplier: result.sourceCte.supplier, offerCode: result.sourceCte.offerCode, cteVersion: result.sourceCte.version, totalCommercialCost: result.totalCommercialCost, comparisonCost: selection.comparisonCost, comparisonCostBasis: selection.comparisonCostBasis, regulatedComponentsIncluded: selection.regulatedComponentsIncluded });
+  });
+  const orderedExcluded = [...excludedOffers].sort((left, right) => compareText(left.archiveId, right.archiveId) || compareText(left.code, right.code));
+  const reference = ordered.length > 0 ? comparisonCostOf(ordered[0]) : null;
+  const payload = { schemaVersion: 1 as const, tenantId: request.tenantId, vector: request.vector, normalizedInput: request, results: ordered, excludedOffers: orderedExcluded, ranking, comparisonCostBasis: reference?.comparisonCostBasis ?? null, regulatedComponentsIncluded: reference?.regulatedComponentsIncluded ?? [], taxTreatment: request.taxTreatment, fiscalExclusionNotice: request.vector === "EE" || request.taxTreatment === "EXCLUDED" ? EE_FISCAL_EXCLUSION_NOTICE : null };
+  const resultFingerprint = fingerprint(payload);
+  return { ...payload, comparisonId: `comparison_${resultFingerprint.slice(0, 32)}`, fingerprint: resultFingerprint, calculatedAt: `${request.calculationDate}T00:00:00.000Z`, warnings: ordered.length === 0 ? ["NO_ELIGIBLE_OFFERS"] : orderedExcluded.length > 0 ? ["EXCLUDED_OFFERS_PRESENT"] : [] };
+}
+
+export async function compareApprovedOffers(cteRepository: CteArchiveRepository, marketRepository: MarketArchiveRepository, request: SimulationRequest, dependencies: CalculationDependencies = {}): Promise<ComparisonResult> {
+  if (request.vector === "EE" && request.taxTreatment !== "EXCLUDED") throw new Error("TAX_TREATMENT_INCOMPATIBLE");
   const records = [...await cteRepository.list(request.tenantId)].sort((left, right) => compareText(left.archiveId, right.archiveId));
   const results: CalculationResult[] = [];
   const excludedOffers = [] as ReturnType<typeof exclusionFor>[];
   for (const record of records) {
     try {
       const prepared = await prepareApprovedOffer(cteRepository, marketRepository, request, record.archiveId);
-      results.push(await calculatePreparedOffer(request, prepared));
+      const result = await calculatePreparedOffer(request, prepared, dependencies);
+      const selection = comparisonCostOf(result);
+      if (selection === null || (results.length > 0 && comparisonCompletenessKey(result) !== comparisonCompletenessKey(results[0]))) {
+        excludedOffers.push(exclusionFor(record, "COMPARISON_INCOMPATIBLE", exclusionMessages.COMPARISON_INCOMPATIBLE));
+      } else results.push(result);
     } catch (error) {
       const code = codeOf(error);
       excludedOffers.push(exclusionFor(record, code, exclusionMessages[code]));
     }
   }
-  const ordered = [...results].sort(compareResults);
-  const ranking: ComparisonRankingEntry[] = [];
-  let previousTotal: number | null = null;
-  let tieGroupNumber = 0;
-  ordered.forEach((result, index) => {
-    if (previousTotal === null || previousTotal !== result.totalCommercialCost.minorUnits) tieGroupNumber += 1;
-    previousTotal = result.totalCommercialCost.minorUnits;
-    ranking.push({ rank: index > 0 && ordered[index - 1].totalCommercialCost.minorUnits === result.totalCommercialCost.minorUnits ? ranking[index - 1].rank : index + 1, tieGroup: `tie-${tieGroupNumber}`, calculationId: result.calculationId, supplier: result.sourceCte.supplier, offerCode: result.sourceCte.offerCode, cteVersion: result.sourceCte.version, totalCommercialCost: result.totalCommercialCost });
-  });
-  const orderedExcluded = [...excludedOffers].sort((left, right) => compareText(left.archiveId, right.archiveId) || compareText(left.code, right.code));
-  const payload = { schemaVersion: 1 as const, tenantId: request.tenantId, vector: request.vector, normalizedInput: request, results: ordered, excludedOffers: orderedExcluded, ranking };
-  const resultFingerprint = fingerprint(payload);
-  return { ...payload, comparisonId: `comparison_${resultFingerprint.slice(0, 32)}`, fingerprint: resultFingerprint, calculatedAt: `${request.calculationDate}T00:00:00.000Z`, warnings: ordered.length === 0 ? ["NO_ELIGIBLE_OFFERS"] : orderedExcluded.length > 0 ? ["EXCLUDED_OFFERS_PRESENT"] : [] };
+  return buildComparisonResult(request, results, excludedOffers);
 }

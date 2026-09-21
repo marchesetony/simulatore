@@ -4,7 +4,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { syntheticElectricityCte, syntheticGasCte } from "../app/lib/cte/synthetic-fixtures.ts";
-import { createCteArchive, createCteCorrection, approveCteArchive, toPublicCteApprovedArchiveDetail, toPublicCteApprovedArchiveSummary } from "../app/lib/cte/archive/service.ts";
+import { createCteArchive, createCteCorrection, approveCteArchive, reviewCteArchive, toPublicCteApprovedArchiveDetail, toPublicCteApprovedArchiveSummary } from "../app/lib/cte/archive/service.ts";
 import { LocalCteArchiveRepository } from "../app/lib/cte/archive/repository.ts";
 
 const root = await mkdtemp(path.join(os.tmpdir(), "cte-approved-human-readable-"));
@@ -15,7 +15,8 @@ const draft = (value) => { const result = clone(value); result.tenantId = tenant
 try {
   const repository = new LocalCteArchiveRepository(root);
   const source = await createCteArchive(repository, { tenantId: tenant, contract: draft(syntheticElectricityCte), now: "2026-08-07T00:00:00.000Z" });
-  const approved = await approveCteArchive(repository, tenant, source.archiveId, source.currentWorkingVersionId, "reviewer", "decision-ee", "2026-08-07T00:00:01.000Z");
+  await reviewCteArchive(repository, tenant, source.archiveId, source.currentWorkingVersionId, "reviewer", "2026-08-07T00:00:00.000Z");
+  const approved = await approveCteArchive(repository, tenant, source.archiveId, source.currentWorkingVersionId, "reviewer", "decision-ee", "2026-08-07T00:00:01.000Z", async () => {});
   const summary = toPublicCteApprovedArchiveSummary(approved);
   assert.deepEqual(summary, { archiveId: source.archiveId, vector: "EE", offerName: syntheticElectricityCte.offer.name, supplierName: syntheticElectricityCte.supplier.name, validity: syntheticElectricityCte.validity, status: "APPROVED", commercialStatus: "ACTIVE" });
   assert.doesNotMatch(JSON.stringify(summary), /recordId|tenantId|cteId|offerId|versionId|objectKey|ingestionId/);
@@ -38,7 +39,8 @@ try {
   assert.equal(approvedStillAuthoritative.contract.pricing.spread.amount, syntheticElectricityCte.pricing.spread.amount);
 
   const gasSource = await createCteArchive(repository, { tenantId: tenant, contract: draft(syntheticGasCte), archiveId: "cte-gas-readable", now: "2026-08-07T00:00:03.000Z" });
-  const gasApproved = await approveCteArchive(repository, tenant, gasSource.archiveId, gasSource.currentWorkingVersionId, "reviewer", "decision-gas", "2026-08-07T00:00:04.000Z");
+  await reviewCteArchive(repository, tenant, gasSource.archiveId, gasSource.currentWorkingVersionId, "reviewer", "2026-08-07T00:00:04.000Z");
+  const gasApproved = await approveCteArchive(repository, tenant, gasSource.archiveId, gasSource.currentWorkingVersionId, "reviewer", "decision-gas", "2026-08-07T00:00:04.000Z", async () => {});
   const gasDetail = toPublicCteApprovedArchiveDetail(gasApproved);
   assert.equal(gasDetail.contract.vector, "GAS");
   assert.equal(gasDetail.contract.pricing.reference, "PSV");

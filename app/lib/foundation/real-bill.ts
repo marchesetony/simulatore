@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { mkdir, readFile, unlink, writeFile } from "node:fs/promises";
+import { mkdir, readFile, rm, unlink, writeFile } from "node:fs/promises";
 import path from "node:path";
 // @ts-expect-error Node's strip-only test runner requires the explicit extension.
 import { atomicWriteJson } from "../archive/atomic.ts";
@@ -9,22 +9,48 @@ import type { BillContract } from "../energy/types.ts";
 // @ts-expect-error Node's strip-only test runner requires the explicit extension.
 import { billErrorCode, billErrorField, isBillErrorCode, BillIngestionError, type BillErrorCode, type BillExtractionField } from "../ingestion/errors.ts";
 // @ts-expect-error Next runtime resolves explicit TypeScript extensions.
-import { structuredBillContract, structuredBillFields, validateStructuredBillExtraction, type StructuredBillExtraction, type StructuredBillExtractionProvider, type StructuredBillField } from "../ingestion/structured-bill.ts";
+import { normalizeStoredStructuredBillExtraction, structuredBillContract, structuredBillFields, validateStructuredBillExtraction, type StructuredBillExtraction, type StructuredBillExtractionProvider, type StructuredBillField } from "../ingestion/structured-bill.ts";
 // @ts-expect-error Next runtime resolves explicit TypeScript extensions.
 import { resolveBillVectorFromEvidence, type ResolvedBillVector } from "../ingestion/vector-resolution.ts";
 import type { OfficialPunModel } from "../market/pun-reference";
 import type { BillRegulatoryAuditDTO } from "./bill-regulatory-audit";
+import type { BillFeatureAccessSnapshot, BillVerificationSummary } from "./bill-feature-permissions.ts";
 // @ts-expect-error Node's strip-only test runner requires the explicit extension.
 import { resolveBillingAddressFromPdf } from "./bill-pdf-layout.ts";
 // @ts-expect-error Node's strip-only test runner requires the explicit extension.
 import { mergeBillCoreAndAnalyst, stripBillAnalystData, type BillAnalystWireExtraction } from "../ingestion/bill-two-stage.ts";
 // @ts-expect-error Node's strip-only test runner requires the explicit extension.
 import { buildBillAnalystReview, type BillAnalystReviewDTO } from "./bill-analyst-review.ts";
+// @ts-expect-error Node's strip-only test runner requires the explicit extension.
+import { extractDocumentMonthlyBandEvidence, reconcileMonthlyBandsWithDocumentEvidence } from "../ingestion/document-numeric-evidence.ts";
+// @ts-expect-error Node's strip-only test runner requires the explicit extension.
+import { selectMonthlyBandsForBillingPeriod, type StructuredBillMonthlyBand } from "../ingestion/monthly-bands.ts";
 
 export type ExtractionStatus = "EXTRACTED" | "OCR_PROVIDER_REQUIRED" | "FAILED" | "REVIEW_REQUIRED";
 export type FieldName = "supplier" | "pod" | "customerName" | "billingPeriod" | "annualConsumption" | "billedConsumption" | "totalAmount";
 export type FieldValue = string | null;
 export type ReviewState = "WORKING" | "WORKING_AFTER_APPROVAL" | "WORKING_SUPERSEDED" | "APPROVED_CURRENT" | "APPROVED_SUPERSEDED";
+export type BillLifecycleState = "UPLOADED" | "ACTIVE" | "ARCHIVED" | "SCHEDULED_DELETION" | "DELETED";
+export type BillRetentionClass = "FISCAL_DOCUMENT" | "NON_FISCAL_DOCUMENT";
+export type BillRetentionPolicyId = "FISCAL_15_MONTHS" | "NON_FISCAL_15_DAYS";
+export type BillRetentionMetadata = {
+  readonly retentionClass: BillRetentionClass;
+  readonly policyId: BillRetentionPolicyId;
+  readonly policyVersion: 2;
+  readonly archivedAt: string | null;
+  readonly deletionDueAt: string | null;
+  readonly deletedAt: string | null;
+};
+export type BillLifecycleEvent = {
+  readonly eventId: string;
+  readonly tenantId: string;
+  readonly documentId: string;
+  readonly fromState: BillLifecycleState | null;
+  readonly toState: BillLifecycleState;
+  readonly at: string;
+  readonly actorId: string | null;
+  readonly reason: string;
+};
 export type ExtractedField = { readonly value: FieldValue; readonly confidence: number; readonly source: "embedded-text" | "document-ai" | "manual" | "unavailable"; readonly confirmed: boolean };
 export type BillFields = Record<FieldName, ExtractedField>;
 export type BillVersion = {
@@ -53,6 +79,8 @@ export type BillProvenanceEvent = {
   readonly previousValue: FieldValue;
   readonly nextValue: FieldValue;
   readonly at: string;
+  readonly actorId?: string | null;
+  readonly auditEventId?: string | null;
 };
 export type BillApprovalRecord = {
   readonly approvalId: string;
@@ -63,13 +91,18 @@ export type BillApprovalRecord = {
   readonly approvedAt: string;
   readonly origin: "LOCAL_APPROVAL";
   readonly supersedesApprovalId: string | null;
+  readonly actorId: string | null;
+  readonly auditEventId: string | null;
 };
 export type BillCorrectionOperation = { readonly operation: "correct"; readonly field: FieldName; readonly value: string; readonly versionId?: string };
 export type BillApprovalOperation = { readonly operation: "approve"; readonly versionId: string };
-export type BillOperation = BillCorrectionOperation | BillApprovalOperation;
+export type BillConfirmFieldsOperation = { readonly operation: "confirm-fields"; readonly versionId: string; readonly fields: readonly FieldName[] };
+export type BillOperation = BillCorrectionOperation | BillApprovalOperation | BillConfirmFieldsOperation;
 export type BillDocument = {
   readonly id: string;
   readonly tenantId: string;
+  /** Server-derived uploader identity; absent only on legacy imported records. */
+  readonly ownerUserId?: string;
   readonly fileName: string;
   readonly objectKey: string;
   readonly size: number;
@@ -77,6 +110,10 @@ export type BillDocument = {
   readonly updatedAt: string;
   readonly currentVersionId: string;
   readonly currentApprovedVersionId: string | null;
+  readonly lifecycleState: BillLifecycleState;
+  readonly lifecycleVersion: number;
+  readonly retention: BillRetentionMetadata;
+  readonly lifecycleHistory: readonly BillLifecycleEvent[];
   readonly versions: readonly BillVersion[];
   readonly provenance: readonly BillProvenanceEvent[];
   readonly approvals: readonly BillApprovalRecord[];
@@ -114,6 +151,8 @@ export type PublicBillDocument = {
   readonly currentApprovedVersionId: string | null;
   readonly currentApprovedVersionNumber: number | null;
   readonly currentApprovedAt: string | null;
+  readonly lifecycleState: BillLifecycleState;
+  readonly retention: BillRetentionMetadata;
   readonly versionCount: number;
   readonly approvalCount: number;
   readonly requiredFields: readonly FieldName[];
@@ -128,6 +167,8 @@ export type PublicBillDocument = {
   readonly resolvedVector: ResolvedBillVector;
   readonly invoicePunReferences: OfficialPunModel;
   readonly regulatoryAudit: BillRegulatoryAuditDTO | null;
+  readonly featurePermissions?: BillFeatureAccessSnapshot;
+  readonly verificationSummary?: BillVerificationSummary | null;
   readonly analystReview: BillAnalystReviewDTO;
 };
 type BillStore = {
@@ -137,6 +178,7 @@ type BillStore = {
 type LegacyBillDocument = {
   readonly id: string;
   readonly tenantId: string;
+  readonly ownerUserId?: string;
   readonly fileName: string;
   readonly objectKey: string;
   readonly size: number;
@@ -153,14 +195,15 @@ type MetadataRecord = Record<string, unknown>;
 
 export interface DocumentStoragePort {
   store(tenantId: string, id: string, bytes: Uint8Array): Promise<string>;
-  read(objectKey: string): Promise<Uint8Array>;
-  remove(objectKey: string): Promise<void>;
+  read(tenantId: string, id: string): Promise<Uint8Array>;
+  remove(tenantId: string, id: string): Promise<void>;
 }
 export interface TextExtractionPort {
   extract(bytes: Uint8Array): Promise<{ readonly text: string; readonly pages: number }>;
 }
 export interface BillRepository {
   save(document: BillDocument): Promise<void>;
+  saveIfCurrentVersion(document: BillDocument, expectedVersionId: string, expectedVersion: BillVersion): Promise<void>;
   get(tenantId: string, id: string): Promise<BillDocument | null>;
   list(tenantId: string): Promise<readonly BillDocument[]>;
   delete?(tenantId: string, id: string): Promise<void>;
@@ -175,7 +218,7 @@ export interface EnergyContractMapperInput {
 }
 export type EnergyContractMapper = (input: EnergyContractMapperInput) => BillContract;
 export interface AuditSink {
-  record(event: { readonly type: "UPLOAD" | "VALIDATION" | "EXTRACTION" | "EXTRACTION_FAILURE" | "MANUAL_REVIEW" | "CORRECTION" | "APPROVAL"; readonly tenantId: string; readonly documentId: string; readonly outcome: "ALLOWED" | "DENIED" | "FAILED" }): Promise<void>;
+  record(event: { readonly type: "UPLOAD" | "VALIDATION" | "EXTRACTION" | "EXTRACTION_FAILURE" | "MANUAL_REVIEW" | "CORRECTION" | "APPROVAL" | "LIFECYCLE"; readonly tenantId: string; readonly documentId: string; readonly outcome: "ALLOWED" | "DENIED" | "FAILED" }): Promise<void>;
 }
 
 export const fieldNames: readonly FieldName[] = ["supplier", "pod", "customerName", "billingPeriod", "annualConsumption", "billedConsumption", "totalAmount"];
@@ -186,6 +229,8 @@ const versionOrigins: readonly BillVersion["origin"][] = ["INGESTION", "MANUAL_R
 const provenanceTypes: readonly BillProvenanceEvent["type"][] = ["INGESTION", "MANUAL_REVIEW", "APPROVAL"];
 const provenanceOrigins: readonly BillProvenanceEvent["origin"][] = ["INGESTION", "MANUAL_REVIEW", "LOCAL_APPROVAL"];
 const approvalOrigins: readonly BillApprovalRecord["origin"][] = ["LOCAL_APPROVAL"];
+const lifecycleStates: readonly BillLifecycleState[] = ["UPLOADED", "ACTIVE", "ARCHIVED", "SCHEDULED_DELETION", "DELETED"];
+const retentionPolicyVersion = 2 as const;
 
 function documentsRoot(explicitRoot?: string): string {
   return path.resolve(explicitRoot ?? path.join(/* turbopackIgnore: true */ process.cwd(), "var", "foundation-documents"));
@@ -205,6 +250,30 @@ function emptyFields(): BillFields {
 
 function unavailable(): ExtractedField {
   return { value: null, confidence: 0, source: "unavailable", confirmed: false };
+}
+
+function retentionPolicyFor(retentionClass: BillRetentionClass): BillRetentionPolicyId {
+  return retentionClass === "FISCAL_DOCUMENT" ? "FISCAL_15_MONTHS" : "NON_FISCAL_15_DAYS";
+}
+
+function emptyBillRetention(retentionClass: BillRetentionClass = "FISCAL_DOCUMENT"): BillRetentionMetadata {
+  return { retentionClass, policyId: retentionPolicyFor(retentionClass), policyVersion: retentionPolicyVersion, archivedAt: null, deletionDueAt: null, deletedAt: null };
+}
+
+function lifecycleEvent(input: {
+  readonly tenantId: string;
+  readonly documentId: string;
+  readonly fromState: BillLifecycleState | null;
+  readonly toState: BillLifecycleState;
+  readonly at: string;
+  readonly actorId?: string | null;
+  readonly reason: string;
+}): BillLifecycleEvent {
+  return { eventId: randomUUID(), tenantId: input.tenantId, documentId: input.documentId, fromState: input.fromState, toState: input.toState, at: input.at, actorId: input.actorId ?? null, reason: input.reason };
+}
+
+function initialLifecycle(tenantId: string, documentId: string, state: BillLifecycleState, at: string, reason: string, retentionClass: BillRetentionClass = "FISCAL_DOCUMENT"): Pick<BillDocument, "lifecycleState" | "lifecycleVersion" | "retention" | "lifecycleHistory"> {
+  return { lifecycleState: state, lifecycleVersion: 1, retention: emptyBillRetention(retentionClass), lifecycleHistory: [lifecycleEvent({ tenantId, documentId, fromState: null, toState: state, at, reason })] };
 }
 
 function cloneFields(fields: BillFields): BillFields {
@@ -236,6 +305,21 @@ function readTimestamp(value: unknown): string {
   const timestamp = readRequiredString(value);
   if (!Number.isFinite(Date.parse(timestamp))) throw metadataInvalid();
   return timestamp;
+}
+
+function readLifecycleState(value: unknown): BillLifecycleState {
+  if (typeof value !== "string" || !lifecycleStates.includes(value as BillLifecycleState)) throw metadataInvalid();
+  return value as BillLifecycleState;
+}
+
+function readOptionalActorId(value: unknown): string | null {
+  if (value === undefined || value === null) return null;
+  return readRequiredString(value);
+}
+
+function readOptionalTimestamp(value: unknown): string | null {
+  if (value === null) return null;
+  return readTimestamp(value);
 }
 
 function readOptionalString(value: unknown): string | null {
@@ -373,6 +457,19 @@ export function assertLocalBillAccess(tenantId: string | null | undefined, local
 export function parseBillOperation(value: unknown): BillOperation | null {
   if (typeof value !== "object" || value === null) return null;
   const record = value as Record<string, unknown>;
+  const confirmationKeys = ["operation", "versionId", "fields"];
+  const confirmation = record.operation === "confirm-fields"
+    && typeof record.versionId === "string"
+    && record.versionId.trim().length > 0
+    && Array.isArray(record.fields)
+    && record.fields.length > 0
+    && Object.keys(record).every((key) => confirmationKeys.includes(key))
+    && record.fields.every((field) => typeof field === "string" && fieldNames.includes(field as FieldName));
+  if (confirmation) {
+    const fields = record.fields as string[];
+    if (new Set(fields).size !== fields.length) return null;
+    return { operation: "confirm-fields", versionId: record.versionId as string, fields: fields as FieldName[] };
+  }
   const correction = (record.operation === undefined || record.operation === "correct")
     && typeof record.field === "string"
     && fieldNames.includes(record.field as FieldName)
@@ -384,6 +481,56 @@ export function parseBillOperation(value: unknown): BillOperation | null {
   const approval = record.operation === "approve" && typeof record.versionId === "string" && record.versionId.trim().length > 0;
   if (approval) return { operation: "approve", versionId: record.versionId as string };
   return null;
+}
+
+function readOptionalOwnerUserId(value: unknown): string | undefined {
+  if (value === undefined || value === null) return undefined;
+  return readRequiredString(value);
+}
+
+function confirmableField(field: ExtractedField | undefined): field is ExtractedField {
+  if (!field) return false;
+  const normalizedValue = field.value?.trim().toUpperCase();
+  return field.source !== "unavailable"
+    && typeof field.value === "string"
+    && field.value.trim().length > 0
+    && normalizedValue !== "UNKNOWN"
+    && normalizedValue !== "NOT_FOUND"
+    && normalizedValue !== "NOT AVAILABLE"
+    && normalizedValue !== "NON DISPONIBILE";
+}
+
+export function confirmBillFields(input: {
+  readonly document: BillDocument;
+  readonly tenantId: string;
+  readonly sourceVersionId: string;
+  readonly fields: readonly FieldName[];
+  readonly at: string;
+}): BillDocument {
+  validateTenantId(input.tenantId);
+  if (input.document.tenantId !== input.tenantId) throw new Error("TENANT_ACCESS_DENIED");
+  if (input.document.currentVersionId !== input.sourceVersionId) throw new Error("DOCUMENT_VERSION_STALE");
+  if (input.document.currentApprovedVersionId === input.sourceVersionId) throw new Error("DOCUMENT_VERSION_ALREADY_APPROVED");
+  const rawFields: unknown = input.fields;
+  if (!Array.isArray(rawFields) || rawFields.length === 0 || new Set(rawFields).size !== rawFields.length || rawFields.some((field) => typeof field !== "string" || !fieldNames.includes(field as FieldName))) {
+    throw new Error("FIELD_CONFIRMATION_INVALID");
+  }
+  const requestedFields = rawFields as readonly FieldName[];
+
+  const source = currentVersion(input.document);
+  for (const field of requestedFields) {
+    if (!confirmableField(source.fields[field])) throw new Error("FIELD_CONFIRMATION_INVALID");
+  }
+
+  const fields = cloneFields(source.fields);
+  for (const field of requestedFields) fields[field] = { ...fields[field], confirmed: true };
+  const confirmedVersion: BillVersion = { ...source, fields };
+  return sanitizeDocument({
+    ...input.document,
+    updatedAt: input.at,
+    currentVersionId: source.versionId,
+    versions: input.document.versions.map((version) => version.versionId === source.versionId ? confirmedVersion : version),
+  });
 }
 
 function currentVersion(document: BillDocument): BillVersion {
@@ -448,6 +595,8 @@ export function toPublicDocumentVersion(document: BillDocument, versionId: strin
     currentApprovedVersionId: approved?.versionId ?? null,
     currentApprovedVersionNumber: approved?.versionNumber ?? null,
     currentApprovedAt: approved ? approvalRecordFor(document, approved.versionId)?.approvedAt ?? null : null,
+    lifecycleState: document.lifecycleState,
+    retention: { ...document.retention },
     versionCount: document.versions.length,
     approvalCount: document.approvals.length,
     requiredFields: requiredFieldNames,
@@ -476,11 +625,19 @@ export function toPublicApprovedDocument(document: BillDocument): PublicBillDocu
   return document.currentApprovedVersionId ? toPublicDocumentVersion(document, document.currentApprovedVersionId) : null;
 }
 
+function localSyntheticQaSelectorTitle(document: BillDocument, fallback: string): string {
+  const configuredLocalTenantId = process.env.FOUNDATION_LOCAL_TENANT_ID?.trim();
+  if (process.env.APP_RUNTIME_MODE !== "local" || !configuredLocalTenantId || document.tenantId !== configuredLocalTenantId) return fallback;
+  const match = /^BILL_QA_DOMESTIC_(3|20)KW\.pdf$/i.exec(document.fileName);
+  return match ? `QA Domestico ${match[1]} kW` : fallback;
+}
+
 export function toPublicBillSummary(document: BillDocument): { readonly id: string; readonly title: string; readonly supplier: string | null; readonly supplyReference: string | null; readonly period: { readonly periodStart: string | null; readonly periodEnd: string | null }; readonly vector: "EE" | "GAS"; readonly status: "APPROVED"; readonly createdAt: string } | null {
   const approved = toPublicApprovedDocument(document);
   if (!approved) return null;
   const profile = approved.normalized;
-  return { id: document.id, title: profile?.customer.name ?? document.fileName, supplier: profile?.currentSupplier ?? null, supplyReference: profile?.supply.reference ?? null, period: profile?.billingPeriod ?? { periodStart: null, periodEnd: null }, vector: profile?.vector ?? "EE", status: "APPROVED", createdAt: document.createdAt };
+  const fallbackTitle = profile?.customer.name ?? document.fileName;
+  return { id: document.id, title: localSyntheticQaSelectorTitle(document, fallbackTitle), supplier: profile?.currentSupplier ?? null, supplyReference: profile?.supply.reference ?? null, period: profile?.billingPeriod ?? { periodStart: null, periodEnd: null }, vector: profile?.vector ?? "EE", status: "APPROVED", createdAt: document.createdAt };
 }
 
 function publicBillProfile(contract: BillContract, fields: BillFields): PublicBillProfile {
@@ -520,6 +677,8 @@ export class LocalDocumentStorage implements DocumentStoragePort {
   }
 
   async store(tenantId: string, id: string, bytes: Uint8Array): Promise<string> {
+    validateTenantId(tenantId);
+    if (!/^[A-Za-z0-9._:-]{1,160}$/.test(id) || id.includes("..")) throw new Error("DOCUMENT_STORAGE_KEY_INVALID");
     const dir = path.join(this.root, tenantId);
     await mkdir(dir, { recursive: true });
     const key = path.join(dir, `${id}.pdf`);
@@ -527,12 +686,22 @@ export class LocalDocumentStorage implements DocumentStoragePort {
     return key;
   }
 
-  async read(objectKey: string): Promise<Uint8Array> {
-    return new Uint8Array(await readFile(objectKey));
+  async read(tenantId: string, id: string): Promise<Uint8Array> {
+    validateTenantId(tenantId);
+    if (!/^[A-Za-z0-9._:-]{1,160}$/.test(id) || id.includes("..")) throw new Error("DOCUMENT_STORAGE_KEY_INVALID");
+    const expectedRoot = path.resolve(path.join(this.root, tenantId));
+    const resolved = path.resolve(path.join(expectedRoot, `${id}.pdf`));
+    if (!resolved.startsWith(`${expectedRoot}${path.sep}`)) throw new Error("DOCUMENT_STORAGE_TENANT_MISMATCH");
+    return new Uint8Array(await readFile(resolved));
   }
 
-  async remove(objectKey: string): Promise<void> {
-    await unlink(objectKey).catch((error: unknown) => {
+  async remove(tenantId: string, id: string): Promise<void> {
+    validateTenantId(tenantId);
+    if (!/^[A-Za-z0-9._:-]{1,160}$/.test(id) || id.includes("..")) throw new Error("DOCUMENT_STORAGE_KEY_INVALID");
+    const expectedRoot = path.resolve(path.join(this.root, tenantId));
+    const resolved = path.resolve(path.join(expectedRoot, `${id}.pdf`));
+    if (!resolved.startsWith(`${expectedRoot}${path.sep}`)) throw new Error("DOCUMENT_STORAGE_TENANT_MISMATCH");
+    await unlink(resolved).catch((error: unknown) => {
       if (error instanceof Error && "code" in error && error.code === "ENOENT") return;
       throw error;
     });
@@ -547,11 +716,33 @@ export class LocalBillRepository implements BillRepository {
   }
 
   async save(document: BillDocument): Promise<void> {
-    const rootDir = path.dirname(this.file);
-    await mkdir(rootDir, { recursive: true });
-    const store = await this.readStore();
-    const documents = [...store.documents.filter((item) => !(item.id === document.id && item.tenantId === document.tenantId)), validateStoredDocument(document)];
-    await atomicWriteJson(this.file, { schemaVersion: 1, documents });
+    const release = await acquireDirectoryLock(`${this.file}.lock`);
+    try {
+      const rootDir = path.dirname(this.file);
+      await mkdir(rootDir, { recursive: true });
+      const store = await this.readStore();
+      const documents = [...store.documents.filter((item) => !(item.id === document.id && item.tenantId === document.tenantId)), validateStoredDocument(document)];
+      await atomicWriteJson(this.file, { schemaVersion: 1, documents });
+    } finally {
+      await release();
+    }
+  }
+
+  async saveIfCurrentVersion(document: BillDocument, expectedVersionId: string, expectedVersion: BillVersion): Promise<void> {
+    const release = await acquireDirectoryLock(`${this.file}.lock`);
+    try {
+      const rootDir = path.dirname(this.file);
+      await mkdir(rootDir, { recursive: true });
+      const store = await this.readStore();
+      const previous = store.documents.find((item) => item.id === document.id && item.tenantId === document.tenantId);
+      const previousVersion = previous?.versions.find((version) => version.versionId === expectedVersionId);
+      if (!previous || previous.currentVersionId !== expectedVersionId || !previousVersion || JSON.stringify(previousVersion) !== JSON.stringify(expectedVersion)) throw new Error("DOCUMENT_VERSION_STALE");
+      const valid = validateStoredDocument(document);
+      const documents = [...store.documents.filter((item) => !(item.id === valid.id && item.tenantId === valid.tenantId)), valid];
+      await atomicWriteJson(this.file, { schemaVersion: 1, documents });
+    } finally {
+      await release();
+    }
   }
 
   async get(tenantId: string, id: string): Promise<BillDocument | null> {
@@ -660,6 +851,32 @@ export function extractBillFields(text: string): BillFields {
   return result;
 }
 
+function applyDocumentGroundedMonthlyEvidence(bytes: Uint8Array, extraction: StructuredBillExtraction): StructuredBillExtraction {
+  const documentEvidence = extractDocumentMonthlyBandEvidence(bytes);
+  const hasProviderMonthlyBands = Array.isArray(extraction.monthlyBands) && extraction.monthlyBands.length > 0;
+  if (documentEvidence.status !== "AVAILABLE") return hasProviderMonthlyBands ? { ...extraction, monthlyBandDocumentEvidenceStatus: documentEvidence.status } : extraction;
+  const reconciled = reconcileMonthlyBandsWithDocumentEvidence(extraction.monthlyBands, documentEvidence.bands);
+  if (reconciled.status !== "DOCUMENT_GROUNDED" || !reconciled.monthlyBands) {
+    return { ...extraction, monthlyBandDocumentEvidenceStatus: "FAIL_CLOSED" };
+  }
+  let scopedMonthlyBands: readonly StructuredBillMonthlyBand[];
+  try {
+    scopedMonthlyBands = selectMonthlyBandsForBillingPeriod(extraction.billingPeriod.status === "FOUND" ? extraction.billingPeriod.value : null, reconciled.monthlyBands);
+  } catch {
+    return { ...extraction, detectedMonthlyBandEvidence: documentEvidence.bands, monthlyBandDocumentEvidenceStatus: "FAIL_CLOSED" };
+  }
+  const scopedMonths = new Set(scopedMonthlyBands.map((band) => band.month));
+  const scopedEvidence = reconciled.evidence.filter((evidence) => scopedMonths.has(evidence.month));
+  return {
+    ...extraction,
+    monthlyBands: scopedMonthlyBands,
+    monthlyBandEvidence: scopedEvidence,
+    detectedMonthlyBandEvidence: documentEvidence.bands,
+    monthlyBandDocumentEvidenceStatus: "DOCUMENT_GROUNDED",
+    monthlyBandPrecisionMismatch: reconciled.precisionMismatch,
+  };
+}
+
 export async function ingestBill(input: {
   readonly tenantId: string;
   readonly fileName: string;
@@ -673,6 +890,8 @@ export async function ingestBill(input: {
   readonly audit: AuditSink;
   readonly onExtractionError?: (error: unknown) => string | null;
   readonly mapEnergyContract?: EnergyContractMapper;
+  readonly retentionClass?: BillRetentionClass;
+  readonly ownerUserId?: string;
 }): Promise<BillDocument> {
   const tenantId = validateTenantId(input.tenantId);
   const safeName = input.structuredExtractor ? validateBillDocument(input.fileName, input.contentType, input.bytes, input.maxBytes) : validatePdf(input.fileName, input.contentType, input.bytes, input.maxBytes);
@@ -686,7 +905,7 @@ export async function ingestBill(input: {
     let energyContract: BillContract | undefined;
     let structuredBill: StructuredBillExtraction | undefined;
     if (input.structuredExtractor) {
-      structuredBill = await input.structuredExtractor.extract({ bytes: input.bytes, contentType: input.contentType });
+      structuredBill = applyDocumentGroundedMonthlyEvidence(input.bytes, await input.structuredExtractor.extract({ bytes: input.bytes, contentType: input.contentType }));
       validateStructuredBillExtraction(structuredBill);
       fields = structuredBillFields(structuredBill);
       energyContract = structuredBillContract({ extraction: structuredBill, tenantId, billId: id, versionId }) ?? undefined;
@@ -703,6 +922,7 @@ export async function ingestBill(input: {
     const document = sanitizeDocument({
       id,
       tenantId,
+      ...(input.ownerUserId ? { ownerUserId: input.ownerUserId } : {}),
       fileName: safeName,
       objectKey,
       size: input.bytes.length,
@@ -710,6 +930,7 @@ export async function ingestBill(input: {
       updatedAt: now,
       currentVersionId: versionId,
       currentApprovedVersionId: null,
+      ...initialLifecycle(tenantId, id, "ACTIVE", now, "INGESTION_COMPLETED", input.retentionClass),
       versions: [{ versionId, versionNumber: 1, supersedesVersionId: null, status: input.structuredExtractor ? "REVIEW_REQUIRED" : energyContract ? "EXTRACTED" : documentStatus(fields), fields, createdAt: now, origin: "INGESTION", ...(energyContract ? { energyContract } : {}), ...(structuredBill ? { structuredBill } : {}) }],
       provenance: [{ eventId: randomUUID(), type: "INGESTION", origin: "INGESTION", tenantId, documentId: id, sourceVersionId: null, resultVersionId: versionId, field: null, previousValue: null, nextValue: null, at: now }],
       approvals: [],
@@ -726,6 +947,7 @@ export async function ingestBill(input: {
     const document = sanitizeDocument({
       id,
       tenantId,
+      ...(input.ownerUserId ? { ownerUserId: input.ownerUserId } : {}),
       fileName: safeName,
       objectKey,
       size: input.bytes.length,
@@ -733,6 +955,7 @@ export async function ingestBill(input: {
       updatedAt: now,
       currentVersionId: versionId,
       currentApprovedVersionId: null,
+      ...initialLifecycle(tenantId, id, "UPLOADED", now, "INGESTION_RECEIVED", input.retentionClass),
       versions: [{ versionId, versionNumber: 1, supersedesVersionId: null, status, fields: emptyFields(), createdAt: now, origin: "INGESTION", ...(status === "FAILED" && errorCode && isBillErrorCode(errorCode) ? { errorCode, ...(errorField ? { errorField } : {}) } : {}) }],
       provenance: [{ eventId: randomUUID(), type: "INGESTION", origin: "INGESTION", tenantId, documentId: id, sourceVersionId: null, resultVersionId: versionId, field: null, previousValue: null, nextValue: null, at: now }],
       approvals: [],
@@ -758,7 +981,7 @@ export async function retryBill(input: {
   const tenantId = validateTenantId(input.tenantId);
   if (input.document.tenantId !== tenantId) throw new Error("TENANT_ACCESS_DENIED");
   if (input.document.currentApprovedVersionId !== null) throw new Error("BILL_APPROVED_RETRY_FORBIDDEN");
-  const bytes = await input.storage.read(input.document.objectKey);
+  const bytes = await input.storage.read(input.document.tenantId, input.document.id);
   const now = new Date().toISOString();
   const versionId = randomUUID();
   const source = currentVersion(input.document);
@@ -768,7 +991,7 @@ export async function retryBill(input: {
     let structuredBill: StructuredBillExtraction | undefined;
     if (input.structuredExtractor) {
       const contentType = /\.png$/i.test(input.document.fileName) ? "image/png" : /\.(?:jpe?g)$/i.test(input.document.fileName) ? "image/jpeg" : "application/pdf";
-      structuredBill = await input.structuredExtractor.extract({ bytes, contentType });
+      structuredBill = applyDocumentGroundedMonthlyEvidence(bytes, await input.structuredExtractor.extract({ bytes, contentType }));
       validateStructuredBillExtraction(structuredBill);
       fields = structuredBillFields(structuredBill);
       energyContract = structuredBillContract({ extraction: structuredBill, tenantId, billId: input.document.id, versionId }) ?? undefined;
@@ -894,9 +1117,11 @@ export function approveDocumentVersion(input: {
   readonly tenantId: string;
   readonly versionId: string;
   readonly at: string;
+  readonly actorId?: string | null;
 }): BillDocument {
   validateTenantId(input.tenantId);
   if (input.document.tenantId !== input.tenantId) throw new Error("TENANT_ACCESS_DENIED");
+  if (input.document.lifecycleState === "DELETED" || input.document.lifecycleState === "SCHEDULED_DELETION") throw new Error("BILL_LIFECYCLE_APPROVAL_FORBIDDEN");
   const version = input.document.versions.find((item) => item.versionId === input.versionId);
   if (!version) throw new Error("DOCUMENT_VERSION_NOT_FOUND");
   if (input.document.currentVersionId !== input.versionId) throw new Error("DOCUMENT_VERSION_NOT_CURRENT");
@@ -906,6 +1131,8 @@ export function approveDocumentVersion(input: {
   if (issues.unconfirmedFields.length > 0) throw new Error("APPROVAL_FIELDS_UNCONFIRMED");
 
   const previous = input.document.currentApprovedVersionId ? approvalRecordFor(input.document, input.document.currentApprovedVersionId) : null;
+  const auditEventId = randomUUID();
+  const actorId = input.actorId ?? null;
   const approval: BillApprovalRecord = {
     approvalId: randomUUID(),
     tenantId: input.tenantId,
@@ -915,6 +1142,8 @@ export function approveDocumentVersion(input: {
     approvedAt: input.at,
     origin: "LOCAL_APPROVAL",
     supersedesApprovalId: previous?.approvalId ?? null,
+    actorId,
+    auditEventId,
   };
 
   return sanitizeDocument({
@@ -925,7 +1154,7 @@ export function approveDocumentVersion(input: {
     provenance: [
       ...input.document.provenance,
       {
-        eventId: randomUUID(),
+        eventId: auditEventId,
         type: "APPROVAL",
         origin: "LOCAL_APPROVAL",
         tenantId: input.tenantId,
@@ -936,8 +1165,84 @@ export function approveDocumentVersion(input: {
         previousValue: null,
         nextValue: null,
         at: input.at,
+        actorId,
+        auditEventId,
       },
     ],
+  });
+}
+
+function addCalendarDays(timestamp: string, days: number): string {
+  const date = new Date(timestamp);
+  date.setUTCDate(date.getUTCDate() + days);
+  return date.toISOString();
+}
+
+function addCalendarMonths(timestamp: string, months: number): string {
+  const date = new Date(timestamp);
+  const originalDay = date.getUTCDate();
+  date.setUTCDate(1);
+  date.setUTCMonth(date.getUTCMonth() + months);
+  const lastDay = new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth() + 1, 0)).getUTCDate();
+  date.setUTCDate(Math.min(originalDay, lastDay));
+  return date.toISOString();
+}
+
+function retentionDueAt(archivedAt: string, retentionClass: BillRetentionClass): string {
+  return retentionClass === "FISCAL_DOCUMENT" ? addCalendarMonths(archivedAt, 15) : addCalendarDays(archivedAt, 15);
+}
+
+function lifecycleTransitionAllowed(fromState: BillLifecycleState, toState: BillLifecycleState): boolean {
+  return (fromState === "UPLOADED" && toState === "ACTIVE")
+    || (fromState === "ACTIVE" && toState === "ARCHIVED")
+    || (fromState === "ARCHIVED" && toState === "SCHEDULED_DELETION")
+    || (fromState === "SCHEDULED_DELETION" && toState === "DELETED");
+}
+
+export function transitionBillLifecycle(input: {
+  readonly document: BillDocument;
+  readonly tenantId: string;
+  readonly expectedLifecycleVersion: number;
+  readonly toState: BillLifecycleState;
+  readonly at: string;
+  readonly actorId?: string | null;
+  readonly reason: string;
+}): BillDocument {
+  validateTenantId(input.tenantId);
+  if (input.document.tenantId !== input.tenantId) throw new Error("TENANT_ACCESS_DENIED");
+  if (!Number.isInteger(input.expectedLifecycleVersion) || input.expectedLifecycleVersion <= 0) throw new Error("BILL_LIFECYCLE_VERSION_INVALID");
+  if (input.document.lifecycleVersion !== input.expectedLifecycleVersion) throw new Error("BILL_LIFECYCLE_STALE");
+  if (!lifecycleStates.includes(input.toState)) throw new Error("BILL_LIFECYCLE_STATE_INVALID");
+  if (!Number.isFinite(Date.parse(input.at))) throw new Error("BILL_LIFECYCLE_TIMESTAMP_INVALID");
+  if (typeof input.reason !== "string" || input.reason.trim().length === 0) throw new Error("BILL_LIFECYCLE_REASON_REQUIRED");
+  if (input.actorId !== undefined && input.actorId !== null && (typeof input.actorId !== "string" || input.actorId.trim().length === 0)) throw new Error("BILL_LIFECYCLE_ACTOR_INVALID");
+
+  const fromState = input.document.lifecycleState;
+  if (fromState === input.toState) return sanitizeDocument(input.document);
+  if (!lifecycleTransitionAllowed(fromState, input.toState)) throw new Error("BILL_LIFECYCLE_TRANSITION_INVALID");
+  if (input.toState === "ARCHIVED" && input.document.currentApprovedVersionId === null) throw new Error("BILL_ARCHIVE_APPROVAL_REQUIRED");
+
+  const retention = { ...input.document.retention };
+  if (input.toState === "ARCHIVED") {
+    if (retention.archivedAt !== null || retention.deletionDueAt !== null || retention.deletedAt !== null) throw new Error("BILL_RETENTION_METADATA_INVALID");
+    retention.archivedAt = input.at;
+    retention.deletionDueAt = retentionDueAt(input.at, retention.retentionClass);
+  }
+  if (input.toState === "SCHEDULED_DELETION") {
+    if (!retention.archivedAt || !retention.deletionDueAt || Date.parse(input.at) < Date.parse(retention.deletionDueAt) || retention.deletedAt !== null) throw new Error("BILL_RETENTION_NOT_DUE");
+  }
+  if (input.toState === "DELETED") {
+    if (!retention.archivedAt || !retention.deletionDueAt || Date.parse(input.at) < Date.parse(retention.deletionDueAt) || retention.deletedAt !== null) throw new Error("BILL_RETENTION_NOT_DUE");
+    retention.deletedAt = input.at;
+  }
+
+  return sanitizeDocument({
+    ...input.document,
+    updatedAt: input.at,
+    lifecycleState: input.toState,
+    lifecycleVersion: input.expectedLifecycleVersion + 1,
+    retention,
+    lifecycleHistory: [...input.document.lifecycleHistory, lifecycleEvent({ tenantId: input.tenantId, documentId: input.document.id, fromState, toState: input.toState, at: input.at, actorId: input.actorId, reason: input.reason })],
   });
 }
 
@@ -950,10 +1255,13 @@ function sanitizeDocument(document: BillDocument): BillDocument {
     .sort((left, right) => left.versionNumber - right.versionNumber);
   const approvals = [...document.approvals].sort((left, right) => left.versionNumber - right.versionNumber || left.approvedAt.localeCompare(right.approvedAt));
   const provenance = [...document.provenance].sort((left, right) => left.at.localeCompare(right.at) || left.eventId.localeCompare(right.eventId));
+  const lifecycleHistory = [...document.lifecycleHistory].sort((left, right) => left.at.localeCompare(right.at) || left.eventId.localeCompare(right.eventId));
   return {
     ...document,
     versions,
     approvals,
+    retention: { ...document.retention },
+    lifecycleHistory,
     provenance,
   };
 }
@@ -1094,6 +1402,7 @@ function normalizeLegacyDocument(value: unknown): BillDocument {
   return validateStoredDocument({
     id: documentId,
     tenantId,
+    ...(typeof legacy.ownerUserId === "string" && legacy.ownerUserId.trim().length > 0 ? { ownerUserId: legacy.ownerUserId } : {}),
     fileName: readRequiredString(legacy.fileName),
     objectKey: readRequiredString(legacy.objectKey),
     size: readNonNegativeNumber(legacy.size),
@@ -1208,11 +1517,82 @@ function validateProvenance(
   assertUniqueIds(approvals.map((approval) => approval.versionId));
   if (approvalEvents.length !== approvals.length) throw metadataInvalid();
   for (const approval of approvals) {
-    if (approvalEvents.filter((event) => event.resultVersionId === approval.versionId).length !== 1) throw metadataInvalid();
+    const matchingEvents = approvalEvents.filter((event) => event.resultVersionId === approval.versionId && event.auditEventId === approval.auditEventId && event.actorId === approval.actorId);
+    if (matchingEvents.length !== 1) throw metadataInvalid();
   }
 }
 
-function validateStoredDocument(value: unknown, allowLegacyEmptyProvenance = false): BillDocument {
+function legacyLifecycleState(versions: readonly BillVersion[]): BillLifecycleState {
+  const status = versions.find((version) => version.versionNumber === Math.max(...versions.map((item) => item.versionNumber)))?.status;
+  return status === "FAILED" || status === "OCR_PROVIDER_REQUIRED" ? "UPLOADED" : "ACTIVE";
+}
+
+function legacyLifecycleEventId(documentId: string): string {
+  return `${documentId}::lifecycle::legacy`;
+}
+
+function parseBillRetention(value: unknown): BillRetentionMetadata {
+  if (value === undefined) return emptyBillRetention();
+  if (!isRecord(value)) throw metadataInvalid();
+  const legacy = value.retentionClass === "BILL_SOURCE_DOCUMENT" && value.policyId === "BILL_60_CALENDAR_DAYS" && value.policyVersion === 1;
+  const retentionClass = value.retentionClass === "FISCAL_DOCUMENT" || legacy ? "FISCAL_DOCUMENT" : value.retentionClass === "NON_FISCAL_DOCUMENT" ? "NON_FISCAL_DOCUMENT" : null;
+  if (!retentionClass || (!legacy && (value.policyId !== retentionPolicyFor(retentionClass) || value.policyVersion !== retentionPolicyVersion))) throw metadataInvalid();
+  const archivedAt = readOptionalTimestamp(value.archivedAt);
+  return {
+    retentionClass,
+    policyId: retentionPolicyFor(retentionClass),
+    policyVersion: retentionPolicyVersion,
+    archivedAt,
+    deletionDueAt: archivedAt === null ? null : retentionDueAt(archivedAt, retentionClass),
+    deletedAt: readOptionalTimestamp(value.deletedAt),
+  };
+}
+
+function parseBillLifecycleEvent(value: unknown, tenantId: string, documentId: string): BillLifecycleEvent {
+  if (!isRecord(value)) throw metadataInvalid();
+  const eventTenantId = validateTenantId(readRequiredString(value.tenantId));
+  const eventDocumentId = readRequiredString(value.documentId);
+  if (eventTenantId !== tenantId || eventDocumentId !== documentId) throw metadataInvalid();
+  return {
+    eventId: readRequiredString(value.eventId),
+    tenantId: eventTenantId,
+    documentId: eventDocumentId,
+    fromState: value.fromState === null ? null : readLifecycleState(value.fromState),
+    toState: readLifecycleState(value.toState),
+    at: readTimestamp(value.at),
+    actorId: readOptionalActorId(value.actorId),
+    reason: readRequiredString(value.reason),
+  };
+}
+
+function validateLifecycle(
+  lifecycleState: BillLifecycleState,
+  lifecycleVersion: number,
+  retention: BillRetentionMetadata,
+  history: readonly BillLifecycleEvent[],
+  tenantId: string,
+  documentId: string,
+): void {
+  if (!Number.isInteger(lifecycleVersion) || lifecycleVersion <= 0 || history.length !== lifecycleVersion || history.length === 0) throw metadataInvalid();
+  assertUniqueIds(history.map((event) => event.eventId));
+  let previous: BillLifecycleState | null = null;
+  for (const [index, event] of history.entries()) {
+    if (event.tenantId !== tenantId || event.documentId !== documentId || event.fromState !== previous) throw metadataInvalid();
+    if (index > 0 && !lifecycleTransitionAllowed(event.fromState as BillLifecycleState, event.toState)) throw metadataInvalid();
+    previous = event.toState;
+  }
+  if (previous !== lifecycleState) throw metadataInvalid();
+  if (retention.archivedAt === null) {
+    if (retention.deletionDueAt !== null || retention.deletedAt !== null || lifecycleState === "ARCHIVED" || lifecycleState === "SCHEDULED_DELETION" || lifecycleState === "DELETED") throw metadataInvalid();
+  } else {
+    if (retention.deletionDueAt === null || retentionDueAt(retention.archivedAt, retention.retentionClass) !== retention.deletionDueAt) throw metadataInvalid();
+    if (lifecycleState === "UPLOADED" || lifecycleState === "ACTIVE") throw metadataInvalid();
+    if (retention.deletedAt !== null && lifecycleState !== "DELETED") throw metadataInvalid();
+    if (lifecycleState === "DELETED" && retention.deletedAt === null) throw metadataInvalid();
+  }
+}
+
+export function validateStoredDocument(value: unknown, allowLegacyEmptyProvenance = false): BillDocument {
   if (!isRecord(value)) throw metadataInvalid();
   const documentId = readRequiredString(value.id);
   const tenantId = validateTenantId(readRequiredString(value.tenantId));
@@ -1221,6 +1601,14 @@ function validateStoredDocument(value: unknown, allowLegacyEmptyProvenance = fal
   const provenance = readArray(value.provenance).map((item) => parseBillProvenance(item, tenantId, documentId));
   const currentVersionId = readRequiredString(value.currentVersionId);
   const currentApprovedVersionId = readOptionalString(value.currentApprovedVersionId);
+  const createdAt = readTimestamp(value.createdAt);
+  const updatedAt = readTimestamp(value.updatedAt);
+  const lifecycleState = value.lifecycleState === undefined ? legacyLifecycleState(versions) : readLifecycleState(value.lifecycleState);
+  const lifecycleVersion = value.lifecycleVersion === undefined ? 1 : readPositiveInteger(value.lifecycleVersion);
+  const retention = parseBillRetention(value.retention);
+  const lifecycleHistory = value.lifecycleHistory === undefined
+    ? [{ eventId: legacyLifecycleEventId(documentId), tenantId, documentId, fromState: null, toState: lifecycleState, at: createdAt, actorId: null, reason: "LEGACY_IMPORT" }]
+    : readArray(value.lifecycleHistory).map((item) => parseBillLifecycleEvent(item, tenantId, documentId));
   const versionIds = versions.map((item) => item.versionId);
   const versionNumbers = versions.map((item) => item.versionNumber);
   const approvalIds = approvals.map((item) => item.approvalId);
@@ -1252,17 +1640,23 @@ function validateStoredDocument(value: unknown, allowLegacyEmptyProvenance = fal
     if (approval.supersedesApprovalId !== null && (!approvalIdsSet.has(approval.supersedesApprovalId) || approval.supersedesApprovalId === approval.approvalId)) throw metadataInvalid();
   }
   validateProvenance(provenance, versions, approvals, allowLegacyEmptyProvenance);
+  validateLifecycle(lifecycleState, lifecycleVersion, retention, lifecycleHistory, tenantId, documentId);
 
   return sanitizeDocument({
     id: documentId,
     tenantId,
+    ...(readOptionalOwnerUserId(value.ownerUserId) ? { ownerUserId: readOptionalOwnerUserId(value.ownerUserId) } : {}),
     fileName: readRequiredString(value.fileName),
     objectKey: readRequiredString(value.objectKey),
     size: readNonNegativeNumber(value.size),
-    createdAt: readTimestamp(value.createdAt),
-    updatedAt: readTimestamp(value.updatedAt),
+    createdAt,
+    updatedAt,
     currentVersionId,
     currentApprovedVersionId,
+    lifecycleState,
+    lifecycleVersion,
+    retention,
+    lifecycleHistory,
     versions,
     provenance,
     approvals,
@@ -1282,9 +1676,9 @@ function parseBillVersion(value: unknown, tenantId: string, documentId: string):
   }
   let structuredBill: StructuredBillExtraction | undefined;
   if (value.structuredBill !== undefined) {
-    validateStructuredBillExtraction(value.structuredBill);
-    structuredBill = value.structuredBill;
+    structuredBill = normalizeStoredStructuredBillExtraction(value.structuredBill);
   }
+
   const errorCode = readOptionalBillErrorCode(value.errorCode);
   const errorField = readOptionalBillErrorField(value.errorField);
   return {
@@ -1302,6 +1696,20 @@ function parseBillVersion(value: unknown, tenantId: string, documentId: string):
   };
 }
 
+async function acquireDirectoryLock(lockPath: string): Promise<() => Promise<void>> {
+  await mkdir(path.dirname(lockPath), { recursive: true });
+  for (let attempt = 0; attempt < 200; attempt += 1) {
+    try {
+      await mkdir(lockPath);
+      return async () => { await rm(lockPath, { recursive: true, force: false }); };
+    } catch (error) {
+      if (!(error instanceof Error && "code" in error && error.code === "EEXIST")) throw error;
+      await new Promise((resolve) => setTimeout(resolve, 5));
+    }
+  }
+  throw new Error("BILL_REPOSITORY_BUSY");
+}
+
 function parseBillApproval(value: unknown, tenantId: string, documentId: string): BillApprovalRecord {
   if (!isRecord(value)) throw metadataInvalid();
   const approvalTenantId = validateTenantId(readRequiredString(value.tenantId));
@@ -1316,6 +1724,8 @@ function parseBillApproval(value: unknown, tenantId: string, documentId: string)
     approvedAt: readTimestamp(value.approvedAt),
     origin: readApprovalOrigin(value.origin),
     supersedesApprovalId: readOptionalString(value.supersedesApprovalId),
+    actorId: readOptionalActorId(value.actorId),
+    auditEventId: value.auditEventId === undefined ? null : readRequiredString(value.auditEventId),
   };
 }
 
@@ -1325,9 +1735,11 @@ function parseBillProvenance(value: unknown, tenantId: string, documentId: strin
   const eventDocumentId = readRequiredString(value.documentId);
   if (eventTenantId !== tenantId || eventDocumentId !== documentId) throw metadataInvalid();
   const versionNumber = "versionNumber" in value ? readPositiveInteger(value.versionNumber) : undefined;
+  const type = readProvenanceType(value.type);
+  const eventId = readRequiredString(value.eventId);
   return {
-    eventId: readRequiredString(value.eventId),
-    type: readProvenanceType(value.type),
+    eventId,
+    type,
     origin: readProvenanceOrigin(value.origin),
     tenantId: eventTenantId,
     documentId: eventDocumentId,
@@ -1338,5 +1750,6 @@ function parseBillProvenance(value: unknown, tenantId: string, documentId: strin
     previousValue: readFieldValue(value.previousValue),
     nextValue: readFieldValue(value.nextValue),
     at: readTimestamp(value.at),
+    ...(type === "APPROVAL" ? { actorId: readOptionalActorId(value.actorId), auditEventId: value.auditEventId === undefined ? null : readRequiredString(value.auditEventId) } : {}),
   };
 }

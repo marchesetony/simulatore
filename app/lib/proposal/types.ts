@@ -1,11 +1,12 @@
-import type { CalculationComponent, CalculationExclusion, CalculationMarketReference, CalculationResult, SimulationRequest } from "../calculation/types";
+import type { CalculationComponent, CalculationCostScope, CalculationExclusion, CalculationMarketReference, CalculationResult, ContractualPassThroughStatus, RegulatedComponentIncluded, SimulationRequest } from "../calculation/types";
 import type { ComparisonResult } from "../comparison/types";
+import type { EligibilityOverrideProvenance } from "../eligibility/override";
 
 export const PROPOSAL_SCHEMA_VERSION = 1 as const;
 export const PROPOSAL_MAX_INPUT_BYTES = 262144;
 export const PROPOSAL_MAX_OUTPUT_BYTES = 524288;
 
-export type ProposalExportFormat = "JSON" | "CSV" | "HTML";
+export type ProposalExportFormat = "JSON" | "CSV" | "HTML" | "PDF";
 
 export interface ProposalCustomerSummary {
   readonly customerId: string;
@@ -35,10 +36,16 @@ export interface ProposalSourceBillReference {
   readonly version: string;
 }
 
+export interface ProposalSourceComparisonReference {
+  readonly comparisonId: string;
+  readonly fingerprint: string;
+}
+
 export interface ProposalRequestBase {
   readonly schemaVersion: typeof PROPOSAL_SCHEMA_VERSION;
   readonly tenantId: string;
   readonly sourceBill?: ProposalSourceBillReference;
+  readonly sourceComparison?: ProposalSourceComparisonReference;
   readonly customer: ProposalCustomerSummary;
   readonly supply: ProposalSupplySummary;
   readonly proposalIssueDate: string;
@@ -69,6 +76,12 @@ export interface ProposalSelectedResultSummary {
   readonly tieGroup: string | null;
 }
 
+export interface ProposalContractualPassThroughSummary {
+  readonly completeness: "COMPLETE" | "PARTIAL";
+  readonly states: readonly ContractualPassThroughStatus[];
+  readonly bta6NetOfTaxComplete: boolean;
+}
+
 export interface ProposalCanonicalSnapshot {
   readonly schemaVersion: typeof PROPOSAL_SCHEMA_VERSION;
   readonly proposalId: string;
@@ -77,17 +90,24 @@ export interface ProposalCanonicalSnapshot {
   readonly customer: ProposalCustomerSummary;
   readonly supply: ProposalSupplySummary;
   readonly sourceBill?: ProposalSourceBillReference;
+  readonly sourceComparison?: ProposalSourceComparisonReference;
+  readonly eligibilityOverride?: EligibilityOverrideProvenance;
   readonly selectedOffer: ProposalOfferIdentity;
   readonly cte: { readonly cteId: string; readonly archiveId: string; readonly versionId: string; readonly version: string };
   readonly marketData: readonly CalculationMarketReference[];
   readonly simulationPeriod: { readonly periodStart: string; readonly periodEnd: string };
   readonly normalizedConsumption: SimulationRequest["consumption"];
   readonly commercialCost: CalculationResult["totalCommercialCost"];
+  readonly comparisonCost: CalculationResult["totalCommercialCost"];
+  readonly comparisonCostBasis: CalculationCostScope;
+  readonly costScope: CalculationCostScope;
+  readonly regulatedComponentsIncluded: readonly RegulatedComponentIncluded[];
   readonly unitCost: CalculationResult["unitCost"];
   readonly components: readonly CalculationComponent[];
   readonly baseline: CalculationResult["savingsVsBaseline"];
   readonly savings: CalculationResult["savingsVsBaseline"];
   readonly selectedResult: ProposalSelectedResultSummary;
+  readonly contractualPassThrough?: ProposalContractualPassThroughSummary;
   readonly exclusions: readonly CalculationExclusion[];
   readonly warnings: readonly string[];
   readonly currency: "EUR";

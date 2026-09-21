@@ -1,10 +1,11 @@
 import type { BillContract, CustomerType, DeclaredText, Quantity, VoltageLevel } from "../energy/types";
 // @ts-expect-error Node's strip-only test runner requires the explicit extension.
-import { validateBillSupplyProfile, type BillSupplyProfile } from "./bill-supply-profile.ts";
+import { normalizeBillSupplyProfile, type BillSupplyProfile } from "./bill-supply-profile.ts";
 // @ts-expect-error Node's strip-only test runner requires the explicit extension.
 import { validateBillContract } from "../energy/validation.ts";
 import type { BillFields } from "../foundation/real-bill";
 import type { BillCalculationCheck, BillEconomicClassification } from "../foundation/bill-economic-analysis.ts";
+import type { BillStageShapeDiagnostic } from "../diagnostics/real-diag-4.ts";
 // @ts-expect-error Node's strip-only test runner requires the explicit extension.
 import { BILL_ECONOMIC_CHARGE_CODES, BILL_EXTENDED_FACT_CODES, type BillEconomicChargeLineCode, type BillExtendedFactCode } from "./bill-extended-contract.ts";
 import {
@@ -25,6 +26,10 @@ import {
 import { BILL_WIRE_TOOL, BILL_WIRE_TOOL_NAME, BillWireValidationError, mapBillWireToStructuredBill, parseBillWireExtraction } from "./bill-wire.ts";
 // @ts-expect-error Node's strip-only test runner requires the explicit extension.
 import { resolveBillVectorFromEvidence } from "./vector-resolution.ts";
+// @ts-expect-error Node's strip-only test runner requires the explicit extension.
+import { analyticalMonthlyTotalKwh, MONTH_KEY_PATTERN, monthlyBandsEqual, normalizeMonthlyBands, reconcileAnalyticalToDisplay, selectMonthlyBandsForBillingPeriod, type MonthlyDisplayReconciliation, type StructuredBillMonthlyBand } from "./monthly-bands.ts";
+// @ts-expect-error Node's strip-only test runner requires the explicit extension.
+import { DOCUMENT_EVIDENCE_SOURCE, MAX_DOCUMENT_LEXEME_LENGTH, type DocumentMonthlyBandEvidence } from "./document-numeric-evidence.ts";
 // Legacy compatibility export; the Bill wire contract lives in bill-wire.ts.
 // @ts-expect-error Node's strip-only test runner requires the explicit extension.
 export { BILL_WIRE_TOOL as ANTHROPIC_BILL_STRUCTURED_TOOL } from "./bill-wire.ts";
@@ -100,6 +105,15 @@ export interface StructuredBillExtraction {
   readonly offerCode: StructuredBillField<string>;
   readonly extendedFacts: readonly StructuredBillExtendedFact[];
   readonly economicChargeLines: readonly StructuredBillEconomicChargeLine[];
+  /** Optional document-backed month detail; never inferred from the billing period. */
+  readonly monthlyBands?: readonly StructuredBillMonthlyBand[];
+  /** Optional bounded evidence for the numeric values in monthlyBands. */
+  readonly monthlyBandEvidence?: readonly DocumentMonthlyBandEvidence[];
+  /** Complete bounded document detection; may include months outside billingPeriod. */
+  readonly detectedMonthlyBandEvidence?: readonly DocumentMonthlyBandEvidence[];
+  /** Set only when a deterministic document reconciler replaced provider values. */
+  readonly monthlyBandDocumentEvidenceStatus?: "DOCUMENT_GROUNDED" | "NOT_AVAILABLE" | "FAIL_CLOSED";
+  readonly monthlyBandPrecisionMismatch?: boolean;
   readonly supplyProfile?: BillSupplyProfile;
   /** Two-stage metadata; absent on legacy/CORE-only fixtures. */
   readonly analystExtractionStatus?: "NOT_RUN" | "EXTRACTED" | "FAILED";
@@ -112,6 +126,7 @@ export interface StructuredBillExtraction {
 
 export interface StructuredBillExtractionProvider {
   extract(input: { readonly bytes: Uint8Array; readonly contentType: string }): Promise<StructuredBillExtraction>;
+  getDiagnosticSnapshots?: () => readonly BillStageShapeDiagnostic[];
 }
 
 export class StructuredBillExtractionError extends Error {
@@ -164,6 +179,27 @@ function validateField(value: unknown, path: string): void {
   if (item.status === "NOT_FOUND" && item.value !== null) throw new StructuredBillExtractionError(`BILL_STRUCTURED_FIELD_INVALID:${path}.value`);
 }
 
+function validateDocumentEvidenceArray(value: unknown, path: string, expectedBands?: readonly StructuredBillMonthlyBand[]): void {
+  if (!Array.isArray(value) || value.length > 120) throw new StructuredBillExtractionError(`BILL_STRUCTURED_FIELD_INVALID:${path}`);
+  const allowedMonths = expectedBands ? new Set(expectedBands.map((band) => band.month)) : null;
+  const evidenceMonths = new Set<string>();
+  for (const [index, candidate] of value.entries()) {
+    const itemPath = `${path}[${index}]`;
+    const evidence = record(candidate, `BILL_STRUCTURED_FIELD_INVALID:${itemPath}`);
+    if (typeof evidence.month !== "string" || !MONTH_KEY_PATTERN.test(evidence.month) || (allowedMonths !== null && !allowedMonths.has(evidence.month)) || evidenceMonths.has(evidence.month)) throw new StructuredBillExtractionError(`BILL_STRUCTURED_FIELD_INVALID:${itemPath}.month`);
+    evidenceMonths.add(evidence.month);
+    const matchingBand = expectedBands?.find((band) => band.month === evidence.month);
+    for (const key of ["f1", "f2", "f3"] as const) {
+      const numeric = record(evidence[key], `BILL_STRUCTURED_FIELD_INVALID:${itemPath}.${key}`);
+      if (typeof numeric.rawLexeme !== "string" || numeric.rawLexeme.length === 0 || numeric.rawLexeme.length > MAX_DOCUMENT_LEXEME_LENGTH || typeof numeric.normalizedValue !== "number" || !Number.isFinite(numeric.normalizedValue) || numeric.normalizedValue < 0 || typeof numeric.sourcePage !== "number" || !Number.isSafeInteger(numeric.sourcePage) || numeric.sourcePage < 1 || numeric.provenance !== DOCUMENT_EVIDENCE_SOURCE) throw new StructuredBillExtractionError(`BILL_STRUCTURED_FIELD_INVALID:${itemPath}.${key}`);
+      const locator = record(numeric.locator, `BILL_STRUCTURED_FIELD_INVALID:${itemPath}.${key}.locator`);
+      if (locator.section !== "CONSUMI" || locator.table !== "MONTHLY_BANDS" || locator.row !== evidence.month || !["F1", "F2", "F3"].includes(locator.column as string)) throw new StructuredBillExtractionError(`BILL_STRUCTURED_FIELD_INVALID:${itemPath}.${key}.locator`);
+      if (matchingBand && matchingBand[key] !== numeric.normalizedValue) throw new StructuredBillExtractionError(`BILL_STRUCTURED_FIELD_INVALID:${itemPath}.${key}.value`);
+      if (typeof numeric.sourceSha256 !== "string" || !/^[a-f0-9]{64}$/.test(numeric.sourceSha256)) throw new StructuredBillExtractionError(`BILL_STRUCTURED_FIELD_INVALID:${itemPath}.${key}.sourceSha256`);
+    }
+  }
+}
+
 export function validateStructuredBillExtraction(value: unknown): asserts value is StructuredBillExtraction {
   const item = record(value);
   if (item.schemaVersion !== 1) throw new StructuredBillExtractionError("BILL_STRUCTURED_SCHEMA_INVALID");
@@ -196,10 +232,26 @@ export function validateStructuredBillExtraction(value: unknown): asserts value 
       }
     }
   }
+  if (item.monthlyBands !== undefined) {
+    try { normalizeMonthlyBands(item.monthlyBands); }
+    catch { throw new StructuredBillExtractionError("BILL_STRUCTURED_FIELD_INVALID:monthlyBands"); }
+  }
+  if (item.monthlyBandDocumentEvidenceStatus !== undefined && !["DOCUMENT_GROUNDED", "NOT_AVAILABLE", "FAIL_CLOSED"].includes(item.monthlyBandDocumentEvidenceStatus as string)) throw new StructuredBillExtractionError("BILL_STRUCTURED_FIELD_INVALID:monthlyBandDocumentEvidenceStatus");
+  if (item.monthlyBandPrecisionMismatch !== undefined && typeof item.monthlyBandPrecisionMismatch !== "boolean") throw new StructuredBillExtractionError("BILL_STRUCTURED_FIELD_INVALID:monthlyBandPrecisionMismatch");
+  if (item.monthlyBandDocumentEvidenceStatus === "DOCUMENT_GROUNDED" && item.monthlyBandEvidence === undefined) throw new StructuredBillExtractionError("BILL_STRUCTURED_FIELD_INVALID:monthlyBandEvidence");
+  if (item.monthlyBandPrecisionMismatch === true && item.monthlyBandDocumentEvidenceStatus !== "DOCUMENT_GROUNDED") throw new StructuredBillExtractionError("BILL_STRUCTURED_FIELD_INVALID:monthlyBandPrecisionMismatch");
+  if (item.monthlyBandEvidence !== undefined) {
+    if (!Array.isArray(item.monthlyBandEvidence)) throw new StructuredBillExtractionError("BILL_STRUCTURED_FIELD_INVALID:monthlyBandEvidence");
+    const evidence = item.monthlyBandEvidence;
+    const bands = item.monthlyBands as readonly StructuredBillMonthlyBand[] | undefined;
+    if (!bands || bands.length !== evidence.length) throw new StructuredBillExtractionError("BILL_STRUCTURED_FIELD_INVALID:monthlyBandEvidence");
+    validateDocumentEvidenceArray(evidence, "monthlyBandEvidence", bands);
+  }
+  if (item.detectedMonthlyBandEvidence !== undefined) validateDocumentEvidenceArray(item.detectedMonthlyBandEvidence, "detectedMonthlyBandEvidence");
   if (item.analystExtractionStatus !== undefined && !["NOT_RUN", "EXTRACTED", "FAILED"].includes(item.analystExtractionStatus as string)) throw new StructuredBillExtractionError("BILL_STRUCTURED_FIELD_INVALID:analystExtractionStatus");
   if (item.supplyProfile !== undefined) {
     try {
-      validateBillSupplyProfile(item.supplyProfile);
+      normalizeBillSupplyProfile(item.supplyProfile);
     } catch (error) {
       if (error instanceof StructuredBillExtractionError) throw error;
       throw new StructuredBillExtractionError("BILL_STRUCTURED_FIELD_INVALID:supplyProfile");
@@ -209,6 +261,16 @@ export function validateStructuredBillExtraction(value: unknown): asserts value 
     const diagnostic = record(item.analystDiagnostic, "BILL_STRUCTURED_FIELD_INVALID:analystDiagnostic");
     if (typeof diagnostic.code !== "string" || diagnostic.code.length > 80 || (diagnostic.requestId !== null && typeof diagnostic.requestId !== "string") || typeof diagnostic.message !== "string" || diagnostic.message.length > 240) throw new StructuredBillExtractionError("BILL_STRUCTURED_FIELD_INVALID:analystDiagnostic");
   }
+}
+
+/** Normalizes only persisted legacy profile omissions; no value is inferred. */
+export function normalizeStoredStructuredBillExtraction(value: unknown): StructuredBillExtraction {
+  const item = record(value);
+  const normalized = item.supplyProfile === undefined
+    ? item
+    : { ...item, supplyProfile: normalizeBillSupplyProfile(item.supplyProfile) };
+  validateStructuredBillExtraction(normalized);
+  return normalized as unknown as StructuredBillExtraction;
 }
 
 export function parseAnthropicStructuredBillResponse(body: unknown): StructuredBillExtraction {
@@ -349,9 +411,55 @@ const unavailableText = (reason: "NOT_PROVIDED" = "NOT_PROVIDED"): DeclaredText 
 const quantity = <U extends "KWH" | "SMC">(unit: U, item: StructuredBillField<number>): Quantity<U> => valueOf(item) === null ? { unit, status: "UNAVAILABLE", reason: "NOT_EXTRACTED" } : { unit, status: "KNOWN", value: valueOf(item) as number };
 const declared = (item: StructuredBillField<string>): DeclaredText => valueOf(item) === null ? unavailableText() : { status: "KNOWN", value: valueOf(item) as string };
 const isoDate = (value: string): boolean => /^\d{4}-\d{2}-\d{2}$/.test(value) && Number.isFinite(Date.parse(`${value}T00:00:00Z`));
+export function structuredBillAnalyticalMonthlyTotal(extraction: StructuredBillExtraction): number | null {
+  if (extraction.monthlyBandDocumentEvidenceStatus === "DOCUMENT_GROUNDED") {
+    try {
+      const period = extraction.billingPeriod.status === "FOUND" ? extraction.billingPeriod.value : null;
+      const scoped = selectMonthlyBandsForBillingPeriod(period, extraction.monthlyBands);
+      if (!monthlyBandsEqual(scoped, extraction.monthlyBands)) return null;
+    } catch {
+      return null;
+    }
+  }
+  return analyticalMonthlyTotalKwh(extraction.monthlyBands);
+}
+
+export function structuredBillMonthlyDisplayReconciliation(extraction: StructuredBillExtraction): MonthlyDisplayReconciliation {
+  if (extraction.monthlyBandDocumentEvidenceStatus !== undefined && extraction.monthlyBandDocumentEvidenceStatus !== "DOCUMENT_GROUNDED") return "FAIL_CLOSED";
+  if (extraction.monthlyBandDocumentEvidenceStatus === "DOCUMENT_GROUNDED") {
+    try {
+      const period = extraction.billingPeriod.status === "FOUND" ? extraction.billingPeriod.value : null;
+      const scoped = selectMonthlyBandsForBillingPeriod(period, extraction.monthlyBands);
+      if (!monthlyBandsEqual(scoped, extraction.monthlyBands)) return "FAIL_CLOSED";
+    } catch {
+      return "FAIL_CLOSED";
+    }
+  }
+  if (extraction.monthlyBandDocumentEvidenceStatus === "DOCUMENT_GROUNDED" && (!extraction.monthlyBandEvidence || extraction.monthlyBandEvidence.length !== extraction.monthlyBands?.length || extraction.monthlyBandEvidence.some((evidence) => {
+    const band = extraction.monthlyBands?.find((candidate) => candidate.month === evidence.month);
+    return !band || band.f1 !== evidence.f1.normalizedValue || band.f2 !== evidence.f2.normalizedValue || band.f3 !== evidence.f3.normalizedValue;
+  }))) return "FAIL_CLOSED";
+  const display = extraction.billedConsumption.status === "FOUND" && extraction.billedConsumption.value !== null ? extraction.billedConsumption.value : null;
+  return reconcileAnalyticalToDisplay(structuredBillAnalyticalMonthlyTotal(extraction), display);
+}
+
+function analyticalElectricityTotal(extraction: StructuredBillExtraction): StructuredBillField<number> {
+  const monthlyTotal = structuredBillAnalyticalMonthlyTotal(extraction);
+  if (monthlyTotal !== null) return { ...extraction.billedConsumption, value: monthlyTotal };
+  const bands = [extraction.f1Consumption, extraction.f2Consumption, extraction.f3Consumption].map(valueOf);
+  const billed = valueOf(extraction.billedConsumption);
+  if (bands.every((value): value is number => typeof value === "number" && Number.isFinite(value)) && billed !== null) {
+    const analytical = bands.reduce((total, value) => total + value, 0);
+    const displayReconciles = billed === analytical || (Number.isInteger(billed) && billed === Math.round(analytical));
+    if (displayReconciles) return { ...extraction.billedConsumption, value: analytical };
+  }
+  return extraction.billedConsumption;
+}
 
 export function structuredBillContract(input: { readonly extraction: StructuredBillExtraction; readonly tenantId: string; readonly billId: string; readonly versionId: string }): BillContract | null {
   const extraction = input.extraction;
+  if (extraction.monthlyBandDocumentEvidenceStatus !== undefined && extraction.monthlyBandDocumentEvidenceStatus !== "DOCUMENT_GROUNDED") return null;
+  if (extraction.monthlyBands !== undefined && structuredBillMonthlyDisplayReconciliation(extraction) === "FAIL_CLOSED") return null;
   const vector = resolveBillVectorFromEvidence(extraction).vector;
   const supplier = valueOf(extraction.supplier);
   const period = valueOf(extraction.billingPeriod);
@@ -364,7 +472,7 @@ export function structuredBillContract(input: { readonly extraction: StructuredB
     const pod = valueOf(extraction.pod);
     const voltageLevel = valueOf(extraction.voltageLevel);
     if (!pod || !/^IT[A-Z0-9]{6,30}$/i.test(pod) || !voltageLevel) return null;
-    const contract: BillContract = { ...base, vector: "EE", supply: { vector: "EE", pod, voltageLevel }, consumption: { vector: "EE", f1: quantity("KWH", extraction.f1Consumption), f2: quantity("KWH", extraction.f2Consumption), f3: quantity("KWH", extraction.f3Consumption), total: quantity("KWH", extraction.billedConsumption) } };
+    const contract: BillContract = { ...base, vector: "EE", supply: { vector: "EE", pod, voltageLevel }, consumption: { vector: "EE", f1: quantity("KWH", extraction.f1Consumption), f2: quantity("KWH", extraction.f2Consumption), f3: quantity("KWH", extraction.f3Consumption), total: quantity("KWH", analyticalElectricityTotal(extraction)) } };
     try { validateBillContract(contract); return contract; } catch { return null; }
   }
   const pdr = valueOf(extraction.pdr);

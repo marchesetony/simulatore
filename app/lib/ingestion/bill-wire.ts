@@ -11,6 +11,8 @@ import { validateStructuredBillExtraction } from "./structured-bill.ts";
 import { resolveBillVectorFromEvidence } from "./vector-resolution.ts";
 // @ts-expect-error Node's strip-only test runner requires the explicit extension.
 import { normalizeBillEconomicComponent } from "../foundation/bill-economic-analysis.ts";
+// @ts-expect-error Node's strip-only test runner requires the explicit extension.
+import { MONTHLY_BANDS_WIRE_SCHEMA, normalizeMonthlyBands, type StructuredBillMonthlyBand } from "./monthly-bands.ts";
 
 export const BILL_WIRE_TOOL_NAME = "extract_bill_structured";
 export const BILL_WIRE_FIELD_NAMES = [
@@ -39,7 +41,7 @@ export interface BillWireAnalystItem {
 }
 export type BillWireExtraction = { readonly schemaVersion: 1 } & {
   readonly [K in Exclude<BillWireFieldName, "customerId">]: BillWireField;
-} & { readonly customerId?: BillWireField; readonly analystItems?: readonly BillWireAnalystItem[] };
+} & { readonly customerId?: BillWireField; readonly analystItems?: readonly BillWireAnalystItem[]; readonly monthlyBands?: readonly StructuredBillMonthlyBand[] };
 
 const BILL_WIRE_VALUE_ENUMS: Partial<Record<BillWireFieldName, readonly string[]>> = {
   vector: BILL_WIRE_VECTOR_VALUES,
@@ -98,6 +100,7 @@ const wireFieldSchema = (field: BillWireFieldName) => ({
   },
 });
 
+
 export const BILL_WIRE_SCHEMA = {
   type: "object",
   additionalProperties: false,
@@ -110,6 +113,7 @@ export const BILL_WIRE_SCHEMA = {
     f1Consumption: wireFieldSchema("f1Consumption"), f2Consumption: wireFieldSchema("f2Consumption"), f3Consumption: wireFieldSchema("f3Consumption"), smcConsumption: wireFieldSchema("smcConsumption"), conversionCoefficient: wireFieldSchema("conversionCoefficient"), pcs: wireFieldSchema("pcs"),
     offerName: wireFieldSchema("offerName"), offerCode: wireFieldSchema("offerCode"),
     analystItems: { type: "array", items: { type: "object", additionalProperties: false, required: ["kind", "code", "value", "unit", "description", "period", "status"], properties: { kind: { type: "string", enum: [...BILL_WIRE_ANALYST_ITEM_KINDS] }, code: { type: "string" }, value: { type: "string" }, unit: { type: "string" }, description: { type: "string" }, period: { type: "string" }, status: { type: "string", enum: [...BILL_WIRE_STATUS_VALUES] } } } },
+    monthlyBands: MONTHLY_BANDS_WIRE_SCHEMA,
   },
 } as const;
 
@@ -123,7 +127,7 @@ export const BILL_WIRE_TOOL = {
 export function validateBillWireExtraction(value: unknown): asserts value is BillWireExtraction {
   const item = record(value, "root");
   if (item.schemaVersion !== 1) throw new BillWireValidationError("schemaVersion", "ENUM", { expectedType: "integer", actualType: actualType(item.schemaVersion), expectedEnumName: "BILL_WIRE_SCHEMA_VERSION" });
-  const expected = new Set<string>(["schemaVersion", ...BILL_WIRE_FIELD_NAMES, "analystItems"]);
+  const expected = new Set<string>(["schemaVersion", ...BILL_WIRE_FIELD_NAMES, "analystItems", "monthlyBands"]);
   for (const key of Object.keys(item)) if (!expected.has(key)) throw new BillWireValidationError(key, "UNEXPECTED_PROPERTY");
   for (const key of BILL_WIRE_FIELD_NAMES) {
     if (!(key in item)) {
@@ -140,6 +144,7 @@ export function validateBillWireExtraction(value: unknown): asserts value is Bil
     if (supportedValues && !supportedValues.includes(field.value)) throw new BillWireValidationError(`${key}.value`, "ENUM", { expectedType: "string", actualType: "string", expectedEnumName: enumName(key) });
   }
   if (item.analystItems !== undefined) validateAnalystItems(item.analystItems);
+  if (item.monthlyBands !== undefined) normalizeMonthlyBands(item.monthlyBands, "monthlyBands");
 }
 
 export function parseBillWireExtraction(value: unknown): BillWireExtraction {
@@ -165,7 +170,7 @@ function parseEnum<T extends string>(values: readonly T[], value: string): T {
 }
 
 function parsePeriod(value: string): StructuredBillPeriod {
-  const raw = value.trim();
+  const raw = value.trim().replace(/[‐‑‒–—−]/g, "-").replace(/\s+/g, " ").replace(/(\d{1,2}[/.]\d{1,2}[/.]\d{4}|\d{4}-\d{1,2}-\d{1,2})\s*-\s*(?=(?:\d{1,2}[/.]\d{1,2}[/.]\d{4}|\d{4}-\d{1,2}-\d{1,2}))/i, "$1 - ");
   const monthNames: Readonly<Record<string, number>> = { gennaio: 1, febbraio: 2, marzo: 3, aprile: 4, maggio: 5, giugno: 6, luglio: 7, agosto: 8, settembre: 9, ottobre: 10, novembre: 11, dicembre: 12 };
   const monthOnly = /^(?:(\d{1,2})[/. -](\d{4})|([a-zàèéìòù]+)\s+(\d{4}))$/i.exec(raw);
   const next = (year: number, month: number): string => new Date(Date.UTC(year, month, 1)).toISOString().slice(0, 10);
@@ -174,6 +179,18 @@ function parsePeriod(value: string): StructuredBillPeriod {
     const year = Number(monthOnly[2] ?? monthOnly[4]);
     if (!Number.isInteger(month) || month < 1 || month > 12 || !Number.isInteger(year)) throw new Error("DATE_NOT_PARSEABLE");
     return { from: `${year.toString().padStart(4, "0")}-${month.toString().padStart(2, "0")}-01`, to: next(year, month), raw };
+  }
+  const monthRange = /^(?:dal\s+)?([a-z]+)\s+(\d{4})\s*-\s*([a-z]+)\s+(\d{4})$/i.exec(raw);
+  if (monthRange) {
+    const fromMonth = monthNames[monthRange[1].toLowerCase()];
+    const fromYear = Number(monthRange[2]);
+    const toMonth = monthNames[monthRange[3].toLowerCase()];
+    const toYear = Number(monthRange[4]);
+    if (!Number.isInteger(fromMonth) || !Number.isInteger(toMonth) || !Number.isInteger(fromYear) || !Number.isInteger(toYear)) throw new Error("DATE_NOT_PARSEABLE");
+    const from = `${fromYear.toString().padStart(4, "0")}-${fromMonth.toString().padStart(2, "0")}-01`;
+    const to = next(toYear, toMonth);
+    if (from >= to) throw new Error("PERIOD_ORDER_INVALID");
+    return { from, to, raw };
   }
   const match = /^(?:dal\s+)?(.+?)\s+(?:-|al|a)\s+(.+)$/i.exec(raw);
   if (!match) throw new Error("PERIOD_NOT_PARSEABLE");
@@ -237,6 +254,7 @@ export function mapBillWireToStructuredBill(wire: BillWireExtraction): Structure
     pod: canonical(wire, "pod"), pdr: canonical(wire, "pdr"), voltageLevel: canonical(wire, "voltageLevel"), powerKw: canonical(wire, "powerKw"),
     f1Consumption: canonical(wire, "f1Consumption"), f2Consumption: canonical(wire, "f2Consumption"), f3Consumption: canonical(wire, "f3Consumption"), smcConsumption: canonical(wire, "smcConsumption"), conversionCoefficient: canonical(wire, "conversionCoefficient"), pcs: canonical(wire, "pcs"),
     offerName: canonical(wire, "offerName"), offerCode: canonical(wire, "offerCode"), extendedFacts: facts, economicChargeLines: charges,
+    ...(wire.monthlyBands === undefined ? {} : { monthlyBands: normalizeMonthlyBands(wire.monthlyBands) }),
   };
   validateStructuredBillExtraction(extraction);
   return extraction;

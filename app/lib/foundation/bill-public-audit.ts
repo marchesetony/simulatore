@@ -1,9 +1,14 @@
+import path from "node:path";
 import type { PublicBillDocument } from "./real-bill.ts";
 // @ts-expect-error Node's strip-only test runner requires the explicit extension.
 import { auditElectricityBill, parseBillNumeric, type BillRegulatoryAuditDTO, type OfficialGmeReference } from "./bill-regulatory-audit.ts";
 // @ts-expect-error Node's strip-only test runner requires the explicit extension.
 import { LocalRegulatoryRepository } from "./regulatory-repository.ts";
 import type { RegulatoryValueRecord } from "./regulatory-types.ts";
+// @ts-expect-error Node's strip-only test runner requires the explicit extension.
+import { runtimeRepositories } from "../persistence/adapter.ts";
+// @ts-expect-error Node's strip-only test runner requires the explicit extension.
+import { ProductionRegulatoryPersistenceBridge } from "../regulatory-bridge.ts";
 // @ts-expect-error Node's strip-only test runner requires the explicit extension.
 import { buildBillSupplyProfile } from "../ingestion/bill-supply-profile.ts";
 // @ts-expect-error Node's strip-only test runner requires the explicit extension.
@@ -39,6 +44,60 @@ function appliedPun(document: PublicBillDocument): { readonly value: number | nu
   return { value: fact ? parseBillNumeric(fact.value) : line ? parseBillNumeric(line.unitPrice) : null, unit: fact?.unit ?? line?.unit ?? null };
 }
 
+async function regulatoryValuesFor(document: PublicBillDocument, period: { readonly from: string }): Promise<readonly RegulatoryValueRecord[]> {
+  const primary = await new LocalRegulatoryRepository().getRegulatoryValues(document.tenantId);
+  let runtime: readonly RegulatoryValueRecord[] = [];
+  try {
+    const repositories = runtimeRepositories();
+    runtime = await new ProductionRegulatoryPersistenceBridge(repositories.regulatoryValues, repositories.approvalDomains).list(document.tenantId, { effectiveAt: period.from });
+  } catch (error) {
+    if (process.env.APP_RUNTIME_MODE === "production") throw error;
+    const reason = error instanceof Error ? error.message : String(error);
+    throw new Error(`RUNTIME_ENV_NOT_CONFIGURED:${reason}`);
+  }
+  const tenantCatalog = primary.length > 0 || process.env.APP_RUNTIME_MODE === "production"
+    ? primary
+    : await new LocalRegulatoryRepository(path.join(process.cwd(), "var", "foundation-regulatory-data", document.tenantId)).getRegulatoryValues(document.tenantId);
+  // The legacy catalog supplements a valid runtime read for domains that are
+  // intentionally not projected yet; it is never a fallback for bad runtime
+  // configuration because that path now fails closed above.
+  // A valid runtime read is authoritative for the semantic dimension it
+  // projects. Do not mix its records with an overlapping legacy catalog
+  // interval: the resolver must still fail closed for genuinely incompatible
+  // records, while an equivalent legacy carry-forward cannot create a false
+  // conflict for the same tenant and supply period.
+  const runtimeAuthorityKeys = new Set(runtime.map((record) => [record.componentCode, record.customerScope, record.normalizedUnit, record.regulatoryVariant ?? ""].join("|")));
+  const catalogSupplement = tenantCatalog.filter((record) => !runtimeAuthorityKeys.has([record.componentCode, record.customerScope, record.normalizedUnit, record.regulatoryVariant ?? ""].join("|")));
+  const merged = new Map<string, RegulatoryValueRecord>();
+  for (const record of [...runtime, ...catalogSupplement]) {
+    if (record.tenantId !== document.tenantId) continue;
+    const key = [record.componentCode, record.customerScope, record.normalizedUnit, record.regulatoryVariant ?? "", record.effectiveFrom, record.effectiveTo ?? ""].join("|");
+    if (!merged.has(key)) merged.set(key, record);
+  }
+  return [...merged.values()];
+}
+
+function selectedAsosVariantForGenericAudit(document: PublicBillDocument, references: readonly RegulatoryValueRecord[]): string | null {
+  const line = document.structuredBill?.economicChargeLines.find((candidate) => candidate.status === "FOUND" && candidate.code === "ASOS" && /energia|scaglione/i.test(candidate.description));
+  const rawValue = parseBillNumeric(line?.unitPrice);
+  const rawUnit = line?.unit?.toUpperCase().replace(/\s/g, "");
+  if (rawValue === null || !rawUnit) return null;
+  const billRate = rawUnit.includes("KWH") ? rawUnit.includes("CENT") ? rawValue / 100 : rawValue : null;
+  if (billRate === null) return null;
+  const matches = [...new Set(references
+    .filter((record) => record.componentCode === "ASOS" && record.customerScope === "NON_DOMESTIC_BT_BTA6" && record.regulatoryVariant !== undefined && record.normalizedUnit === "EUR/KWH")
+    .filter((record) => Math.abs(record.normalizedValue - billRate) <= 0.000001)
+    .map((record) => record.regulatoryVariant as string))];
+  return matches.length === 1 ? matches[0] : null;
+}
+
+function referencesForGenericAudit(document: PublicBillDocument, references: readonly RegulatoryValueRecord[]): readonly RegulatoryValueRecord[] {
+  const variant = selectedAsosVariantForGenericAudit(document, references);
+  const hasBta6Variants = references.some((record) => record.componentCode === "ASOS" && record.customerScope === "NON_DOMESTIC_BT_BTA6" && record.regulatoryVariant !== undefined);
+  if (!hasBta6Variants) return references;
+  return references.filter((record) => record.componentCode !== "ASOS" || record.regulatoryVariant === undefined || record.regulatoryVariant === variant);
+}
+
 function auditInput(document: PublicBillDocument, period: { readonly from: string; readonly to: string }) {
   const extraction = document.structuredBill;
   const customerType = foundValue(extraction?.customerType);
@@ -62,10 +121,20 @@ export async function buildBillRegulatoryAudit(document: PublicBillDocument, reg
   const period = periodFrom(document);
   if (!period) return null;
   const profile = buildBillSupplyProfile(document.structuredBill?.extendedFacts ?? []);
-  const input = { ...auditInput(document, period), domesticResidenceStatus: profile.domesticResidenceStatus.normalizedValue === "RESIDENT" ? "PROVEN" as const : profile.domesticResidenceStatus.normalizedValue === "NON_RESIDENT" ? "NOT_PROVEN" as const : "UNKNOWN" as const };
-  const references = regulatoryReferences ?? await new LocalRegulatoryRepository().getRegulatoryValues(document.tenantId);
+  const customerType = foundValue(document.structuredBill?.customerType);
+  const resolvedScope = customerType === "NON_RESIDENTIAL" && profile.supplyUseCategory.normalizedValue === "OTHER_USE" && ["LV", "BT"].includes(profile.voltageClass.normalizedValue ?? "")
+    ? "NON_DOMESTIC_BT_BTA6" as const
+    : profile.supplyUseCategory.normalizedValue === "DOMESTIC"
+    ? profile.domesticResidenceStatus.normalizedValue === "RESIDENT"
+      ? "DOMESTIC_RESIDENT_BT" as const
+      : profile.domesticResidenceStatus.normalizedValue === "NON_RESIDENT"
+        ? "DOMESTIC_NON_RESIDENT_BT" as const
+        : "UNKNOWN" as const
+    : "UNKNOWN" as const;
+  const input = { ...auditInput(document, period), domesticResidenceStatus: profile.domesticResidenceStatus.normalizedValue === "RESIDENT" ? "PROVEN" as const : profile.domesticResidenceStatus.normalizedValue === "NON_RESIDENT" ? "NOT_PROVEN" as const : "UNKNOWN" as const, regulatoryCustomerScope: resolvedScope };
+  const references = regulatoryReferences ?? await regulatoryValuesFor(document, period);
   const audit = auditElectricityBill(input, {
-    regulatoryReferences: references,
+    regulatoryReferences: referencesForGenericAudit(document, references),
     officialGmeReferences: officialGmeReferences(document),
     appliedPunOriginalValue: input.pun.value,
     appliedPunOriginalUnit: input.pun.unit,
@@ -106,7 +175,7 @@ export async function buildBillRegulatoryAudit(document: PublicBillDocument, reg
     regulatoryReferences: references,
     billedConsumptionKwh: parseBillNumeric(input.billedConsumptionKwh),
     powerKw: parseBillNumeric(input.powerKw),
-    customerScope: matrix.scope === "DOMESTIC_RESIDENT_BT" ? "DOMESTIC_RESIDENT_BT" : "UNKNOWN",
+    customerScope: resolvedScope === "DOMESTIC_RESIDENT_BT" || resolvedScope === "DOMESTIC_NON_RESIDENT_BT" || resolvedScope === "NON_DOMESTIC_BT_BTA6" ? resolvedScope : "UNKNOWN",
   });
   const passThroughOvercharge = regulatedPassThrough.items.reduce((sum, item) => sum + Math.max(0, item.amountDifference ?? 0), 0);
   const passThroughUndercharge = regulatedPassThrough.items.reduce((sum, item) => sum + Math.max(0, -(item.amountDifference ?? 0)), 0);

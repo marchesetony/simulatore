@@ -3,7 +3,7 @@ import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { syntheticElectricityCte, syntheticGasCte } from "../app/lib/cte/synthetic-fixtures.ts";
-import { createCteArchive, createCteCorrection, approveCteArchive, rejectCteArchive } from "../app/lib/cte/archive/service.ts";
+import { createCteArchive, createCteCorrection, approveCteArchive, rejectCteArchive, reviewCteArchive } from "../app/lib/cte/archive/service.ts";
 import { LocalCteArchiveRepository } from "../app/lib/cte/archive/repository.ts";
 import { validateElectricityCte } from "../app/lib/cte/validation.ts";
 import { syntheticElectricityPun, syntheticGasPsv } from "../app/lib/energy/synthetic-fixtures.ts";
@@ -23,14 +23,16 @@ try {
   const cte = new LocalCteArchiveRepository(eeRoot);
   const ee = await createCteArchive(cte, { tenantId: tenantA, contract: draft(syntheticElectricityCte), now: "2026-08-01T00:00:00.000Z" });
   assert.equal(ee.versions[0].status, "DRAFT");
-  const approvedEe = await approveCteArchive(cte, tenantA, ee.archiveId, ee.currentWorkingVersionId, "reviewer-ee", "ee-decision", "2026-08-02T00:00:00.000Z");
+  await reviewCteArchive(cte, tenantA, ee.archiveId, ee.currentWorkingVersionId, "reviewer-ee", "2026-08-02T00:00:00.000Z");
+  const approvedEe = await approveCteArchive(cte, tenantA, ee.archiveId, ee.currentWorkingVersionId, "reviewer-ee", "ee-decision", "2026-08-02T00:00:00.000Z", async () => {});
   assert.equal(approvedEe.currentApprovedVersionId, approvedEe.currentWorkingVersionId);
   assert.equal(approvedEe.versions[0].status, "APPROVED");
   const historyBeforeCorrection = structuredClone(approvedEe.history);
   const correctedContract = clone(syntheticElectricityCte); correctedContract.tenantId = tenantA;
   correctedContract.pricing.spread.amount = 0.014;
   const corrected = await createCteCorrection(cte, { tenantId: tenantA, archiveId: ee.archiveId, expectedVersionId: approvedEe.currentWorkingVersionId, contract: correctedContract, reason: "supplier correction", now: "2026-08-03T00:00:00.000Z" });
-  const correctedApproved = await approveCteArchive(cte, tenantA, corrected.archiveId, corrected.currentWorkingVersionId, "reviewer-ee", "ee-decision-2", "2026-08-04T00:00:00.000Z");
+  await reviewCteArchive(cte, tenantA, corrected.archiveId, corrected.currentWorkingVersionId, "reviewer-ee", "2026-08-04T00:00:00.000Z");
+  const correctedApproved = await approveCteArchive(cte, tenantA, corrected.archiveId, corrected.currentWorkingVersionId, "reviewer-ee", "ee-decision-2", "2026-08-04T00:00:00.000Z", async () => {});
   assert.equal(correctedApproved.versions[0].status, "EXPIRED");
   assert.equal(correctedApproved.currentApprovedVersionId, correctedApproved.currentWorkingVersionId);
   assert.deepEqual(approvedEe.history, historyBeforeCorrection);
@@ -41,7 +43,8 @@ try {
   await fails(cte.save(tamperedCte), "ARCHIVE_HISTORY_IMMUTABLE");
 
   const gas = await createCteArchive(cte, { tenantId: tenantA, contract: draft(syntheticGasCte), now: "2026-08-01T00:00:00.000Z" });
-  const approvedGas = await approveCteArchive(cte, tenantA, gas.archiveId, gas.currentWorkingVersionId, "reviewer-gas", "gas-decision", "2026-08-02T00:00:00.000Z");
+  await reviewCteArchive(cte, tenantA, gas.archiveId, gas.currentWorkingVersionId, "reviewer-gas", "2026-08-02T00:00:00.000Z");
+  const approvedGas = await approveCteArchive(cte, tenantA, gas.archiveId, gas.currentWorkingVersionId, "reviewer-gas", "gas-decision", "2026-08-02T00:00:00.000Z", async () => {});
   assert.equal(approvedGas.vector, "GAS");
   const gasCorrection = clone(syntheticGasCte); gasCorrection.tenantId = tenantA;
   gasCorrection.vector = "EE";
@@ -51,8 +54,9 @@ try {
   incomplete.approval = { status: "DRAFT", reason: "incomplete" };
   assert.throws(() => validateElectricityCte(incomplete));
   const overlap = await createCteArchive(cte, { tenantId: tenantA, archiveId: "cte-ee-overlap", contract: draft(syntheticElectricityCte), now: "2026-08-05T00:00:00.000Z" });
-  await fails(approveCteArchive(cte, tenantA, overlap.archiveId, overlap.currentWorkingVersionId, "reviewer", ""), "ACTOR_REQUIRED");
-  await fails(approveCteArchive(cte, tenantA, overlap.archiveId, overlap.currentWorkingVersionId, "reviewer", "overlap-decision", "2026-08-06T00:00:00.000Z"), "CTE_APPROVED_VALIDITY_OVERLAP");
+  await reviewCteArchive(cte, tenantA, overlap.archiveId, overlap.currentWorkingVersionId, "reviewer", "2026-08-06T00:00:00.000Z");
+  await fails(approveCteArchive(cte, tenantA, overlap.archiveId, overlap.currentWorkingVersionId, "reviewer", "", undefined, async () => {}), "ACTOR_REQUIRED");
+  await fails(approveCteArchive(cte, tenantA, overlap.archiveId, overlap.currentWorkingVersionId, "reviewer", "overlap-decision", "2026-08-06T00:00:00.000Z", async () => {}), "CTE_APPROVED_VALIDITY_OVERLAP");
   const rejected = await rejectCteArchive(cte, tenantA, overlap.archiveId, overlap.currentWorkingVersionId, "reviewer", "source not confirmed", "2026-08-06T00:00:00.000Z");
   assert.equal(rejected.versions[0].status, "REJECTED");
 

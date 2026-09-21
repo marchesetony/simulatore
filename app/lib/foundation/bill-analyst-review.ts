@@ -1,5 +1,6 @@
 import type { BillFields, PublicBillDocument } from "./real-bill";
 import type { StructuredBillExtraction, StructuredBillField, StructuredBillFieldStatus, StructuredBillEconomicChargeLine, StructuredBillExtendedFact } from "../ingestion/structured-bill";
+import type { StructuredBillMonthlyBand } from "../ingestion/monthly-bands";
 import type { BillSupplyProfile } from "../ingestion/bill-supply-profile";
 // @ts-expect-error Node's strip-only test runner requires the explicit extension.
 import { buildBillSupplyProfile } from "../ingestion/bill-supply-profile.ts";
@@ -119,6 +120,9 @@ export interface BillAnalystReviewDTO {
   readonly reviewIssues: readonly BillAnalystReviewIssue[];
   readonly provenance: readonly { readonly label: string; readonly source: string; readonly confidence: number; readonly reviewed: boolean }[];
   readonly simulationDraft: {
+    readonly billId?: string;
+    readonly billVersion?: string;
+    readonly monthlyProfile?: readonly { readonly month: string; readonly f1: number; readonly f2: number; readonly f3: number }[];
     readonly vector: "EE" | "GAS";
     readonly calculationDate: string;
     readonly periodStart: string;
@@ -171,6 +175,7 @@ export interface BillAnalystReviewSource {
   readonly reviewState: string;
   readonly updatedAt: string;
   readonly currentVersionNumber: number;
+  readonly currentApprovedVersionId: string | null;
   readonly approvalReady: boolean;
   readonly fields: BillFields;
   readonly normalized: PublicBillDocument["normalized"];
@@ -289,7 +294,8 @@ export function buildBillAnalystReview(source: BillAnalystReviewSource): BillAna
   const reviewIssues = allFields.map(([path, item]) => issue(path, item)).filter((item): item is BillAnalystReviewIssue => item !== null);
   const vectorValue = source.resolvedVector === "EE" || source.resolvedVector === "GAS" ? source.resolvedVector : null;
   const customerCategory: "RESIDENTIAL" | "NON_RESIDENTIAL" | "" = customer.type.value === "RESIDENTIAL" || customer.type.value === "NON_RESIDENTIAL" ? customer.type.value : "";
-  const simulationDraft = vectorValue ? { vector: vectorValue, periodStart: periodValue?.from ?? "", periodEnd: periodValue?.to ?? "", customerCategory, customerReference: "", supplyReference: stringValue(vectorValue === "EE" ? supply.pod : supply.pdr) ?? "", voltageLevel: "" as const, f1: stringValue(consumption.f1) ?? "", f2: stringValue(consumption.f2) ?? "", f3: stringValue(consumption.f3) ?? "", smc: stringValue(consumption.smc) ?? "", correctionRequired: false, correctionCoefficient: "" } : null;
+  const monthlyProfile = vectorValue === "EE" && source.structuredBill?.monthlyBands ? source.structuredBill.monthlyBands.map((band: StructuredBillMonthlyBand) => ({ month: band.month, f1: band.f1, f2: band.f2, f3: band.f3 })) : undefined;
+  const simulationDraft = vectorValue ? { billId: source.id, billVersion: source.currentApprovedVersionId ?? undefined, ...(monthlyProfile && monthlyProfile.length > 0 ? { monthlyProfile } : {}), vector: vectorValue, periodStart: periodValue?.from ?? "", periodEnd: periodValue?.to ?? "", customerCategory, customerReference: "", supplyReference: stringValue(vectorValue === "EE" ? supply.pod : supply.pdr) ?? "", voltageLevel: "" as const, f1: stringValue(consumption.f1) ?? "", f2: stringValue(consumption.f2) ?? "", f3: stringValue(consumption.f3) ?? "", smc: stringValue(consumption.smc) ?? "", correctionRequired: false, correctionCoefficient: "" } : null;
   const provenance = source.normalized?.provenance ?? [];
   const date = source.updatedAt ?? "";
   const supplyProfile = extraction?.extendedFacts ? buildBillSupplyProfile(extraction.extendedFacts) : extraction?.supplyProfile ?? null;

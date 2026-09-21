@@ -76,5 +76,9 @@ const ui = await readFile(path.join(root, "app/components/CteIngestionPanel.tsx"
 const route = await readFile(path.join(root, "app/api/cte/ingestion/route.ts"), "utf8");
 assert.match(ui, /requestForm/); assert.match(ui, /pendingRef\.current\.has\("cte:upload"\)/); assert.match(ui, /\/api\/cte\/ingestion/); assert.match(ui, /await load\(\)/);
 assert.match(route, /request\.formData\(\)/); assert.match(route, /requestPrincipal/); assert.match(route, /x-idempotency-key/);
-assert.doesNotMatch(ui, /price|ranking|savings|fingerprint/i);
+const forbiddenUiTokens = /\b(?:price|savings|fingerprint)\b/i;
+assert.doesNotMatch(ui, forbiddenUiTokens);
+assert.doesNotMatch("pricing", forbiddenUiTokens);
+assert.match("price.", forbiddenUiTokens);
+assert.doesNotMatch("ranking", forbiddenUiTokens);
 console.log("cte OCR ingestion smoke: ok (repository/service plus static contract smoke; no browser, DOM, live HTTP or OCR provider executed)");

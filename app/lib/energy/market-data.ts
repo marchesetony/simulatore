@@ -6,8 +6,10 @@ export type MarketDataSource = {
   readonly sourceId: string;
   readonly name: string;
   readonly url: string;
-  readonly authority?: "GME";
+  readonly authority?: "GME" | "ARERA";
   readonly sourceType?: "OFFICIAL";
+  readonly sourceSha256?: string;
+  readonly relatedUrls?: readonly string[];
 };
 
 export type MarketRate = {
@@ -65,8 +67,10 @@ function assertSource(value: unknown): asserts value is MarketDataSource {
   nonEmpty(item.name, "MARKET_SOURCE_INVALID");
   const url = nonEmpty(item.url, "MARKET_SOURCE_INVALID");
   if (!/^https:\/\//.test(url)) fail("MARKET_SOURCE_INVALID");
-  if (item.authority !== undefined && item.authority !== "GME") fail("MARKET_SOURCE_INVALID");
+  if (item.authority !== undefined && item.authority !== "GME" && item.authority !== "ARERA") fail("MARKET_SOURCE_INVALID");
   if (item.sourceType !== undefined && item.sourceType !== "OFFICIAL") fail("MARKET_SOURCE_INVALID");
+  if (item.sourceSha256 !== undefined && (typeof item.sourceSha256 !== "string" || !/^[a-f0-9]{64}$/i.test(item.sourceSha256))) fail("MARKET_SOURCE_INVALID");
+  if (item.relatedUrls !== undefined && (!Array.isArray(item.relatedUrls) || item.relatedUrls.some((itemUrl) => typeof itemUrl !== "string" || !/^https:\/\//.test(itemUrl)))) fail("MARKET_SOURCE_INVALID");
 }
 
 function assertRate(value: unknown, unit: MarketRate["unit"]): asserts value is MarketRate {

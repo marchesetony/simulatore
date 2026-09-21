@@ -15,6 +15,8 @@ import { BILL_WIRE_SCHEMA, BillWireValidationError, mapBillWireToStructuredBill,
 import { BILL_ANALYST_ITEM_CODES, BILL_ECONOMIC_CHARGE_CODES, normalizeAnalystItemCode, type BillEconomicChargeLineCode, type BillAnalystItemCode } from "./bill-extended-contract.ts";
 // @ts-expect-error Node's strip-only test runner requires the explicit extension.
 import { normalizeBillEconomicComponent } from "../foundation/bill-economic-analysis.ts";
+// @ts-expect-error Node's strip-only test runner requires the explicit extension.
+import { MONTHLY_BANDS_WIRE_SCHEMA, monthlyBandsEqual, normalizeMonthlyBands, type StructuredBillMonthlyBand } from "./monthly-bands.ts";
 
 export const BILL_CORE_TOOL_NAME = "extract_bill_core";
 export const BILL_ANALYST_TOOL_NAME = "extract_bill_analyst_items";
@@ -23,8 +25,9 @@ export const BILL_TWO_STAGE_SCHEMA_VERSION = "1";
 type SchemaRecord = Record<string, unknown>;
 
 /* The CORE schema is mechanically derived from the last accepted CORE-compatible
- * wire. The legacy one-call analystItems branch is deliberately excluded. */
-const coreProperties = Object.fromEntries(Object.entries(BILL_WIRE_SCHEMA.properties).filter(([name]) => name !== "analystItems"));
+ * wire. The legacy one-call analystItems and optional monthly detail branches
+ * are deliberately excluded; monthly detail belongs to the Analyst stage. */
+const coreProperties = Object.fromEntries(Object.entries(BILL_WIRE_SCHEMA.properties).filter(([name]) => name !== "analystItems" && name !== "monthlyBands"));
 export const CORE_WIRE_SCHEMA = {
   type: "object",
   additionalProperties: false,
@@ -34,7 +37,7 @@ export const CORE_WIRE_SCHEMA = {
 
 export const CORE_WIRE_TOOL = {
   name: BILL_CORE_TOOL_NAME,
-  description: "Estrai esclusivamente i dati core affidabili della bolletta. Usa NOT_FOUND per dati assenti e non inventare valori.",
+  description: "Estrai solo i dati core affidabili e le bande aggregate del periodo. Il dettaglio mensile, solo se esplicitamente presente, viene estratto dal successivo stage Analyst; non inferire né distribuire consumi.",
   strict: true,
   input_schema: CORE_WIRE_SCHEMA,
 } as const;
@@ -58,6 +61,7 @@ export interface BillAnalystWireItem {
 export interface BillAnalystWireExtraction {
   readonly schemaVersion: string;
   readonly items: readonly BillAnalystWireItem[];
+  readonly monthlyBands?: readonly StructuredBillMonthlyBand[];
 }
 
 const analystItemProperties = Object.fromEntries(ANALYST_ITEM_PROPERTY_NAMES.map((name) => [name, { type: "string" }])) as Record<AnalystItemPropertyName, { readonly type: "string" }>;
@@ -76,6 +80,7 @@ export const ANALYST_WIRE_SCHEMA = {
         properties: analystItemProperties,
       },
     },
+    monthlyBands: MONTHLY_BANDS_WIRE_SCHEMA,
   },
 } as const;
 
@@ -97,6 +102,7 @@ export const ANALYST_STAGE_PROMPT = [
   "Restituisci un item per ogni fatto documentale trovato e una riga CHARGE per ogni componente economica trovata.",
   `Usa questo catalogo solo come guida di normalizzazione: ${BILL_ANALYST_ITEM_CODES.join(", ")}. Non filtrare né scartare voci economiche perché il codice non è presente; per ogni corrispettivo distinto conserva descrizione e valori originali e assegna un code testuale descrittivo.`,
   "Usa kind FACT per i fatti e kind CHARGE per le righe economiche.",
+  "Se il documento espone un dettaglio esplicito per mese con F1/F2/F3, restituiscilo anche in monthlyBands con mese YYYY-MM e numeri kWh. Copia ogni cifra decimale visibile esattamente: non arrotondare, non troncare e non convertire un valore decimale in intero. Se il documento non mostra il dettaglio mensile, ometti monthlyBands e non inferire o distribuire consumi.",
   "Distingui i prezzi PUN_SINGLE/PUN_F1/PUN_F2/PUN_F3 dai consumi F1/F2/F3, che sono kWh.",
   "Per ogni CHARGE conserva label originale, value, quantity, unit, unitPrice, amount e periodo raw.",
   "Restituisci ogni voce economica distinta realmente esposta, anche se il code non è nel catalogo: conserva la descrizione originale e usa un code descrittivo; il server classifica gli elementi sconosciuti come UNCLASSIFIED_BILL_CHARGE.",
@@ -124,7 +130,7 @@ function object(value: unknown, path: string): SchemaRecord {
 }
 
 export function validateBillCoreWireExtraction(value: unknown): asserts value is BillWireExtraction {
-  if (!isRecord(value) || Object.hasOwn(value, "analystItems")) throw new BillWireValidationError("root", "CORE_ONLY_REQUIRED");
+  if (!isRecord(value) || Object.hasOwn(value, "analystItems") || Object.hasOwn(value, "monthlyBands")) throw new BillWireValidationError("root", "CORE_ONLY_REQUIRED");
   parseBillWireExtraction(value);
 }
 
@@ -136,7 +142,7 @@ export function parseBillCoreWireExtraction(value: unknown): BillWireExtraction 
 export function validateBillAnalystWireExtraction(value: unknown): asserts value is BillAnalystWireExtraction {
   const root = object(value, "root");
   if (typeof root.schemaVersion !== "string" || !/^1(?:\.0+)?$/.test(root.schemaVersion.trim())) throw new BillAnalystWireValidationError("schemaVersion", "VERSION");
-  for (const key of Object.keys(root)) if (key !== "schemaVersion" && key !== "items") throw new BillAnalystWireValidationError(key, "UNEXPECTED_PROPERTY");
+  for (const key of Object.keys(root)) if (key !== "schemaVersion" && key !== "items" && key !== "monthlyBands") throw new BillAnalystWireValidationError(key, "UNEXPECTED_PROPERTY");
   if (!Array.isArray(root.items)) throw new BillAnalystWireValidationError("items", "ARRAY_REQUIRED");
   for (const [index, rawItem] of root.items.entries()) {
     const item = object(rawItem, `items.${index}`);
@@ -145,6 +151,10 @@ export function validateBillAnalystWireExtraction(value: unknown): asserts value
       if (typeof item[key] !== "string") throw new BillAnalystWireValidationError(`items.${index}.${key}`, "STRING_REQUIRED");
     }
     for (const key of Object.keys(item)) if (!(ANALYST_ITEM_PROPERTY_NAMES as readonly string[]).includes(key)) throw new BillAnalystWireValidationError(`items.${index}.${key}`, "UNEXPECTED_PROPERTY");
+  }
+  if (root.monthlyBands !== undefined) {
+    try { normalizeMonthlyBands(root.monthlyBands, "monthlyBands"); }
+    catch { throw new BillAnalystWireValidationError("monthlyBands", "INVALID"); }
   }
 }
 
@@ -225,7 +235,7 @@ function documentField<T>(value: T | null, status: BillWireStatus): StructuredBi
 }
 
 function parsePeriod(value: string): StructuredBillPeriod | null {
-  const raw = value.trim();
+  const raw = value.trim().replace(/[‐‑‒–—−]/g, "-").replace(/\s+/g, " ").replace(/(\d{1,2}[/.]\d{1,2}[/.]\d{4}|\d{4}-\d{1,2}-\d{1,2})\s*-\s*(?=(?:\d{1,2}[/.]\d{1,2}[/.]\d{4}|\d{4}-\d{1,2}-\d{1,2}))/i, "$1 - ");
   const monthNames: Readonly<Record<string, number>> = { gennaio: 1, febbraio: 2, marzo: 3, aprile: 4, maggio: 5, giugno: 6, luglio: 7, agosto: 8, settembre: 9, ottobre: 10, novembre: 11, dicembre: 12 };
   const monthOnly = /^(?:(\d{1,2})[/. -](\d{4})|([a-zàèéìòù]+)\s+(\d{4}))$/i.exec(raw);
   const date = (candidateRaw: string): string | null => {
@@ -246,6 +256,17 @@ function parsePeriod(value: string): StructuredBillPeriod | null {
     const to = new Date(Date.UTC(year, month, 1)).toISOString().slice(0, 10);
     return { from, to, raw };
   }
+  const monthRange = /^(?:dal\s+)?([a-z]+)\s+(\d{4})\s*-\s*([a-z]+)\s+(\d{4})$/i.exec(raw);
+  if (monthRange) {
+    const fromMonth = monthNames[monthRange[1].toLowerCase()];
+    const fromYear = Number(monthRange[2]);
+    const toMonth = monthNames[monthRange[3].toLowerCase()];
+    const toYear = Number(monthRange[4]);
+    if (!Number.isInteger(fromMonth) || !Number.isInteger(toMonth) || !Number.isInteger(fromYear) || !Number.isInteger(toYear)) return null;
+    const from = `${fromYear.toString().padStart(4, "0")}-${fromMonth.toString().padStart(2, "0")}-01`;
+    const to = new Date(Date.UTC(toYear, toMonth, 1)).toISOString().slice(0, 10);
+    return from < to ? { from, to, raw } : null;
+  }
   const range = /^(?:dal\s+)?(.+?)\s+(?:-|al|a)\s+(.+)$/i.exec(raw);
   if (!range) return null;
   const from = date(range[1]);
@@ -259,7 +280,7 @@ export function mapBillCoreToStructuredBill(core: BillWireExtraction): Structure
   return { ...extraction, analystExtractionStatus: "NOT_RUN" };
 }
 
-export function mapBillAnalystItems(analyst: BillAnalystWireExtraction): { readonly facts: readonly StructuredBillExtendedFact[]; readonly charges: readonly StructuredBillEconomicChargeLine[] } {
+export function mapBillAnalystItems(analyst: BillAnalystWireExtraction): { readonly facts: readonly StructuredBillExtendedFact[]; readonly charges: readonly StructuredBillEconomicChargeLine[]; readonly monthlyBands?: readonly StructuredBillMonthlyBand[] } {
   validateBillAnalystWireExtraction(analyst);
   const facts: StructuredBillExtendedFact[] = [];
   const charges: StructuredBillEconomicChargeLine[] = [];
@@ -273,7 +294,7 @@ export function mapBillAnalystItems(analyst: BillAnalystWireExtraction): { reado
       facts.push({ code: item.normalizedCode, value: item.value.trim(), ...(item.normalizedUnit ? { unit: item.normalizedUnit } : {}), status: item.normalizedStatus });
     }
   }
-  return { facts, charges };
+  return { facts, charges, ...(analyst.monthlyBands === undefined ? {} : { monthlyBands: normalizeMonthlyBands(analyst.monthlyBands) }) };
 }
 
 export const ANALYST_OWNED_PROPERTIES = ["extendedFacts", "economicChargeLines", "supplyProfile", "analystExtractionStatus", "analystDiagnostic"] as const;
@@ -296,6 +317,8 @@ export function mergeBillCoreAndAnalyst(core: StructuredBillExtraction, analyst:
   const cleanCore = stripBillAnalystData(core);
   if (!analyst) return { ...cleanCore, analystExtractionStatus: options.analystExtractionStatus ?? "NOT_RUN", ...(options.diagnostic ? { analystDiagnostic: options.diagnostic } : {}) };
   const mapped = mapBillAnalystItems(analyst);
+  if (cleanCore.monthlyBands !== undefined && mapped.monthlyBands !== undefined && !monthlyBandsEqual(cleanCore.monthlyBands, mapped.monthlyBands)) throw new BillAnalystWireValidationError("monthlyBands", "CONFLICT");
+  const monthlyBands = cleanCore.monthlyBands ?? mapped.monthlyBands;
   let billingPeriod = cleanCore.billingPeriod;
   const raw = mapped.facts.find((fact) => fact.code === "BILLING_PERIOD_RAW" && fact.value.trim());
   if (billingPeriod.status !== "FOUND" && raw) {
@@ -307,6 +330,7 @@ export function mergeBillCoreAndAnalyst(core: StructuredBillExtraction, analyst:
     billingPeriod,
     extendedFacts: [...mapped.facts],
     economicChargeLines: [...mapped.charges],
+    ...(monthlyBands === undefined ? {} : { monthlyBands }),
     supplyProfile: buildBillSupplyProfile(mapped.facts),
     analystExtractionStatus: options.analystExtractionStatus ?? "EXTRACTED",
     ...(options.diagnostic ? { analystDiagnostic: options.diagnostic } : {}),

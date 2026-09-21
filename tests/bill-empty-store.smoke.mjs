@@ -13,6 +13,8 @@ const root = await mkdtemp(path.join(tmpdir(), "bill-empty-store-"));
 const repository = new LocalBillRepository(root);
 const storage = new LocalDocumentStorage(root);
 try {
+  await assert.rejects(() => storage.read("../../outside", "document"), /TENANT_ACCESS_DENIED/);
+  await assert.rejects(() => storage.read(tenant, "../outside"), /DOCUMENT_STORAGE_KEY_INVALID/);
   await writeFile(path.join(root, "metadata.json"), Buffer.from("\uFEFF{\"schemaVersion\":1,\"documents\":[]}", "utf8"));
   assert.deepEqual(await repository.list(tenant), []);
 
@@ -23,7 +25,7 @@ try {
   const unrelated = path.join(root, "non-bill-sentinel.json");
   await writeFile(unrelated, "non-bill-data", "utf8");
   await repository.delete(tenant, first.id);
-  await storage.remove(first.objectKey);
+  await storage.remove(tenant, first.id);
   assert.deepEqual(await repository.list(tenant), []);
   assert.equal(await readFile(unrelated, "utf8"), "non-bill-data");
 

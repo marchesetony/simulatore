@@ -5,8 +5,10 @@ import { legacyCteApprovedSnapshot } from "../app/lib/cte/approved-snapshot.ts";
 import { toPublicCteApprovedArchiveDetail } from "../app/lib/cte/archive/service.ts";
 import { LocalCteArchiveRepository } from "../app/lib/cte/archive/repository.ts";
 import { toPublicCteIngestion } from "../app/lib/cte/ingestion.ts";
+import { loadLocalRuntimeEnvForTests } from "./support/standalone-runtime-env.mjs";
 
 const tenant = "tenant_local-demo";
+loadLocalRuntimeEnvForTests({ expectedTenantId: tenant });
 const ingestion = JSON.parse(await readFile("var/phase6/cte-archives/tenant_local-demo/cte-ingestion-c30431e0-11ab-460d-ad10-6a26eb23b63d.json", "utf8"));
 const archive = await new LocalCteArchiveRepository().get(tenant, ingestion.recordId);
 assert.ok(archive?.currentApprovedVersionId);
