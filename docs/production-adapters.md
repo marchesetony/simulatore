@@ -23,6 +23,13 @@ SUPABASE_STORAGE_BUCKET=bill-documents
 
 `SUPABASE_SECRET_KEY` is a server-only `sb_secret_...` key for provider persistence and the manual admin bootstrap. `SUPABASE_PUBLISHABLE_KEY` is the low-privilege key used by the server-side Supabase Auth client for email/password verification. Neither key is copied into the application cookie or returned to the browser; the legacy service-role environment variable is not part of this contract.
 
+Runtime contract:
+
+- Vercel does not load the repository's `.env.local`; configure the production tuple in the target Vercel environment.
+- Missing or invalid runtime/provider variables fail closed: `/api/health/readiness` returns HTTP 503 and production adapters are not retained.
+- `SUPABASE_SERVICE_ROLE_KEY` is not an alias for `SUPABASE_SECRET_KEY` and is intentionally ignored by this runtime.
+- Preview/local remains explicit: use the complete local tuple (`FOUNDATION_LOCAL_DEV=true`, local adapters) or the complete production tuple; partial or implicit production configuration is invalid.
+
 Optional safe defaults:
 
 ```text

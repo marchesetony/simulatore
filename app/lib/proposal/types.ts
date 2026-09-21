@@ -1,11 +1,12 @@
 import type { CalculationComponent, CalculationCostScope, CalculationExclusion, CalculationMarketReference, CalculationResult, ContractualPassThroughStatus, RegulatedComponentIncluded, SimulationRequest } from "../calculation/types";
 import type { ComparisonResult } from "../comparison/types";
+import type { EligibilityOverrideProvenance } from "../eligibility/override";
 
 export const PROPOSAL_SCHEMA_VERSION = 1 as const;
 export const PROPOSAL_MAX_INPUT_BYTES = 262144;
 export const PROPOSAL_MAX_OUTPUT_BYTES = 524288;
 
-export type ProposalExportFormat = "JSON" | "CSV" | "HTML";
+export type ProposalExportFormat = "JSON" | "CSV" | "HTML" | "PDF";
 
 export interface ProposalCustomerSummary {
   readonly customerId: string;
@@ -35,10 +36,16 @@ export interface ProposalSourceBillReference {
   readonly version: string;
 }
 
+export interface ProposalSourceComparisonReference {
+  readonly comparisonId: string;
+  readonly fingerprint: string;
+}
+
 export interface ProposalRequestBase {
   readonly schemaVersion: typeof PROPOSAL_SCHEMA_VERSION;
   readonly tenantId: string;
   readonly sourceBill?: ProposalSourceBillReference;
+  readonly sourceComparison?: ProposalSourceComparisonReference;
   readonly customer: ProposalCustomerSummary;
   readonly supply: ProposalSupplySummary;
   readonly proposalIssueDate: string;
@@ -83,6 +90,8 @@ export interface ProposalCanonicalSnapshot {
   readonly customer: ProposalCustomerSummary;
   readonly supply: ProposalSupplySummary;
   readonly sourceBill?: ProposalSourceBillReference;
+  readonly sourceComparison?: ProposalSourceComparisonReference;
+  readonly eligibilityOverride?: EligibilityOverrideProvenance;
   readonly selectedOffer: ProposalOfferIdentity;
   readonly cte: { readonly cteId: string; readonly archiveId: string; readonly versionId: string; readonly version: string };
   readonly marketData: readonly CalculationMarketReference[];

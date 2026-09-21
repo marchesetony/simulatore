@@ -4,12 +4,14 @@ import type { ElectricityMonthlyPunRecord } from "../energy/market-data.ts";
 import { approveMarketArchive, compareMarketVersions, createMarketArchive } from "../market/service.ts";
 import type { MarketArchiveRecord, MarketArchiveRepository } from "../market/types.ts";
 // @ts-expect-error Node's strip-only test runner requires the explicit extension.
-import { assertMarketRecord } from "../market/validation.ts";
+import { assertMarketRecord, assertMarketTenantId } from "../market/validation.ts";
 import type { TenantRecordRepository } from "../persistence/types.ts";
 // @ts-expect-error Node's strip-only test runner requires the explicit extension.
 import { deterministicRecordId } from "../persistence/types.ts";
 // @ts-expect-error Node's strip-only test runner requires the explicit extension.
 import { createOfficialPunSourceReader, type PunSourceBundle, type PunSourceCandidate, type PunSourceReader } from "./source.ts";
+// @ts-expect-error Node's strip-only test runner requires the explicit extension.
+import { withBoundedRetry } from "../automation/retry.ts";
 // @ts-expect-error Node's strip-only test runner requires the explicit extension.
 import { CALCULATED_PUN_DOMAINS, MINIMUM_PUN_HISTORY_MONTHS, PUN_REFRESH_STALE_DAYS, assertPunRefreshCoverage } from "./registry.ts";
 
@@ -153,6 +155,7 @@ async function persistRun(input: MarketRefreshDependencies, run: MarketRefreshRu
 }
 
 export async function runPunMarketRefresh(input: { readonly tenantId: string } & MarketRefreshDependencies): Promise<MarketRefreshSummary> {
+  assertMarketTenantId(input.tenantId);
   assertPunRefreshCoverage(CALCULATED_PUN_DOMAINS);
   const now = validDate(input.now ?? new Date().toISOString());
   const trigger = input.trigger ?? "MANUAL";
@@ -169,8 +172,9 @@ export async function runPunMarketRefresh(input: { readonly tenantId: string } &
   try {
     for (const referenceMonth of targetMonths) {
       try {
-        const bundle = await reader.load({ tenantId: input.tenantId, referenceMonth, retrievedAt: now });
+        const bundle = (await withBoundedRetry(() => reader.load({ tenantId: input.tenantId, referenceMonth, retrievedAt: now }), { maxAttempts: 3, baseDelayMs: 50, maxDelayMs: 250, jitterRatio: 0, sleep: async () => undefined })).value;
         const candidate = canonicalCandidate(bundle, referenceMonth);
+        if (candidate.record.tenantId !== input.tenantId) throw new Error("TENANT_ACCESS_DENIED");
         const existing = await input.repositories.marketArchiveRepository.list(input.tenantId);
         const sameMonth = existing.filter((record) => record.month === referenceMonth && record.status === "APPROVED").sort(compareMarketVersions);
         const current = sameMonth[0];

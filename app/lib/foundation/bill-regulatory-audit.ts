@@ -34,6 +34,8 @@ export type ElectricityBillAuditInput = {
   readonly vector: "EE";
   readonly customerType: "RESIDENTIAL" | "NON_RESIDENTIAL" | "UNKNOWN";
   readonly domesticResidenceStatus: "PROVEN" | "NOT_PROVEN" | "UNKNOWN";
+  /** Server-resolved scope from the bill supply profile; never supplied by the browser. */
+  readonly regulatoryCustomerScope?: RegulatoryCustomerScope | "UNKNOWN";
   readonly billingPeriod: { readonly from: string; readonly to: string };
   readonly billedConsumptionKwh?: string | number | null;
   readonly powerKw?: string | number | null;
@@ -153,8 +155,13 @@ function parseBillQuantity(value: string | number | null | undefined): number | 
 const roundMoney = (value: number): number => Math.round((value + Number.EPSILON) * 100) / 100;
 const canonicalBillUnit = (value: string | null | undefined): string | null => value ? value.toUpperCase().replace(/€/g, "EUR").replace(/\s/g, "").replace(/KW\/MESE/g, "KW/MONTH").replace(/POD\/MESE/g, "POD/MONTH").replace(/KW\/ANNO/g, "KW/YEAR").replace(/POD\/ANNO/g, "POD/YEAR") : null;
 
+function normalizeBillUnit(value: string | null | undefined): string | null {
+  const unit = canonicalBillUnit(value);
+  return unit ? unit.replace(/^EURO(?=\/|$)/, "EUR").replace(/^EUROCENT(?=\/|$)/, "CENT_EUR") : null;
+}
+
 function normalizePunUnit(value: string | null | undefined): "EUR/KWH" | "EUR/MWH" | null {
-  const unit = canonicalBillUnit(value)?.replace(/PER/g, "/");
+  const unit = normalizeBillUnit(value)?.replace(/PER/g, "/");
   if (unit === "EUR/KWH") return unit;
   if (unit === "EUR/MWH") return unit;
   return null;
@@ -162,7 +169,7 @@ function normalizePunUnit(value: string | null | undefined): "EUR/KWH" | "EUR/MW
 
 export function normalizeAppliedPun(value: string | number | null | undefined, unit: string | null | undefined): { readonly originalValue: number | null; readonly originalUnit: string | null; readonly normalizedValue: number | null; readonly normalizedUnit: "EUR/MWH" | null; readonly status: BillPunUnitStatus } {
   const originalValue = parseBillNumeric(value);
-  const originalUnit = canonicalBillUnit(unit);
+  const originalUnit = normalizeBillUnit(unit);
   const normalizedUnit = normalizePunUnit(unit);
   if (originalValue === null || normalizedUnit === null) return { originalValue, originalUnit, normalizedValue: null, normalizedUnit: null, status: "UNRESOLVED" };
   return { originalValue, originalUnit, normalizedValue: normalizedUnit === "EUR/KWH" ? originalValue * 1000 : originalValue, normalizedUnit: "EUR/MWH", status: "RESOLVED" };
@@ -203,23 +210,30 @@ export function identifyAmountUnitIssues(lines: readonly BillAuditChargeLineInpu
   return issues;
 }
 
-export function customerScopeForBill(input: Pick<ElectricityBillAuditInput, "customerType" | "domesticResidenceStatus">): RegulatoryCustomerScope | "UNKNOWN" {
+export function customerScopeForBill(input: Pick<ElectricityBillAuditInput, "customerType" | "domesticResidenceStatus" | "regulatoryCustomerScope">): RegulatoryCustomerScope | "UNKNOWN" {
+  if (input.regulatoryCustomerScope && input.regulatoryCustomerScope !== "UNKNOWN") return input.regulatoryCustomerScope;
   if (input.customerType !== "RESIDENTIAL") return "NON_DOMESTIC_BT";
   if (input.domesticResidenceStatus === "PROVEN") return "DOMESTIC_RESIDENT_BT";
   return "UNKNOWN";
 }
 
 function regulatedScopeForBill(code: string, bill: ElectricityBillAuditInput): RegulatoryCustomerScope | "UNKNOWN" {
-  // UC3 and UC6 are not selected by registry residence status. For a residential
-  // bill their minimum applicable scope is domestic low voltage.
-  if (["UC3", "UC6"].includes(code)) return bill.customerType === "RESIDENTIAL" ? "DOMESTIC_BT" : "NON_DOMESTIC_BT";
-  return customerScopeForBill(bill);
+  const scope = customerScopeForBill(bill);
+  // UC3 and UC6 are published on the generic domestic BT scope for both
+  // resident and non-resident domestic supplies.
+  if (["UC3", "UC6"].includes(code) && (bill.customerType === "RESIDENTIAL" || ["DOMESTIC_RESIDENT_BT", "DOMESTIC_NON_RESIDENT_BT"].includes(scope))) return "DOMESTIC_BT";
+  return scope;
 }
 
 function sourceUnitForBill(code: string, unit: string | null | undefined): string | undefined {
+  const normalized = normalizeBillUnit(unit);
+  if (["ASOS", "ARIM"].includes(code)) {
+    if (normalized?.includes("KWH")) return "EUR/KWH";
+    if (normalized?.includes("MONTH")) return "EUR/POD/YEAR";
+  }
   if (code !== "UC6") return undefined;
-  if (canonicalBillUnit(unit)?.includes("KW")) return "EUR/KW/YEAR";
-  if (canonicalBillUnit(unit)?.includes("KWH")) return "EUR/KWH";
+  if (normalized?.includes("KW")) return "EUR/KW/YEAR";
+  if (normalized?.includes("KWH")) return "EUR/KWH";
   return undefined;
 }
 
@@ -244,7 +258,7 @@ function auditLine(input: BillAuditChargeLineInput, bill: ElectricityBillAuditIn
   const unitPrice = parseBillNumeric(input.unitPrice);
   const quantity = parseBillNumeric(input.quantity);
   const consistency = amountUnitConsistency(input);
-  const base = { code: input.code, category, authority, billAmount: amount, billUnitPrice: unitPrice, billUnit: canonicalBillUnit(input.unit), billQuantity: quantity, expectedAmount: null, expectedUnitPrice: null, expectedUnit: null, differenceAmount: null, differencePercent: null, sourceReference: null, officialIdentifier: null, effectivePeriod: null, description: input.description, notComparableReason: "NONE" as const };
+  const base = { code: input.code, category, authority, billAmount: amount, billUnitPrice: unitPrice, billUnit: normalizeBillUnit(input.unit), billQuantity: quantity, expectedAmount: null, expectedUnitPrice: null, expectedUnit: null, differenceAmount: null, differencePercent: null, sourceReference: null, officialIdentifier: null, effectivePeriod: null, description: input.description, notComparableReason: "NONE" as const };
   if (consistency.status !== "CONSISTENT") return { ...base, auditStatus: consistency.status, notComparableReason: consistency.status === "UNIT_SEMANTICS_INCONSISTENT" ? "UNIT_SEMANTICS_INCONSISTENT" : "INSUFFICIENT_DOCUMENT_DATA", messageCode: consistency.status === "UNIT_SEMANTICS_INCONSISTENT" ? "AMOUNT_UNIT_CONSISTENCY_CHECK_FAILED" : "AMOUNT_UNIT_DATA_INCOMPLETE" };
   if (category === "SELLER_CONTRACTUAL") return { ...base, auditStatus: contract?.approved ? "NOT_COMPARABLE" : "CONTRACT_REFERENCE_REQUIRED", notComparableReason: "FORMULA_MISSING", messageCode: contract?.approved ? "SELLER_CONTRACT_FORMULA_REQUIRED" : "CONTRACT_REFERENCE_REQUIRED" };
   if (category === "TAX") return { ...base, auditStatus: "SOURCE_AUTHORITY_NOT_IMPLEMENTED", notComparableReason: "REGULATORY_SOURCE_MISSING", messageCode: "TAX_NOT_VERIFIED_BY_ARERA" };
@@ -267,7 +281,7 @@ function auditLine(input: BillAuditChargeLineInput, bill: ElectricityBillAuditIn
   if (quantity === null) return { ...base, ...sourceFor(record), auditStatus: "INSUFFICIENT_DOCUMENT_DATA", notComparableReason: "QUANTITY_MISSING", messageCode: "REGULATED_FORMULA_INPUT_MISSING" };
   if (amount === null) return { ...base, ...sourceFor(record), auditStatus: "INSUFFICIENT_DOCUMENT_DATA", notComparableReason: "INSUFFICIENT_DOCUMENT_DATA", messageCode: "REGULATED_FORMULA_INPUT_MISSING" };
   let expectedUnitPrice: number;
-  try { expectedUnitPrice = normalizeRegulatoryUnit(record.normalizedValue, record.normalizedUnit, input.unit ?? record.normalizedUnit).value; } catch { return { ...base, ...sourceFor(record), auditStatus: "NOT_COMPARABLE", notComparableReason: "UNIT_SEMANTICS_INCONSISTENT", messageCode: "REGULATED_UNIT_NOT_COMPARABLE" }; }
+  try { expectedUnitPrice = normalizeRegulatoryUnit(record.normalizedValue, record.normalizedUnit, normalizeBillUnit(input.unit) ?? record.normalizedUnit).value; } catch { return { ...base, ...sourceFor(record), auditStatus: "NOT_COMPARABLE", notComparableReason: "UNIT_SEMANTICS_INCONSISTENT", messageCode: "REGULATED_UNIT_NOT_COMPARABLE" }; }
   const rawExpectedAmount = quantity * expectedUnitPrice;
   const expectedAmount = roundMoney(rawExpectedAmount);
   const rawDifference = amount - rawExpectedAmount;

@@ -14,7 +14,7 @@ export type RegulatoryValueSourceType = "OFFICIAL_WEB_PAGE" | "OFFICIAL_PROVVEDI
 export type RegulatoryValueVector = "EE" | "GAS";
 export type RegulatoryReferenceDomain = "NETWORK" | "SYSTEM_CHARGES" | "DISPATCHING" | "CAPACITY_MARKET" | "MARKET_INDEX" | "TAX" | "CONTRACT";
 export type RegulatoryCustomerScope = "DOMESTIC_BT" | "DOMESTIC_RESIDENT_BT" | "DOMESTIC_NON_RESIDENT_BT" | "NON_DOMESTIC_BT" | "NON_DOMESTIC_BT_BTA6" | "ALL_ELECTRICITY";
-export type RegulatoryVariant = "ASOS_CLASS_0" | "ASOS_CLASS_1" | "ASOS_CLASS_2" | "ASOS_CLASS_3";
+export type RegulatoryVariant = "ASOS_CLASS_0" | "ASOS_CLASS_1" | "ASOS_CLASS_2" | "ASOS_CLASS_3" | "TIDE" | "LEGACY_111_06";
 export type RegulatoryValueComponentCode =
   | "S1_TOTAL" | "S1_MEASURE" | "S2_POWER" | "S3_ENERGY_TRANSMISSION"
   | "NETWORK_FIXED" | "METERING_FIXED" | "NETWORK_POWER" | "NETWORK_ENERGY" | "TRANSMISSION_ENERGY"
@@ -46,7 +46,7 @@ export interface RegulatoryValueRecord extends TenantScoped {
   readonly effectiveTo: string | null;
   readonly vector: RegulatoryValueVector;
   readonly customerScope: RegulatoryCustomerScope;
-  /** Optional fourth identity dimension; omitted for all legacy records. */
+  /** Optional fourth identity dimension; omitted for legacy records. TIDE marks TERNA TIDE records. */
   readonly regulatoryVariant?: RegulatoryVariant;
   readonly componentCode: RegulatoryValueComponentCode;
   /** Semantic functional domain; authority is deliberately independent. */

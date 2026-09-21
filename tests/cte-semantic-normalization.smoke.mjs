@@ -30,6 +30,10 @@ const record = { ingestionId: "cte-fix9-synthetic", documentId: "cte-document-fi
 const contract = buildAuthoritativeCteContract(record);
 validateCteContract(contract);
 
+const monthlyFixedFeeContract = structuredClone(contract);
+monthlyFixedFeeContract.commercialTerms.fixedFees = [{ ...monthlyFixedFeeContract.commercialTerms.fixedFees[0], amount: 13, period: "MONTH", monthlyEquivalent: undefined }];
+validateCteContract(monthlyFixedFeeContract);
+
 assert.equal(contract.supplier.name, "BPower Energia S.p.A.");
 assert.equal(contract.commercialTerms.fixedFees[0].amount, 156);
 assert.equal(contract.commercialTerms.fixedFees[0].unit, "EUR_PER_POD");

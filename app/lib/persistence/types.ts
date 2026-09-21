@@ -1,5 +1,7 @@
 export const PERSISTENCE_SCHEMA_VERSION = 1 as const;
 
+import type { EligibilityOverride } from "../eligibility/override";
+
 export interface TenantRecord<TPayload = unknown> {
   readonly schemaVersion: typeof PERSISTENCE_SCHEMA_VERSION;
   readonly recordId: string;
@@ -57,7 +59,76 @@ export interface NormalizedBillSnapshot { readonly documentId: string; readonly 
 export interface CalculationResultRecord { readonly calculationId: string; readonly fingerprint: string; readonly result: unknown; }
 export interface ComparisonResultRecord { readonly comparisonId: string; readonly fingerprint: string; readonly result: unknown; }
 export interface CommercialProposalRecord { readonly proposalId: string; readonly proposalFingerprint: string; readonly proposal: unknown; }
-export interface ExportMetadataRecord { readonly exportId: string; readonly proposalId?: string; readonly format: "JSON" | "CSV" | "HTML"; readonly contentFingerprint: string; }
+export interface ExportMetadataRecord { readonly exportId: string; readonly proposalId?: string; readonly format: "JSON" | "CSV" | "HTML" | "PDF"; readonly contentFingerprint: string; }
+export interface FoundationInvitationRecord {
+  readonly id: string;
+  readonly tenantId: string;
+  readonly recipientUserId: string;
+  readonly recipientEmail: string;
+  readonly role: "PRODUCT_OWNER" | "PLATFORM_OWNER" | "TENANT_ADMIN" | "SALES_MANAGER" | "SALES_OPERATOR";
+  readonly tokenDigest: string;
+  readonly issuedAt: string;
+  readonly expiresAt: string;
+  readonly createdBy: string;
+  readonly status: "PENDING" | "ACCEPTED" | "REVOKED" | "EXPIRED";
+  readonly acceptedAt?: string;
+  readonly revokedAt?: string;
+}
+export interface FoundationMembershipRecord {
+  readonly id: string;
+  readonly userId: string;
+  readonly tenantId: string;
+  readonly role: "PRODUCT_OWNER" | "PLATFORM_OWNER" | "TENANT_ADMIN" | "SALES_MANAGER" | "SALES_OPERATOR";
+  readonly status: "ACTIVE" | "SUSPENDED" | "DEACTIVATED";
+  readonly permissions: ReadonlyArray<"tenant:read" | "tenant:manage" | "membership:read" | "membership:manage" | "customer:read" | "customer:manage" | "document:read" | "document:manage" | "audit:read">;
+  readonly createdAt: string;
+  readonly updatedAt: string;
+  readonly revokedAt?: string;
+  /** Server-managed reporting line. Only a SUPER_ADMIN may mutate it. */
+  readonly managerUserId?: string;
+  /** Server-managed group membership used by feature governance. */
+  readonly groupIds?: readonly string[];
+}
+
+export type BillFeaturePermissionRecord = import("../foundation/bill-feature-permissions.ts").BillFeaturePermissionRecord;
+
+export type ObservedJobKey = "BILL_RETENTION" | "CTE_EXPIRY" | "MARKET_REFRESH" | "REGULATORY_REFRESH";
+export type ObservedJobTrigger = "CRON" | "MANUAL" | "TEST";
+export type ObservedJobRunStatus = "RUNNING" | "SUCCESS" | "PARTIAL_FAILURE" | "FAILED" | "ALREADY_RUNNING";
+export type JobIncidentStatus = "OPEN" | "RESOLVED";
+
+export interface SafeJobDiagnostics {
+  readonly code: string;
+  readonly stage: string;
+  readonly retryable: boolean;
+}
+
+export interface JobRunRecord {
+  readonly runId: string;
+  readonly tenantId: string;
+  readonly jobKey: ObservedJobKey;
+  readonly trigger: ObservedJobTrigger;
+  readonly startedAt: string;
+  readonly finishedAt: string | null;
+  readonly status: ObservedJobRunStatus;
+  readonly durationMs: number | null;
+  readonly summary: Readonly<Record<string, number>>;
+  readonly diagnostics: SafeJobDiagnostics | null;
+}
+
+export interface JobIncidentRecord {
+  readonly incidentId: string;
+  readonly tenantId: string;
+  readonly jobKey: ObservedJobKey;
+  readonly fingerprint: string;
+  readonly status: JobIncidentStatus;
+  readonly firstSeenAt: string;
+  readonly lastSeenAt: string;
+  readonly resolvedAt: string | null;
+  readonly occurrences: number;
+  readonly lastRunId: string;
+  readonly diagnostics: SafeJobDiagnostics;
+}
 
 export interface AuditEvent {
   readonly schemaVersion: typeof PERSISTENCE_SCHEMA_VERSION;
@@ -82,6 +153,7 @@ export type ComparisonResultRepository = TenantRecordRepository<ComparisonResult
 export type CommercialProposalRepository = TenantRecordRepository<CommercialProposalRecord>;
 export type ExportMetadataRepository = TenantRecordRepository<ExportMetadataRecord>;
 export type AuditEventRepository = TenantRecordRepository<AuditEvent> & UnscopedAppendRepository<AuditEvent>;
+export type EligibilityOverrideRepository = TenantRecordRepository<EligibilityOverride>;
 
 export function deterministicRecordId(namespace: string, tenantId: string, stableKey: string): string {
   if (!/^[A-Za-z0-9._:-]{1,160}$/.test(namespace) || !/^tenant_[a-z0-9-]+$/.test(tenantId) || typeof stableKey !== "string" || stableKey.length > 4096) throw new Error("PERSISTENCE_ID_INVALID");

@@ -5,7 +5,9 @@ export function formatEuro(amount: number | null | undefined): string {
 
 export function formatNumber(value: number | null | undefined, unit = ""): string {
   if (value === null || value === undefined || !Number.isFinite(value)) return "Non disponibile";
-  return `${new Intl.NumberFormat("it-IT", { maximumFractionDigits: 6 }).format(value)}${unit ? ` ${unit}` : ""}`;
+  const absolute = Math.abs(value);
+  const display = absolute > 0 && absolute < 0.000005 ? "< 0,00001" : new Intl.NumberFormat("it-IT", { maximumFractionDigits: 5 }).format(value);
+  return `${display}${unit ? ` ${unit}` : ""}`;
 }
 
 export function statusLabel(value: string | null | undefined): string {

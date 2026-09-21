@@ -47,7 +47,7 @@ export async function resolvePrincipal(request: Request, now = new Date()): Prom
   let principal: AuthenticatedPrincipal;
   try {
     const config = getRuntimeConfig();
-    if (config.runtimeMode === "local") principal = Object.freeze({ userId: "user_local-dev", tenantId: config.localTenantId, role: config.localRole, sessionId: "session_local-dev", issuedAt: "2020-01-01T00:00:00.000Z", expiresAt: "2099-01-01T00:00:00.000Z", source: "LOCAL_SYNTHETIC" });
+    if (config.runtimeMode === "local") principal = Object.freeze({ userId: config.localUserId, tenantId: config.localTenantId, role: config.localRole, sessionId: "session_local-dev", issuedAt: "2020-01-01T00:00:00.000Z", expiresAt: "2099-01-01T00:00:00.000Z", source: "LOCAL_SYNTHETIC" });
     else {
       // @ts-expect-error Node's strip-only test runner requires the explicit extension.
       const { bootstrapProductionRuntime } = await import("../production/bootstrap.ts");

@@ -4,7 +4,7 @@ import type { ComparisonResult } from "../comparison/types";
 import { assertCalculationResult, assertComparisonResult, assertComponent, assertContractualSummary, assertExclusion, assertInputSize, assertMoney, assertPeriod, assertRegulatedComponentSet, canonical, dateOnly, fingerprint, normalizedNote, proposalFail, text } from "./integrity.ts";
 // @ts-expect-error Node's strip-only test runner requires the explicit extension.
 import { parseSimulationRequest } from "../calculation/input.ts";
-import type { ComparisonProposalRequest, ProposalCanonicalSnapshot, ProposalCustomerSummary, ProposalExportFormat, ProposalOfferIdentity, ProposalRequest, ProposalSupplySummary } from "./types";
+import type { ComparisonProposalRequest, ProposalCanonicalSnapshot, ProposalCustomerSummary, ProposalExportFormat, ProposalOfferIdentity, ProposalRequest, ProposalSupplySummary, ProposalSourceComparisonReference } from "./types";
 // @ts-expect-error Node's strip-only test runner requires the explicit extension.
 import { PROPOSAL_SCHEMA_VERSION } from "./types.ts";
 // @ts-expect-error Node's strip-only test runner requires the explicit extension.
@@ -19,6 +19,7 @@ function parseCustomer(value: unknown): ProposalCustomerSummary { const item = r
 function parseSupply(value: unknown): ProposalSupplySummary { const item = record(value, "PROPOSAL_SUPPLY_INVALID"); const meterId = optionalText(item.meterId, "PROPOSAL_SUPPLY_INVALID", 128); const pod = optionalText(item.pod, "PROPOSAL_SUPPLY_INVALID", 64); const pdr = optionalText(item.pdr, "PROPOSAL_SUPPLY_INVALID", 64); const voltageLevel = item.voltageLevel === undefined ? undefined : enumValue(item.voltageLevel, ["LV", "MV", "HV", "EHV"], "PROPOSAL_SUPPLY_INVALID"); return { supplyId: text(item.supplyId, "PROPOSAL_SUPPLY_INVALID", 128), ...(meterId ? { meterId } : {}), ...(pod ? { pod } : {}), ...(pdr ? { pdr } : {}), ...(voltageLevel ? { voltageLevel } : {}) }; }
 function parseOffer(value: unknown): ProposalOfferIdentity { const item = record(value, "PROPOSAL_OFFER_INVALID"); return { archiveId: text(item.archiveId, "PROPOSAL_OFFER_INVALID", 128), cteId: text(item.cteId, "PROPOSAL_OFFER_INVALID", 128), versionId: text(item.versionId, "PROPOSAL_OFFER_INVALID", 128), version: text(item.version, "PROPOSAL_OFFER_INVALID", 64), supplier: text(item.supplier, "PROPOSAL_OFFER_INVALID", 256), offerCode: text(item.offerCode, "PROPOSAL_OFFER_INVALID", 128) }; }
 function parseSourceBill(value: unknown): { readonly billId: string; readonly version: string } | undefined { if (value === undefined) return undefined; const item = record(value, "PROPOSAL_SOURCE_BILL_INVALID"); return { billId: text(item.billId, "PROPOSAL_SOURCE_BILL_INVALID", 128), version: text(item.version, "PROPOSAL_SOURCE_BILL_INVALID", 64) }; }
+function parseSourceComparison(value: unknown): ProposalSourceComparisonReference | undefined { if (value === undefined) return undefined; const item = record(value, "PROPOSAL_SOURCE_COMPARISON_INVALID"); const comparisonId = text(item.comparisonId, "PROPOSAL_SOURCE_COMPARISON_INVALID", 128); const fingerprintValue = text(item.fingerprint, "PROPOSAL_SOURCE_COMPARISON_INVALID", 128); if (!/^comparison_[a-f0-9]{32}$/.test(comparisonId) || !/^[a-f0-9]{64}$/.test(fingerprintValue)) proposalFail("PROPOSAL_SOURCE_COMPARISON_INVALID"); return { comparisonId, fingerprint: fingerprintValue }; }
 
 export function parseProposalRequest(value: unknown, tenantId: string, requiredSourceType?: "CALCULATION" | "COMPARISON", requiredFormat?: ProposalExportFormat): ProposalRequest {
   assertInputSize(value);
@@ -26,7 +27,7 @@ export function parseProposalRequest(value: unknown, tenantId: string, requiredS
   if (item.schemaVersion !== PROPOSAL_SCHEMA_VERSION || item.tenantId !== tenantId) proposalFail(item.tenantId === tenantId ? "PROPOSAL_SCHEMA_UNSUPPORTED" : "TENANT_MISMATCH");
   const sourceType = enumValue(item.sourceType, ["CALCULATION", "COMPARISON"], "PROPOSAL_SOURCE_INVALID");
   if (requiredSourceType !== undefined && sourceType !== requiredSourceType) proposalFail("PROPOSAL_SOURCE_INVALID");
-  const requestedExportFormat = enumValue(item.requestedExportFormat, ["JSON", "CSV", "HTML"], "PROPOSAL_FORMAT_INVALID");
+  const requestedExportFormat = enumValue(item.requestedExportFormat, ["JSON", "CSV", "HTML", "PDF"], "PROPOSAL_FORMAT_INVALID");
   if (requiredFormat !== undefined && requestedExportFormat !== requiredFormat) proposalFail("PROPOSAL_FORMAT_INVALID");
   const customer = parseCustomer(item.customer);
   const supply = parseSupply(item.supply);
@@ -34,10 +35,11 @@ export function parseProposalRequest(value: unknown, tenantId: string, requiredS
   const offerValidity = assertPeriod(item.offerValidity, "PROPOSAL_VALIDITY_INVALID");
   const commercialNotes = item.commercialNotes === undefined ? undefined : normalizedNote(item.commercialNotes);
   const sourceBill = parseSourceBill(item.sourceBill);
+  const sourceComparison = parseSourceComparison(item.sourceComparison);
   const selectedOffer = parseOffer(item.selectedOffer);
-  if (sourceType === "CALCULATION") return { schemaVersion: 1, tenantId, sourceType, calculation: item.calculation as CalculationResult, selectedOffer, customer, supply, proposalIssueDate, offerValidity, ...(sourceBill ? { sourceBill } : {}), ...(commercialNotes ? { commercialNotes } : {}), requestedExportFormat };
+  if (sourceType === "CALCULATION") return { schemaVersion: 1, tenantId, sourceType, calculation: item.calculation as CalculationResult, selectedOffer, customer, supply, proposalIssueDate, offerValidity, ...(sourceBill ? { sourceBill } : {}), ...(sourceComparison ? { sourceComparison } : {}), ...(commercialNotes ? { commercialNotes } : {}), requestedExportFormat };
   const selectedCalculationId = text(item.selectedCalculationId, "PROPOSAL_SELECTION_INVALID", 128);
-  return { schemaVersion: 1, tenantId, sourceType, comparison: item.comparison as ComparisonResult, selectedCalculationId, selectedOffer, customer, supply, proposalIssueDate, offerValidity, ...(sourceBill ? { sourceBill } : {}), ...(commercialNotes ? { commercialNotes } : {}), requestedExportFormat };
+  return { schemaVersion: 1, tenantId, sourceType, comparison: item.comparison as ComparisonResult, selectedCalculationId, selectedOffer, customer, supply, proposalIssueDate, offerValidity, ...(sourceBill ? { sourceBill } : {}), ...(sourceComparison ? { sourceComparison } : {}), ...(commercialNotes ? { commercialNotes } : {}), requestedExportFormat };
 }
 
 function same(left: unknown, right: unknown): boolean { return canonical(left) === canonical(right); }
@@ -104,6 +106,8 @@ export function generateProposal(rawRequest: unknown, tenantId: string, required
     customer: request.customer,
     supply: request.supply,
     ...(sourceBill ? { sourceBill } : {}),
+    ...(request.sourceComparison ? { sourceComparison: request.sourceComparison } : {}),
+    ...(normalized.eligibilityOverride ? { eligibilityOverride: normalized.eligibilityOverride } : {}),
     selectedOffer: request.selectedOffer,
     cte: { cteId: selected.calculation.sourceCte.cteId, archiveId: selected.calculation.sourceCte.archiveId, versionId: selected.calculation.sourceCte.versionId, version: selected.calculation.sourceCte.version },
     marketData: selected.calculation.marketData,
@@ -154,6 +158,7 @@ export function assertProposalSnapshot(value: unknown, tenantId: string): Propos
   const supply = parseSupply(proposal.supply);
   const offer = parseOffer(proposal.selectedOffer);
   const sourceBill = parseSourceBill(proposal.sourceBill);
+  parseSourceComparison(proposal.sourceComparison);
   const cte = record(proposal.cte, "PROPOSAL_SNAPSHOT_INVALID");
   const cteId = text(cte.cteId, "PROPOSAL_SNAPSHOT_INVALID", 128);
   const archiveId = text(cte.archiveId, "PROPOSAL_SNAPSHOT_INVALID", 128);

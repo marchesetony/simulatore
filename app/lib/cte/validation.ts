@@ -6,6 +6,11 @@ import type {
   CteExpiry,
   CteExitFee,
   CteFeeComponent,
+  CteCapacityMarketScheduleEntry,
+  CteDispatchingReference,
+  CteLossReference,
+  CtePunResolutionRule,
+  CteLossTreatment,
   CteLossSemantics,
   CteOffer,
   CtePassThroughComponent,
@@ -26,6 +31,75 @@ const nonEmpty = (value: unknown, code: string): string => typeof value === "str
 const enumValue = <T extends string>(value: unknown, values: readonly T[], code: string): T => typeof value === "string" && values.includes(value as T) ? value as T : fail(code);
 const finite = (value: unknown, code: string): number => typeof value === "number" && Number.isFinite(value) ? value : fail(code);
 const nonNegative = (value: unknown, code: string): number => finite(value, code) >= 0 ? value as number : fail(code);
+const positive = (value: unknown, code: string): number => finite(value, code) > 0 ? value as number : fail(code);
+const lossTreatment = (value: unknown, code: string): CteLossTreatment => enumValue(value, ["NET_OF_LOSSES", "GROSS_OF_LOSSES", "OFFICIAL_REFERENCE", "INCLUDED", "EXCLUDED", "NOT_DECLARED"], code);
+
+function assertOfficialReference(value: unknown, code: string): void {
+  const item = record(value, code);
+  enumValue(item.authority, ["ARERA", "TERNA", "ARERA_TERNA"], code);
+  nonEmpty(item.document, code);
+  nonEmpty(item.sourceEvidence, code);
+  if (item.table !== undefined) nonEmpty(item.table, code);
+  if (item.column !== undefined) nonEmpty(item.column, code);
+  if (item.article !== undefined) nonEmpty(item.article, code);
+}
+
+function assertPunRule(value: unknown): asserts value is CtePunResolutionRule {
+  const item = record(value, "CTE_PUN_RULE_INVALID");
+  if (item.index !== "PUN" || item.resolution !== "MONTHLY_ARITHMETIC_MEAN" || item.periodBasis !== "CALENDAR_MONTH" || item.application !== "PER_TIME_BAND" || item.spreadApplication !== "ADD_TO_INDEXED_UNIT_PRICE") fail("CTE_PUN_RULE_INVALID");
+  if (!Array.isArray(item.timeBands) || item.timeBands.length === 0) fail("CTE_PUN_RULE_INVALID");
+  (item.timeBands as readonly unknown[]).forEach((band) => enumValue(band, ["MONO", "F1", "F2", "F3", "F23"], "CTE_PUN_RULE_INVALID"));
+  if (new Set(item.timeBands as readonly unknown[]).size !== (item.timeBands as readonly unknown[]).length) fail("CTE_PUN_RULE_INVALID");
+  if (typeof item.effectiveFrom !== "string" || typeof item.effectiveTo !== "string") fail("CTE_PUN_RULE_INVALID");
+  assertEffectivePeriod({ effectiveFrom: item.effectiveFrom, effectiveTo: item.effectiveTo }, "CTE_PUN_RULE_INVALID");
+  nonEmpty(item.sourceEvidence, "CTE_PUN_RULE_INVALID");
+}
+
+function assertCapacityMarketSchedule(value: unknown): asserts value is readonly CteCapacityMarketScheduleEntry[] {
+  if (!Array.isArray(value) || value.length === 0) fail("CTE_CAPACITY_SCHEDULE_INVALID");
+  const keys = new Set<string>();
+  (value as readonly unknown[]).forEach((candidate) => {
+    const item = record(candidate, "CTE_CAPACITY_SCHEDULE_INVALID");
+    if (item.voltageScope !== undefined) enumValue(item.voltageScope, ["LV", "MV", "HV", "EHV"], "CTE_CAPACITY_SCHEDULE_INVALID");
+    enumValue(item.timeClass, ["ALL", "PEAK", "CAPACITY_MARKET_LIBERO"], "CTE_CAPACITY_SCHEDULE_INVALID");
+    nonNegative(item.value, "CTE_CAPACITY_SCHEDULE_INVALID");
+    if (item.unit !== "EUR_PER_KWH") fail("CTE_CAPACITY_SCHEDULE_INVALID");
+    const mode = enumValue(item.mode, ["OFFICIAL_PASS_THROUGH", "FIXED_VALUE"], "CTE_CAPACITY_SCHEDULE_INVALID");
+    if (typeof item.effectiveFrom !== "string" || typeof item.effectiveTo !== "string") fail("CTE_CAPACITY_SCHEDULE_INVALID");
+    assertEffectivePeriod({ effectiveFrom: item.effectiveFrom, effectiveTo: item.effectiveTo }, "CTE_CAPACITY_SCHEDULE_INVALID");
+    lossTreatment(item.lossTreatment, "CTE_CAPACITY_SCHEDULE_INVALID");
+    if (mode === "OFFICIAL_PASS_THROUGH") {
+      if (item.officialReference === undefined) fail("CTE_CAPACITY_REFERENCE_REQUIRED");
+      assertOfficialReference(item.officialReference, "CTE_CAPACITY_REFERENCE_INVALID");
+    } else if (item.officialReference !== undefined) assertOfficialReference(item.officialReference, "CTE_CAPACITY_REFERENCE_INVALID");
+    nonEmpty(item.sourceEvidence, "CTE_CAPACITY_SCHEDULE_INVALID");
+    const key = `${item.voltageScope ?? "ANY"}|${item.timeClass}|${item.effectiveFrom}|${item.effectiveTo}`;
+    if (keys.has(key)) fail("CTE_CAPACITY_SCHEDULE_DUPLICATE");
+    keys.add(key);
+  });
+}
+
+function assertDispatchingReference(value: unknown): asserts value is CteDispatchingReference {
+  const item = record(value, "CTE_DISPATCHING_REFERENCE_INVALID");
+  if (item.mode !== "OFFICIAL_PASS_THROUGH") fail("CTE_DISPATCHING_REFERENCE_INVALID");
+  assertOfficialReference(item.reference, "CTE_DISPATCHING_REFERENCE_INVALID");
+  nonEmpty(item.formula, "CTE_DISPATCHING_REFERENCE_INVALID");
+  if (item.lossTreatment !== "OFFICIAL_REFERENCE") fail("CTE_DISPATCHING_REFERENCE_INVALID");
+  if (item.snapshotValue !== undefined) nonNegative(item.snapshotValue, "CTE_DISPATCHING_REFERENCE_INVALID");
+  if (item.snapshotUnit !== undefined && item.snapshotUnit !== "EUR_PER_KWH") fail("CTE_DISPATCHING_REFERENCE_INVALID");
+  if (typeof item.effectiveFrom !== "string" || typeof item.effectiveTo !== "string") fail("CTE_DISPATCHING_REFERENCE_INVALID");
+  assertEffectivePeriod({ effectiveFrom: item.effectiveFrom, effectiveTo: item.effectiveTo }, "CTE_DISPATCHING_REFERENCE_INVALID");
+  nonEmpty(item.sourceEvidence, "CTE_DISPATCHING_REFERENCE_INVALID");
+}
+
+function assertLossReference(value: unknown): asserts value is CteLossReference {
+  const item = record(value, "CTE_LOSS_REFERENCE_INVALID");
+  if (item.lossMode !== "OFFICIAL_REFERENCE") fail("CTE_LOSS_REFERENCE_INVALID");
+  assertOfficialReference(item.reference, "CTE_LOSS_REFERENCE_INVALID");
+  if (!Array.isArray(item.applicationTargets) || item.applicationTargets.length === 0) fail("CTE_LOSS_REFERENCE_INVALID");
+  (item.applicationTargets as readonly unknown[]).forEach((target) => enumValue(target, ["DISPATCHING", "ENERGY_INDEX", "SPREAD", "COMMERCIALIZATION_FEE", "IMBALANCE", "CAPACITY_MARKET"], "CTE_LOSS_REFERENCE_INVALID"));
+  nonEmpty(item.sourceEvidence, "CTE_LOSS_REFERENCE_INVALID");
+}
 
 function assertSupplier(value: unknown): asserts value is CteSupplier {
   const item = record(value, "CTE_SUPPLIER_INVALID");
@@ -42,9 +116,10 @@ function assertOffer(value: unknown): asserts value is CteOffer {
 
 function assertPrice(value: unknown, unit: CtePrice["unit"]): asserts value is CtePrice {
   const item = record(value, "CTE_PRICE_INVALID");
-  nonNegative(item.amount, "CTE_PRICE_INVALID");
+  positive(item.amount, "CTE_PRICE_INVALID");
   if (item.currency !== "EUR" || item.unit !== unit) fail("CTE_PRICE_UNIT_INVALID");
   enumValue(item.taxTreatment, ["INCLUDED", "EXCLUDED", "NOT_APPLICABLE"], "CTE_TAX_TREATMENT_INVALID");
+  if (item.lossTreatment !== undefined) lossTreatment(item.lossTreatment, "CTE_LOSS_TREATMENT_INVALID");
 }
 
 function assertFee(value: unknown): asserts value is CteFeeComponent {
@@ -59,8 +134,10 @@ function assertFee(value: unknown): asserts value is CteFeeComponent {
     const monthly = nonNegative(item.monthlyEquivalent, "CTE_MONTHLY_EQUIVALENT_INVALID");
     if (item.unit !== "EUR_PER_POD" || item.period !== "YEAR" || Math.abs(monthly - (Number(item.amount) / 12)) > 0.000001) fail("CTE_MONTHLY_EQUIVALENT_INVALID");
   }
-  if (item.unit === "EUR_PER_POD" && (item.period !== "YEAR" || item.monthlyEquivalent === undefined)) fail("CTE_FIXED_FEE_CANONICAL_INVALID");
+  if (item.unit === "EUR_PER_POD" && item.period !== "YEAR" && item.period !== "MONTH") fail("CTE_FIXED_FEE_CANONICAL_INVALID");
+  if (item.unit === "EUR_PER_POD" && item.period === "YEAR" && item.monthlyEquivalent === undefined) fail("CTE_FIXED_FEE_CANONICAL_INVALID");
   enumValue(item.taxTreatment, ["INCLUDED", "EXCLUDED", "NOT_APPLICABLE"], "CTE_TAX_TREATMENT_INVALID");
+  if (item.lossTreatment !== undefined) lossTreatment(item.lossTreatment, "CTE_LOSS_TREATMENT_INVALID");
 }
 
 function assertEconomicDuration(value: unknown): asserts value is CteEconomicDuration {
@@ -123,6 +200,9 @@ export function assertPassThroughComponents(value: unknown, validity?: DatePerio
   }
   const previousByKind = new Map<CtePassThroughComponent["kind"], CtePassThroughComponent>();
   for (const component of [...components].sort((left, right) => left.effectiveFrom.localeCompare(right.effectiveFrom) || left.effectiveTo.localeCompare(right.effectiveTo))) {
+    // Provider-native components whose semantic kind is not declared are independent
+    // document statements; their shared CTE validity period is not a duplicate fee.
+    if (component.kind === "OTHER_CONTRACTUAL_PASS_THROUGH") continue;
     const previous = previousByKind.get(component.kind);
     if (previous && component.effectiveFrom < previous.effectiveTo) fail("CTE_PASS_THROUGH_OVERLAP");
     previousByKind.set(component.kind, component);
@@ -153,6 +233,10 @@ function assertCommercialTerms(value: unknown): asserts value is CteCommercialTe
   if (item.lossSemantics !== undefined) assertLossSemantics(item.lossSemantics);
   if (item.exitFee !== undefined) assertExitFee(item.exitFee);
   if (item.exitFee !== undefined && Array.isArray(item.oneOffFees) && item.oneOffFees.length > 0) fail("CTE_EXIT_FEE_DUPLICATE");
+  if (item.punRule !== undefined) assertPunRule(item.punRule);
+  if (item.capacityMarketSchedule !== undefined) assertCapacityMarketSchedule(item.capacityMarketSchedule);
+  if (item.dispatchingReference !== undefined) assertDispatchingReference(item.dispatchingReference);
+  if (item.lossReference !== undefined) assertLossReference(item.lossReference);
 }
 
 function assertExpiry(value: unknown): asserts value is CteExpiry {
@@ -175,6 +259,9 @@ function assertBase(value: unknown): Record<string, unknown> {
   assertDatePeriod(item.validity, "CTE_VALIDITY_INVALID");
   assertEffectivePeriod({ effectiveFrom: (item.validity as Record<string, unknown>).periodStart, effectiveTo: (item.validity as Record<string, unknown>).periodEnd }, "CTE_VALIDITY_INVALID");
   assertExpiry(item.expiry);
+  const validity = item.validity as DatePeriod;
+  const expiry = item.expiry as CteExpiry;
+  if (expiry.status === "EXPIRES_ON" && (expiry.date < validity.periodStart || expiry.date > validity.periodEnd)) fail("CTE_EXPIRY_OUTSIDE_VALIDITY");
   if (item.currency !== "EUR") fail("CURRENCY_INVALID");
   enumValue(item.taxTreatment, ["INCLUDED", "EXCLUDED", "NOT_APPLICABLE"], "CTE_TAX_TREATMENT_INVALID");
   assertCommercialTerms(item.commercialTerms);
@@ -188,6 +275,46 @@ function assertCustomerTypes(value: unknown): void {
   if (!Array.isArray(value) || value.length === 0) fail("CTE_ELIGIBILITY_INVALID");
   const values = (value as readonly unknown[]).map((candidate: unknown) => enumValue(candidate, ["RESIDENTIAL", "NON_RESIDENTIAL"], "CTE_ELIGIBILITY_INVALID"));
   if (new Set(values).size !== values.length) fail("CTE_ELIGIBILITY_INVALID");
+}
+
+function assertAnnualConsumptionRule(value: unknown): void {
+  const item = record(value, "CTE_ANNUAL_CONSUMPTION_RULE_INVALID");
+  enumValue(item.operator, [">", ">=", "<", "<=", "="], "CTE_ANNUAL_CONSUMPTION_RULE_INVALID");
+  positive(item.value, "CTE_ANNUAL_CONSUMPTION_RULE_INVALID");
+  enumValue(item.unit, ["KWH_PER_YEAR", "SMC_PER_YEAR"], "CTE_ANNUAL_CONSUMPTION_RULE_INVALID");
+  nonEmpty(item.sourceEvidence, "CTE_ANNUAL_CONSUMPTION_RULE_INVALID");
+}
+
+function assertCustomerScopes(value: unknown): void {
+  if (!Array.isArray(value) || value.length === 0) fail("CTE_CUSTOMER_SCOPES_INVALID");
+  const allowed = ["DOMESTIC_BT", "DOMESTIC_RESIDENT_BT", "DOMESTIC_NON_RESIDENT_BT", "NON_DOMESTIC_BT", "NON_DOMESTIC_OTHER_USE", "NON_DOMESTIC_BT_BTA6", "ALL_ELECTRICITY", "DOMESTIC_GAS", "NON_DOMESTIC_GAS", "ALL_GAS"] as const;
+  const values = (value as readonly unknown[]).map((candidate) => enumValue(candidate, allowed, "CTE_CUSTOMER_SCOPES_INVALID"));
+  if (new Set(values).size !== values.length) fail("CTE_CUSTOMER_SCOPES_INVALID");
+}
+
+function assertCanonicalEligibilityScope(value: unknown): void {
+  const item = record(value, "CTE_ELIGIBILITY_INVALID");
+  if (item.allowedCustomerTypes !== undefined) {
+    if (!Array.isArray(item.allowedCustomerTypes) || item.allowedCustomerTypes.length === 0) fail("CTE_ALLOWED_CUSTOMER_TYPES_INVALID");
+    const values = (item.allowedCustomerTypes as readonly unknown[]).map((candidate) => enumValue(candidate, ["CONSUMER", "BUSINESS", "BOTH", "NOT_DECLARED"], "CTE_ALLOWED_CUSTOMER_TYPES_INVALID"));
+    if (new Set(values).size !== values.length) fail("CTE_ALLOWED_CUSTOMER_TYPES_INVALID");
+    if (values.includes("BOTH") && values.length > 1) fail("CTE_ALLOWED_CUSTOMER_TYPES_INVALID");
+  }
+  if (item.allowedSupplyUses !== undefined) {
+    if (!Array.isArray(item.allowedSupplyUses) || item.allowedSupplyUses.length === 0) fail("CTE_ALLOWED_SUPPLY_USES_INVALID");
+    const values = (item.allowedSupplyUses as readonly unknown[]).map((candidate) => enumValue(candidate, ["DOMESTIC", "OTHER_USE", "PUBLIC_LIGHTING", "EV_CHARGING", "OTHER", "NOT_DECLARED"], "CTE_ALLOWED_SUPPLY_USES_INVALID"));
+    if (new Set(values).size !== values.length) fail("CTE_ALLOWED_SUPPLY_USES_INVALID");
+  }
+  if (item.allowedLegalForms !== undefined) {
+    if (!Array.isArray(item.allowedLegalForms) || item.allowedLegalForms.length === 0) fail("CTE_ALLOWED_LEGAL_FORMS_INVALID");
+    const values = (item.allowedLegalForms as readonly unknown[]).map((candidate) => enumValue(candidate, ["NATURAL_PERSON", "LEGAL_PERSON", "PROFESSIONAL", "ENTERPRISE", "PUBLIC_BODY", "OTHER", "NOT_DECLARED"], "CTE_ALLOWED_LEGAL_FORMS_INVALID"));
+    if (new Set(values).size !== values.length) fail("CTE_ALLOWED_LEGAL_FORMS_INVALID");
+  }
+  if (item.allowedIdentifierTypes !== undefined) {
+    if (!Array.isArray(item.allowedIdentifierTypes) || item.allowedIdentifierTypes.length === 0) fail("CTE_ALLOWED_IDENTIFIER_TYPES_INVALID");
+    const values = (item.allowedIdentifierTypes as readonly unknown[]).map((candidate) => enumValue(candidate, ["TAX_CODE", "VAT", "OTHER", "NOT_DECLARED"], "CTE_ALLOWED_IDENTIFIER_TYPES_INVALID"));
+    if (new Set(values).size !== values.length) fail("CTE_ALLOWED_IDENTIFIER_TYPES_INVALID");
+  }
 }
 
 function assertVoltageLevels(value: unknown): asserts value is readonly VoltageLevel[] {
@@ -227,6 +354,9 @@ export function validateElectricityCte(value: unknown): asserts value is Electri
   if (item.vector !== "EE") fail("VECTOR_MISMATCH");
   const eligibility = record(item.eligibility, "CTE_ELIGIBILITY_INVALID");
   assertCustomerTypes(eligibility.customerTypes);
+  if (eligibility.customerScopes !== undefined) assertCustomerScopes(eligibility.customerScopes);
+  assertCanonicalEligibilityScope(eligibility);
+  if (eligibility.annualConsumptionRule !== undefined) assertAnnualConsumptionRule(eligibility.annualConsumptionRule);
   assertVoltageLevels(eligibility.voltageLevels);
   assertElectricityPricing(item.pricing);
   if (Object.prototype.hasOwnProperty.call(item, "pdr")) fail("EE_SCHEMA_MIXED");
@@ -237,6 +367,9 @@ export function validateGasCte(value: unknown): asserts value is GasCteContract 
   if (item.vector !== "GAS") fail("VECTOR_MISMATCH");
   const eligibility = record(item.eligibility, "CTE_ELIGIBILITY_INVALID");
   assertCustomerTypes(eligibility.customerTypes);
+  if (eligibility.customerScopes !== undefined) assertCustomerScopes(eligibility.customerScopes);
+  assertCanonicalEligibilityScope(eligibility);
+  if (eligibility.annualConsumptionRule !== undefined) assertAnnualConsumptionRule(eligibility.annualConsumptionRule);
   if (Object.prototype.hasOwnProperty.call(eligibility, "voltageLevels")) fail("GAS_SCHEMA_MIXED");
   assertGasPricing(item.pricing);
   if (Object.prototype.hasOwnProperty.call(item, "pod") || Object.prototype.hasOwnProperty.call(item, "voltageLevel")) fail("GAS_SCHEMA_MIXED");

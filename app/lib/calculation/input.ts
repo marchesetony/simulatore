@@ -1,5 +1,6 @@
 import type { CustomerResidency, CustomerType, TaxInclusionState, VoltageLevel } from "../energy/types";
 import type { ElectricityMonthlyProfile, ElectricitySimulationRequest, GasMonthlyProfile, GasSimulationRequest, SimulationRequest } from "./types";
+import type { EligibilityOverrideProvenance } from "../eligibility/override";
 // @ts-expect-error Node's strip-only test runner requires the explicit extension.
 import { add, equals, fromNumber, zero } from "./decimal.ts";
 
@@ -47,7 +48,19 @@ type CommonInput = {
   readonly taxTreatment: TaxInclusionState;
   readonly sourceBill?: { readonly billId: string; readonly version: string };
   readonly baseline?: { readonly totalCommercialCost: number; readonly currency: "EUR"; readonly taxTreatment: TaxInclusionState; readonly supplyPeriod: { readonly periodStart: string; readonly periodEnd: string } };
+  readonly eligibilityOverride?: EligibilityOverrideProvenance;
 };
+
+function parseEligibilityOverride(value: unknown): EligibilityOverrideProvenance {
+  const item = recordValue(value, "ELIGIBILITY_OVERRIDE_INVALID");
+  const overrideId = requiredString(item.overrideId, "ELIGIBILITY_OVERRIDE_INVALID");
+  const authorizedByUserId = requiredString(item.authorizedByUserId, "ELIGIBILITY_OVERRIDE_INVALID");
+  const authorizedAt = dateOnly(String(item.authorizedAt).slice(0, 10), "ELIGIBILITY_OVERRIDE_INVALID");
+  const reason = requiredString(item.reason, "ELIGIBILITY_OVERRIDE_INVALID");
+  const originalMismatchReasons = Array.isArray(item.originalMismatchReasons) ? item.originalMismatchReasons.map((reasonValue) => enumValue(reasonValue, ["CUSTOMER_LEGAL_TYPE_MISMATCH", "SUPPLY_USE_MISMATCH", "IDENTIFIER_TYPE_MISMATCH"], "ELIGIBILITY_OVERRIDE_INVALID")) : fail("ELIGIBILITY_OVERRIDE_INVALID");
+  if (!overrideId.startsWith("override_") || !authorizedByUserId || !reason) fail("ELIGIBILITY_OVERRIDE_INVALID");
+  return { overrideId, authorizedByUserId, authorizedAt: `${authorizedAt}T00:00:00.000Z`, reason, originalMismatchReasons: originalMismatchReasons as EligibilityOverrideProvenance["originalMismatchReasons"] };
+}
 
 function assertCommon(value: Record<string, unknown>): CommonInput {
   assertNoTrustedOutcome(value);
@@ -72,7 +85,8 @@ function assertCommon(value: Record<string, unknown>): CommonInput {
     baseline = { totalCommercialCost: finiteNonNegative(item.totalCommercialCost, "BASELINE_INVALID"), currency: item.currency === "EUR" ? "EUR" : fail("BASELINE_INVALID"), taxTreatment: enumValue(item.taxTreatment, ["INCLUDED", "EXCLUDED", "NOT_APPLICABLE"], "BASELINE_INVALID"), supplyPeriod: baselinePeriod };
     if (baseline.taxTreatment !== taxTreatment || baselinePeriod.periodStart !== supplyPeriod.periodStart || baselinePeriod.periodEnd !== supplyPeriod.periodEnd) fail("BASELINE_INCOMPATIBLE");
   }
-  return { schemaVersion: 1, tenantId, calculationDate, supplyPeriod, customerCategory, ...(residency === undefined ? {} : { residency }), currency: "EUR", taxTreatment, ...(sourceBill ? { sourceBill } : {}), ...(baseline ? { baseline } : {}) };
+  const eligibilityOverride = value.eligibilityOverride === undefined ? undefined : parseEligibilityOverride(value.eligibilityOverride);
+  return { schemaVersion: 1, tenantId, calculationDate, supplyPeriod, customerCategory, ...(residency === undefined ? {} : { residency }), currency: "EUR", taxTreatment, ...(sourceBill ? { sourceBill } : {}), ...(baseline ? { baseline } : {}), ...(eligibilityOverride ? { eligibilityOverride } : {}) };
 }
 
 function assertMonthlyMonths(profile: readonly { readonly month: string }[], expected: readonly string[]): void { if (profile.length !== expected.length || new Set(profile.map((item) => item.month)).size !== profile.length || profile.some((item, index) => item.month !== expected[index])) fail("MONTHLY_PROFILE_INVALID"); }

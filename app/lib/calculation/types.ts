@@ -1,6 +1,7 @@
 import type { CustomerResidency, CustomerType, TaxInclusionState, VoltageLevel } from "../energy/types";
 import type { RegulatoryValueComponentCode, RegulatoryCustomerScope, RegulatoryVariant } from "../foundation/regulatory-types";
 import type { CtePassThroughKind } from "../cte/types";
+import type { EligibilityOverrideProvenance } from "../eligibility/override";
 
 export const CALCULATION_SCHEMA_VERSION = 1 as const;
 export const CALCULATION_ENGINE_VERSION = "1" as const;
@@ -37,6 +38,8 @@ export interface SimulationRequestBase {
   readonly taxTreatment: TaxInclusionState;
   readonly sourceBill?: SourceBillReference;
   readonly baseline?: SimulationBaseline;
+  /** Server-issued provenance only; never accepted from the browser execution payload. */
+  readonly eligibilityOverride?: EligibilityOverrideProvenance;
 }
 
 export interface ElectricityMonthlyProfile {

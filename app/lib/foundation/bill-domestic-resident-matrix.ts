@@ -90,7 +90,7 @@ export interface GmeMatrixReference {
 
 export interface DomesticResidentMatrix {
   readonly profileResolved: boolean;
-  readonly scope: "DOMESTIC_RESIDENT_BT" | "DOMESTIC_RESIDENT_SCOPE_PENDING_VOLTAGE" | "NOT_APPLICABLE";
+  readonly scope: "DOMESTIC_RESIDENT_BT" | "DOMESTIC_NON_RESIDENT_BT" | "DOMESTIC_RESIDENT_SCOPE_PENDING_VOLTAGE" | "NOT_APPLICABLE";
   readonly components: readonly ExpectedComponent[];
   readonly coverage: MatrixCoverage;
   readonly counts: {
@@ -181,7 +181,7 @@ function toEurPerKwh(value: number): number {
 }
 
 function expectedApplicability(scope: DomesticResidentMatrix["scope"]): string {
-  return scope === "DOMESTIC_RESIDENT_BT" ? scope : "DOMESTIC_RESIDENT_SCOPE_PENDING_VOLTAGE";
+  return ["DOMESTIC_RESIDENT_BT", "DOMESTIC_NON_RESIDENT_BT"].includes(scope) ? scope : "DOMESTIC_RESIDENT_SCOPE_PENDING_VOLTAGE";
 }
 
 function baseComponent(input: {
@@ -205,7 +205,7 @@ function networkComponents(input: DomesticResidentMatrixInput, scope: DomesticRe
   const power = lineFor(input.chargeLines, ["POWER_CHARGE", "NETWORK_POWER"]);
   const aggregateEvidence: BillEvidence = aggregate ? "PRESENT_AGGREGATED" : "NOT_IDENTIFIED";
   const powerEvidence: BillEvidence = power ? "PRESENT_EXACT" : "NOT_IDENTIFIED";
-  const auditFor = (evidence: BillEvidence): MatrixAuditability => evidence === "PRESENT_AGGREGATED" ? "DOCUMENT_DETAIL_REQUIRED" : scope === "DOMESTIC_RESIDENT_BT" ? "COMPARABLE" : "NOT_COMPARABLE";
+  const auditFor = (evidence: BillEvidence): MatrixAuditability => evidence === "PRESENT_AGGREGATED" ? "DOCUMENT_DETAIL_REQUIRED" : ["DOMESTIC_RESIDENT_BT", "DOMESTIC_NON_RESIDENT_BT"].includes(scope) ? "COMPARABLE" : "NOT_COMPARABLE";
   const common = { applicability: expectedApplicability(scope), authority: "ARERA" as const, calculatedBy: "ARERA" as const, publishedBy: "ARERA" as const, periodicity: "ANNUAL" as const, reference: ARERA_DOMESTIC_TARIFF_SOURCE };
   const record = (...codes: RegulatoryValueRecord["componentCode"][]): RegulatoryValueRecord | null => {
     const aliases: Partial<Record<RegulatoryValueRecord["componentCode"], RegulatoryValueRecord["componentCode"][]>> = { S1_TOTAL: ["NETWORK_FIXED", "S1_TOTAL"], S1_MEASURE: ["METERING_FIXED", "S1_MEASURE"], S2_POWER: ["NETWORK_POWER", "S2_POWER"], S3_ENERGY_TRANSMISSION: ["TRANSMISSION_ENERGY", "NETWORK_ENERGY", "S3_ENERGY_TRANSMISSION"] };
@@ -213,7 +213,7 @@ function networkComponents(input: DomesticResidentMatrixInput, scope: DomesticRe
   };
   const component = (args: { code: ExpectedComponentCode; officialName: string; applicationBasis: string; recordCode: RegulatoryValueRecord["componentCode"]; evidence: BillEvidence; contributingReferences?: readonly string[] }): ExpectedComponent => {
     const source = record(args.recordCode);
-    return baseComponent({ ...common, code: args.code, officialName: args.officialName, applicationBasis: args.applicationBasis, billEvidence: args.evidence, referenceStatus: source ? "AVAILABLE" : "REFERENCE_MISSING", auditability: source ? auditFor(args.evidence) : "REFERENCE_MISSING", sourceValue: sourceFromRecord(source), contributingReferences: args.contributingReferences ?? [], notComparableReason: source ? (args.evidence === "PRESENT_AGGREGATED" ? "AGGREGATED_BILL_LINE" : scope !== "DOMESTIC_RESIDENT_BT" ? "VOLTAGE_CLASS_UNRESOLVED" : null) : "REFERENCE_MISSING" });
+    return baseComponent({ ...common, code: args.code, officialName: args.officialName, applicationBasis: args.applicationBasis, billEvidence: args.evidence, referenceStatus: source ? "AVAILABLE" : "REFERENCE_MISSING", auditability: source ? auditFor(args.evidence) : "REFERENCE_MISSING", sourceValue: sourceFromRecord(source), contributingReferences: args.contributingReferences ?? [], notComparableReason: source ? (args.evidence === "PRESENT_AGGREGATED" ? "AGGREGATED_BILL_LINE" : !["DOMESTIC_RESIDENT_BT", "DOMESTIC_NON_RESIDENT_BT"].includes(scope) ? "VOLTAGE_CLASS_UNRESOLVED" : null) : "REFERENCE_MISSING" });
   };
   return [
     component({ ...common, code: "NETWORK_FIXED", officialName: "Componente s1 — totale quota fissa", applicationBasis: "Quota fissa per punto di prelievo per anno", recordCode: "S1_TOTAL", evidence: aggregateEvidence, contributingReferences: aggregate ? ["NETWORK_SYSTEM", "NETWORK_FIXED"] : [] }),
@@ -227,9 +227,9 @@ function networkComponents(input: DomesticResidentMatrixInput, scope: DomesticRe
 function systemComponents(input: DomesticResidentMatrixInput, scope: DomesticResidentMatrix["scope"]): ExpectedComponent[] {
   const common = { applicability: expectedApplicability(scope), authority: "ARERA" as const, calculatedBy: "ARERA" as const, publishedBy: "ARERA" as const, periodicity: "QUARTERLY" as const, reference: "https://www.arera.it/fileadmin/allegati/docs/26/227-2026-R-com-TABELLE.xlsx" };
   return SYSTEM_CODES.map((code) => {
-    const record = recordForPeriod(input.regulatoryReferences, code, "DOMESTIC_RESIDENT_BT", input.billingPeriod.from);
+    const record = recordForPeriod(input.regulatoryReferences, code, scope === "DOMESTIC_NON_RESIDENT_BT" ? "DOMESTIC_NON_RESIDENT_BT" : "DOMESTIC_RESIDENT_BT", input.billingPeriod.from);
     const evidence = lineFor(input.chargeLines, [code]) ? "PRESENT_EXACT" : "NOT_IDENTIFIED";
-    return baseComponent({ ...common, code, officialName: `Oneri generali di sistema ${code}`, applicationBasis: `Valore ufficiale ${code} per utenza domestica residente BT`, billEvidence: evidence, referenceStatus: record ? "AVAILABLE" : "REFERENCE_MISSING", auditability: evidence === "NOT_IDENTIFIED" ? "DOCUMENT_DETAIL_REQUIRED" : scope === "DOMESTIC_RESIDENT_BT" && record ? "COMPARABLE" : "NOT_COMPARABLE", sourceValue: sourceFromRecord(record), notComparableReason: !record ? "REFERENCE_MISSING" : evidence === "NOT_IDENTIFIED" ? "BILL_LINE_NOT_IDENTIFIED" : scope !== "DOMESTIC_RESIDENT_BT" ? "VOLTAGE_CLASS_UNRESOLVED" : null });
+    return baseComponent({ ...common, code, officialName: `Oneri generali di sistema ${code}`, applicationBasis: `Valore ufficiale ${code} per utenza domestica ${scope === "DOMESTIC_NON_RESIDENT_BT" ? "non residente" : "residente"} BT`, billEvidence: evidence, referenceStatus: record ? "AVAILABLE" : "REFERENCE_MISSING", auditability: evidence === "NOT_IDENTIFIED" ? "DOCUMENT_DETAIL_REQUIRED" : ["DOMESTIC_RESIDENT_BT", "DOMESTIC_NON_RESIDENT_BT"].includes(scope) && record ? "COMPARABLE" : "NOT_COMPARABLE", sourceValue: sourceFromRecord(record), notComparableReason: !record ? "REFERENCE_MISSING" : evidence === "NOT_IDENTIFIED" ? "BILL_LINE_NOT_IDENTIFIED" : !["DOMESTIC_RESIDENT_BT", "DOMESTIC_NON_RESIDENT_BT"].includes(scope) ? "VOLTAGE_CLASS_UNRESOLVED" : null });
   });
 }
 
@@ -343,9 +343,9 @@ function coverage(components: readonly ExpectedComponent[], contractAvailable: b
 
 export function buildDomesticResidentMatrix(input: DomesticResidentMatrixInput): DomesticResidentMatrix {
   const profile = input.profile;
-  const profileResolved = profile?.supplyUseCategory.normalizedValue === "DOMESTIC" && profile.domesticResidenceStatus.normalizedValue === "RESIDENT";
+  const profileResolved = profile?.supplyUseCategory.normalizedValue === "DOMESTIC" && ["RESIDENT", "NON_RESIDENT"].includes(profile.domesticResidenceStatus.normalizedValue);
   const voltage = normalizedVoltage(profile);
-  const scope = !profileResolved ? "NOT_APPLICABLE" : voltage ? "DOMESTIC_RESIDENT_BT" : "DOMESTIC_RESIDENT_SCOPE_PENDING_VOLTAGE";
+  const scope = !profileResolved ? "NOT_APPLICABLE" : voltage ? profile?.domesticResidenceStatus.normalizedValue === "NON_RESIDENT" ? "DOMESTIC_NON_RESIDENT_BT" : "DOMESTIC_RESIDENT_BT" : "DOMESTIC_RESIDENT_SCOPE_PENDING_VOLTAGE";
   const network = networkComponents(input, scope);
   const system = systemComponents(input, scope);
   // Expected upstream components are derived from the official records actually

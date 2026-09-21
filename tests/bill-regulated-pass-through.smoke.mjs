@@ -2,11 +2,11 @@ import assert from "node:assert/strict";
 import { verifyRegulatedPassThrough } from "../app/lib/foundation/bill-regulated-pass-through.ts";
 
 const period = { from: "2026-07-01", to: "2026-08-01" };
-const record = (componentCode, originalValue, originalUnit, referenceDomain, authority = "ARERA") => ({
+const record = (componentCode, originalValue, originalUnit, referenceDomain, authority = "ARERA", customerScopeOverride = null) => ({
   tenantId: "tenant_test", id: `${componentCode}-id`, identityKey: `${componentCode}-identity`, version: "1", parentVersionId: null,
   authority, sourceType: "OFFICIAL_ATTACHMENT", sourceReference: `https://${authority.toLowerCase()}.example.test/${componentCode}`, officialIdentifier: `REF-${componentCode}`,
   publicationDate: "2026-06-01", retrievedAt: "2026-06-02T00:00:00.000Z", effectiveFrom: "2026-07-01", effectiveTo: "2026-10-01", vector: "EE",
-  customerScope: referenceDomain === "DISPATCHING" || referenceDomain === "CAPACITY_MARKET" ? "ALL_ELECTRICITY" : "DOMESTIC_BT", componentCode,
+  customerScope: customerScopeOverride ?? (referenceDomain === "DISPATCHING" || referenceDomain === "CAPACITY_MARKET" ? "ALL_ELECTRICITY" : "DOMESTIC_BT"), componentCode,
   referenceDomain, originalValue, originalUnit, normalizedValue: originalValue, normalizedUnit: originalUnit, applicationBasis: `Applicazione ${componentCode}`,
   sourceSha256: "a".repeat(64), conversionProvenance: [], approvalStatus: "IMPORTED", reviewStatus: "APPROVED", checksum: "b".repeat(64),
 });
@@ -18,7 +18,7 @@ const references = [
   record("ASOS", 20, "EUR/MWH", "SYSTEM_CHARGES"), record("ARIM", 0.01, "EUR/KWH", "SYSTEM_CHARGES"),
   record("UC3", 0.01, "EUR/KWH", "SYSTEM_CHARGES"), record("UC6", 0.01, "EUR/KWH", "SYSTEM_CHARGES"),
   record("DISPATCHING_TERNA_OPERATION", 0.0652, "CENT_EUR/KWH", "DISPATCHING"), record("DISPATCHING_ESSENTIAL_UNITS_REINTEGRATION", 0.3041, "CENT_EUR/KWH", "DISPATCHING"),
-  record("CAPACITY_MARKET_OFF_PEAK", 0.003197, "EUR/KWH", "CAPACITY_MARKET", "TERNA"),
+  record("CAPACITY_MARKET_OFF_PEAK", 0.003197, "EUR/KWH", "CAPACITY_MARKET", "TERNA"), { ...record("CAPACITY_MARKET", 2.4466, "CENT_EUR/KWH", "CAPACITY_MARKET", "ARERA", "DOMESTIC_RESIDENT_BT"), effectiveTo: "2026-08-01" },
 ];
 const result = verifyRegulatedPassThrough({
   billingPeriod: period, regulatoryReferences: references, customerScope: "DOMESTIC_RESIDENT_BT", billedConsumptionKwh: 100, powerKw: 3,
@@ -48,7 +48,7 @@ assert.equal(byCode("DISPATCHING")?.reason, "CUSTOMER_FACING_REFERENCE_MISSING")
 assert.equal(byCode("CAPACITY_MARKET")?.outcome, "COINCIDE");
 assert.equal(byCode("CAPACITY_MARKET")?.comparable, true);
 assert.equal(byCode("CAPACITY_MARKET")?.authority, "ARERA");
-assert.equal(byCode("CAPACITY_MARKET")?.officialIdentifier, "219/2026/R/eel");
+assert.equal(byCode("CAPACITY_MARKET")?.officialIdentifier, "REF-CAPACITY_MARKET");
 assert.equal(byCode("CAPACITY_MARKET")?.normalizedOfficialRate, 0.024466);
 assert.equal(byCode("CAPACITY_MARKET")?.unitRateDifference, 0);
 assert.equal(byCode("CAPACITY_MARKET")?.unitRateDifferencePercent, 0);

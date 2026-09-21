@@ -7,7 +7,14 @@ const envelopeField = (path, value) => ({ path, valueKind: value === null ? "NUL
 const response = (fields) => ({ stop_reason: "tool_use", content: [{ type: "tool_use", name: "extract_cte", input: { schemaVersion: 1, documentType: "CTE", vector: "EE", fields, extractionNotes: [] } }] });
 
 assert.deepEqual(CTE_ARRAY_PATHS_ALLOWED_BY_TOOL, ["commercialTerms.passThroughComponents"]);
-assert.deepEqual(CTE_ARRAY_PATHS_ALLOWED_BY_VALIDATOR, ["commercialTerms.passThroughComponents"]);
+assert.deepEqual(CTE_ARRAY_PATHS_ALLOWED_BY_VALIDATOR, [
+  "commercialTerms.passThroughComponents",
+  "commercialTerms.fixedFees",
+  "commercialTerms.variableFees",
+  "commercialTerms.oneOffFees",
+  "commercialTerms.commercialDiscounts",
+  "commercialTerms.imbalance",
+]);
 const fieldSchema = ANTHROPIC_CTE_TOOL.input_schema.properties.fields.items;
 assert.equal(fieldSchema.type, "object");
 assert.equal("anyOf" in fieldSchema, false);
@@ -29,8 +36,8 @@ assert.throws(() => parseAnthropicCteResponse(response([{ ...envelopeField("offe
 assert.throws(() => parseAnthropicCteResponse(response([{ ...envelopeField("offer.name", null), sourceText: "evidence" }])), /CTE_EXTRACTION_SCHEMA_INVALID/);
 assert.throws(() => parseAnthropicCteResponse(response([field("commercialTerms.passThroughComponents", "scalar-bypass")])), /CTE_EXTRACTION_SCHEMA_INVALID/);
 assert.throws(() => parseAnthropicCteResponse(response([field("pricing.reference", ["PUN"])])), (error) => error.code === "CTE_EXTRACTION_SCHEMA_INVALID" && error.issuePaths.includes("fields[0].value"));
-assert.throws(() => parseAnthropicCteResponse(response([field("commercialTerms.fixedFees", [component])])), /CTE_EXTRACTION_SCHEMA_INVALID/);
+assert.doesNotThrow(() => parseAnthropicCteResponse(response([field("commercialTerms.fixedFees", [component])])));
 assert.throws(() => parseAnthropicCteResponse(response([field("pricing.reference", [])])), /CTE_EXTRACTION_SCHEMA_INVALID/);
 assert.throws(() => parseAnthropicCteResponse(response([field("unknown.path", [component])])), /CTE_EXTRACTION_SCHEMA_INVALID/);
 
-console.log("cte path-aware schema smoke: ok (only passThroughComponents accepts arrays; scalar, empty and unknown array paths fail closed)");
+console.log("cte path-aware schema smoke: ok (pass-through and legacy commercial arrays are path-scoped; scalar, empty and unknown arrays fail closed)");

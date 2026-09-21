@@ -16,7 +16,9 @@ import { deterministicRecordId } from "../persistence/types.ts";
 // @ts-expect-error Node's strip-only test runner requires the explicit extension.
 import { createAreraRegulatorySourceReader, recordsForDomain, type RegulatorySourceReader } from "./arera.ts";
 // @ts-expect-error Node's strip-only test runner requires the explicit extension.
-import { AUTO_REFRESH_REGISTERED_DOMAINS, CALCULATED_REGULATORY_DOMAINS, REGULATORY_REFRESH_STALE_DAYS, regulatoryDomainKey, type RegulatoryRefreshDomain } from "./registry.ts";
+import { withBoundedRetry } from "../automation/retry.ts";
+// @ts-expect-error Node's strip-only test runner requires the explicit extension.
+import { CALCULATED_REGULATORY_DOMAINS, REGULATORY_REFRESH_STALE_DAYS, regulatoryDomainKey, type RegulatoryRefreshDomain } from "./registry.ts";
 
 export type RefreshRunStatus = "SUCCESS" | "PARTIAL_FAILURE" | "FAILED" | "ALREADY_RUNNING";
 export type RefreshSourceStatus = "FRESH" | "STALE" | "FAILED_REVIEW_REQUIRED" | "NEVER_SUCCESSFUL" | "RUNNING";
@@ -72,6 +74,8 @@ export interface RegulatoryRefreshDependencies {
   readonly runId?: string;
   readonly trigger?: "CRON" | "MANUAL" | "TEST";
   readonly dryRun?: boolean;
+  /** Optional exact domain allow-list for a scoped projection run. */
+  readonly domainKeys?: readonly string[];
 }
 
 const actor = "user_regulatory-auto-refresh";
@@ -192,9 +196,14 @@ export async function runRegulatoryRefresh(input: { readonly tenantId: string } 
   const checks: Array<RegulatoryRefreshRun["sourceChecks"][number]> = [];
   const errors: string[] = [];
   let unchangedCount = 0; let createdCount = 0; let approvedCount = 0; let replacedCount = 0; let failedCount = 0;
+  const requestedDomainKeys = input.domainKeys === undefined ? null : new Set(input.domainKeys);
+  const domains = requestedDomainKeys === null
+    ? CALCULATED_REGULATORY_DOMAINS
+    : CALCULATED_REGULATORY_DOMAINS.filter((domain) => requestedDomainKeys.has(regulatoryDomainKey(domain)));
+  if (requestedDomainKeys !== null && (domains.length !== requestedDomainKeys.size || domains.length === 0)) throw new Error("REGULATORY_REFRESH_DOMAIN_ALLOWLIST_INVALID");
   let candidates: readonly RegulatoryValueRecord[] = [];
-  try { candidates = await reader.load({ tenantId: input.tenantId, retrievedAt: now }); } catch (error) { errors.push(errorText(error)); }
-  for (const domain of CALCULATED_REGULATORY_DOMAINS) {
+  try { candidates = (await withBoundedRetry(() => reader.load({ tenantId: input.tenantId, retrievedAt: now }), { maxAttempts: 3, baseDelayMs: 50, maxDelayMs: 250, jitterRatio: 0, sleep: async () => undefined })).value; } catch (error) { errors.push(errorText(error)); }
+  for (const domain of domains) {
     try {
       const domainCandidates = recordsForDomain(domain, candidates);
       checks.push({ domain: regulatoryDomainKey(domain), status: "PASS", sourceReference: domainCandidates[0].sourceReference, sourceSha256: domainCandidates[0].sourceSha256 });
@@ -205,7 +214,7 @@ export async function runRegulatoryRefresh(input: { readonly tenantId: string } 
       }
     } catch (error) { failedCount += 1; const message = errorText(error); errors.push(`${regulatoryDomainKey(domain)}:${message}`); checks.push({ domain: regulatoryDomainKey(domain), status: "FAIL", error: message }); }
   }
-  const status: RefreshRunStatus = failedCount === 0 && errors.length === 0 ? "SUCCESS" : failedCount === CALCULATED_REGULATORY_DOMAINS.length ? "FAILED" : "PARTIAL_FAILURE";
+  const status: RefreshRunStatus = failedCount === 0 && errors.length === 0 ? "SUCCESS" : failedCount === domains.length ? "FAILED" : "PARTIAL_FAILURE";
   if (!dryRun) {
     const stateRepository = input.repositories.regulatoryRefreshState;
     const stored = await stateRepository.get(input.tenantId, stateId(input.tenantId));
@@ -214,7 +223,7 @@ export async function runRegulatoryRefresh(input: { readonly tenantId: string } 
     const isStale = stale(lastSuccessfulAt, now);
     const state: RegulatoryRefreshState = { tenantId: input.tenantId, status: status === "SUCCESS" ? "FRESH" : isStale ? "STALE" : "FAILED_REVIEW_REQUIRED", lastAttemptAt: now, lastSuccessfulAt, nextExpectedCheckAt: addDays(now, 1), consecutiveFailures: status === "SUCCESS" ? 0 : previous.consecutiveFailures + 1, sourceStatus: Object.fromEntries(checks.map((check) => [check.domain, check.status])), errors: isStale ? ["REGULATORY_REFRESH_STALE", ...errors] : errors, lease: null };
     await stateRepository.put({ tenantId: input.tenantId, recordId: stateId(input.tenantId), payload: state, expectedVersion: stored?.version, idempotencyKey: `state:${runId}`, now });
-    const run: RegulatoryRefreshRun = { runId, tenantId: input.tenantId, startedAt: now, finishedAt: new Date().toISOString(), status, trigger, sourceChecks: checks, domainsChecked: [...AUTO_REFRESH_REGISTERED_DOMAINS.map(regulatoryDomainKey)], unchangedCount, createdCount, approvedCount, replacedCount, failedCount, lastSuccessfulAt, errors };
+    const run: RegulatoryRefreshRun = { runId, tenantId: input.tenantId, startedAt: now, finishedAt: new Date().toISOString(), status, trigger, sourceChecks: checks, domainsChecked: domains.map(regulatoryDomainKey), unchangedCount, createdCount, approvedCount, replacedCount, failedCount, lastSuccessfulAt, errors };
     await persistRun(input, run);
   }
   return { runId, tenantId: input.tenantId, status, dryRun, unchangedCount, createdCount, approvedCount, replacedCount, failedCount, errors, sourceChecks: checks };

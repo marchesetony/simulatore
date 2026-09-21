@@ -7,6 +7,8 @@ import { AuthenticationError } from "../../lib/auth/errors";
 import { createAnthropicTwoStageBillSdkAdapter } from "../../lib/ingestion/anthropic-bill-sdk";
 // createAnthropicBillSdkAdapter remains the legacy compatibility adapter; Bill routes use two-stage.
 import { attachOfficialPun } from "../../lib/market/pun-reference";
+import { billInScope, billVisibilityScope } from "../../lib/foundation/bill-visibility";
+import { isBillFeature, resolveBillFeaturePermissions, sanitizeBillForFeatureAccess, type BillFeature } from "../../lib/foundation/bill-feature-permissions";
 
 const CORRELATION_ID = "foundation-bills";
 const LIST_CORRELATION_ID = "foundation-bill-list";
@@ -90,10 +92,15 @@ function listError(error: unknown): Response {
 export async function GET(request: Request): Promise<Response> {
   try {
     const principal = await requestPrincipal(request, "READ");
-    const documents = await runtimeRepositories().billRepository.list(principal.tenantId);
+    const repositories = runtimeRepositories();
+    const scope = await billVisibilityScope(principal, repositories);
+    const access = await resolveBillFeaturePermissions(principal, repositories, scope);
+    const requestedFeature = new URL(request.url).searchParams.get("feature");
+    if (requestedFeature !== null && (!isBillFeature(requestedFeature) || !access.features[requestedFeature as BillFeature])) return deny("BILL_FEATURE_ACCESS_DENIED", "Funzione tecnica non autorizzata", 403);
+    const documents = (await repositories.billRepository.list(principal.tenantId)).filter((document) => billInScope(document, scope));
     if (documents.length > MAX_BILL_LIST_RESULTS) throw new Error("BILL_LIST_TOO_LARGE");
     const approvedView = new URL(request.url).searchParams.get("view") === "approved";
-    const publicDocuments = (approvedView ? documents.filter((document) => document.currentApprovedVersionId !== null).map(toPublicBillSummary).filter((document): document is NonNullable<typeof document> => document !== null) : documents.filter((document) => document.currentApprovedVersionId === null).map(toPublicDocument))
+    const publicDocuments = (approvedView ? documents.filter((document) => document.currentApprovedVersionId !== null).map(toPublicBillSummary).filter((document): document is NonNullable<typeof document> => document !== null) : await Promise.all(documents.filter((document) => document.currentApprovedVersionId === null).map(async (document) => sanitizeBillForFeatureAccess(await attachOfficialPun(toPublicDocument(document), repositories.marketArchiveRepository), access))))
       .sort((left, right) => left.createdAt.localeCompare(right.createdAt) || left.id.localeCompare(right.id));
     return Response.json({ documents: publicDocuments }, { headers: noStoreHeaders });
   } catch (error) {
@@ -112,6 +119,7 @@ export async function POST(request: Request): Promise<Response> {
     if (!(file instanceof File)) return deny("PDF_REQUIRED", "A PDF file is required", 400);
     const result = await ingestEnergyBill({
       tenantId,
+      ownerUserId: principal.userId,
       fileName: file.name,
       contentType: file.type,
       bytes: new Uint8Array(await file.arrayBuffer()),
@@ -125,9 +133,9 @@ export async function POST(request: Request): Promise<Response> {
     });
     if (result.errorCode) {
       const code = boundedPublicCode(result.errorCode, "BILL_OPERATION_FAILED");
-      return Response.json({ error: { code, message: messageFor(code), correlationId: CORRELATION_ID }, document: await attachOfficialPun(toPublicDocument(result.document), repositories.marketArchiveRepository), status: result.status, errorCode: code }, { status: publicStatus(code), headers: noStoreHeaders });
+      return Response.json({ error: { code, message: messageFor(code), correlationId: CORRELATION_ID }, document: sanitizeBillForFeatureAccess(await attachOfficialPun(toPublicDocument(result.document), repositories.marketArchiveRepository), await resolveBillFeaturePermissions(principal, repositories, await billVisibilityScope(principal, repositories))), status: result.status, errorCode: code }, { status: publicStatus(code), headers: noStoreHeaders });
     }
-    return Response.json({ document: await attachOfficialPun(toPublicDocument(result.document), repositories.marketArchiveRepository), energyBill: result.contract }, { status: 201, headers: noStoreHeaders });
+    return Response.json({ document: sanitizeBillForFeatureAccess(await attachOfficialPun(toPublicDocument(result.document), repositories.marketArchiveRepository), await resolveBillFeaturePermissions(principal, repositories, await billVisibilityScope(principal, repositories))), energyBill: result.contract }, { status: 201, headers: noStoreHeaders });
   } catch (error) {
     const code = publicCode(error, "INGESTION_FAILED");
     return deny(code, messageFor(code), publicStatus(code));

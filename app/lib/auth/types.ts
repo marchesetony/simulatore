@@ -2,6 +2,7 @@ export type RuntimeMode = "local" | "production";
 export type AuthAdapterKind = "local" | "server-session";
 export type PersistenceAdapterKind = "filesystem" | "provider";
 export type AuthRole = "ADMIN" | "ANALYST" | "VIEWER";
+export type CanonicalProductRole = "SUPER_ADMIN" | "ADMIN" | "AGENT";
 export type AuthSource = "LOCAL_SYNTHETIC" | "VERIFIED_SESSION";
 export type AccessLevel = "READ" | "WRITE" | "ADMIN";
 
@@ -26,6 +27,7 @@ export interface RuntimeConfig {
   readonly authAdapter: AuthAdapterKind;
   readonly persistenceAdapter: PersistenceAdapterKind;
   readonly localTenantId: string;
+  readonly localUserId: string;
   readonly localRole: AuthRole;
 }
 

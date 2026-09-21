@@ -4,7 +4,9 @@ import { AUTO_REFRESH_REGISTERED_DOMAINS, CALCULATED_REGULATORY_DOMAINS, regulat
 import { LocalFilesystemAdapter } from "../app/lib/persistence/local.ts";
 import { ProductionRegulatoryPersistenceBridge } from "../app/lib/regulatory-bridge.ts";
 import { resolveRegulatoryTimeline } from "../app/lib/calculation/regulatory-timeline.ts";
+import { loadLocalRuntimeEnvForTests } from "./support/standalone-runtime-env.mjs";
 
+loadLocalRuntimeEnvForTests({ expectedTenantId: "tenant_local-demo" });
 const sourceSha256 = "a".repeat(64);
 const records = parseArera588Bta6ArimTableRows({
   rows: [

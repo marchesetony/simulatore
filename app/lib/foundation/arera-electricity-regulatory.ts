@@ -173,6 +173,7 @@ export function createRegulatoryValue(input: {
   readonly referenceDomain?: RegulatoryValueRecord["referenceDomain"];
 }): RegulatoryValueRecord {
   if (!isAllowedOfficialRegulatoryUrl(input.sourceReference)) throw new Error("OFFICIAL_REGULATORY_DOMAIN_NOT_ALLOWED");
+  assertTernaDispatchingRegime(input);
   const normalized = normalizeRegulatoryUnit(input.originalValue, input.originalUnit);
   const identityParts = [input.tenantId, input.officialIdentifier, input.componentCode, scopeFor(input.customerScope), input.effectiveFrom, normalized.unit];
   if (input.regulatoryVariant !== undefined) identityParts.push(input.regulatoryVariant);
@@ -193,6 +194,22 @@ export function createRegulatoryValue(input: {
 }
 
 const createValue = createRegulatoryValue;
+
+const TERNA_DISPATCHING_COMPONENTS: readonly RegulatoryValueComponentCode[] = [
+  "DISPATCHING", "DISPATCHING_TOTAL", "DISPATCHING_UPLIFT", "DISPATCHING_UPLIFT_ATT_MSDMB",
+  "DISPATCHING_UPLIFT_ATT_DED", "DISPATCHING_UPLIFT_RUPL", "DISPATCHING_ESSENTIAL_UNITS",
+  "DISPATCHING_ESSENTIAL_UNITS_ORDINARY", "DISPATCHING_ESSENTIAL_UNITS_REINTEGRATION",
+  "DISPATCHING_TERNA_OPERATION", "DISPATCHING_EXTRAORDINARY_MODULATION",
+  "DISPATCHING_WIND_COMPENSATION", "DISPATCHING_OTHER_ITEMS",
+];
+
+function assertTernaDispatchingRegime(input: { readonly authority?: "ARERA" | "TERNA"; readonly componentCode: RegulatoryValueComponentCode; readonly regulatoryVariant?: RegulatoryVariant; readonly effectiveFrom: string }): void {
+  if (input.authority !== "TERNA" || !TERNA_DISPATCHING_COMPONENTS.includes(input.componentCode)) return;
+  const year = Number(input.effectiveFrom.slice(0, 4));
+  if (!Number.isInteger(year)) throw new Error("TERNA_EFFECTIVE_DATE_INVALID");
+  const expected = year >= 2025 ? "TIDE" : "LEGACY_111_06";
+  if (input.regulatoryVariant !== expected) throw new Error(`TERNA_DISPATCHING_REGIME_MISMATCH:${expected}`);
+}
 
 export type AreraInfrastructureImport = {
   readonly source: { readonly sourceReference: string; readonly officialIdentifier: string; readonly publicationDate: string; readonly retrievedAt: string; readonly sourceSha256: string };

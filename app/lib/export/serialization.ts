@@ -13,11 +13,11 @@ const CSV_COLUMNS = [
   "comparisonCost", "comparisonCostBasis", "costScope", "regulatedComponentsIncluded", "contractualPassThroughCompleteness", "contractualPassThroughStates", "bta6NetOfTaxComplete",
 ] as const;
 
-function safeFilename(proposal: ProposalCanonicalSnapshot, format: "JSON" | "CSV" | "HTML"): string {
+export function safeProposalFilename(proposal: ProposalCanonicalSnapshot, format: "JSON" | "CSV" | "HTML" | "PDF"): string {
   const base = `commercial-proposal-${proposal.proposalId}`.replace(/[^A-Za-z0-9_-]/g, "_").slice(0, 160);
   return `${base}.${format.toLowerCase()}`;
 }
-function outputSize(body: string): void { if (Buffer.byteLength(body, "utf8") > 524288) throw new Error("PROPOSAL_OUTPUT_TOO_LARGE"); }
+export function assertProposalOutputSize(body: string | Uint8Array): void { if ((typeof body === "string" ? Buffer.byteLength(body, "utf8") : body.byteLength) > 524288) throw new Error("PROPOSAL_OUTPUT_TOO_LARGE"); }
 function jsonValue(value: unknown): string { return canonical(value); }
 function csvField(value: unknown): string {
   const valueText = value === undefined || value === null ? "" : typeof value === "string" ? value : jsonValue(value);
@@ -36,8 +36,8 @@ function commonCsvValues(proposal: ProposalCanonicalSnapshot): readonly unknown[
 export function exportJson(proposal: ProposalExportInput, tenantId: string): ProposalExportDocument {
   const validated = assertProposalSnapshot(proposal, tenantId);
   const body = `${canonical(validated)}\n`;
-  outputSize(body);
-  return { format: "JSON", contentType: "application/json; charset=utf-8", filename: safeFilename(validated, "JSON"), body };
+  assertProposalOutputSize(body);
+  return { format: "JSON", contentType: "application/json; charset=utf-8", filename: safeProposalFilename(validated, "JSON"), body };
 }
 
 export function exportCsv(proposal: ProposalExportInput, tenantId: string): ProposalExportDocument {
@@ -49,8 +49,8 @@ export function exportCsv(proposal: ProposalExportInput, tenantId: string): Prop
     jsonValue(component.formulaInputs), component.amount.amount, component.amount.minorUnits, component.amount.currency, ...common.slice(31),
   ]);
   const body = `${csvRow(CSV_COLUMNS)}\r\n${csvRow(summary)}\r\n${componentRows.map(csvRow).join("\r\n")}\r\n`;
-  outputSize(body);
-  return { format: "CSV", contentType: "text/csv; charset=utf-8", filename: safeFilename(validated, "CSV"), body };
+  assertProposalOutputSize(body);
+  return { format: "CSV", contentType: "text/csv; charset=utf-8", filename: safeProposalFilename(validated, "CSV"), body };
 }
 
 function escapeHtml(value: unknown): string { return String(value ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&#39;"); }
@@ -68,6 +68,6 @@ export function exportHtml(proposal: ProposalExportInput, tenantId: string): Pro
   const marketRows = validated.marketData.map((market: ProposalCanonicalSnapshot["marketData"][number]) => `${market.vector} ${market.index} ${market.month} version ${market.version}`);
   const exclusionRows = validated.exclusions.map((exclusion: ProposalCanonicalSnapshot["exclusions"][number]) => `${exclusion.code}: ${exclusion.message}`);
   const body = `<!doctype html><html lang="en"><head><meta charset="utf-8"><title>${escapeHtml(validated.proposalId)}</title><style>body{font-family:Arial,sans-serif;line-height:1.4;margin:2rem;color:#17202a}table{border-collapse:collapse;width:100%;margin:1rem 0}th,td{border:1px solid #9aa4ad;padding:.4rem;text-align:left;vertical-align:top}code{white-space:pre-wrap;word-break:break-word}.muted{color:#52606d}</style></head><body><article><header><h1>Commercial proposal</h1><p class="muted">Proposal ${escapeHtml(validated.proposalId)} - issued ${escapeHtml(validated.generatedAt.slice(0, 10))}</p></header><section><h2>Customer and supply</h2><p>Customer: ${escapeHtml(validated.customer.customerId)} (${escapeHtml(validated.customer.category)})${validated.customer.displayName ? ` - ${escapeHtml(validated.customer.displayName)}` : ""}</p><p>Supply: ${escapeHtml(validated.supply.supplyId)}${validated.supply.pod ? ` - POD ${escapeHtml(validated.supply.pod)}` : ""}${validated.supply.pdr ? ` - PDR ${escapeHtml(validated.supply.pdr)}` : ""}</p></section><section><h2>Selected offer</h2><p>Supplier: ${escapeHtml(validated.selectedOffer.supplier)} - Offer: ${escapeHtml(validated.selectedOffer.offerCode)} - CTE ${escapeHtml(validated.cte.cteId)} version ${escapeHtml(validated.cte.version)} (version ID ${escapeHtml(validated.cte.versionId)})</p><p>Validity: ${escapeHtml(validated.offerValidity.periodStart)} to ${escapeHtml(validated.offerValidity.periodEnd)}</p></section><section><h2>Calculated commercial components</h2><p>Commercial total: <strong>${htmlMoney(validated.commercialCost)}</strong></p><p>Comparison total: <strong>${htmlMoney(validated.comparisonCost)}</strong> (${escapeHtml(validated.comparisonCostBasis)})</p><p>Cost scope: ${escapeHtml(validated.costScope)}; regulated components: ${escapeHtml(validated.regulatedComponentsIncluded.join(", ") || "None")}</p><p>Unit cost: ${escapeHtml(validated.unitCost.amount)} ${escapeHtml(validated.unitCost.currency)} per ${escapeHtml(validated.unitCost.unit)}</p><p>Baseline: ${htmlMoney(validated.baseline)} - Savings: ${htmlMoney(validated.savings)}</p><table><thead><tr><th>Category</th><th>Label</th><th>Sign</th><th>Amount</th><th>Formula</th><th>Inputs</th></tr></thead><tbody>${componentRows}</tbody></table></section>${contractualHtml(validated)}<section><h2>Sources and audit</h2><p>Calculation fingerprint: <code>${escapeHtml(validated.calculationFingerprint)}</code></p><p>Proposal fingerprint: <code>${escapeHtml(validated.proposalFingerprint)}</code></p><p>Market records:</p>${htmlList(marketRows)}</section><section><h2>Excluded or not calculated charges</h2>${htmlList(validated.notCalculated)}${htmlList(exclusionRows)}</section><section><h2>Warnings</h2>${htmlList(validated.warnings)}</section><section><h2>Unavailable information</h2>${htmlList(validated.unavailableInformation)}</section><section><h2>Informational notes</h2>${htmlList(validated.notes)}</section><section><h2>Disclaimer</h2><p>${escapeHtml(validated.disclaimer)}</p></section></article></body></html>`;
-  outputSize(body);
-  return { format: "HTML", contentType: "text/html; charset=utf-8", filename: safeFilename(validated, "HTML"), body };
+  assertProposalOutputSize(body);
+  return { format: "HTML", contentType: "text/html; charset=utf-8", filename: safeProposalFilename(validated, "HTML"), body };
 }

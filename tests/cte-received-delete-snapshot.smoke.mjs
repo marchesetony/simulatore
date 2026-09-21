@@ -1,7 +1,9 @@
 import assert from "node:assert/strict";
 import { readdir, readFile } from "node:fs/promises";
 import { deleteCteIngestion, toPublicCteIngestion } from "../app/lib/cte/ingestion.ts";
+import { loadLocalRuntimeEnvForTests } from "./support/standalone-runtime-env.mjs";
 
+loadLocalRuntimeEnvForTests({ expectedTenantId: "tenant_local-demo" });
 const archiveDirectory = "var/phase6/cte-archives/tenant_local-demo";
 const archiveNames = (await readdir(archiveDirectory)).filter((name) => name.endsWith(".json"));
 const failedCandidates = await Promise.all(archiveNames.map(async (name) => {
@@ -19,7 +21,7 @@ const repository = {
   async put() { throw new Error("not used"); },
   async append() { throw new Error("not used"); },
 };
-const storage = { async remove(objectKey) { removed.push(objectKey); } };
+const storage = { async remove(tenantId, documentId) { removed.push([tenantId, documentId]); } };
 const publicFailed = toPublicCteIngestion(failed);
 const publicApproved = toPublicCteIngestion(approved);
 assert.equal(publicApproved.status, "APPROVED");
@@ -27,10 +29,10 @@ assert.equal(publicFailed.fileName, failed.payload.fileName);
 assert.equal([failed, approved].filter((record) => record.payload.status !== "APPROVED").length, 1);
 await deleteCteIngestion({ tenantId: failed.tenantId, ingestionId: failed.recordId, repository, storage });
 assert.equal(records.has(failed.recordId), false);
-assert.deepEqual(removed, [failed.payload.objectKey]);
+assert.deepEqual(removed, [[failed.tenantId, failed.payload.documentId]]);
 await assert.rejects(() => deleteCteIngestion({ tenantId: approved.tenantId, ingestionId: approved.recordId, repository, storage }), /CTE_INGESTION_APPROVED_IMMUTABLE/);
 assert.equal(records.has(approved.recordId), true);
-assert.deepEqual(removed, [failed.payload.objectKey]);
+assert.deepEqual(removed, [[failed.tenantId, failed.payload.documentId]]);
 const route = await readFile(new URL("../app/api/cte/ingestion/route.ts", import.meta.url), "utf8");
 const deleteRoute = await readFile(new URL("../app/api/cte/ingestion/[id]/route.ts", import.meta.url), "utf8");
 const ui = await readFile(new URL("../app/components/CteIngestionPanel.tsx", import.meta.url), "utf8");

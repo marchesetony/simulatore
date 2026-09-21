@@ -4,7 +4,9 @@ import { parseArera575Bta6DistributionXlsx, parseArera575Bta6MeasurementXlsx, pa
 import { LocalFilesystemAdapter } from "../app/lib/persistence/local.ts";
 import { ProductionRegulatoryPersistenceBridge } from "../app/lib/regulatory-bridge.ts";
 import { resolveRegulatoryTimeline } from "../app/lib/calculation/regulatory-timeline.ts";
+import { loadLocalRuntimeEnvForTests } from "./support/standalone-runtime-env.mjs";
 
+loadLocalRuntimeEnvForTests({ expectedTenantId: "tenant_local-demo" });
 const retrievedAt = "2026-09-04T12:00:00.000Z";
 const tit = new Uint8Array(await readFile(".tmp-regulatory-sources/ee-calc-3c2/575-2025-R-eel-TABELLE_TIT.xlsx"));
 const time = new Uint8Array(await readFile(".tmp-regulatory-sources/ee-calc-3c2/575-2025-R-eel-TABELLE_TIME.xlsx"));

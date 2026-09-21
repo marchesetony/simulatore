@@ -1,5 +1,7 @@
 import type { RegulatoryValueRecord } from "./foundation/regulatory-types.ts";
 // @ts-expect-error Node's strip-only test runner requires the explicit extension.
+import { assertReferenceDomainForComponent } from "./foundation/regulatory-domains.ts";
+// @ts-expect-error Node's strip-only test runner requires the explicit extension.
 import { validateChecksum, validateTenantId } from "./foundation/regulatory-validation.ts";
 import type { TenantRecord, TenantRecordRepository } from "./persistence/types.ts";
 import type { RegulatoryApprovalDomainState } from "./regulatory-approval-domain.ts";
@@ -50,6 +52,7 @@ function assertRecordShape(value: RegulatoryValueRecord, tenantId: string): void
   if (!Number.isFinite(Date.parse(value.publicationDate)) || !Number.isFinite(Date.parse(value.retrievedAt))) fail("REGULATORY_PROVENANCE_INVALID");
   assertEffectiveInterval(value);
   if (typeof value.checksum !== "string" || !/^[a-f0-9]{64}$/i.test(value.checksum)) fail("REGULATORY_CHECKSUM_INVALID");
+  assertReferenceDomainForComponent(value);
   try { validateChecksum(value); } catch { fail("REGULATORY_CHECKSUM_INVALID"); }
 }
 

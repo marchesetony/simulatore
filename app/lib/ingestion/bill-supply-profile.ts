@@ -71,7 +71,11 @@ function factFor(facts: readonly StructuredBillExtendedFact[], code: ProfileCode
 }
 
 function rawField(fact: StructuredBillExtendedFact | undefined): SupplyProfileField {
-  return fact ? { rawValue: fact.value, normalizedValue: null, status: fact.status } : { rawValue: null, normalizedValue: null, status: "NOT_FOUND" };
+  if (!fact) return { rawValue: null, normalizedValue: null, status: "NOT_FOUND" };
+  const rawValue = fact.unit && !new RegExp(`(?:^|\\s)${fact.unit}(?:$|\\s)`, "i").test(fact.value)
+    ? `${fact.value} ${fact.unit}`
+    : fact.value;
+  return { rawValue, normalizedValue: null, status: fact.status };
 }
 
 function folded(value: string): string {

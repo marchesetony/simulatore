@@ -10,6 +10,11 @@ import { requestPrincipal } from "../../../lib/auth/request";
 import { runtimeRepositories } from "../../../lib/persistence/adapter";
 import { recordRuntimeAudit } from "../../../lib/persistence/audit";
 import { attachOfficialPun } from "../../../lib/market/pun-reference";
+import { billVisibilityScope, getBillInScope } from "../../../lib/foundation/bill-visibility";
+import { isBillFeature, resolveBillFeaturePermissions, sanitizeBillForFeatureAccess, type BillFeature } from "../../../lib/foundation/bill-feature-permissions";
+import type { AuthenticatedPrincipal } from "../../../lib/auth/types";
+import type { RuntimeRepositories } from "../../../lib/persistence/adapter";
+import type { PublicBillDocument } from "../../../lib/foundation/real-bill";
 
 const CORRELATION_ID = "foundation-bills";
 const NO_STORE_HEADERS = { "cache-control": "no-store, private", "vary": "Cookie, Authorization", "x-content-type-options": "nosniff" };
@@ -17,15 +22,25 @@ function deny(code: string, message: string, status: number): Response {
   return Response.json({ error: { code, message, correlationId: CORRELATION_ID } }, { status, headers: NO_STORE_HEADERS });
 }
 
+async function publicDocumentFor(principal: AuthenticatedPrincipal, repositories: RuntimeRepositories, document: PublicBillDocument): Promise<PublicBillDocument> {
+  const scope = await billVisibilityScope(principal, repositories);
+  const access = await resolveBillFeaturePermissions(principal, repositories, scope);
+  return sanitizeBillForFeatureAccess(document, access);
+}
+
 export async function GET(request: Request, context: { params: Promise<{ id: string }> }): Promise<Response> {
   const { id } = await context.params;
   try {
-    const tenantId = (await requestPrincipal(request, "READ")).tenantId;
+    const principal = await requestPrincipal(request, "READ");
     const repositories = runtimeRepositories();
-    const document = await repositories.billRepository.get(tenantId, id);
+    const document = await getBillInScope(principal, repositories, id);
     const approvedView = new URL(request.url).searchParams.get("view") === "approved";
+    const scope = await billVisibilityScope(principal, repositories);
+    const access = await resolveBillFeaturePermissions(principal, repositories, scope);
+    const requestedFeature = new URL(request.url).searchParams.get("feature");
+    if (requestedFeature !== null && (!isBillFeature(requestedFeature) || !access.features[requestedFeature as BillFeature])) return deny("BILL_FEATURE_ACCESS_DENIED", "Funzione tecnica non autorizzata", 403);
     const publicDocument = document ? (approvedView ? toPublicApprovedDocument(document) : toPublicDocument(document)) : null;
-    return publicDocument ? Response.json({ document: await attachOfficialPun(publicDocument, repositories.marketArchiveRepository) }, { headers: NO_STORE_HEADERS }) : deny("DOCUMENT_NOT_FOUND", "Bill document not found", 404);
+    return publicDocument ? Response.json({ document: sanitizeBillForFeatureAccess(await attachOfficialPun(publicDocument, repositories.marketArchiveRepository), access) }, { headers: NO_STORE_HEADERS }) : deny("DOCUMENT_NOT_FOUND", "Bill document not found", 404);
   } catch (error) {
     const code = publicErrorCode(error);
     return deny(code, messageFor(code), statusFor(code));
@@ -47,7 +62,7 @@ export async function PATCH(request: Request, context: { params: Promise<{ id: s
     const repositories = runtimeRepositories();
     const repository = repositories.billRepository;
     const audit = { async record(event: { readonly type: string; readonly tenantId: string; readonly documentId: string; readonly outcome: string }) { await recordRuntimeAudit({ principal, action: `BILL_${event.type}`, resourceType: "BILL", resourceId: event.documentId, outcome: event.outcome === "ALLOWED" ? "ALLOWED" : "DENIED", correlationId: CORRELATION_ID }); } };
-    const document = await repository.get(tenantId, id);
+    const document = await getBillInScope(principal, repositories, id);
     if (!document) return deny("DOCUMENT_NOT_FOUND", "Bill document not found", 404);
     const now = new Date().toISOString();
     const operation = parseBillOperation(body);
@@ -63,13 +78,13 @@ export async function PATCH(request: Request, context: { params: Promise<{ id: s
         correlationId: CORRELATION_ID,
         metadata: { sourceVersionId: operation.versionId, resultVersionId: confirmed.currentVersionId, fields: operation.fields.join(",") },
       });
-      return Response.json({ document: await attachOfficialPun(toPublicDocument(confirmed), repositories.marketArchiveRepository) }, { headers: NO_STORE_HEADERS });
+      return Response.json({ document: await publicDocumentFor(principal, repositories, await attachOfficialPun(toPublicDocument(confirmed), repositories.marketArchiveRepository)) }, { headers: NO_STORE_HEADERS });
     }
     if (operation?.operation === "approve") {
       const approved = approveDocumentVersion({ document, tenantId, versionId: operation.versionId, at: now });
       await repository.saveIfCurrentVersion(approved, operation.versionId, document.versions.find((version) => version.versionId === operation.versionId)!);
       await audit.record({ type: "APPROVAL", tenantId, documentId: id, outcome: "ALLOWED" });
-      return Response.json({ document: await attachOfficialPun(toPublicDocument(approved), repositories.marketArchiveRepository) }, { headers: NO_STORE_HEADERS });
+      return Response.json({ document: await publicDocumentFor(principal, repositories, await attachOfficialPun(toPublicDocument(approved), repositories.marketArchiveRepository)) }, { headers: NO_STORE_HEADERS });
     }
     if (operation?.operation === "correct") {
       const corrected = createManualCorrection({
@@ -84,7 +99,7 @@ export async function PATCH(request: Request, context: { params: Promise<{ id: s
       await repository.saveIfCurrentVersion(corrected, sourceVersionId, document.versions.find((version) => version.versionId === sourceVersionId)!);
       await audit.record({ type: "MANUAL_REVIEW", tenantId, documentId: id, outcome: "ALLOWED" });
       await audit.record({ type: "CORRECTION", tenantId, documentId: id, outcome: "ALLOWED" });
-      return Response.json({ document: await attachOfficialPun(toPublicDocument(corrected), repositories.marketArchiveRepository) }, { headers: NO_STORE_HEADERS });
+      return Response.json({ document: await publicDocumentFor(principal, repositories, await attachOfficialPun(toPublicDocument(corrected), repositories.marketArchiveRepository)) }, { headers: NO_STORE_HEADERS });
     }
     return deny("BILL_OPERATION_INVALID", "Unsupported bill operation", 400);
   } catch (error) {
@@ -98,14 +113,10 @@ export async function DELETE(request: Request, context: { params: Promise<{ id: 
   try {
     const principal = await requestPrincipal(request, "WRITE");
     const repositories = runtimeRepositories();
-    const document = await repositories.billRepository.get(principal.tenantId, id);
+    const document = await getBillInScope(principal, repositories, id);
     if (!document) return Response.json({ deleted: true }, { headers: NO_STORE_HEADERS });
-    if (document.currentApprovedVersionId !== null) return deny("BILL_APPROVED_DELETE_FORBIDDEN", "Approved bills cannot be deleted", 409);
-    if (typeof repositories.billRepository.delete !== "function") return deny("BILL_DELETE_UNAVAILABLE", "Bill deletion is not available", 503);
-    await repositories.documentStorage.remove(document.objectKey);
-    await repositories.billRepository.delete(principal.tenantId, id);
-    await recordRuntimeAudit({ principal, action: "BILL_DELETE", resourceType: "BILL", resourceId: id, outcome: "ALLOWED", correlationId: CORRELATION_ID });
-    return Response.json({ deleted: true }, { headers: NO_STORE_HEADERS });
+    if (document.lifecycleState === "DELETED") return Response.json({ deleted: true }, { headers: NO_STORE_HEADERS });
+    return deny(document.currentApprovedVersionId !== null ? "BILL_APPROVED_DELETE_FORBIDDEN" : "BILL_RETENTION_NOT_DUE", "Bill deletion is controlled by the retention lifecycle", 409);
   } catch (error) {
     const code = publicErrorCode(error);
     return deny(code, messageFor(code), statusFor(code));
@@ -129,6 +140,7 @@ const INTERNAL_TO_PUBLIC_CODE: Readonly<Record<string, string>> = {
   BILL_OPERATION_INVALID: "BILL_OPERATION_INVALID",
   DOCUMENT_NOT_FOUND: "DOCUMENT_NOT_FOUND",
   BILL_APPROVED_DELETE_FORBIDDEN: "BILL_APPROVED_DELETE_FORBIDDEN",
+  BILL_RETENTION_NOT_DUE: "BILL_RETENTION_NOT_DUE",
   BILL_DELETE_UNAVAILABLE: "BILL_DELETE_UNAVAILABLE",
   AUTHENTICATION_REQUIRED: "AUTHENTICATION_REQUIRED",
   AUTHENTICATION_INVALID: "AUTHENTICATION_INVALID",
@@ -149,7 +161,7 @@ function statusFor(code: string): number {
   if (code === "AUTH_CONFIGURATION_INVALID" || code === "AUTH_ADAPTER_UNAVAILABLE" || code === "AUTH_AUDIT_UNAVAILABLE") return 503;
   if (code === "BILL_REPOSITORY_CAS_UNAVAILABLE" || code === "BILL_REPOSITORY_BUSY") return 503;
   if (["DOCUMENT_NOT_FOUND"].includes(code)) return 404;
-  if (["BILL_APPROVED_DELETE_FORBIDDEN"].includes(code)) return 409;
+  if (["BILL_APPROVED_DELETE_FORBIDDEN", "BILL_RETENTION_NOT_DUE"].includes(code)) return 409;
   if (["DOCUMENT_VERSION_NOT_CURRENT", "DOCUMENT_VERSION_STALE", "DOCUMENT_VERSION_ALREADY_APPROVED", "DOCUMENT_NO_CHANGES", "METADATA_INVALID"].includes(code)) return 409;
   return 400;
 }
@@ -182,6 +194,8 @@ function messageFor(code: string): string {
       return "Approved bills cannot be deleted";
     case "BILL_DELETE_UNAVAILABLE":
       return "Bill deletion is not available";
+    case "BILL_RETENTION_NOT_DUE":
+      return "Bill deletion is available only after the retention period";
     default:
       return "Bill operation failed";
   }

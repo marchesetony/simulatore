@@ -8,7 +8,9 @@ import { collisionDomainKey, regulatoryApprovalDomainId } from "../app/lib/regul
 import { calculatePreparedOffer } from "../app/lib/calculation/engine.ts";
 import { calculateRegulatedEeSubset } from "../app/lib/calculation/regulated-ee.ts";
 import { parseSimulationRequest } from "../app/lib/calculation/input.ts";
+import { loadLocalRuntimeEnvForTests } from "./support/standalone-runtime-env.mjs";
 
+loadLocalRuntimeEnvForTests({ expectedTenantId: "tenant_local-demo" });
 class MemoryRepository {
   constructor() { this.records = []; }
   async get(tenantId, recordId) { return this.records.find((record) => record.tenantId === tenantId && record.recordId === recordId) ?? null; }

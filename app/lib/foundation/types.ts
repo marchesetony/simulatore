@@ -27,7 +27,10 @@ export type MembershipStatus = "ACTIVE" | "SUSPENDED" | "DEACTIVATED";
 export type InvitationStatus = "PENDING" | "ACCEPTED" | "REVOKED" | "EXPIRED";
 
 export class ImmutablePermissions {
-  private constructor(private readonly values: ReadonlyArray<Permission>) {
+  private readonly values: ReadonlyArray<Permission>;
+
+  private constructor(values: ReadonlyArray<Permission>) {
+    this.values = values;
     Object.freeze(this);
   }
 
@@ -96,4 +99,6 @@ export interface Membership {
   readonly role: Role;
   readonly status: MembershipStatus;
   readonly permissions: ReadonlyArray<Permission>;
+  readonly managerUserId?: UserId;
+  readonly groupIds?: ReadonlyArray<string>;
 }

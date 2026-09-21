@@ -19,7 +19,8 @@ import type { MarketArchiveRecord, MarketArchiveRepository } from "../market/typ
 import { validateStoredMarketArchive } from "../market/validation.ts";
 import type { RegulatoryValueRecord } from "../foundation/regulatory-types.ts";
 import type { RegulatoryApprovalDomainState } from "../regulatory-approval-domain.ts";
-import type { AuditEvent, BillIngestionMetadata, CalculationResultRecord, CommercialProposalRecord, ComparisonResultRecord, DeletableTenantRecordRepository, ExportMetadataRecord, NormalizedBillSnapshot } from "../persistence/types.ts";
+import type { AuditEvent, BillIngestionMetadata, CalculationResultRecord, CommercialProposalRecord, ComparisonResultRecord, DeletableTenantRecordRepository, ExportMetadataRecord, FoundationInvitationRecord, FoundationMembershipRecord, NormalizedBillSnapshot, JobIncidentRecord, JobRunRecord, EligibilityOverrideRepository, BillFeaturePermissionRecord } from "../persistence/types.ts";
+import type { EligibilityOverride } from "../eligibility/override.ts";
 
 const TENANT_PATTERN = /^tenant_[a-z0-9-]+$/;
 const USER_PATTERN = /^user_[a-z0-9-]+$/;
@@ -263,7 +264,7 @@ class SupabaseDocumentStorage implements DocumentStoragePort {
   async store(tenantId: string, id: string, bytes: Uint8Array): Promise<string> {
     const objectKey = this.key(tenantId, id);
     const body = bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer;
-    const result = await this.client.storage.from(this.bucket).upload(objectKey, body, { contentType: "application/pdf", upsert: true });
+    const result = await this.client.storage.from(this.bucket).upload(objectKey, body, { contentType: "application/pdf", upsert: false });
     if (result.error) providerError(result.error, "DOCUMENT_STORAGE_ERROR");
     const now = new Date().toISOString();
     const previous = await this.metadata.get(tenantId, id);
@@ -275,19 +276,25 @@ class SupabaseDocumentStorage implements DocumentStoragePort {
     }
     return objectKey;
   }
-  async read(objectKey: string): Promise<Uint8Array> {
-    if (!/^tenant_[a-z0-9-]+\/[A-Za-z0-9._:-]{1,160}\.pdf$/.test(objectKey)) fail("DOCUMENT_STORAGE_KEY_INVALID");
+  async read(tenantId: string, id: string): Promise<Uint8Array> {
+    assertTenant(tenantId);
+    assertRecordId(id);
+    const objectKey = this.key(tenantId, id);
+    const metadata = await this.metadata.get(tenantId, id);
+    if (!metadata || metadata.payload.documentId !== id || metadata.payload.storageKey !== objectKey) fail("DOCUMENT_STORAGE_NOT_FOUND");
     const result = await this.client.storage.from(this.bucket).download(objectKey);
     if (result.error) providerError(result.error, "DOCUMENT_STORAGE_ERROR");
     return new Uint8Array(await result.data.arrayBuffer());
   }
-  async remove(objectKey: string): Promise<void> {
-    const match = /^(tenant_[a-z0-9-]+)\/([A-Za-z0-9._:-]{1,160})\.pdf$/.exec(objectKey);
-    if (!match) fail("DOCUMENT_STORAGE_KEY_INVALID");
+  async remove(tenantId: string, id: string): Promise<void> {
+    assertTenant(tenantId);
+    assertRecordId(id);
+    const objectKey = this.key(tenantId, id);
+    const metadata = await this.metadata.get(tenantId, id);
+    if (!metadata || metadata.payload.documentId !== id || metadata.payload.storageKey !== objectKey) fail("DOCUMENT_STORAGE_NOT_FOUND");
     const result = await this.client.storage.from(this.bucket).remove([objectKey]);
     if (result.error) providerError(result.error, "DOCUMENT_STORAGE_ERROR");
-    const metadata = await this.metadata.get(match[1], match[2]);
-    if (metadata) await this.metadata.delete({ tenantId: match[1], recordId: match[2], expectedVersion: metadata.version });
+    await this.metadata.delete({ tenantId, recordId: id, expectedVersion: metadata.version });
   }
 }
 
@@ -307,12 +314,18 @@ export class SupabaseProductionStorageAdapter implements ProductionStorageAdapte
   readonly comparisonResults: TenantRecordRepository<ComparisonResultRecord>;
   readonly proposals: TenantRecordRepository<CommercialProposalRecord>;
   readonly exports: TenantRecordRepository<ExportMetadataRecord>;
+  readonly foundationInvitations: DeletableTenantRecordRepository<FoundationInvitationRecord>;
+  readonly foundationMemberships: DeletableTenantRecordRepository<FoundationMembershipRecord>;
+  readonly billFeaturePermissions: TenantRecordRepository<BillFeaturePermissionRecord>;
   readonly auditEvents: SupabaseRecordRepository<AuditEvent>;
+  readonly eligibilityOverrides: EligibilityOverrideRepository;
   readonly regulatoryRefreshState: TenantRecordRepository<unknown>;
   readonly regulatoryRefreshRuns: TenantRecordRepository<unknown>;
   readonly marketRefreshState: TenantRecordRepository<unknown>;
   readonly marketRefreshRuns: TenantRecordRepository<unknown>;
   readonly marketRefreshLocks: TenantRecordRepository<unknown>;
+  readonly jobRuns: TenantRecordRepository<JobRunRecord>;
+  readonly jobIncidents: TenantRecordRepository<JobIncidentRecord>;
 
   constructor(client: ProviderClient, storageBucket: string) {
     this.cteArchiveRepository = new SupabaseCteArchiveRepository(client);
@@ -329,12 +342,18 @@ export class SupabaseProductionStorageAdapter implements ProductionStorageAdapte
     this.comparisonResults = new SupabaseRecordRepository(client, "comparisons");
     this.proposals = new SupabaseRecordRepository(client, "proposals");
     this.exports = new SupabaseRecordRepository(client, "exports");
+    this.foundationInvitations = new SupabaseRecordRepository(client, "foundation-invitations") as SupabaseRecordRepository<FoundationInvitationRecord> & DeletableTenantRecordRepository<FoundationInvitationRecord>;
+    this.foundationMemberships = new SupabaseRecordRepository(client, "foundation-memberships") as SupabaseRecordRepository<FoundationMembershipRecord> & DeletableTenantRecordRepository<FoundationMembershipRecord>;
+    this.billFeaturePermissions = new SupabaseRecordRepository<BillFeaturePermissionRecord>(client, "bill-feature-permissions");
     this.auditEvents = new SupabaseRecordRepository(client, "audit-events");
+    this.eligibilityOverrides = new SupabaseRecordRepository<EligibilityOverride>(client, "eligibility-overrides");
     this.regulatoryRefreshState = new SupabaseRecordRepository(client, "regulatory-refresh-state");
     this.regulatoryRefreshRuns = new SupabaseRecordRepository(client, "regulatory-refresh-runs");
     this.marketRefreshState = new SupabaseRecordRepository(client, "market-refresh-state");
     this.marketRefreshRuns = new SupabaseRecordRepository(client, "market-refresh-runs");
     this.marketRefreshLocks = new SupabaseRecordRepository(client, "market-refresh-locks");
+    this.jobRuns = new SupabaseRecordRepository<JobRunRecord>(client, "job-runs");
+    this.jobIncidents = new SupabaseRecordRepository<JobIncidentRecord>(client, "job-incidents");
   }
 }
 

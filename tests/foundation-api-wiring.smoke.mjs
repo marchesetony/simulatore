@@ -1,0 +1,32 @@
+import assert from "node:assert/strict";
+import { readFile } from "node:fs/promises";
+import path from "node:path";
+
+const root = path.resolve("app/api/foundation");
+const read = (relative) => readFile(path.join(root, relative), "utf8");
+const invitations = await read("invitations/route.ts");
+const memberships = await read("memberships/route.ts");
+const accept = await read("invitations/[id]/accept/route.ts");
+const revokeInvitation = await read("invitations/[id]/revoke/route.ts");
+const role = await read("memberships/[id]/role/route.ts");
+const revokeMembership = await read("memberships/[id]/revoke/route.ts");
+
+assert.match(invitations, /requireRequestAccess\(request, "ADMIN"\)/);
+assert.match(invitations, /foundationInvitations\.append/);
+assert.match(invitations, /requireRequestAccess\(request, "ADMIN"\)/);
+assert.match(invitations, /foundationInvitations\.list/);
+assert.match(invitations, /principal\.tenantId/);
+assert.doesNotMatch(invitations, /scenario/);
+assert.match(accept, /recipientUserId !== principal\.userId/);
+assert.match(accept, /foundationMemberships\.append/);
+assert.match(accept, /tokenDigest/);
+assert.match(revokeInvitation, /requireRequestAccess\(request, "ADMIN"\)/);
+assert.match(revokeInvitation, /expectedVersion: record\.version/);
+assert.match(memberships, /requireRequestAccess\(request, "ADMIN"\)/);
+assert.match(memberships, /foundationMemberships\.list/);
+assert.doesNotMatch(memberships, /scenario/);
+assert.match(role, /requireRequestAccess\(request, "ADMIN"\)/);
+assert.match(role, /expectedVersion/);
+assert.match(revokeMembership, /requireRequestAccess\(request, "ADMIN"\)/);
+assert.match(revokeMembership, /expectedVersion/);
+console.log("FOUNDATION_API_WIRING_SMOKE=OK");

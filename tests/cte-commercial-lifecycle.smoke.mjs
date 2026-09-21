@@ -59,13 +59,14 @@ try {
   await assertCommerciallyActive(cteRepository, tenant, source.archiveId, source.currentApprovedVersionId);
 
   const blockedAgain = await blockCteArchive(cteRepository, tenant, source.archiveId, "principal-blocker", "Second review", "2026-01-07T00:00:00.000Z");
-  const deleted = await deleteCteArchive(cteRepository, tenant, source.archiveId, "principal-deleter", "2026-01-08T00:00:00.000Z");
+  await assert.rejects(() => deleteCteArchive(cteRepository, tenant, source.archiveId, "principal-deleter", "2026-01-08T00:00:00.000Z"), /CTE_RETENTION_NOT_DUE/);
+  const deleted = await deleteCteArchive(cteRepository, tenant, source.archiveId, "principal-deleter", "2027-01-08T00:00:00.000Z");
   assert.equal(deleted.commercialStatus, "DELETED");
   assert.deepEqual(deleted.versions.find((version) => version.versionId === source.currentApprovedVersionId).contract, approvedContract);
   assert.equal(deleted.deletedBy, "principal-deleter");
   assert.equal(toPublicCteApprovedArchiveSummary(deleted), null);
   assert.equal(toPublicCteApprovedArchiveDetail(deleted), null);
-  assert.equal((await deleteCteArchive(cteRepository, tenant, source.archiveId, "other-principal", "2026-01-09T00:00:00.000Z")).history.length, deleted.history.length);
+  assert.equal((await deleteCteArchive(cteRepository, tenant, source.archiveId, "other-principal", "2027-01-09T00:00:00.000Z")).history.length, deleted.history.length);
   await assert.rejects(() => assertCommerciallyActive(cteRepository, tenant, source.archiveId, source.currentApprovedVersionId), /CTE_COMMERCIAL_DELETED/);
   await assert.rejects(() => reactivateCteArchive(cteRepository, tenant, source.archiveId, "principal-reactivator"), /CTE_COMMERCIAL_DELETED_IMMUTABLE/);
   await assert.rejects(() => blockCteArchive(cteRepository, tenant, source.archiveId, "principal-blocker", "Not allowed"), /CTE_COMMERCIAL_DELETED_IMMUTABLE/);
@@ -76,11 +77,12 @@ try {
 
   const activeDeleteSource = await createCteArchive(cteRepository, { tenantId: tenant, contract: { ...clone(contract), recordId: "cte-commercial-active-delete", cteId: "cte-commercial-active-delete", validity: { ...clone(contract.validity), periodStart: "2027-01-01", periodEnd: "2027-12-31" }, expiry: { ...clone(contract.expiry), date: "2027-12-31" } }, actor: "SMOKE", now: "2026-01-10T00:00:00.000Z" });
   const activeDeleteSnapshot = clone(activeDeleteSource.versions.find((version) => version.versionId === activeDeleteSource.currentApprovedVersionId).contract);
-  const directlyDeleted = await deleteCteArchive(cteRepository, tenant, activeDeleteSource.archiveId, "principal-direct-deleter", "2026-01-11T00:00:00.000Z");
+  await assert.rejects(() => deleteCteArchive(cteRepository, tenant, activeDeleteSource.archiveId, "principal-direct-deleter", "2026-01-11T00:00:00.000Z"), /CTE_RETENTION_NOT_DUE/);
+  const directlyDeleted = await deleteCteArchive(cteRepository, tenant, activeDeleteSource.archiveId, "principal-direct-deleter", "2028-01-11T00:00:00.000Z");
   assert.equal(directlyDeleted.commercialStatus, "DELETED");
   assert.equal(directlyDeleted.deletedBy, "principal-direct-deleter");
   assert.deepEqual(directlyDeleted.versions.find((version) => version.versionId === activeDeleteSource.currentApprovedVersionId).contract, activeDeleteSnapshot);
-  assert.equal((await deleteCteArchive(cteRepository, tenant, activeDeleteSource.archiveId, "other-principal", "2026-01-12T00:00:00.000Z")).history.length, directlyDeleted.history.length);
+  assert.equal((await deleteCteArchive(cteRepository, tenant, activeDeleteSource.archiveId, "other-principal", "2028-01-12T00:00:00.000Z")).history.length, directlyDeleted.history.length);
 
   const ui = await readFile(new URL("../app/components/CteIngestionPanel.tsx", import.meta.url), "utf8");
   const blockRoute = await readFile(new URL("../app/api/cte/archive/[id]/block/route.ts", import.meta.url), "utf8");

@@ -17,6 +17,11 @@ export function referenceDomainForComponent(componentCode: string): ReferenceDom
   return domains[componentCode] ?? null;
 }
 
+export function assertReferenceDomainForComponent(record: Pick<RegulatoryValueRecord, "componentCode" | "referenceDomain">): void {
+  const expected = referenceDomainForComponent(record.componentCode);
+  if (expected !== null && record.referenceDomain !== undefined && record.referenceDomain !== expected) throw new Error("REGULATORY_REFERENCE_DOMAIN_MISMATCH");
+}
+
 export function referenceDomainOf(record: Pick<RegulatoryValueRecord, "componentCode" | "referenceDomain">): ReferenceDomain | null {
   return record.referenceDomain ?? referenceDomainForComponent(record.componentCode);
 }

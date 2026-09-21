@@ -36,8 +36,8 @@ async function seedApproval(approvalRepository, record) {
   await approvalRepository.put({ tenantId: record.tenantId, recordId: stateId, payload: { ...payload, effectiveApprovals: [...payload.effectiveApprovals, { targetRecordId: record.id, targetRecordChecksum: record.checksum, effectiveFrom: record.effectiveFrom, effectiveTo: record.effectiveTo, decisionEventId: `audit_fixture_${record.id}` }] }, expectedVersion: previous?.version });
 }
 
-function value({ tenantId = "tenant_a", id = "reg-1", componentCode = "NETWORK_ENERGY", customerScope = "DOMESTIC_BT", effectiveFrom = "2026-07-01T00:00:00.000Z", effectiveTo = "2026-08-01T00:00:00.000Z", approvalStatus = "APPROVED", reviewStatus = "APPROVED", normalizedValue = 1, normalizedUnit = "EUR/KWH" } = {}) {
-  const base = { tenantId, id, identityKey: `${tenantId}|${id}`, version: "1", parentVersionId: null, authority: "ARERA", sourceType: "OFFICIAL_ATTACHMENT", sourceReference: "https://official.example/regulatory-source", officialIdentifier: "REG-TEST", publicationDate: "2026-06-01T00:00:00.000Z", retrievedAt: "2026-06-02T00:00:00.000Z", effectiveFrom, effectiveTo, vector: "EE", customerScope, componentCode, originalValue: normalizedValue, originalUnit: normalizedUnit, normalizedValue, normalizedUnit, applicationBasis: "test fixture only", sourceSha256: "a".repeat(64), conversionProvenance: [], approvalStatus, reviewStatus };
+function value({ tenantId = "tenant_a", id = "reg-1", componentCode = "NETWORK_ENERGY", customerScope = "DOMESTIC_BT", effectiveFrom = "2026-07-01T00:00:00.000Z", effectiveTo = "2026-08-01T00:00:00.000Z", approvalStatus = "APPROVED", reviewStatus = "APPROVED", normalizedValue = 1, normalizedUnit = "EUR/KWH", referenceDomain } = {}) {
+  const base = { tenantId, id, identityKey: `${tenantId}|${id}`, version: "1", parentVersionId: null, authority: "ARERA", sourceType: "OFFICIAL_ATTACHMENT", sourceReference: "https://official.example/regulatory-source", officialIdentifier: "REG-TEST", publicationDate: "2026-06-01T00:00:00.000Z", retrievedAt: "2026-06-02T00:00:00.000Z", effectiveFrom, effectiveTo, vector: "EE", customerScope, componentCode, ...(referenceDomain === undefined ? {} : { referenceDomain }), originalValue: normalizedValue, originalUnit: normalizedUnit, normalizedValue, normalizedUnit, applicationBasis: "test fixture only", sourceSha256: "a".repeat(64), conversionProvenance: [], approvalStatus, reviewStatus };
   return { ...base, checksum: checksumFor(base) };
 }
 
@@ -63,6 +63,7 @@ assert.equal(await bridge.resolve("tenant_a", { componentCode: "NETWORK_ENERGY",
 assert.equal(await bridge.resolve("tenant_a", { componentCode: "NETWORK_FIXED", customerScope: "DOMESTIC_BT", effectiveAt: "2026-07-01T00:00:00.000Z" }), null, "wrong component is not returned");
 assert.equal(await bridge.resolve("tenant_a", { componentCode: "NETWORK_ENERGY", customerScope: "NON_DOMESTIC_BT", effectiveAt: "2026-07-01T00:00:00.000Z" }), null, "wrong customer scope is not returned");
 assert.equal((await bridge.resolve("tenant_b", { componentCode: "NETWORK_ENERGY", customerScope: "DOMESTIC_BT", effectiveAt: "2026-07-01T00:00:00.000Z" })).id, "reg-b", "tenant isolation is enforced");
+await assert.rejects(() => bridge.save("tenant_a", value({ id: "reg-invalid-domain", componentCode: "CAPACITY_MARKET_OFF_PEAK", referenceDomain: "DISPATCHING" })), /REGULATORY_REFERENCE_DOMAIN_MISMATCH/);
 
 const unitRepository = new MemoryRepository();
 const unitApprovals = new MemoryRepository();

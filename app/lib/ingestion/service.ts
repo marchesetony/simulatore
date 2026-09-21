@@ -66,6 +66,7 @@ function hybridExtractor(ocrProvider: OcrProvider | undefined, ocrProviderFactor
 
 export async function ingestEnergyBill(input: {
   readonly tenantId: string;
+  readonly ownerUserId?: string;
   readonly fileName: string;
   readonly contentType: string;
   readonly bytes: Uint8Array;
@@ -94,6 +95,7 @@ export async function ingestEnergyBill(input: {
       : undefined;
   const document = await ingestBill({
     tenantId,
+    ...(input.ownerUserId ? { ownerUserId: input.ownerUserId } : {}),
     fileName: safeName,
     contentType: input.contentType,
     bytes: input.bytes,

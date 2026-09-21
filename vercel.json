@@ -7,6 +7,14 @@
     {
       "path": "/api/cron/market-refresh",
       "schedule": "15 4 * * *"
+    },
+    {
+      "path": "/api/cron/bill-retention",
+      "schedule": "0 5 * * *"
+    },
+    {
+      "path": "/api/cron/cte-expiry",
+      "schedule": "30 5 * * *"
     }
   ]
 }

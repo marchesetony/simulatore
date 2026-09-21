@@ -9,7 +9,7 @@ import { runtimeRepositories } from "./adapter.ts";
 const unsafeKey = /password|token|cookie|cookies|authorization|secret|credential|document|raw|body|file|bytes|request|header|headers|exception|error|stack|trace|session|payload/i;
 const identifierPattern = /^[A-Za-z0-9._:-]{1,160}$/;
 const tenantPattern = /^tenant_[a-z0-9-]+$/;
-const principalPattern = /^user_[a-z0-9-]+$/;
+const principalPattern = /^(?:user_[a-z0-9-]+|qa_[a-z0-9_-]+)$/;
 const roles = ["ADMIN", "ANALYST", "VIEWER"] as const;
 
 function safeMetadata(value: Readonly<Record<string, unknown>> | undefined): Readonly<Record<string, string | number | boolean | null>> {

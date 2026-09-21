@@ -18,10 +18,11 @@ export interface ReadinessReport {
 }
 
 export function readinessReport(now = new Date()): ReadinessReport {
-  bootstrapProductionRuntime();
+  const bootstrap = bootstrapProductionRuntime();
   const config = readRuntimeConfig();
   if (!config.valid) return { application: "running", runtimeMode: "invalid", authAdapterConfigured: false, persistenceAdapterConfigured: false, readiness: false, schemaCompatibility: true, timestamp: now.toISOString() };
   const authConfigured = config.config.runtimeMode === "local" || productionSessionAdapterConfigured();
   const persistenceConfigured = config.config.runtimeMode === "local" || productionStorageAdapterConfigured();
-  return { application: "running", runtimeMode: config.config.runtimeMode, authAdapterConfigured: authConfigured, persistenceAdapterConfigured: persistenceConfigured, readiness: authConfigured && persistenceConfigured, schemaCompatibility: true, timestamp: now.toISOString() };
+  const providerConfigured = config.config.runtimeMode === "local" || bootstrap.providerConfigured;
+  return { application: "running", runtimeMode: config.config.runtimeMode, authAdapterConfigured: authConfigured, persistenceAdapterConfigured: persistenceConfigured, readiness: providerConfigured && authConfigured && persistenceConfigured, schemaCompatibility: true, timestamp: now.toISOString() };
 }

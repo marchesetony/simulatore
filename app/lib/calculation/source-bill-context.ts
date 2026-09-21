@@ -36,6 +36,13 @@ function profileFromApprovedStructuredBill(approved: PublicBillDocument) {
   if (structuredBill.vector.status !== "FOUND" || structuredBill.vector.value !== "EE" || vectorResolution.vector !== "EE" || vectorResolution.reviewRequired || approved.resolvedVector !== "EE") fail("SOURCE_BILL_VECTOR_MISMATCH");
   if (structuredBill.supplyProfile !== undefined) {
     try { validateBillSupplyProfile(structuredBill.supplyProfile); } catch { return fail("SOURCE_BILL_TRUST_CONTEXT_UNAVAILABLE"); }
+    // Rebuild from the structured documentary facts when available so unit
+    // metadata retained on the real source facts cannot be lost in a legacy
+    // persisted profile projection. The persisted profile remains the
+    // backwards-compatible fallback for older records without those facts.
+    if (structuredBill.extendedFacts.length > 0) {
+      try { return buildBillSupplyProfile(structuredBill.extendedFacts); } catch { /* use the validated stored profile */ }
+    }
     return structuredBill.supplyProfile;
   }
   try { return buildBillSupplyProfile(structuredBill.extendedFacts); } catch { return fail("SOURCE_BILL_TRUST_CONTEXT_UNAVAILABLE"); }

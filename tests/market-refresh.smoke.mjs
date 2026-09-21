@@ -30,6 +30,8 @@ const makeRepositories = () => { const marketArchiveRepository = new (class { co
 
 assertPunRefreshCoverage(CALCULATED_PUN_DOMAINS);
 assert.deepEqual(AUTO_REFRESH_REGISTERED_PUN_DOMAINS, CALCULATED_PUN_DOMAINS);
+await assert.rejects(() => runPunMarketRefresh({ tenantId: "invalid-tenant", repositories: makeRepositories(), sourceReader: sourceReader(), now, trigger: "TEST", dryRun: true }), /TENANT_ACCESS_DENIED/);
+console.log("PUN_REFRESH_TENANT_GUARD=PASS");
 assert.equal(PUN_REFRESH_FREQUENCY, "DAILY");
 assert.equal(PUN_REFRESH_CRON, "15 4 * * *");
 assert.equal(MINIMUM_PUN_HISTORY_MONTHS, 4);
@@ -100,6 +102,18 @@ assert.equal((await firstRepositories.marketArchiveRepository.list(tenant)).filt
 console.log("OFFICIAL_SOURCE_MISMATCH_FAIL_CLOSED=PASS");
 console.log("LAST_GOOD_PUN_PRESERVED=PASS");
 
+const recoveryRepositories = makeRepositories();
+const missingMonth = await runPunMarketRefresh({ tenantId: tenant, repositories: recoveryRepositories, sourceReader: { async load({ referenceMonth }) { return referenceMonth === "2026-07" ? { gmeError: "GME_PT15_MONTH_MISSING:2026-07" } : { gme: { record: recordFor({ month: referenceMonth }) } }; } }, now, runId: "pun-missing-month", trigger: "TEST" });
+assert.equal(missingMonth.status, "PARTIAL_FAILURE");
+assert.equal(missingMonth.monthsFailed, 1);
+assert.equal((await recoveryRepositories.marketArchiveRepository.list(tenant)).length, 3);
+const recoveredMonth = await runPunMarketRefresh({ tenantId: tenant, repositories: recoveryRepositories, sourceReader: sourceReader(), now: "2026-09-05T00:00:00.000Z", runId: "pun-missing-month-recovery", trigger: "TEST" });
+assert.equal(recoveredMonth.status, "SUCCESS");
+assert.equal(recoveredMonth.monthsCreated, 1);
+assert.equal(recoveredMonth.monthsComplete, 4);
+assert.equal((await recoveryRepositories.marketArchiveRepository.list(tenant)).filter((record) => record.status === "APPROVED").length, 4);
+console.log("PUN_MISSING_MONTH_RECOVERY=PASS");
+
 const lockRepositories = makeRepositories();
 await lockRepositories.marketRefreshLocks.put({ tenantId: tenant, recordId: deterministicRecordId("market-refresh-lock", tenant, "pun-market-refresh"), payload: { ownerRunId: "other", expiresAt: "2026-09-04T00:15:00.000Z" }, now });
 const locked = await runPunMarketRefresh({ tenantId: tenant, repositories: lockRepositories, sourceReader: sourceReader(), now, runId: "pun-locked", trigger: "TEST" });
@@ -115,7 +129,8 @@ assert.throws(() => marketCronSecretConfigured({}), /CRON_SECRET_REQUIRED/);
 assert.equal(marketCronAuthorizationMatches(new Request("https://example.test", { headers: { authorization: "Bearer qa-secret" } }), "qa-secret"), true);
 assert.equal(marketCronAuthorizationMatches(new Request("https://example.test", { headers: { authorization: "Bearer wrong" } }), "qa-secret"), false);
 const vercel = JSON.parse(await readFile("vercel.json", "utf8"));
-assert.deepEqual(vercel.crons, [{ path: "/api/cron/regulatory-refresh", schedule: "15 3 * * *" }, { path: "/api/cron/market-refresh", schedule: "15 4 * * *" }]);
+assert.ok(vercel.crons.some((cron) => cron.path === "/api/cron/regulatory-refresh" && cron.schedule === "15 3 * * *"));
+assert.ok(vercel.crons.some((cron) => cron.path === "/api/cron/market-refresh" && cron.schedule === "15 4 * * *"));
 console.log("CRON_SECRET_PROTECTED=PASS");
 console.log("CRON_AUTH_TEST=PASS");
 console.log("DAILY_CRON_CONFIG=PASS");

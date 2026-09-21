@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { readFile } from "node:fs/promises";
 import { clearProductionSessionAdapter } from "../app/lib/auth/adapter.ts";
 import { clearProductionStorageAdapter } from "../app/lib/persistence/adapter.ts";
 import { readinessReport } from "../app/lib/readiness.ts";
@@ -15,6 +16,10 @@ import {
 
 const ok = (condition, message) => assert.equal(condition, true, message);
 const clone = (value) => structuredClone(value);
+
+const envExample = await readFile(new URL("../.env.example", import.meta.url), "utf8");
+ok(envExample.includes("SUPABASE_SECRET_KEY="), "ENV_EXAMPLE_USES_SECRET_KEY_CONTRACT");
+ok(!envExample.includes("SUPABASE_SERVICE_ROLE_KEY="), "ENV_EXAMPLE_REJECTS_LEGACY_SERVICE_ROLE_NAME");
 
 class FakeQuery {
   constructor(client, table) { this.client = client; this.table = table; this.filters = []; this.mode = "select"; this.values = null; this.single = false; }
@@ -109,7 +114,10 @@ ok(await storage.billIngestionMetadata.get("tenant_b", "ingest_a") === null, "te
 console.log("PRODUCTION_STORAGE_ADAPTER_REGISTERS=OK");
 const bytes = new TextEncoder().encode("synthetic document bytes");
 const objectKey = await storage.documentStorage.store("tenant_a", "doc_a", bytes);
-assert.deepEqual([...await storage.documentStorage.read(objectKey)], [...bytes]);
+assert.deepEqual([...await storage.documentStorage.read("tenant_a", "doc_a")], [...bytes]);
+await assert.rejects(() => storage.documentStorage.read("tenant_b", "doc_a"), /DOCUMENT_STORAGE_NOT_FOUND|DOCUMENT_STORAGE_TENANT_MISMATCH/);
+await assert.rejects(() => storage.documentStorage.remove("tenant_b", "doc_a"), /DOCUMENT_STORAGE_NOT_FOUND|DOCUMENT_STORAGE_TENANT_MISMATCH/);
+console.log("DOCUMENT_STORAGE_CROSS_TENANT_DENIED=OK");
 const documentMetadata = client.tables.runtime_records.find((row) => row.collection === "document-metadata" && row.tenant_id === "tenant_a" && row.record_id === "doc_a");
 ok(documentMetadata?.payload.storageKey === objectKey && documentMetadata.payload.size === bytes.byteLength && documentMetadata.payload.mime === "application/pdf" && typeof documentMetadata.payload.sha256 === "string", "document metadata persists with tenant ownership and hash");
 console.log("DOCUMENT_STORAGE_PERSISTS=OK");
@@ -138,6 +146,13 @@ process.env.SUPABASE_SECRET_KEY = "sb_secret_synthetic_key";
 const configured = bootstrapProductionRuntime();
 ok(configured.providerConfigured && configured.authRegistered && configured.persistenceRegistered && readinessReport().readiness, "real production adapter classes register from provider config");
 console.log("READINESS_TRUE_WITH_REAL_ADAPTERS=OK");
+delete process.env.SUPABASE_SECRET_KEY;
+const invalidated = bootstrapProductionRuntime();
+ok(!invalidated.providerConfigured && !invalidated.authRegistered && !invalidated.persistenceRegistered && !readinessReport().readiness, "INVALID_PROVIDER_CONFIG_CLEARS_STALE_ADAPTERS");
+console.log("STALE_PRODUCTION_ADAPTERS_FAIL_CLOSED=OK");
+process.env.SUPABASE_SECRET_KEY = "sb_secret_synthetic_key";
+const restored = bootstrapProductionRuntime();
+ok(restored.providerConfigured && restored.authRegistered && restored.persistenceRegistered && readinessReport().readiness, "VALID_PROVIDER_CONFIG_RESTORES_ADAPTERS");
 const validEnv = readProductionProviderConfig(process.env);
 ok(validEnv.valid === true && validEnv.config.secretKey === "sb_secret_synthetic_key", "MODERN_SUPABASE_SECRET_KEY_ACCEPTED");
 const providerClient = createSupabaseProviderClient(validEnv.config);
