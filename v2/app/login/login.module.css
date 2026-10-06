@@ -1,0 +1,8 @@
+.page { display: grid; place-items: center; min-height: 85vh; padding: 24px; background: #f4f7fb; color: #172b42; }
+.form { display: grid; gap: 12px; width: min(100%, 380px); padding: 32px; border: 1px solid #d6dfe8; border-radius: 16px; background: white; box-shadow: 0 12px 40px #172b4210; }
+.form label { font-weight: 600; }
+.form input { width: 100%; min-height: 46px; padding: 10px 12px; border: 1px solid #8796a8; border-radius: 7px; background: white; color: #172b42; }
+.form button { min-height: 46px; margin-top: 12px; border-radius: 7px; background: #174a75; color: white; font-weight: 600; cursor: pointer; }
+.form button:disabled { opacity: .65; cursor: wait; }
+.form :focus-visible { outline: 3px solid #4b91cb; outline-offset: 3px; }
+.form p { min-height: 24px; font-size: 14px; line-height: 1.5; overflow-wrap: anywhere; }
