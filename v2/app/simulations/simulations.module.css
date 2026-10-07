@@ -1,0 +1,9 @@
+.workspace { display: grid; gap: 1.5rem; color: #18283b; }
+.workspace fieldset { border: 1px solid #c8d2de; border-radius: .5rem; margin: .75rem 0; padding: 1rem; }
+.workspace legend { font-weight: 600; }
+.workspace label { display: grid; gap: .35rem; margin: .75rem 0; }
+.workspace input, .workspace select, .workspace button { font: inherit; padding: .5rem; max-width: 100%; }
+.workspace button { cursor: pointer; margin: .4rem; }
+.workspace :focus-visible { outline: 3px solid #287aa8; outline-offset: 2px; }
+.workspace article { border-top: 2px solid #c8d2de; margin-top: 1.5rem; padding-top: 1rem; }
+.workspace [role="alert"] { color: #8b2020; }

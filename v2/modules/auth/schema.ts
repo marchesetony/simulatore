@@ -1,5 +1,13 @@
 import { AuthError } from "../../core/errors/auth-error";
-import type { Credentials, Role, Permission, CustomerPermission, BillPermission } from "./types";
+import type { Credentials, Role, Permission, CustomerPermission, BillPermission, SimulationPermission } from "./types";
+
+const simulationPermissionSet: readonly SimulationPermission[] = Object.freeze([
+  "simulations:list", "simulations:read", "simulations:create",
+]);
+export function simulationPermissions(role: unknown): readonly SimulationPermission[] {
+  canonicalRole(role);
+  return simulationPermissionSet;
+}
 
 const billPermissionSet: readonly BillPermission[] = Object.freeze([
   "bills:list", "bills:read", "bills:create", "bills:update",
@@ -43,7 +51,7 @@ export function canonicalRole(value: unknown): Role {
 }
 
 export function permissions(value: unknown): readonly Permission[] {
-  if (!Array.isArray(value) || value.some(p => p !== "auth:login" && p !== "auth:session" && !customerPermissionSet.includes(p) && !billPermissionSet.includes(p)) ||
+  if (!Array.isArray(value) || value.some(p => p !== "auth:login" && p !== "auth:session" && !customerPermissionSet.includes(p) && !billPermissionSet.includes(p) && !simulationPermissionSet.includes(p)) ||
       new Set(value).size !== value.length) throw new AuthError("ACCESS_CONFIGURATION_INVALID");
   return Object.freeze([...value]) as readonly Permission[];
 }

@@ -97,13 +97,13 @@ test("infrastructure failure renders safe unavailable state without dashboard", 
 test("future navigation stays disabled and no synthetic commercial data is rendered", async () => {
   const f = await authenticated();
   const html = renderToStaticMarkup(await page(f.deps, [f.token])());
-  assert.equal((html.match(/aria-disabled="true"/g) ?? []).length, 4);
-  assert.equal((html.match(/Non ancora disponibile/g) ?? []).length, 8);
+  assert.equal((html.match(/aria-disabled="true"/g) ?? []).length, 3);
+  assert.equal((html.match(/Non ancora disponibile/g) ?? []).length, 6);
   for (const name of ["Clienti", "Bollette", "Simulazioni", "CTE", "Regolatorio / Mercato", "Proposte"]) {
     assert.ok(html.includes(name));
   }
   assert.deepEqual([...new Set([...html.matchAll(/href="([^"]+)"/g)].map(m => m[1]))],
-    ["#contenuto", "/v2/dashboard", "/v2/customers", "/v2/bills"]);
+    ["#contenuto", "/v2/dashboard", "/v2/customers", "/v2/bills", "/v2/simulations"]);
   assert.doesNotMatch(html, /€|kWh|fatturato|risparmio|<table|<button|<input/i);
 });
 

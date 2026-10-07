@@ -1,7 +1,8 @@
 export type Role = "PLATFORM_OWNER" | "TENANT_ADMIN" | "SALES_MANAGER" | "SALES_OPERATOR";
 export type CustomerPermission = "customers:list" | "customers:read" | "customers:create" | "customers:update";
 export type BillPermission = "bills:list" | "bills:read" | "bills:create" | "bills:update";
-export type Permission = "auth:login" | "auth:session" | CustomerPermission | BillPermission;
+export type SimulationPermission = "simulations:list" | "simulations:read" | "simulations:create";
+export type Permission = "auth:login" | "auth:session" | CustomerPermission | BillPermission | SimulationPermission;
 export interface Credentials { readonly email: string; readonly password: string }
 export interface Identity { readonly userId: string; readonly authUserId: string }
 
