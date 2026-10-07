@@ -22,7 +22,8 @@ export default function LoginForm() {
       });
       if (response.ok) {
         const session = await fetch("/api/v2/auth/session", { credentials: "same-origin", cache: "no-store" });
-        setMessage(session.ok ? "Accesso effettuato." : "Impossibile verificare l’accesso. Riprova.");
+        if (session.ok) window.location.replace("/v2/dashboard");
+        else setMessage("Impossibile verificare l’accesso. Riprova.");
       } else {
         setMessage(response.status === 401 ? "Accesso non consentito. Verifica le credenziali o contatta l’amministratore." :
           response.status === 403 ? "L’accesso richiede una verifica dell’amministratore." :
