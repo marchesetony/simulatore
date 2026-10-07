@@ -1,0 +1,16 @@
+.workspace { display: grid; gap: 1rem; color: #142b39; }
+.workspace section, .workspace article, .workspace details { padding: 1rem; border: 1px solid #c3d0d5; border-radius: .5rem; background: #fff; }
+.workspace form, .workspace fieldset { display: grid; gap: .8rem; }
+.workspace fieldset { border: 1px solid #c3d0d5; padding: 1rem; margin: .5rem 0; min-width: 0; }
+.workspace label { display: grid; gap: .3rem; }
+.workspace input, .workspace select { font: inherit; padding: .6rem; border: 1px solid #70848e; border-radius: .25rem; max-width: 100%; }
+.workspace input[type="checkbox"] { justify-self: start; }
+.workspace button { font: inherit; padding: .65rem .9rem; background: #16445a; color: white; border: 0; border-radius: .3rem; cursor: pointer; justify-self: start; }
+.workspace button:disabled { opacity: .5; cursor: not-allowed; }
+.workspace :focus-visible { outline: 3px solid #be7200; outline-offset: 3px; }
+.workspace table { width: 100%; border-collapse: collapse; }
+.workspace th, .workspace td { padding: .6rem; border-bottom: 1px solid #c3d0d5; text-align: left; }
+.workspace dt { font-weight: 600; margin-top: .6rem; }
+.workspace dd { margin: .15rem 0 .6rem; }
+.workspace [role="alert"] { color: #8e241b; background: #fff3f0; padding: 1rem; }
+.workspace li { margin: .5rem 0; }
