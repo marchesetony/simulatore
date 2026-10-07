@@ -1,6 +1,6 @@
 import "server-only";
 import { AuthError } from "../../core/errors/auth-error";
-import { canonicalRole, permissions, record, requiredString } from "./schema";
+import { canonicalRole, customerPermissions, permissions, record, requiredString } from "./schema";
 import type { AccessRepository } from "./repository";
 import type { Identity, Permission, Principal } from "./types";
 
@@ -41,9 +41,11 @@ export async function resolveAccess(repo: AccessRepository, authUserId: string, 
 /** Internal server policy; callers must obtain the principal through session verification. */
 export async function authorize(principal: Principal, permission: Permission,
   scope: "PLATFORM" | "TENANT", repo: AccessRepository, targetTenantId?: string): Promise<boolean> {
-  if (!principal.userId || !principal.authUserId || !principal.assignmentId ||
-      !principal.permissions.includes(permission)) return false;
+  if (!principal.userId || !principal.authUserId || !principal.assignmentId) return false;
   try { canonicalRole(principal.role); } catch { return false; }
+  const allowed: readonly Permission[] = [...principal.permissions.filter(p => p === "auth:login" || p === "auth:session"),
+    ...customerPermissions(principal.role)];
+  if (!allowed.includes(permission)) return false;
   if (principal.scope === "PLATFORM") {
     if (principal.role !== "PLATFORM_OWNER" || principal.tenantId !== undefined) return false;
     return scope === "PLATFORM" ? targetTenantId === undefined :

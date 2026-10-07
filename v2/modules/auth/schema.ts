@@ -1,5 +1,14 @@
 import { AuthError } from "../../core/errors/auth-error";
-import type { Credentials, Role, Permission } from "./types";
+import type { Credentials, Role, Permission, CustomerPermission } from "./types";
+
+const customerPermissionSet: readonly CustomerPermission[] = Object.freeze([
+  "customers:list", "customers:read", "customers:create", "customers:update",
+]);
+
+export function customerPermissions(role: unknown): readonly CustomerPermission[] {
+  canonicalRole(role);
+  return customerPermissionSet;
+}
 
 export function record(value: unknown): Record<string, unknown> {
   if (!value || typeof value !== "object" || Array.isArray(value)) {
@@ -25,7 +34,7 @@ export function canonicalRole(value: unknown): Role {
 }
 
 export function permissions(value: unknown): readonly Permission[] {
-  if (!Array.isArray(value) || value.some(p => p !== "auth:login" && p !== "auth:session") ||
+  if (!Array.isArray(value) || value.some(p => p !== "auth:login" && p !== "auth:session" && !customerPermissionSet.includes(p)) ||
       new Set(value).size !== value.length) throw new AuthError("ACCESS_CONFIGURATION_INVALID");
   return Object.freeze([...value]) as readonly Permission[];
 }

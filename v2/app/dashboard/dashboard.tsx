@@ -18,8 +18,8 @@ function Navigation() {
     <p className={styles.navLabel}>SPAZIO DI LAVORO</p>
     <nav aria-label="Navigazione principale"><ul className={styles.nav}>
       <li><a href="/v2/dashboard" aria-current="page">Dashboard <span aria-hidden="true">↗</span></a></li>
-      {modules.map(item => <li key={item.name}><span className={styles.disabled} aria-disabled="true">
-        {item.name}<small>Non ancora disponibile</small></span></li>)}
+      {modules.map(item => <li key={item.name}>{item.name === "Clienti" ? <a href="/v2/customers">Clienti</a> :
+        <span className={styles.disabled} aria-disabled="true">{item.name}<small>Non ancora disponibile</small></span>}</li>)}
     </ul></nav>
     <p className={styles.sidebarNote}>SIMULATORE EE<span>Un ambiente, tutti i tuoi strumenti.</span></p>
   </aside>;
@@ -47,10 +47,11 @@ export default function Dashboard({ view }: { view: DashboardView }) {
         <Identity view={view} />
         <section className={styles.modules} aria-labelledby="strumenti">
           <div className={styles.sectionHeading}><div><h2 id="strumenti">Strumenti di lavoro</h2>
-            <p>I moduli saranno disponibili nelle prossime fasi. Al momento non sono operativi.</p></div><span>6 moduli previsti</span></div>
+            <p>Clienti è collegato. Gli altri moduli non sono ancora disponibili.</p></div><span>6 moduli previsti</span></div>
           <div className={styles.grid}>{modules.map(item => <article key={item.name} className={styles.card}>
             <span className={styles.mark} aria-hidden="true">{item.mark}</span>
-            <h3>{item.name}</h3><p>{item.description}</p><span className={styles.status}>Non ancora disponibile</span>
+            <h3>{item.name}</h3><p>{item.description}</p>{item.name === "Clienti" ? <a href="/v2/customers">Apri Clienti</a> :
+              <span className={styles.status}>Non ancora disponibile</span>}
           </article>)}</div>
         </section>
         <footer className={styles.footer}>Energia Operativa<span>Workspace · V2</span></footer>
