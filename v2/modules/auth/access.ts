@@ -1,6 +1,6 @@
 import "server-only";
 import { AuthError } from "../../core/errors/auth-error";
-import { simulationPermissions, billPermissions, canonicalRole, customerPermissions, permissions, record, requiredString } from "./schema";
+import { simulationPermissions, ctePermissions, billPermissions, canonicalRole, customerPermissions, permissions, record, requiredString } from "./schema";
 import type { AccessRepository } from "./repository";
 import type { Identity, Permission, Principal } from "./types";
 
@@ -44,7 +44,7 @@ export async function authorize(principal: Principal, permission: Permission,
   if (!principal.userId || !principal.authUserId || !principal.assignmentId) return false;
   try { canonicalRole(principal.role); } catch { return false; }
   const allowed: readonly Permission[] = [...principal.permissions.filter(p => p === "auth:login" || p === "auth:session"),
-    ...customerPermissions(principal.role), ...billPermissions(principal.role), ...simulationPermissions(principal.role)];
+    ...customerPermissions(principal.role), ...billPermissions(principal.role), ...simulationPermissions(principal.role), ...ctePermissions(principal.role)];
   if (!allowed.includes(permission)) return false;
   if (principal.scope === "PLATFORM") {
     if (principal.role !== "PLATFORM_OWNER" || principal.tenantId !== undefined) return false;

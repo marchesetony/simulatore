@@ -10,12 +10,17 @@ function rate(value: unknown): Rate {
   if (applicability === "NOT_APPLICABLE" && (amount !== null || unit !== null)) throw new SimulationError("INVALID_INPUT");
   return { applicability, amount, unit };
 }
-export function terms(value: unknown): CommercialTermsSnapshot | null {
+export function terms(value: unknown, allowSource = false): CommercialTermsSnapshot | null {
   if (value === null) return null;
-  const row = strictObject(value, ["reference", "periodStart", "periodEnd", "mode", "taxTreatment", "fixedPrice", "spread", "fees"]);
+  const raw = value as Record<string, unknown>;
+  const hasSource = Object.hasOwn(raw, "source");
+  if (hasSource && !allowSource) throw new SimulationError("INVALID_INPUT");
+  const row = strictObject(value, ["reference", "periodStart", "periodEnd", "mode", "taxTreatment", "fixedPrice", "spread", "fees", ...(hasSource ? ["source"] : [])]);
   if (!Array.isArray(row.fees) || row.fees.length > 20) throw new SimulationError("INVALID_INPUT");
+  const source = Object.hasOwn(row, "source") ? (() => { const item = strictObject(row.source, ["type", "cteId", "cteVersion"]); return { type: choice(item.type, ["CTE"] as const), cteId: text(item.cteId, 120), cteVersion: text(item.cteVersion, 40) }; })() : undefined;
   return { ...period(row), reference: text(row.reference, 120), mode: choice(row.mode, ["FIXED", "INDEXED"]),
     taxTreatment: choice(row.taxTreatment, ["EXCLUDED"]), fixedPrice: rate(row.fixedPrice), spread: rate(row.spread),
+    ...(source ? { source } : {}),
     fees: row.fees.map(value => {
       const fee = strictObject(value, ["kind", "applicability", "amount", "unit"]);
       const { kind, ...rest } = fee;
@@ -33,12 +38,12 @@ function market(value: unknown): MarketSnapshot | null {
       unit: choice(item.unit, ["EUR_PER_MWH"]), versionReference: text(item.versionReference, 120) };
   }) };
 }
-export function simulationInput(value: unknown): SimulationCreateInput {
+export function simulationInput(value: unknown, allowSource = false): SimulationCreateInput {
   try {
     const row = strictObject(value, ["billId", "calculationPeriod", "currentCommercialTerms", "candidateCommercialTerms", "marketSnapshot"]);
     const dates = strictObject(row.calculationPeriod, ["periodStart", "periodEnd"]);
     return { billId: identifier(row.billId), calculationPeriod: period(dates),
-      currentCommercialTerms: terms(row.currentCommercialTerms), candidateCommercialTerms: terms(row.candidateCommercialTerms),
+      currentCommercialTerms: terms(row.currentCommercialTerms, allowSource), candidateCommercialTerms: terms(row.candidateCommercialTerms, allowSource),
       marketSnapshot: market(row.marketSnapshot) };
   } catch (error) {
     if (error instanceof BillError) throw new SimulationError("INVALID_INPUT");

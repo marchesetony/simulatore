@@ -1,5 +1,5 @@
 import type { Period } from "../bills/types";
-import { FEE_KINDS, block, type CommercialTermsSnapshot, type CommercialResult, type MarketSnapshot, type Rate } from "./types";
+import { FEE_KINDS, LEGACY_FEE_KINDS, block, type CommercialTermsSnapshot, type CommercialResult, type MarketSnapshot, type Rate } from "./types";
 import { add, cents, decimal, divide, integer, multiply, type Rational } from "./decimal";
 import { bandQuantity, monthPeriods, wholeMonths, type ConsumptionGroup } from "./consumption";
 
@@ -43,11 +43,12 @@ export function energyComponents(terms: CommercialTermsSnapshot, period: Period,
   });
 }
 export function feeComponents(terms: CommercialTermsSnapshot, period: Period): readonly Component[] {
+  const requiredKinds = terms.source?.type === "CTE" ? FEE_KINDS : LEGACY_FEE_KINDS;
   const keys = terms.fees.map(fee => fee.kind);
   if (new Set(keys).size !== keys.length) return block("AMBIGUOUS_COMPONENT");
-  if (FEE_KINDS.some(kind => !keys.includes(kind))) return block("MISSING_COMMERCIAL_COMPONENT");
+  if (requiredKinds.some(kind => !keys.includes(kind))) return block("MISSING_COMMERCIAL_COMPONENT");
   const result: Component[] = [];
-  for (const kind of FEE_KINDS) {
+  for (const kind of requiredKinds) {
     const fee = terms.fees.find(fee => fee.kind === kind)!;
     // A declared imbalance is not proof of disjointness from spread or other charges.
     if (kind === "IMBALANCE" && fee.applicability === "APPLIES") return block("AMBIGUOUS_COMPONENT");

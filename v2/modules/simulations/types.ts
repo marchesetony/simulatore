@@ -1,7 +1,8 @@
 import type { ConsumptionInput, Period } from "../bills/types";
 
 export const CALCULATION_VERSION = "commercial-ee-1" as const;
-export const FEE_KINDS = ["COMMERCIALIZATION", "IMBALANCE", "OTHER_VARIABLE", "ONE_OFF", "DISCOUNT"] as const;
+export const FEE_KINDS = ["COMMERCIALIZATION", "MONTHLY_FEE", "ANNUAL_FEE", "IMBALANCE", "OTHER_VARIABLE", "ONE_OFF", "DISCOUNT"] as const;
+export const LEGACY_FEE_KINDS = ["COMMERCIALIZATION", "IMBALANCE", "OTHER_VARIABLE", "ONE_OFF", "DISCOUNT"] as const;
 export type FeeKind = typeof FEE_KINDS[number];
 export type Applicability = "APPLIES" | "NOT_APPLICABLE" | "UNKNOWN";
 export interface Rate {
@@ -16,6 +17,7 @@ export interface CommercialTermsSnapshot extends Period {
   readonly fixedPrice: Rate;
   readonly spread: Rate;
   readonly fees: readonly (Rate & { readonly kind: FeeKind })[];
+  readonly source?: { readonly type: "CTE"; readonly cteId: string; readonly cteVersion: string };
 }
 export interface MarketSnapshot {
   readonly reference: string;
@@ -39,7 +41,7 @@ export type BlockReason = "MISSING_CONSUMPTION" | "AMBIGUOUS_CONSUMPTION" | "INC
   "MISSING_CURRENT_TERMS" | "MISSING_CANDIDATE_TERMS" | "MISSING_MARKET_DATA" | "AMBIGUOUS_MARKET_DATA" |
   "UNKNOWN_UNIT" | "MISSING_COMMERCIAL_COMPONENT" | "AMBIGUOUS_COMPONENT" | "AMOUNT_OUT_OF_RANGE";
 export interface CommercialResult {
-  readonly components: readonly { readonly kind: "ENERGY" | "SPREAD" | "COMMERCIALIZATION" | "IMBALANCE";
+  readonly components: readonly { readonly kind: "ENERGY" | "SPREAD" | FeeKind;
     readonly periodStart: string; readonly periodEnd: string; readonly band: "TOTAL" | "F1" | "F2" | "F3";
     readonly amountCents: number }[];
   readonly commercialTotalCents: number;

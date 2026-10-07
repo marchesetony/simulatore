@@ -1,6 +1,6 @@
 import type { BlockReason, FeeKind } from "../../modules/simulations/types";
 export const feeLabels: Record<FeeKind, string> = {
-  COMMERCIALIZATION: "Commercializzazione fissa", IMBALANCE: "Sbilanciamento", OTHER_VARIABLE: "Altre quote variabili",
+  COMMERCIALIZATION: "Commercializzazione fissa", MONTHLY_FEE: "Quota mensile", ANNUAL_FEE: "Quota annuale", IMBALANCE: "Sbilanciamento", OTHER_VARIABLE: "Altre quote variabili",
   ONE_OFF: "Una tantum", DISCOUNT: "Sconti",
 };
 export const reasonLabels: Record<BlockReason, string> = {

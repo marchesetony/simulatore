@@ -35,7 +35,7 @@ export function calculate(input: SimulationInputSnapshot): SimulationResult {
   try {
     if (input.calculationVersion !== CALCULATION_VERSION) throw new SimulationError("INVALID_INPUT");
     const normalized = simulationInput({ billId: input.billReference.id, calculationPeriod: input.calculationPeriod,
-      currentCommercialTerms: input.currentCommercialTerms, candidateCommercialTerms: input.candidateCommercialTerms, marketSnapshot: input.marketSnapshot });
+      currentCommercialTerms: input.currentCommercialTerms, candidateCommercialTerms: input.candidateCommercialTerms, marketSnapshot: input.marketSnapshot }, true);
     const snapshot = { ...input, ...normalized };
     if (!snapshot.candidateCommercialTerms) return block("MISSING_CANDIDATE_TERMS");
     const candidate = calculateTerms(snapshot, snapshot.candidateCommercialTerms);
