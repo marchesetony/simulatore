@@ -18,7 +18,12 @@ test("runtime dependency boundary contains no previous brick, network or test ad
       const content = readFileSync(new URL(name, directory), "utf8");
       const imports = [...content.matchAll(/(?:from\s+|import\s+)["']([^"']+)["']/g)].map(match => match[1]);
       assert.ok(imports.every(path => path === "server-only" || path === "node:crypto" || /^\.\/(?!.*\.\.)/.test(path) || path.startsWith("../market/")), name);
-      assert.doesNotMatch(content, /\b(?:fetch|XMLHttpRequest|WebSocket|setInterval|setTimeout)\s*\(|https?:\/\/|\bimport\s*\(/, name);
+      const acquisitionAdapter = directory.pathname.endsWith("/regulatory/") && name === "acquisition.ts";
+      if (acquisitionAdapter) {
+        assert.deepEqual(imports, ["server-only", "node:crypto", "./acquisition-types", "./acquisition-types"]);
+        assert.deepEqual(content.match(/https?:\/\/[^"\s]+/g), ["https://www.arera.it/fileadmin/allegati/docs/25/573-2025-R-eel-TABELLE.xlsx"]);
+        assert.doesNotMatch(content, /\b(?:XMLHttpRequest|WebSocket|setInterval)\s*\(|\bimport\s*\(/);
+      } else assert.doesNotMatch(content, /\b(?:fetch|XMLHttpRequest|WebSocket|setInterval|setTimeout)\s*\(|https?:\/\/|\bimport\s*\(/, name);
       assert.doesNotMatch(content, /\bany\b|@ts-ignore|@ts-nocheck/, name);
     }
   }

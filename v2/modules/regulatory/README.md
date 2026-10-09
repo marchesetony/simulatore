@@ -1,5 +1,23 @@
 # Regulatory foundation — Phase A
 
+## ARERA document acquisition — B2a
+
+`acquisition.ts` provides an explicit server-only GET of the single pinned ARERA document
+573/2025/R/eel. It has no callers, endpoint, scheduler, parser or persistence adapter.
+Defaults: 8 MiB and 15 seconds; configurable ceilings: 32 MiB and 60 seconds.
+The deadline includes headers and stream consumption. Redirects, partial HTTP responses,
+unexpected MIME types, HTTP content encoding, size overflow and inconsistent Content-Length fail closed.
+XLSX, octet-stream and ZIP MIME types are accepted only with the initial ZIP local-file signature.
+That signature is not proof of a valid ZIP archive or XLSX workbook. No decompression occurs.
+
+The result separates original binary bytes from frozen transport evidence (`B2A_CHECKS_PASSED`).
+SHA-256 fingerprints received bytes; an optional independently supplied digest can detect mismatch.
+Without independent evidence the digest does not attest publisher approval or workbook validity.
+`retrievedAt` records acquisition completion only. No publication/validation/approval date is inferred.
+The bytes are mutable in-memory data, NOT immutable persistent custody. No document bytes are logged.
+No Source, Version, review, economic component or snapshot is created or published automatically.
+This adapter does not supply the trusted governance authority and cannot unblock production publication.
+
 See `../market/README.md` for shared governance, repository, provenance and time rules.
 No tariff, fiscal formula, pro-rata, total or official source is supplied by this module.
 
