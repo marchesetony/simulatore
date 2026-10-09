@@ -89,8 +89,19 @@ test("interrupted stream never returns a partial document", async t => {
 test("network failure is typed", async t => { mock(t, async () => { throw new Error("offline"); }); await rejects("NETWORK_ERROR"); });
 for (const phase of ["headers", "body"]) {
   test(`deadline covers stalled ${phase}`, async t => {
+    t.mock.timers.enable({ apis: ["setTimeout"] });
+    t.mock.method(performance, "now", () => 0);
     let signal;
-    mock(t, (_, init) => { signal = init.signal; return phase === "headers" ? new Promise(() => {}) : Promise.resolve(response(new ReadableStream({ start(c) { c.enqueue(original); } }))); });
+    mock(t, (_, init) => {
+      signal = init.signal;
+      if (phase === "headers") {
+        queueMicrotask(() => t.mock.timers.tick(15));
+        return new Promise(() => {});
+      }
+      return Promise.resolve(response(new ReadableStream({
+        pull() { queueMicrotask(() => t.mock.timers.tick(15)); },
+      }, { highWaterMark: 0 })));
+    });
     await rejects("REQUEST_TIMEOUT", { timeoutMs: 15 }); assert.ok(signal.aborted);
   });
 }
@@ -99,6 +110,76 @@ for (const body of [null, new Uint8Array()]) {
 }
 test("missing body with positive Content-Length is incomplete", async t => {
   mock(t, async () => response(null, { "content-length": "9" })); await rejects("INCOMPLETE_DOWNLOAD");
+});
+
+for (const chunkSize of [1, 7]) {
+  test(`M1: 65536 original bytes in chunks of ${chunkSize}, bounded output storage`, async t => {
+    t.mock.method(performance, "now", () => 0);
+    const expected = Uint8Array.from({ length: 65536 }, (_, i) => i % 256);
+    expected.set(original);
+    let offset = 0, reads = 0, signal, listenerCalls;
+    const body = new ReadableStream({
+      pull(c) {
+        reads++;
+        if (offset === expected.length) { c.close(); return; }
+        const end = Math.min(offset + chunkSize, expected.length);
+        c.enqueue(expected.subarray(offset, end)); offset = end;
+      },
+    }, { highWaterMark: 0 });
+    mock(t, async (_, init) => {
+      signal = init.signal;
+      listenerCalls = t.mock.method(signal, "addEventListener");
+      return response(body);
+    });
+    const result = await acquireAreraDocument(undefined, { maxBytes: expected.length });
+    assert.deepEqual(result.bytes, expected);
+    assert.equal(result.bytes.buffer.byteLength, expected.length);
+    assert.equal(result.evidence.sha256, createHash("sha256").update(expected).digest("hex"));
+    assert.equal(result.evidence.contentLengthReceived, expected.length);
+    assert.equal(reads, Math.ceil(expected.length / chunkSize) + 1);
+    assert.equal(listenerCalls.mock.callCount(), 0);
+    assert.equal(body.locked, false); assert.equal(signal.aborted, false);
+  });
+}
+
+test("M1: a single oversized chunk is rejected without partial success", async t => {
+  let cancelled = false, signal;
+  const body = new ReadableStream({
+    pull(c) { c.enqueue(new Uint8Array(65536)); },
+    cancel() { cancelled = true; },
+  }, { highWaterMark: 0 });
+  mock(t, async (_, init) => { signal = init.signal; return response(body); });
+  await rejects("DOCUMENT_TOO_LARGE", { maxBytes: 32 });
+  assert.ok(cancelled); assert.ok(signal.aborted); assert.equal(body.locked, false);
+});
+
+test("M2: monotonic deadline rejects continuous reads while timer callbacks are held", async t => {
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  let now = 0, reads = 0, cancelled = false, signal;
+  t.mock.method(performance, "now", () => now);
+  const body = new ReadableStream({
+    pull(c) { reads++; now += 1; c.enqueue(original); },
+    cancel() { cancelled = true; },
+  }, { highWaterMark: 0 });
+  mock(t, async (_, init) => { signal = init.signal; return response(body); });
+  await rejects("REQUEST_TIMEOUT", { timeoutMs: 10, maxBytes: 1024 });
+  assert.equal(reads, 10); assert.ok(cancelled); assert.ok(signal.aborted);
+  assert.equal(body.locked, false);
+});
+
+test("M2: deadline expiring during final metadata creation prevents success", async t => {
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  let now = 0, signal, metadataCreated = false;
+  t.mock.method(performance, "now", () => now);
+  const iso = Date.prototype.toISOString;
+  t.mock.method(Date.prototype, "toISOString", function () {
+    metadataCreated = true; now = 10;
+    return iso.call(this);
+  });
+  const body = response();
+  mock(t, async (_, init) => { signal = init.signal; return body; });
+  await rejects("REQUEST_TIMEOUT", { timeoutMs: 10 });
+  assert.ok(metadataCreated); assert.ok(signal.aborted); assert.equal(body.body.locked, false);
 });
 test("encoded HTTP representation rejected", async t => {
   mock(t, async () => response(original, { "content-encoding": "gzip" })); await rejects("INTEGRITY_ERROR");

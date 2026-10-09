@@ -5,6 +5,14 @@
 `acquisition.ts` provides an explicit server-only GET of the single pinned ARERA document
 573/2025/R/eel. It has no callers, endpoint, scheduler, parser or persistence adapter.
 Defaults: 8 MiB and 15 seconds; configurable ceilings: 32 MiB and 60 seconds.
+Acquisition owns one binary backing buffer of `maxBytes`, independent of chunk count;
+the returned view has the exact received length but retains that backing capacity.
+This bound excludes incoming chunks and internal network/runtime buffers, which are owned by Fetch.
+Only one asynchronous operation is awaited at a time, with one replaceable interruption callback;
+there is no shared pending deadline promise accumulating per-chunk reactions or abort listeners.
+The deadline uses monotonic `performance.now()` checks during consumption and immediately before success.
+A timer and AbortController interrupt suspended operations. JavaScript cannot instantly interrupt
+synchronous work already executing; expiration is detected at the next explicit check.
 The deadline includes headers and stream consumption. Redirects, partial HTTP responses,
 unexpected MIME types, HTTP content encoding, size overflow and inconsistent Content-Length fail closed.
 XLSX, octet-stream and ZIP MIME types are accepted only with the initial ZIP local-file signature.

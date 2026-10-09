@@ -32,19 +32,39 @@ export async function acquireAreraDocument(
   let reader: ReadableStreamDefaultReader<Uint8Array> | undefined;
   let completed = false;
   let timedOut = false;
-  let timer: ReturnType<typeof setTimeout> | undefined;
-  const deadline = new Promise<never>((_, reject) => {
-    timer = setTimeout(() => {
-      timedOut = true;
-      reject(new AreraAcquisitionError("REQUEST_TIMEOUT"));
-      controller.abort();
-    }, timeoutMs);
-  });
+  const deadline = performance.now() + timeoutMs;
+  // Only the current operation has a rejection callback; no shared pending promise
+  // or per-chunk abort listeners retain reactions throughout the download.
+  let interrupt: ((error: AreraAcquisitionError) => void) | undefined;
+  function expire(): void {
+    timedOut = true;
+    interrupt?.(new AreraAcquisitionError("REQUEST_TIMEOUT"));
+    controller.abort();
+  }
+  function checkDeadline(): void {
+    if (timedOut || performance.now() >= deadline) {
+      expire();
+      fail("REQUEST_TIMEOUT");
+    }
+  }
+  async function waitFor<T>(operation: () => Promise<T>): Promise<T> {
+    checkDeadline();
+    try {
+      return await new Promise<T>((resolve, reject) => {
+        interrupt = reject;
+        operation().then(resolve, reject);
+      });
+    } finally {
+      interrupt = undefined;
+    }
+  }
+  const timer = setTimeout(expire, timeoutMs);
   try {
-    response = await Promise.race([fetch(ARERA_DOCUMENT_URL, {
+    response = await waitFor(() => fetch(ARERA_DOCUMENT_URL, {
       method: "GET", redirect: "manual", signal: controller.signal, cache: "no-store",
       headers: { Accept: [...contentTypes].join(", "), "Accept-Encoding": "identity" },
-    }), deadline]);
+    }));
+    checkDeadline();
     if (response.redirected || (response.status >= 300 && response.status < 400)) return fail("UNEXPECTED_REDIRECT");
     if (response.url && response.url !== ARERA_DOCUMENT_URL) return fail("UNTRUSTED_SOURCE");
     if (response.status !== 200 || response.headers.has("content-range")) return fail("HTTP_ERROR");
@@ -63,35 +83,42 @@ export async function acquireAreraDocument(
     }
     if (!response.body) return fail(declaredLength ? "INCOMPLETE_DOWNLOAD" : "EMPTY_DOCUMENT");
     reader = response.body.getReader();
-    const chunks: Uint8Array[] = [];
+    // Exactly one backing buffer, at most 32 MiB, independent of chunk count.
+    // The returned view retains this capacity; no second final buffer is allocated.
+    const storage = new Uint8Array(maxBytes);
     let received = 0;
     const hash = createHash("sha256");
     while (true) {
-      const { done, value } = await Promise.race([reader.read(), deadline]);
+      checkDeadline();
+      const { done, value } = await waitFor(() => reader!.read());
+      checkDeadline();
       if (done) break;
       received += value.byteLength;
       if (received > maxBytes) return fail("DOCUMENT_TOO_LARGE");
       if (declaredLength !== undefined && received > declaredLength) return fail("INCOMPLETE_DOWNLOAD");
       if (value.byteLength) {
-        const copy = Uint8Array.from(value);
-        chunks.push(copy); hash.update(copy);
+        const offset = received - value.byteLength;
+        storage.set(value, offset);
+        hash.update(storage.subarray(offset, received));
       }
+      checkDeadline();
     }
     if (declaredLength !== undefined && received !== declaredLength) return fail("INCOMPLETE_DOWNLOAD");
     if (!received) return fail("EMPTY_DOCUMENT");
-    const bytes = new Uint8Array(received);
-    let offset = 0;
-    for (const chunk of chunks) { bytes.set(chunk, offset); offset += chunk.byteLength; }
+    const bytes = storage.subarray(0, received);
     // ZIP local-file header only. This does NOT establish XLSX/OOXML validity.
     if (bytes[0] !== 0x50 || bytes[1] !== 0x4b || bytes[2] !== 0x03 || bytes[3] !== 0x04)
       return fail("INVALID_FILE_SIGNATURE");
     const sha256 = hash.digest("hex");
     if (expectedSha256 !== undefined && sha256 !== expectedSha256) return fail("INTEGRITY_ERROR");
-    if (timedOut) return fail("REQUEST_TIMEOUT");
-    completed = true;
-    return { bytes, evidence: Object.freeze({ authority: "ARERA", actReference: "573/2025/R/eel",
+    const result: AreraAcquisitionResult = { bytes, evidence: Object.freeze({ authority: "ARERA", actReference: "573/2025/R/eel",
       documentUrl: ARERA_DOCUMENT_URL, retrievedAt: new Date().toISOString(), httpStatus: 200,
       contentType, contentLengthReceived: received, sha256, acquisitionStatus: "B2A_CHECKS_PASSED" }) };
+    // JS timers cannot preempt synchronous work. Recheck elapsed monotonic time
+    // after hashing/metadata creation so delayed timer callbacks cannot allow success.
+    checkDeadline();
+    completed = true;
+    return result;
   } catch (error) {
     if (timedOut) return fail("REQUEST_TIMEOUT");
     if (error instanceof AreraAcquisitionError) throw error;
