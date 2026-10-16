@@ -68,6 +68,9 @@ try {
   assert.equal(comparisonProposal.selectedResult.calculationId, selected.calculationId);
   assert.ok(comparisonProposal.selectedResult.rankingPosition !== null);
   assert.ok(comparison.ranking.some((entry) => entry.tieGroup));
+  assert.ok(comparison.suggestions.length >= 1);
+  assert.equal(comparison.suggestions[0].calculationId, comparison.ranking[0].calculationId);
+  assert.throws(() => generateProposal({ ...proposalRequest(selected), sourceType: "COMPARISON", comparison: { ...comparison, suggestions: [] }, selectedCalculationId: selected.calculationId }, tenant), /COMPARISON_SUGGESTIONS_MISMATCH/);
 
   const json = exportJson(fixedProposal, tenant);
   const csv = exportCsv(fixedProposal, tenant);

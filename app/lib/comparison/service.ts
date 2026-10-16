@@ -5,6 +5,8 @@ import type { MarketArchiveRepository } from "../market/types";
 import { calculatePreparedOffer, exclusionFor, prepareApprovedOffer } from "../calculation/engine.ts";
 import type { CalculationExclusionCode, CalculationResult, SimulationRequest } from "../calculation/types";
 import type { ComparisonRankingEntry, ComparisonResult } from "./types";
+// @ts-expect-error Node's strip-only test runner requires the explicit extension.
+import { suggestOffers } from "./suggestions.ts";
 
 function canonical(value: unknown): string {
   if (value === null || typeof value !== "object") return JSON.stringify(value);
@@ -75,5 +77,5 @@ export async function compareApprovedOffers(cteRepository: CteArchiveRepository,
   const orderedExcluded = [...excludedOffers].sort((left, right) => compareText(left.archiveId, right.archiveId) || compareText(left.code, right.code));
   const payload = { schemaVersion: 1 as const, tenantId: request.tenantId, vector: request.vector, normalizedInput: request, results: ordered, excludedOffers: orderedExcluded, ranking };
   const resultFingerprint = fingerprint(payload);
-  return { ...payload, comparisonId: `comparison_${resultFingerprint.slice(0, 32)}`, fingerprint: resultFingerprint, calculatedAt: `${request.calculationDate}T00:00:00.000Z`, warnings: ordered.length === 0 ? ["NO_ELIGIBLE_OFFERS"] : orderedExcluded.length > 0 ? ["EXCLUDED_OFFERS_PRESENT"] : [] };
+  return { ...payload, comparisonId: `comparison_${resultFingerprint.slice(0, 32)}`, fingerprint: resultFingerprint, calculatedAt: `${request.calculationDate}T00:00:00.000Z`, warnings: ordered.length === 0 ? ["NO_ELIGIBLE_OFFERS"] : orderedExcluded.length > 0 ? ["EXCLUDED_OFFERS_PRESENT"] : [], suggestions: suggestOffers(ordered, ranking) };
 }

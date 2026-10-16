@@ -3,6 +3,8 @@ import type { CalculationComponent, CalculationExclusion, CalculationResult, Sim
 // @ts-expect-error Node's strip-only test runner requires the explicit extension.
 import { parseSimulationRequest } from "../calculation/input.ts";
 import type { ComparisonRankingEntry, ComparisonResult } from "../comparison/types";
+// @ts-expect-error Node's strip-only test runner requires the explicit extension.
+import { suggestOffers } from "../comparison/suggestions.ts";
 
 export class ProposalValidationError extends Error {
   readonly code: string;
@@ -122,6 +124,7 @@ export function assertComparisonResult(value: unknown, tenantId: string): Compar
   if (canonical(expected) !== canonical(result.ranking)) proposalFail("COMPARISON_RANKING_INVALID");
   const expectedWarnings = ordered.length === 0 ? ["NO_ELIGIBLE_OFFERS"] : result.excludedOffers.length > 0 ? ["EXCLUDED_OFFERS_PRESENT"] : [];
   if (canonical(result.warnings) !== canonical(expectedWarnings)) proposalFail("COMPARISON_WARNINGS_MISMATCH");
+  if (result.suggestions !== undefined && canonical(result.suggestions) !== canonical(suggestOffers(ordered, expected))) proposalFail("COMPARISON_SUGGESTIONS_MISMATCH");
   return result;
 }
 
