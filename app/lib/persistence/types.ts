@@ -57,7 +57,7 @@ export interface NormalizedBillSnapshot { readonly documentId: string; readonly 
 export interface CalculationResultRecord { readonly calculationId: string; readonly fingerprint: string; readonly result: unknown; }
 export interface ComparisonResultRecord { readonly comparisonId: string; readonly fingerprint: string; readonly result: unknown; }
 export interface CommercialProposalRecord { readonly proposalId: string; readonly proposalFingerprint: string; readonly proposal: unknown; }
-export interface ExportMetadataRecord { readonly exportId: string; readonly proposalId?: string; readonly format: "JSON" | "CSV" | "HTML"; readonly contentFingerprint: string; }
+export interface ExportMetadataRecord { readonly exportId: string; readonly proposalId?: string; readonly format: "JSON" | "CSV" | "HTML" | "PDF"; readonly contentFingerprint: string; }
 
 export interface AuditEvent {
   readonly schemaVersion: typeof PERSISTENCE_SCHEMA_VERSION;

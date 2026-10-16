@@ -157,16 +157,16 @@ function safeFilename(value: string | null, extension: string): string {
   return value;
 }
 
-export async function downloadExport(path: string, payload: unknown, format: "JSON" | "CSV" | "HTML"): Promise<void> {
+export async function downloadExport(path: string, payload: unknown, format: "JSON" | "CSV" | "HTML" | "PDF"): Promise<void> {
   const response = await fetch(path, { method: "POST", body: JSON.stringify(payload), credentials: "same-origin", headers: { "content-type": "application/json" } });
   if (!response.ok) {
     const body: unknown = await response.json().catch(() => null);
     const errorBody = typeof body === "object" && body !== null && "error" in body ? (body as { readonly error?: unknown }).error : body;
     throw errorFrom(errorBody, `HTTP_${response.status}`);
   }
-  const expected = format === "JSON" ? "application/json" : format === "CSV" ? "text/csv" : "text/html";
+  const expected = format === "JSON" ? "application/json" : format === "CSV" ? "text/csv" : format === "PDF" ? "application/pdf" : "text/html";
   if (!(response.headers.get("content-type") ?? "").toLowerCase().startsWith(expected)) throw new UiApiError("EXPORT_CONTENT_TYPE_INVALID", "Tipo contenuto export non valido");
-  const extension = format === "JSON" ? ".json" : format === "CSV" ? ".csv" : ".html";
+  const extension = format === "JSON" ? ".json" : format === "CSV" ? ".csv" : format === "PDF" ? ".pdf" : ".html";
   const contentDisposition = response.headers.get("content-disposition") ?? "";
   const match = /filename="([^"]+)"/i.exec(contentDisposition);
   const filename = safeFilename(match?.[1] ?? null, extension);

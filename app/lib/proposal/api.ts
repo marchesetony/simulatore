@@ -2,6 +2,8 @@
 import { assertInputSize, proposalFail } from "./integrity.ts";
 // @ts-expect-error Node's strip-only test runner requires the explicit extension.
 import { exportCsv, exportHtml, exportJson } from "../export/serialization.ts";
+// @ts-expect-error Node's strip-only test runner requires the explicit extension.
+import { exportPdf } from "../export/pdf.ts";
 import type { ProposalExportDocument } from "../export/types";
 import type { ProposalExportFormat } from "./types";
 import type { AuthenticatedPrincipal } from "../auth/types";
@@ -32,4 +34,19 @@ export async function exportResponse(body: Record<string, unknown>, tenantId: st
   await repositories.exports.put({ tenantId, recordId: `export_${contentFingerprint.slice(0, 32)}`, payload: { exportId: `export_${contentFingerprint.slice(0, 32)}`, proposalId: proposal.proposalId, format, contentFingerprint }, idempotencyKey: contentFingerprint });
   await recordRuntimeAudit({ tenantId, principal, action: "EXPORT_GENERATION", resourceType: "PROPOSAL_EXPORT", resourceId: `export_${contentFingerprint.slice(0, 32)}`, outcome: "ALLOWED", correlationId: PROPOSAL_CORRELATION_ID, metadata: { format, contentFingerprint } });
   return new Response(document.body, { status: 200, headers: { "content-type": document.contentType, "content-disposition": `attachment; filename="${document.filename}"`, "cache-control": "no-store" } });
+}
+
+/** Printable PDF proposal laid out after the ARERA Bolletta 2.0 "scontrino dell'energia". */
+export async function pdfExportResponse(body: Record<string, unknown>, tenantId: string, principal?: AuthenticatedPrincipal): Promise<Response> {
+  assertInputSize(body);
+  if (body.proposal === undefined) proposalFail("PROPOSAL_REQUIRED");
+  const document = await exportPdf(body.proposal as never, tenantId, await runtimeTenantBranding(tenantId));
+  const proposal = body.proposal as { readonly proposalId: string; readonly cte: { readonly archiveId: string; readonly versionId: string } };
+  const repositories = runtimeRepositories();
+  await assertCommerciallyActive(repositories.cteArchiveRepository, tenantId, proposal.cte.archiveId, proposal.cte.versionId);
+  const contentFingerprint = createHash("sha256").update(document.body).digest("hex");
+  const exportId = `export_${contentFingerprint.slice(0, 32)}`;
+  await repositories.exports.put({ tenantId, recordId: exportId, payload: { exportId, proposalId: proposal.proposalId, format: "PDF", contentFingerprint }, idempotencyKey: contentFingerprint });
+  await recordRuntimeAudit({ tenantId, principal, action: "EXPORT_GENERATION", resourceType: "PROPOSAL_EXPORT", resourceId: exportId, outcome: "ALLOWED", correlationId: PROPOSAL_CORRELATION_ID, metadata: { format: "PDF", contentFingerprint } });
+  return new Response(new Blob([document.body as Uint8Array<ArrayBuffer>], { type: document.contentType }), { status: 200, headers: { "content-type": document.contentType, "content-disposition": `attachment; filename="${document.filename}"`, "cache-control": "no-store" } });
 }
