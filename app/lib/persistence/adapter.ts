@@ -11,6 +11,7 @@ import { LocalMarketArchiveRepository } from "../market/repository.ts";
 import { getRuntimeConfig } from "../auth/config.ts";
 // @ts-expect-error Node's strip-only test runner requires the explicit extension.
 import { LocalFilesystemAdapter } from "./local.ts";
+import type { TenantBrandingRepository } from "../branding/service";
 import type { AuditEventRepository, CalculationResultRepository, CommercialProposalRepository, ComparisonResultRepository, DeletableTenantRecordRepository, ExportMetadataRepository, BillIngestionMetadata, NormalizedBillSnapshot, TenantRecordRepository } from "./types";
 
 export interface ProductionStorageAdapter {
@@ -28,6 +29,7 @@ export interface ProductionStorageAdapter {
   readonly proposals: CommercialProposalRepository;
   readonly exports: ExportMetadataRepository;
   readonly auditEvents: AuditEventRepository;
+  readonly tenantBranding?: TenantBrandingRepository;
 }
 
 export interface RuntimeRepositories {
@@ -44,6 +46,7 @@ export interface RuntimeRepositories {
   readonly proposals: CommercialProposalRepository;
   readonly exports: ExportMetadataRepository;
   readonly auditEvents: AuditEventRepository;
+  readonly tenantBranding?: TenantBrandingRepository;
 }
 
 let productionStorageAdapter: ProductionStorageAdapter | null = null;
@@ -66,6 +69,7 @@ function isProductionStorageAdapter(adapter: unknown): adapter is ProductionStor
 export function registerProductionStorageAdapter(adapter: ProductionStorageAdapter): void {
   if (!isProductionStorageAdapter(adapter)) throw new Error("PERSISTENCE_ADAPTER_INVALID");
   if (!hasMethods(adapter.auditEvents, ["appendUnscoped"])) throw new Error("PERSISTENCE_ADAPTER_INVALID");
+  if (adapter.tenantBranding !== undefined && !hasMethods(adapter.tenantBranding, ["get", "list", "put", "append"])) throw new Error("PERSISTENCE_ADAPTER_INVALID");
   productionStorageAdapter = adapter;
 }
 export function clearProductionStorageAdapter(): void { productionStorageAdapter = null; }
@@ -92,5 +96,6 @@ export function runtimeRepositories(): RuntimeRepositories {
     proposals: local.collection("proposals"),
     exports: local.collection("exports"),
     auditEvents: local.collection("audit-events"),
+    tenantBranding: local.collection("tenant-branding"),
   };
 }

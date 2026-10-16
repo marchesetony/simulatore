@@ -283,3 +283,14 @@ export interface SimulationDraft {
   readonly correctionCoefficient: string;
   readonly baseline: string;
 }
+
+export interface TenantBrandingModel {
+  readonly tenantId: string;
+  readonly legalName: string;
+  readonly vatNumber: string | null;
+  readonly address: string | null;
+  readonly logo: { readonly contentType: "image/png" | "image/jpeg" | "image/webp"; readonly dataBase64: string; readonly byteLength: number } | null;
+  readonly version: number | null;
+  readonly updatedAt: string | null;
+  readonly synthetic: boolean;
+}
