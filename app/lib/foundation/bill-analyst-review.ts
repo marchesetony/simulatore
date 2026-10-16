@@ -248,6 +248,14 @@ function buildReceipt(extraction: StructuredBillExtraction | null, facts: readon
   };
 }
 
+/** The competitor's seller costs (energy, commercialization, other seller charges, before taxes) are the baseline the simulated offers are compared against. */
+function competitorSellerBaseline(totals: BillEconomicAnalysis["totals"]): { readonly taxTreatment: "" | "EXCLUDED"; readonly baseline: string } {
+  const parts = [totals.sellerEnergyTotal, totals.sellerCommercializationTotal, totals.sellerOtherTotal];
+  if (parts.every((value) => value === null)) return { taxTreatment: "", baseline: "" };
+  const total = Math.round(parts.reduce<number>((sum, value) => sum + (value ?? 0), 0) * 100) / 100;
+  return total > 0 ? { taxTreatment: "EXCLUDED", baseline: total.toFixed(2) } : { taxTreatment: "", baseline: "" };
+}
+
 export function buildBillAnalystReview(source: BillAnalystReviewSource): BillAnalystReviewDTO {
   const extraction = source.structuredBill;
   const facts = extraction?.extendedFacts ?? [];
@@ -293,5 +301,5 @@ export function buildBillAnalystReview(source: BillAnalystReviewSource): BillAna
   const provenance = source.normalized?.provenance ?? [];
   const date = source.updatedAt ?? "";
   const supplyProfile = extraction?.extendedFacts ? buildBillSupplyProfile(extraction.extendedFacts) : extraction?.supplyProfile ?? null;
-  return { document: { fileName: source.fileName, status: source.status, reviewState: source.reviewState, versionNumber: source.currentVersionNumber, approvalReady: source.approvalReady, analystExtractionStatus: extraction?.analystExtractionStatus ?? "NOT_RUN" }, punReferences: source.invoicePunReferences, supply, supplyProfile, customer, dates, consumption, economics: { ...economicsWithLines, economicAnalysis }, payment, receipt, reviewIssues, provenance, simulationDraft: simulationDraft ? { ...simulationDraft, calculationDate: date.slice(0, 10), taxTreatment: "", baseline: "" } : null };
+  return { document: { fileName: source.fileName, status: source.status, reviewState: source.reviewState, versionNumber: source.currentVersionNumber, approvalReady: source.approvalReady, analystExtractionStatus: extraction?.analystExtractionStatus ?? "NOT_RUN" }, punReferences: source.invoicePunReferences, supply, supplyProfile, customer, dates, consumption, economics: { ...economicsWithLines, economicAnalysis }, payment, receipt, reviewIssues, provenance, simulationDraft: simulationDraft ? { ...simulationDraft, calculationDate: date.slice(0, 10), ...competitorSellerBaseline(economicAnalysis.totals) } : null };
 }

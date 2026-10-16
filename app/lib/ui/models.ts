@@ -243,6 +243,7 @@ export interface ComparisonModel {
   readonly excludedOffers: readonly { readonly archiveId: string; readonly cteId: string; readonly vector: UiVector; readonly supplier: string; readonly offerCode: string; readonly code: string; readonly message: string }[];
   readonly ranking: readonly { readonly rank: number; readonly tieGroup: string; readonly calculationId: string; readonly supplier: string; readonly offerCode: string; readonly cteVersion: string; readonly totalCommercialCost: CalculationMoneyModel }[];
   readonly warnings: readonly string[];
+  readonly suggestions?: readonly { readonly calculationId: string; readonly rank: number; readonly supplier: string; readonly offerCode: string; readonly totalCommercialCost: CalculationMoneyModel; readonly differenceFromBest: CalculationMoneyModel; readonly savingsVsBaseline: CalculationMoneyModel | null; readonly reason: "BEST" | "WITHIN_TOLERANCE" }[];
 }
 
 export interface ProposalModel {

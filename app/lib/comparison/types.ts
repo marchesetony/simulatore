@@ -12,6 +12,17 @@ export interface ComparisonRankingEntry {
   readonly totalCommercialCost: CalculationResult["totalCommercialCost"];
 }
 
+export interface ComparisonSuggestion {
+  readonly calculationId: string;
+  readonly rank: number;
+  readonly supplier: string;
+  readonly offerCode: string;
+  readonly totalCommercialCost: CalculationResult["totalCommercialCost"];
+  readonly differenceFromBest: CalculationResult["totalCommercialCost"];
+  readonly savingsVsBaseline: CalculationResult["savingsVsBaseline"];
+  readonly reason: "BEST" | "WITHIN_TOLERANCE";
+}
+
 export interface ComparisonResult {
   readonly schemaVersion: typeof COMPARISON_SCHEMA_VERSION;
   readonly comparisonId: string;
@@ -24,4 +35,6 @@ export interface ComparisonResult {
   readonly excludedOffers: readonly CalculationExclusion[];
   readonly ranking: readonly ComparisonRankingEntry[];
   readonly warnings: readonly string[];
+  /** Derived from ranking, outside the fingerprint: the best offers proposed to the operator. */
+  readonly suggestions?: readonly ComparisonSuggestion[];
 }
