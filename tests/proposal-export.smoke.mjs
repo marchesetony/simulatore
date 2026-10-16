@@ -80,6 +80,16 @@ try {
   assert.match(html.body, /&lt;Test&gt;/);
   assert.doesNotMatch(html.body, /<script|https?:\/\//i);
   assert.match(html.body, /Network charges/);
+  assert.doesNotMatch(html.body, /class="brand"/);
+  const brandPng = Buffer.concat([Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]), Buffer.alloc(8, 2)]).toString("base64");
+  const branded = exportHtml(fixedProposal, tenant, { legalName: "Rossi & Figli Energia S.r.l.", vatNumber: "IT01234567890", address: "Via Prova 1, Roma", logo: { contentType: "image/png", dataBase64: brandPng, byteLength: 16 } });
+  assert.match(branded.body, /<div class="brand"><img src="data:image\/png;base64,/);
+  assert.match(branded.body, /Rossi &amp; Figli Energia S\.r\.l\./);
+  assert.match(branded.body, /P\.IVA IT01234567890 - Via Prova 1, Roma/);
+  assert.match(branded.body, /<title>Rossi &amp; Figli Energia S\.r\.l\. - proposal_/);
+  assert.doesNotMatch(branded.body, /<script|https?:\/\//i);
+  assert.equal(branded.body, exportHtml(fixedProposal, tenant, { legalName: "Rossi & Figli Energia S.r.l.", vatNumber: "IT01234567890", address: "Via Prova 1, Roma", logo: { contentType: "image/png", dataBase64: brandPng, byteLength: 16 } }).body);
+  assert.doesNotMatch(exportHtml(fixedProposal, tenant, { legalName: "Senza Logo S.r.l.", vatNumber: null, address: null, logo: null }).body, /<img/);
   assert.match(json.filename, /^commercial-proposal-proposal_[a-f0-9]{32}\.json$/);
 
   assert.throws(() => generateProposal(proposalRequest({ ...fixedCalculation, fingerprint: "altered" }), tenant), /CALCULATION_FINGERPRINT_MISMATCH/);

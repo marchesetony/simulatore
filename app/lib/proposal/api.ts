@@ -10,6 +10,8 @@ import { runtimeRepositories } from "../persistence/adapter";
 import { recordRuntimeAudit } from "../persistence/audit";
 // @ts-expect-error Node's strip-only test runner requires the explicit extension.
 import { assertCommerciallyActive } from "../calculation/engine.ts";
+// @ts-expect-error Node's strip-only test runner requires the explicit extension.
+import { runtimeTenantBranding } from "../branding/api.ts";
 
 export const PROPOSAL_CORRELATION_ID = "commercial-proposal-export-v1";
 
@@ -22,7 +24,7 @@ export function proposalError(error: unknown, fallback = "PROPOSAL_REQUEST_INVAL
 export async function exportResponse(body: Record<string, unknown>, tenantId: string, format: ProposalExportFormat, principal?: AuthenticatedPrincipal): Promise<Response> {
   assertInputSize(body);
   if (body.proposal === undefined) proposalFail("PROPOSAL_REQUIRED");
-  const document: ProposalExportDocument = format === "JSON" ? exportJson(body.proposal as never, tenantId) : format === "CSV" ? exportCsv(body.proposal as never, tenantId) : exportHtml(body.proposal as never, tenantId);
+  const document: ProposalExportDocument = format === "JSON" ? exportJson(body.proposal as never, tenantId) : format === "CSV" ? exportCsv(body.proposal as never, tenantId) : exportHtml(body.proposal as never, tenantId, await runtimeTenantBranding(tenantId));
   const proposal = body.proposal as { readonly proposalId: string; readonly proposalFingerprint: string; readonly cte: { readonly archiveId: string; readonly versionId: string } };
   const repositories = runtimeRepositories();
   await assertCommerciallyActive(repositories.cteArchiveRepository, tenantId, proposal.cte.archiveId, proposal.cte.versionId);
