@@ -112,7 +112,7 @@ export function buildComparisonResult(request: SimulationRequest, results: reado
 
 export async function compareApprovedOffers(cteRepository: CteArchiveRepository, marketRepository: MarketArchiveRepository, request: SimulationRequest, dependencies: CalculationDependencies = {}): Promise<ComparisonResult> {
   if (request.vector === "EE" && request.taxTreatment !== "EXCLUDED") throw new Error("TAX_TREATMENT_INCOMPATIBLE");
-  const records = [...await cteRepository.list(request.tenantId)].sort((left, right) => compareText(left.archiveId, right.archiveId));
+  const records = [...await cteRepository.list(request.tenantId)].filter((record) => !dependencies.cteUsable || dependencies.cteUsable(record.archiveId)).sort((left, right) => compareText(left.archiveId, right.archiveId));
   const results: CalculationResult[] = [];
   const excludedOffers = [] as ReturnType<typeof exclusionFor>[];
   for (const record of records) {

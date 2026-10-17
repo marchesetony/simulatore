@@ -14,6 +14,8 @@ import { runtimeRepositories } from "../persistence/adapter";
 import { recordRuntimeAudit } from "../persistence/audit";
 // @ts-expect-error Node's strip-only test runner requires the explicit extension.
 import { assertCommerciallyActive } from "../calculation/engine.ts";
+// @ts-expect-error Node's strip-only test runner requires the explicit extension.
+import { assertProposalInScope } from "./scope.ts";
 
 export const PROPOSAL_CORRELATION_ID = "commercial-proposal-export-v1";
 
@@ -41,6 +43,7 @@ export function proposalError(error: unknown, fallback = "PROPOSAL_REQUEST_INVAL
 export async function exportResponse(body: Record<string, unknown>, tenantId: string, format: ProposalExportFormat, principal?: AuthenticatedPrincipal): Promise<Response> {
   assertInputSize(body);
   const proposal = await canonicalProposal(body, tenantId);
+  if (principal) await assertProposalInScope(principal, runtimeRepositories(), proposal);
   const document: ProposalExportDocument = format === "JSON" ? exportJson(proposal, tenantId) : format === "CSV" ? exportCsv(proposal, tenantId) : format === "HTML" ? exportHtml(proposal, tenantId) : exportPdf(proposal, tenantId);
   const repositories = runtimeRepositories();
   await assertCommerciallyActive(repositories.cteArchiveRepository, tenantId, proposal.cte.archiveId, proposal.cte.versionId);

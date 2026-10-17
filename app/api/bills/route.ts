@@ -110,7 +110,7 @@ export async function GET(request: Request): Promise<Response> {
 
 export async function POST(request: Request): Promise<Response> {
   try {
-    const principal = await requestPrincipal(request, "WRITE");
+    const principal = await requestPrincipal(request, "OPERATE");
     const tenantId = principal.tenantId;
     const repositories = runtimeRepositories();
     const audit = { async record(event: { readonly type: string; readonly tenantId: string; readonly documentId: string; readonly outcome: string }) { await recordRuntimeAudit({ principal, action: `BILL_${event.type}`, resourceType: "BILL", resourceId: event.documentId, outcome: event.outcome === "ALLOWED" ? "ALLOWED" : "DENIED", correlationId: CORRELATION_ID }); } };

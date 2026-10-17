@@ -30,7 +30,7 @@ function executionInput(value: unknown): BillDrivenExecutionInput {
 
 export async function POST(request: Request): Promise<Response> {
   try {
-    const principal = await requestPrincipal(request, "WRITE");
+    const principal = await requestPrincipal(request, "OPERATE");
     let body: unknown;
     try { body = await request.json(); } catch { throw new BillDrivenSimulationError("SIMULATION_REQUEST_INVALID"); }
     const input = executionInput(body);

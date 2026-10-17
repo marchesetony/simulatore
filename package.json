@@ -17,7 +17,8 @@
     "test:bill-anthropic-schema-probe": "node --experimental-strip-types scripts/bill-schema-probe.mjs",
     "test:bill-anthropic-two-stage-probe": "node --experimental-strip-types scripts/bill-anthropic-two-stage-probe.mjs",
     "test:production-adapters": "node --experimental-strip-types tests/production-adapters.smoke.mjs",
-    "production:bootstrap-admin": "node --experimental-strip-types scripts/bootstrap-production-admin.mjs"
+    "production:bootstrap-admin": "node --experimental-strip-types scripts/bootstrap-production-admin.mjs",
+    "test:hierarchy-cte-assignment": "node --experimental-strip-types tests/hierarchy-cte-assignment.smoke.mjs"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.117.1",

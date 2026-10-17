@@ -57,7 +57,7 @@ export async function PATCH(request: Request, context: { params: Promise<{ id: s
   }
 
   try {
-    const principal = await requestPrincipal(request, "WRITE");
+    const principal = await requestPrincipal(request, "OPERATE");
     const tenantId = principal.tenantId;
     const repositories = runtimeRepositories();
     const repository = repositories.billRepository;

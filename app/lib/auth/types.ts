@@ -4,7 +4,8 @@ export type PersistenceAdapterKind = "filesystem" | "provider";
 export type AuthRole = "ADMIN" | "ANALYST" | "VIEWER";
 export type CanonicalProductRole = "SUPER_ADMIN" | "ADMIN" | "AGENT";
 export type AuthSource = "LOCAL_SYNTHETIC" | "VERIFIED_SESSION";
-export type AccessLevel = "READ" | "WRITE" | "ADMIN";
+/** OPERATE covers the day-to-day sales work (bills, simulations, proposals) every role may do within its own scope. */
+export type AccessLevel = "READ" | "OPERATE" | "WRITE" | "ADMIN";
 
 export interface AuthenticatedPrincipal {
   readonly userId: string;
