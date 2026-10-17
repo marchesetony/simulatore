@@ -4,7 +4,7 @@ import { authFail } from "./errors.ts";
 import { recordRuntimeAudit } from "../persistence/audit.ts";
 import type { AccessLevel, AuthenticatedPrincipal, AuthRole, AuthorizationResult } from "./types";
 
-function can(role: AuthRole, access: AccessLevel): boolean { return access === "READ" || role === "ADMIN" || role === "ANALYST" && access === "WRITE"; }
+function can(role: AuthRole, access: AccessLevel): boolean { return access === "READ" || access === "OPERATE" || role === "ADMIN" || role === "ANALYST" && access === "WRITE"; }
 
 export function authorizePrincipal(principal: AuthenticatedPrincipal, access: AccessLevel, requestedTenantId?: string): AuthorizationResult {
   if (requestedTenantId !== undefined && requestedTenantId !== principal.tenantId) return { allowed: false, reason: "TENANT_MISMATCH" };

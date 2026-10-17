@@ -14,7 +14,7 @@ import { cteUsability, loadHierarchyAccess } from "../../lib/hierarchy/service";
 export const runtime = "nodejs";
 export async function POST(request: Request): Promise<Response> {
   try {
-    const principal = await requestPrincipal(request, "WRITE");
+    const principal = await requestPrincipal(request, "OPERATE");
     const tenantId = principal.tenantId;
     const repositories = runtimeRepositories();
     const body = await jsonBody(request);

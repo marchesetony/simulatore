@@ -4,6 +4,7 @@ import { requestPrincipal } from "../../../lib/auth/request";
 import { proposalError } from "../../../lib/proposal/api";
 import { generateProposal } from "../../../lib/proposal/service";
 import { resolveAuthoritativeProposalInput } from "../../../lib/proposal/server";
+import { assertProposalInScope } from "../../../lib/proposal/scope";
 import { runtimeRepositories } from "../../../lib/persistence/adapter";
 import { recordRuntimeAudit } from "../../../lib/persistence/audit";
 import { assertCommerciallyActive } from "../../../lib/calculation/engine";
@@ -11,6 +12,6 @@ import { assertCommerciallyActive } from "../../../lib/calculation/engine";
 export const runtime = "nodejs";
 
 export async function POST(request: Request): Promise<Response> {
-  try { const principal = await requestPrincipal(request, "WRITE"); const tenantId = principal.tenantId; const body = await jsonBody(request); const repositories = runtimeRepositories(); const trustedInput = await resolveAuthoritativeProposalInput(repositories, body, tenantId, "COMPARISON", await loadHierarchyAccess(principal, repositories)); const proposal = generateProposal(trustedInput, tenantId, "COMPARISON"); await assertCommerciallyActive(repositories.cteArchiveRepository, tenantId, proposal.cte.archiveId, proposal.cte.versionId); await repositories.proposals.put({ tenantId, recordId: proposal.proposalId, payload: { proposalId: proposal.proposalId, proposalFingerprint: proposal.proposalFingerprint, proposal }, idempotencyKey: proposal.proposalFingerprint }); await recordRuntimeAudit({ principal, action: "PROPOSAL_GENERATION", resourceType: "PROPOSAL", resourceId: proposal.proposalId, outcome: "ALLOWED", correlationId: "commercial-proposal-v1", metadata: { proposalFingerprint: proposal.proposalFingerprint } }); return Response.json({ proposal }); }
+  try { const principal = await requestPrincipal(request, "OPERATE"); const tenantId = principal.tenantId; const body = await jsonBody(request); const repositories = runtimeRepositories(); const trustedInput = await resolveAuthoritativeProposalInput(repositories, body, tenantId, "COMPARISON", await loadHierarchyAccess(principal, repositories)); const proposal = generateProposal(trustedInput, tenantId, "COMPARISON"); await assertProposalInScope(principal, repositories, proposal); await assertCommerciallyActive(repositories.cteArchiveRepository, tenantId, proposal.cte.archiveId, proposal.cte.versionId); await repositories.proposals.put({ tenantId, recordId: proposal.proposalId, payload: { proposalId: proposal.proposalId, proposalFingerprint: proposal.proposalFingerprint, proposal }, idempotencyKey: proposal.proposalFingerprint }); await recordRuntimeAudit({ principal, action: "PROPOSAL_GENERATION", resourceType: "PROPOSAL", resourceId: proposal.proposalId, outcome: "ALLOWED", correlationId: "commercial-proposal-v1", metadata: { proposalFingerprint: proposal.proposalFingerprint } }); return Response.json({ proposal }); }
   catch (error) { return proposalError(error); }
 }

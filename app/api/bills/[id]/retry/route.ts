@@ -14,7 +14,7 @@ const HEADERS = { "cache-control": "no-store, private", "vary": "Cookie, Authori
 export async function POST(request: Request, context: { params: Promise<{ id: string }> }): Promise<Response> {
   const { id } = await context.params;
   try {
-    const principal = await requestPrincipal(request, "WRITE");
+    const principal = await requestPrincipal(request, "OPERATE");
     const repositories = runtimeRepositories();
     const scope = await billVisibilityScope(principal, repositories);
     const access = await resolveBillFeaturePermissions(principal, repositories, scope);

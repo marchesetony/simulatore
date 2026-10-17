@@ -73,6 +73,8 @@ try {
   assert.equal(authorizePrincipal({ ...principal, role: "ANALYST" }, "WRITE").allowed, true);
   assert.equal(authorizePrincipal({ ...principal, role: "VIEWER" }, "READ").allowed, true);
   assert.equal(authorizePrincipal({ ...principal, role: "VIEWER" }, "WRITE").allowed, false);
+  assert.equal(authorizePrincipal({ ...principal, role: "VIEWER" }, "OPERATE").allowed, true);
+  assert.equal(authorizePrincipal({ ...principal, role: "VIEWER" }, "OPERATE", "tenant_other").allowed, false);
   assert.equal(authorizePrincipal(principal, "READ", "tenant_other").allowed, false);
   assert.equal(authorizePrincipal(principal, "WRITE", "tenant_other").allowed, false);
 

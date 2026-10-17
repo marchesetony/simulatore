@@ -129,4 +129,24 @@ await assert.rejects(() => removeOrgNode(stores, areaNord, { userId: "user_agent
 await removeOrgNode(stores, actorOf("user_area-sud", "ANALYST"), { userId: "user_agente-sud", expectedVersion: 1 });
 assert.equal((await orgChain.list(tenant)).length, 6);
 
+
+// Proposals follow the source bill: an agent sees its own, the area manager its branch, the company everything.
+{
+  const { proposalScope, proposalInScope, assertProposalInScope } = await import("../app/lib/proposal/scope.ts");
+  const bills = [
+    { id: "bill_agente-1", tenantId: tenant, ownerUserId: "user_agente-1" },
+    { id: "bill_agente-2", tenantId: tenant, ownerUserId: "user_agente-2" },
+    { id: "bill_agente-sud", tenantId: tenant, ownerUserId: "user_agente-sud" },
+  ];
+  const membershipStore = { async list() { return memberships.map((payload) => ({ tenantId: tenant, recordId: payload.id, payload, version: 1 })); } };
+  const repos = { billRepository: { async list() { return bills; } }, foundationMemberships: membershipStore, orgChain };
+  const proposalFor = (billId) => ({ sourceBill: { billId, version: "v1" } });
+  const visible = async (userId, role) => { const access = await proposalScope(principal(userId, role), repos); return bills.map((bill) => bill.id).filter((billId) => proposalInScope(access, proposalFor(billId))); };
+  assert.deepEqual(await visible("user_agente-1", "VIEWER"), ["bill_agente-1"]);
+  assert.deepEqual(await visible("user_area-nord", "ANALYST"), ["bill_agente-1", "bill_agente-2"]);
+  assert.deepEqual(await visible("user_azienda", "ADMIN"), ["bill_agente-1", "bill_agente-2", "bill_agente-sud"]);
+  await assert.rejects(() => assertProposalInScope(principal("user_agente-1", "VIEWER"), repos, proposalFor("bill_agente-2")), /PROPOSAL_NOT_FOUND/);
+  assert.equal(proposalInScope(await proposalScope(principal("user_agente-1", "VIEWER"), repos), {}), false, "agents never see proposals without a source bill");
+}
+
 console.log("hierarchy and CTE assignment smoke passed");
