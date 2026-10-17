@@ -1,3 +1,5 @@
+// @ts-expect-error Node's strip-only test runner requires the explicit extension.
+import { assertSimulationWithinLimits, cteUsability, loadHierarchyAccess } from "../hierarchy/service.ts";
 import type { BillDocument, BillVersion } from "../foundation/real-bill";
 // @ts-expect-error Node's strip-only test runner requires the explicit extension.
 import { getBillInScope } from "../foundation/bill-visibility.ts";
@@ -45,7 +47,7 @@ export class BillDrivenSimulationError extends Error {
 const fail = (code: string): never => { throw new BillDrivenSimulationError(code); };
 const NO_STORE_HEADERS = { "cache-control": "no-store, private", "vary": "Cookie, Authorization", "x-content-type-options": "nosniff" } as const;
 
-export type BillDrivenRepositories = Pick<RuntimeRepositories, "billRepository" | "foundationMemberships" | "cteArchiveRepository" | "marketArchiveRepository"> & { readonly eligibilityOverrides?: RuntimeRepositories["eligibilityOverrides"] };
+export type BillDrivenRepositories = Pick<RuntimeRepositories, "billRepository" | "foundationMemberships" | "cteArchiveRepository" | "marketArchiveRepository"> & { readonly eligibilityOverrides?: RuntimeRepositories["eligibilityOverrides"]; readonly orgChain?: RuntimeRepositories["orgChain"]; readonly cteAssignments?: RuntimeRepositories["cteAssignments"] };
 
 export interface ContractExpiryStatus {
   readonly status: "KNOWN" | "UNKNOWN";
@@ -396,8 +398,12 @@ export async function prepareBillDrivenSimulation(principal: AuthenticatedPrinci
   const version = approvedVersion(document);
   const context = buildContext(document, version);
   const records = await repositories.cteArchiveRepository.list(principal.tenantId);
+  const hierarchy = repositories.orgChain && repositories.cteAssignments ? await loadHierarchyAccess(principal, { foundationMemberships: repositories.foundationMemberships, orgChain: repositories.orgChain, cteAssignments: repositories.cteAssignments }, asOf) : null;
+  if (hierarchy) assertSimulationWithinLimits(hierarchy, context.vector, context.customerType);
   const candidates: CteEligibilityCandidate[] = [];
   for (const record of records) {
+    // CTEs outside the operator's assignment or validity window are not offered at all.
+    if (hierarchy && cteUsability(hierarchy, record.archiveId) !== "USABLE") continue;
     const current = currentApprovedCteVersion(record);
     if (!current) continue;
     candidates.push(await applyAuthorizedOverride(principal, repositories, context, await evaluateCte(repositories.marketArchiveRepository, context, record, current, taxTreatment, asOf)));
@@ -405,7 +411,7 @@ export async function prepareBillDrivenSimulation(principal: AuthenticatedPrinci
   return { context, candidates };
 }
 
-export async function listBillDrivenSources(principal: AuthenticatedPrincipal, repositories: Pick<RuntimeRepositories, "billRepository" | "foundationMemberships">): Promise<readonly Record<string, unknown>[]> {
+export async function listBillDrivenSources(principal: AuthenticatedPrincipal, repositories: Pick<RuntimeRepositories, "billRepository" | "foundationMemberships"> & { readonly orgChain?: RuntimeRepositories["orgChain"] }): Promise<readonly Record<string, unknown>[]> {
   const documents = (await repositories.billRepository.list(principal.tenantId)).filter((document) => document.tenantId === principal.tenantId && document.currentApprovedVersionId !== null && document.lifecycleState !== "DELETED" && document.lifecycleState !== "SCHEDULED_DELETION");
   const scoped: BillDocument[] = [];
   for (const document of documents) {

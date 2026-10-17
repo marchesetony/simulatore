@@ -1,3 +1,4 @@
+import { loadHierarchyAccess } from "../../lib/hierarchy/service";
 import { jsonBody } from "../../lib/archive/api";
 import { requestPrincipal } from "../../lib/auth/request";
 import { proposalError, readCanonicalProposal } from "../../lib/proposal/api";
@@ -19,6 +20,6 @@ export async function GET(request: Request): Promise<Response> {
 }
 
 export async function POST(request: Request): Promise<Response> {
-  try { const principal = await requestPrincipal(request, "WRITE"); const tenantId = principal.tenantId; const body = await jsonBody(request); const repositories = runtimeRepositories(); const trustedInput = await resolveAuthoritativeProposalInput(repositories, body, tenantId, "CALCULATION"); const proposal = generateProposal(trustedInput, tenantId, "CALCULATION"); await assertCommerciallyActive(repositories.cteArchiveRepository, tenantId, proposal.cte.archiveId, proposal.cte.versionId); await repositories.proposals.put({ tenantId, recordId: proposal.proposalId, payload: { proposalId: proposal.proposalId, proposalFingerprint: proposal.proposalFingerprint, proposal }, idempotencyKey: proposal.proposalFingerprint }); await recordRuntimeAudit({ principal, action: "PROPOSAL_GENERATION", resourceType: "PROPOSAL", resourceId: proposal.proposalId, outcome: "ALLOWED", correlationId: "commercial-proposal-v1", metadata: { proposalFingerprint: proposal.proposalFingerprint } }); return Response.json({ proposal }); }
+  try { const principal = await requestPrincipal(request, "WRITE"); const tenantId = principal.tenantId; const body = await jsonBody(request); const repositories = runtimeRepositories(); const trustedInput = await resolveAuthoritativeProposalInput(repositories, body, tenantId, "CALCULATION", await loadHierarchyAccess(principal, repositories)); const proposal = generateProposal(trustedInput, tenantId, "CALCULATION"); await assertCommerciallyActive(repositories.cteArchiveRepository, tenantId, proposal.cte.archiveId, proposal.cte.versionId); await repositories.proposals.put({ tenantId, recordId: proposal.proposalId, payload: { proposalId: proposal.proposalId, proposalFingerprint: proposal.proposalFingerprint, proposal }, idempotencyKey: proposal.proposalFingerprint }); await recordRuntimeAudit({ principal, action: "PROPOSAL_GENERATION", resourceType: "PROPOSAL", resourceId: proposal.proposalId, outcome: "ALLOWED", correlationId: "commercial-proposal-v1", metadata: { proposalFingerprint: proposal.proposalFingerprint } }); return Response.json({ proposal }); }
   catch (error) { return proposalError(error); }
 }

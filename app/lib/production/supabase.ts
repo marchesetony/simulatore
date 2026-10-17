@@ -1,3 +1,5 @@
+import type { CteAssignmentRepository, OrgChainRepository } from "../hierarchy/service";
+import type { CteAssignment, OrgNode } from "../hierarchy/types";
 import { createHash, randomBytes, randomUUID } from "node:crypto";
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 import type { ServerSessionAdapter } from "../auth/adapter.ts";
@@ -316,6 +318,8 @@ export class SupabaseProductionStorageAdapter implements ProductionStorageAdapte
   readonly exports: TenantRecordRepository<ExportMetadataRecord>;
   readonly foundationInvitations: DeletableTenantRecordRepository<FoundationInvitationRecord>;
   readonly foundationMemberships: DeletableTenantRecordRepository<FoundationMembershipRecord>;
+  readonly orgChain: OrgChainRepository;
+  readonly cteAssignments: CteAssignmentRepository;
   readonly billFeaturePermissions: TenantRecordRepository<BillFeaturePermissionRecord>;
   readonly auditEvents: SupabaseRecordRepository<AuditEvent>;
   readonly eligibilityOverrides: EligibilityOverrideRepository;
@@ -354,6 +358,8 @@ export class SupabaseProductionStorageAdapter implements ProductionStorageAdapte
     this.marketRefreshLocks = new SupabaseRecordRepository(client, "market-refresh-locks");
     this.jobRuns = new SupabaseRecordRepository<JobRunRecord>(client, "job-runs");
     this.jobIncidents = new SupabaseRecordRepository<JobIncidentRecord>(client, "job-incidents");
+    this.orgChain = new SupabaseRecordRepository<OrgNode>(client, "org-chain") as SupabaseRecordRepository<OrgNode> & OrgChainRepository;
+    this.cteAssignments = new SupabaseRecordRepository<CteAssignment>(client, "cte-assignments");
   }
 }
 

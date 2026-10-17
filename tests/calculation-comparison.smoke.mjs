@@ -123,6 +123,11 @@ try {
   assert.equal(tieRanks.length, 2);
   assert.equal(tieRanks[0].rank, tieRanks[1].rank);
   assert.equal(tieRanks[0].tieGroup, tieRanks[1].tieGroup);
+  // The commercial chain gate removes CTEs the operator may not sell, without listing them as excluded.
+  const gated = await compareApprovedOffers(cteRepository, marketRepository, eeRequest(), { cteUsable: (archiveId) => archiveId !== fixedEe.archiveId });
+  assert.ok(!gated.results.some((result) => result.sourceCte.archiveId === fixedEe.archiveId));
+  assert.ok(!gated.excludedOffers.some((offer) => offer.archiveId === fixedEe.archiveId));
+  assert.equal(gated.results.length, comparison.results.length - 1);
 
   const immutable = structuredClone(await cteRepository.get(tenant, fixedEe.archiveId));
   immutable.history[0].reason = "tampered";

@@ -164,6 +164,8 @@ export interface CalculationDependencies {
   readonly regulatoryBridge?: Pick<ProductionRegulatoryPersistenceBridge, "list">;
   readonly regulatoryRefreshState?: Pick<TenantRecordRepository<unknown>, "get">;
   readonly regulatoryRuntimeResolver?: CteRegulatoryRuntimeResolver;
+  /** Commercial chain gate: when present, only CTEs it accepts take part in a comparison. */
+  readonly cteUsable?: (archiveId: string) => boolean;
 }
 
 export async function assertNoKnownDomesticTierDivergence(repository: Pick<TenantRecordRepository<unknown>, "get"> | undefined, tenantId: string): Promise<void> {

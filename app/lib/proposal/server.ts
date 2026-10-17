@@ -1,3 +1,6 @@
+// @ts-expect-error Node's strip-only test runner requires the explicit extension.
+import { cteUsability } from "../hierarchy/service.ts";
+import type { HierarchyAccess } from "../hierarchy/service";
 import type { CalculationResult } from "../calculation/types";
 // @ts-expect-error Node's strip-only test runner requires the explicit extension.
 import { calculateApprovedOffer, type CalculationDependencies } from "../calculation/engine.ts";
@@ -68,16 +71,17 @@ export async function rebuildAuthoritativeCalculation(repositories: RuntimeRepos
   return rebuilt;
 }
 
-export async function rebuildAuthoritativeComparison(repositories: RuntimeRepositories, tenantId: string, comparisonId: string, expectedFingerprint: string): Promise<ComparisonResult> {
+export async function rebuildAuthoritativeComparison(repositories: RuntimeRepositories, tenantId: string, comparisonId: string, expectedFingerprint: string, hierarchy?: HierarchyAccess): Promise<ComparisonResult> {
   const stored = await repositories.comparisonResults.get(tenantId, comparisonId);
   const comparison = assertStoredComparison(stored, comparisonId, expectedFingerprint, tenantId);
   const request = parseSimulationRequest(comparison.normalizedInput, tenantId);
-  const rebuilt = await compareApprovedOffers(repositories.cteArchiveRepository, repositories.marketArchiveRepository, request, await dependenciesFor(repositories, tenantId, request));
+  const dependencies = await dependenciesFor(repositories, tenantId, request);
+  const rebuilt = await compareApprovedOffers(repositories.cteArchiveRepository, repositories.marketArchiveRepository, request, hierarchy ? { ...(dependencies ?? {}), cteUsable: (archiveId) => cteUsability(hierarchy, archiveId) === "USABLE" } : dependencies);
   if (rebuilt.comparisonId !== comparison.comparisonId || rebuilt.fingerprint !== comparison.fingerprint) throw new Error("PROPOSAL_COMPARISON_STALE");
   return rebuilt;
 }
 
-export async function resolveAuthoritativeProposalInput(repositories: RuntimeRepositories, body: Record<string, unknown>, tenantId: string, sourceType: ProposalSourceType): Promise<Record<string, unknown>> {
+export async function resolveAuthoritativeProposalInput(repositories: RuntimeRepositories, body: Record<string, unknown>, tenantId: string, sourceType: ProposalSourceType, hierarchy?: HierarchyAccess): Promise<Record<string, unknown>> {
   assertNoClientEconomicObject(body);
   if (body.sourceType !== sourceType) throw new Error("PROPOSAL_SOURCE_INVALID");
   const trusted = { ...body };
@@ -91,13 +95,14 @@ export async function resolveAuthoritativeProposalInput(repositories: RuntimeRep
     const calculationId = requiredReference(body.calculationId, "PROPOSAL_CALCULATION_ID_REQUIRED");
     const calculationFingerprint = assertReferenceFingerprint(body.calculationFingerprint, "PROPOSAL_CALCULATION_FINGERPRINT_REQUIRED");
     const calculation = await rebuildAuthoritativeCalculation(repositories, tenantId, calculationId, calculationFingerprint);
+    if (hierarchy && cteUsability(hierarchy, calculation.sourceCte.archiveId) !== "USABLE") throw new Error("CTE_NOT_ASSIGNED");
     trusted.calculation = calculation;
     if (calculation.normalizedInput.sourceBill) trusted.sourceBill = calculation.normalizedInput.sourceBill;
     return trusted;
   }
   const comparisonId = requiredReference(body.comparisonId, "PROPOSAL_COMPARISON_ID_REQUIRED");
   const comparisonFingerprint = assertReferenceFingerprint(body.comparisonFingerprint, "PROPOSAL_COMPARISON_FINGERPRINT_REQUIRED");
-  const comparison = await rebuildAuthoritativeComparison(repositories, tenantId, comparisonId, comparisonFingerprint);
+  const comparison = await rebuildAuthoritativeComparison(repositories, tenantId, comparisonId, comparisonFingerprint, hierarchy);
   trusted.comparison = comparison;
   if (comparison.normalizedInput.sourceBill) trusted.sourceBill = comparison.normalizedInput.sourceBill;
   trusted.sourceComparison = { comparisonId, fingerprint: comparisonFingerprint };

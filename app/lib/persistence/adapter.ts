@@ -1,3 +1,4 @@
+import type { CteAssignmentRepository, OrgChainRepository } from "../hierarchy/service";
 import type { BillRepository, DocumentStoragePort } from "../foundation/real-bill";
 import type { RegulatoryValueRecord } from "../foundation/regulatory-types.ts";
 import type { RegulatoryApprovalDomainState } from "../regulatory-approval-domain.ts";
@@ -43,6 +44,8 @@ export interface ProductionStorageAdapter {
   readonly marketRefreshLocks?: TenantRecordRepository<unknown>;
   readonly jobRuns: TenantRecordRepository<JobRunRecord>;
   readonly jobIncidents: TenantRecordRepository<JobIncidentRecord>;
+  readonly orgChain?: OrgChainRepository;
+  readonly cteAssignments?: CteAssignmentRepository;
 }
 
 export interface RuntimeRepositories {
@@ -72,9 +75,20 @@ export interface RuntimeRepositories {
   readonly marketRefreshLocks: TenantRecordRepository<unknown>;
   readonly jobRuns: TenantRecordRepository<JobRunRecord>;
   readonly jobIncidents: TenantRecordRepository<JobIncidentRecord>;
+  readonly orgChain: OrgChainRepository;
+  readonly cteAssignments: CteAssignmentRepository;
 }
 
 let productionStorageAdapter: ProductionStorageAdapter | null = null;
+
+/**
+ * A provider adapter that predates the commercial chain reads as an empty chain
+ * (the behaviour before the chain existed) and refuses every write.
+ */
+function unavailableHierarchyStore(): DeletableTenantRecordRepository<never> {
+  const fail = async (): Promise<never> => { throw new Error("HIERARCHY_STORAGE_UNAVAILABLE"); };
+  return { get: async () => null, list: async () => [], put: fail, append: fail, delete: fail };
+}
 function hasMethods(value: unknown, methods: readonly string[]): boolean {
   if (typeof value !== "object" || value === null) return false;
   return methods.every((method) => typeof (value as Record<string, unknown>)[method] === "function");
@@ -107,7 +121,7 @@ export function runtimeRepositories(): RuntimeRepositories {
   const config = getRuntimeConfig();
   if (config.runtimeMode === "production") {
     if (!productionStorageAdapter) throw new Error("PERSISTENCE_ADAPTER_UNAVAILABLE");
-    return { ...productionStorageAdapter, eligibilityOverrides: productionStorageAdapter.eligibilityOverrides ?? productionStorageAdapter.cteArchives as EligibilityOverrideRepository, marketRefreshState: productionStorageAdapter.marketRefreshState ?? productionStorageAdapter.marketDataArchives, marketRefreshRuns: productionStorageAdapter.marketRefreshRuns ?? productionStorageAdapter.marketDataArchives, marketRefreshLocks: productionStorageAdapter.marketRefreshLocks ?? productionStorageAdapter.marketDataArchives };
+    return { ...productionStorageAdapter, eligibilityOverrides: productionStorageAdapter.eligibilityOverrides ?? productionStorageAdapter.cteArchives as EligibilityOverrideRepository, marketRefreshState: productionStorageAdapter.marketRefreshState ?? productionStorageAdapter.marketDataArchives, marketRefreshRuns: productionStorageAdapter.marketRefreshRuns ?? productionStorageAdapter.marketDataArchives, marketRefreshLocks: productionStorageAdapter.marketRefreshLocks ?? productionStorageAdapter.marketDataArchives, orgChain: productionStorageAdapter.orgChain ?? unavailableHierarchyStore() as OrgChainRepository, cteAssignments: productionStorageAdapter.cteAssignments ?? unavailableHierarchyStore() as CteAssignmentRepository };
   }
   const local = new LocalFilesystemAdapter("var/phase6");
   return {
@@ -130,6 +144,8 @@ export function runtimeRepositories(): RuntimeRepositories {
     billFeaturePermissions: local.collection<BillFeaturePermissionRecord>("bill-feature-permissions"),
     auditEvents: local.collection("audit-events"),
     eligibilityOverrides: local.collection("eligibility-overrides"),
+    orgChain: local.collection("org-chain") as OrgChainRepository,
+    cteAssignments: local.collection("cte-assignments"),
     regulatoryRefreshState: local.collection("regulatory-refresh-state"),
     regulatoryRefreshRuns: local.collection("regulatory-refresh-runs"),
     marketRefreshState: local.collection("market-refresh-state"),
