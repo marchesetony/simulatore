@@ -20,7 +20,8 @@ async function context(principal: AuthenticatedPrincipal) {
 /** The chain the caller may see, the people that can still be placed in it, and the caller's own limits. */
 export async function hierarchyResponse(principal: AuthenticatedPrincipal): Promise<Response> {
   const { repositories, memberships, actor } = await context(principal);
-  const [nodes, assignments] = await Promise.all([repositories.orgChain.list(principal.tenantId), repositories.cteAssignments.list(principal.tenantId)]);
+  const [nodes, assignments, accounts] = await Promise.all([repositories.orgChain.list(principal.tenantId), repositories.cteAssignments.list(principal.tenantId), repositories.accessAccounts.list(principal.tenantId)]);
+  const names = new Map(accounts.map((record) => [record.payload.userId, record.payload.displayName]));
   const access = buildHierarchyAccess(actor, nodes, assignments, today());
   const visible = visibleOrgNodes(access.index, actor);
   const placed = new Set(access.index.nodes.keys());
@@ -29,7 +30,7 @@ export async function hierarchyResponse(principal: AuthenticatedPrincipal): Prom
     .filter((record) => record.tenantId === principal.tenantId && record.status === "ACTIVE")
     // Managers may place people who are not in the chain yet, below themselves.
     .filter((record) => actor.role === "SUPER_ADMIN" || branch.has(record.userId) || (!placed.has(record.userId) && (record.role === "SALES_OPERATOR" || record.role === "SALES_MANAGER")))
-    .map((record) => ({ userId: record.userId, role: record.role, allowedLevels: LEVEL_FOR_ROLE[record.role] ?? [], placed: placed.has(record.userId) }))
+    .map((record) => ({ userId: record.userId, displayName: names.get(record.userId) ?? null, role: record.role, allowedLevels: LEVEL_FOR_ROLE[record.role] ?? [], placed: placed.has(record.userId) }))
     .sort((left, right) => left.userId.localeCompare(right.userId));
   const own = access.index.nodes.get(actor.userId);
   return Response.json({ actor: { userId: actor.userId, role: actor.role, level: own?.payload.level ?? null, effectiveLimits: access.limits, canManageCompany: actor.role === "SUPER_ADMIN" }, nodes: visible, members }, { headers: HEADERS });

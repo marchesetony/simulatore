@@ -99,6 +99,18 @@ const messages: Readonly<Record<string, string>> = {
   COMPARISON_RESPONSE_INVALID: "Risposta confronto non valida",
   EXPORT_CONTENT_TYPE_INVALID: "Tipo contenuto export non valido",
   EXPORT_FILENAME_INVALID: "Nome file export non valido",
+  ACCESS_DENIED: "Non hai i permessi per questa operazione.",
+  ACCESS_EMAIL_TAKEN: "Esiste già un accesso con questa email.",
+  ACCESS_EMAIL_INVALID: "Email non valida.",
+  ACCESS_PASSWORD_WEAK: "La password deve avere almeno 10 caratteri, con lettere e numeri.",
+  ACCESS_PASSWORD_INCORRECT: "La password attuale non è corretta.",
+  ACCESS_PASSWORD_UNCHANGED: "La nuova password deve essere diversa da quella attuale.",
+  ACCESS_NAME_INVALID: "Inserisci nome e cognome.",
+  ACCESS_COMPANY_NAME_INVALID: "Inserisci la ragione sociale.",
+  ACCESS_COMPANY_EXISTS: "Esiste già un'azienda con questo nome.",
+  ACCESS_SELF_EDIT_DENIED: "Non puoi sospendere il tuo stesso accesso.",
+  ACCESS_DIRECTORY_UNAVAILABLE: "Servizio accessi non disponibile. Riprova.",
+  PERSISTENCE_VERSION_CONFLICT: "Qualcun altro ha modificato questo accesso. Ricarica la pagina.",
   UI_REQUEST_FAILED: "Operazione non disponibile. Codice UI_REQUEST_FAILED",
 };
 

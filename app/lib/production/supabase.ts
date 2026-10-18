@@ -1,5 +1,8 @@
 import type { CteAssignmentRepository, OrgChainRepository } from "../hierarchy/service";
 import type { CteAssignment, OrgNode } from "../hierarchy/types";
+import type { AccessAccount, AccessDirectory, Company } from "../access/types";
+// @ts-expect-error Node's strip-only test runner requires the explicit extension.
+import { SupabaseAccessDirectory } from "./supabase-directory.ts";
 import { createHash, randomBytes, randomUUID } from "node:crypto";
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 import type { ServerSessionAdapter } from "../auth/adapter.ts";
@@ -331,7 +334,11 @@ export class SupabaseProductionStorageAdapter implements ProductionStorageAdapte
   readonly jobRuns: TenantRecordRepository<JobRunRecord>;
   readonly jobIncidents: TenantRecordRepository<JobIncidentRecord>;
 
-  constructor(client: ProviderClient, storageBucket: string) {
+  readonly companies: TenantRecordRepository<Company>;
+  readonly accessAccounts: TenantRecordRepository<AccessAccount>;
+  readonly accessDirectory?: AccessDirectory;
+
+  constructor(client: ProviderClient, storageBucket: string, authClient?: () => ProviderClient) {
     this.cteArchiveRepository = new SupabaseCteArchiveRepository(client);
     this.marketArchiveRepository = new SupabaseMarketArchiveRepository(client);
     this.billRepository = new SupabaseBillRepository(client);
@@ -360,6 +367,9 @@ export class SupabaseProductionStorageAdapter implements ProductionStorageAdapte
     this.jobIncidents = new SupabaseRecordRepository<JobIncidentRecord>(client, "job-incidents");
     this.orgChain = new SupabaseRecordRepository<OrgNode>(client, "org-chain") as SupabaseRecordRepository<OrgNode> & OrgChainRepository;
     this.cteAssignments = new SupabaseRecordRepository<CteAssignment>(client, "cte-assignments");
+    this.companies = new SupabaseRecordRepository<Company>(client, "companies");
+    this.accessAccounts = new SupabaseRecordRepository<AccessAccount>(client, "access-accounts");
+    if (authClient) this.accessDirectory = new SupabaseAccessDirectory(client, authClient);
   }
 }
 
@@ -469,5 +479,5 @@ export async function revokeProductionSession(client: ProviderClient, sessionId:
 
 export function createProductionAdapters(config: ProductionProviderConfig): { readonly client: ProviderClient; readonly auth: ServerSessionAdapter; readonly storage: ProductionStorageAdapter } {
   const client = createSupabaseProviderClient(config);
-  return { client, auth: new SupabaseServerSessionAdapter(client, config.sessionCookieName), storage: new SupabaseProductionStorageAdapter(client, config.storageBucket) };
+  return { client, auth: new SupabaseServerSessionAdapter(client, config.sessionCookieName), storage: new SupabaseProductionStorageAdapter(client, config.storageBucket, () => createSupabaseAuthClient(config)) };
 }
