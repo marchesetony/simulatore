@@ -6,6 +6,8 @@ import { productionSessionAdapterConfigured } from "./auth/adapter.ts";
 import { productionStorageAdapterConfigured } from "./persistence/adapter.ts";
 // @ts-expect-error Node's strip-only test runner requires the explicit extension.
 import { bootstrapProductionRuntime } from "./production/bootstrap.ts";
+// @ts-expect-error Node's strip-only test runner requires the explicit extension.
+import { readProductionProviderConfig } from "./production/supabase.ts";
 
 export interface ReadinessReport {
   readonly application: "running";
@@ -22,7 +24,10 @@ export interface ReadinessReport {
 export function readinessReport(now = new Date()): ReadinessReport {
   const bootstrap = bootstrapProductionRuntime();
   const config = readRuntimeConfig();
-  if (!config.valid) return { application: "running", runtimeMode: "invalid", authAdapterConfigured: false, persistenceAdapterConfigured: false, readiness: false, schemaCompatibility: true, configurationIssues: config.errors, timestamp: now.toISOString() };
+  if (!config.valid) {
+    const provider = readProductionProviderConfig();
+    return { application: "running", runtimeMode: "invalid", authAdapterConfigured: false, persistenceAdapterConfigured: false, readiness: false, schemaCompatibility: true, configurationIssues: [...config.errors, ...(provider.valid ? [] : provider.missing)], timestamp: now.toISOString() };
+  }
   const authConfigured = config.config.runtimeMode === "local" || productionSessionAdapterConfigured();
   const persistenceConfigured = config.config.runtimeMode === "local" || productionStorageAdapterConfigured();
   const providerConfigured = config.config.runtimeMode === "local" || bootstrap.providerConfigured;
