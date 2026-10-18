@@ -14,15 +14,17 @@ export interface ReadinessReport {
   readonly persistenceAdapterConfigured: boolean;
   readonly readiness: boolean;
   readonly schemaCompatibility: boolean;
+  /** Names of the settings that are missing or malformed, never their values. */
+  readonly configurationIssues?: readonly string[];
   readonly timestamp: string;
 }
 
 export function readinessReport(now = new Date()): ReadinessReport {
   const bootstrap = bootstrapProductionRuntime();
   const config = readRuntimeConfig();
-  if (!config.valid) return { application: "running", runtimeMode: "invalid", authAdapterConfigured: false, persistenceAdapterConfigured: false, readiness: false, schemaCompatibility: true, timestamp: now.toISOString() };
+  if (!config.valid) return { application: "running", runtimeMode: "invalid", authAdapterConfigured: false, persistenceAdapterConfigured: false, readiness: false, schemaCompatibility: true, configurationIssues: config.errors, timestamp: now.toISOString() };
   const authConfigured = config.config.runtimeMode === "local" || productionSessionAdapterConfigured();
   const persistenceConfigured = config.config.runtimeMode === "local" || productionStorageAdapterConfigured();
   const providerConfigured = config.config.runtimeMode === "local" || bootstrap.providerConfigured;
-  return { application: "running", runtimeMode: config.config.runtimeMode, authAdapterConfigured: authConfigured, persistenceAdapterConfigured: persistenceConfigured, readiness: providerConfigured && authConfigured && persistenceConfigured, schemaCompatibility: true, timestamp: now.toISOString() };
+  return { application: "running", runtimeMode: config.config.runtimeMode, authAdapterConfigured: authConfigured, persistenceAdapterConfigured: persistenceConfigured, readiness: providerConfigured && authConfigured && persistenceConfigured, schemaCompatibility: true, configurationIssues: bootstrap.missing, timestamp: now.toISOString() };
 }
