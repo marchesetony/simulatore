@@ -7,7 +7,7 @@ import { requestJson, toUiError } from "../lib/ui/client";
 type Level = "AMMINISTRATORE" | "DIRETTORE" | "AREA_MANAGER" | "AGENTE";
 type Account = { readonly userId: string; readonly tenantId: string; readonly email: string; readonly displayName: string; readonly level: Level; readonly status: "ACTIVE" | "SUSPENDED"; readonly version?: number };
 type Company = { readonly tenantId: string; readonly name: string; readonly createdAt: string; readonly accounts: readonly Account[] };
-type Capabilities = { readonly platformOwner: boolean; readonly teamManager: boolean };
+type Capabilities = { readonly userId: string; readonly platformOwner: boolean; readonly teamManager: boolean };
 
 const LEVEL_LABEL: Readonly<Record<Level, string>> = { AMMINISTRATORE: "Amministratore", DIRETTORE: "Direttore", AREA_MANAGER: "Area Manager", AGENTE: "Agente" };
 const LEVELS = Object.keys(LEVEL_LABEL) as Level[];
@@ -25,7 +25,7 @@ function AccountFields({ idPrefix, withLevel, value, onChange }: { readonly idPr
 
 const EMPTY = { displayName: "", email: "", password: "", level: "AGENTE" as Level };
 
-function AccountList({ accounts, tenantId, onChanged }: { readonly accounts: readonly Account[]; readonly tenantId?: string; readonly onChanged: () => void }) {
+function AccountList({ accounts, tenantId, selfUserId, onChanged }: { readonly accounts: readonly Account[]; readonly tenantId?: string; readonly selfUserId?: string; readonly onChanged: () => void }) {
   const [pending, setPending] = useState<string | null>(null); const [error, setError] = useState<string>();
   async function toggle(account: Account) {
     setPending(account.userId); setError(undefined);
@@ -36,7 +36,7 @@ function AccountList({ accounts, tenantId, onChanged }: { readonly accounts: rea
   return <>
     <div className="responsive-table"><table><thead><tr><th>Nome</th><th>Email</th><th>Ruolo</th><th>Stato</th><th></th></tr></thead>
       <tbody>{accounts.map((account) => <tr key={account.userId}><td><strong>{account.displayName}</strong></td><td>{account.email}</td><td>{LEVEL_LABEL[account.level]}</td><td><span className={`status-badge ${account.status === "ACTIVE" ? "positive" : "negative"}`}>{account.status === "ACTIVE" ? "Attivo" : "Sospeso"}</span></td>
-        <td>{account.version !== undefined ? <button className="button secondary compact" type="button" disabled={pending !== null} onClick={() => void toggle(account)}>{pending === account.userId ? "Salvataggio" : account.status === "ACTIVE" ? "Sospendi" : "Riattiva"}</button> : null}</td></tr>)}</tbody></table></div>
+        <td>{account.version !== undefined && account.userId !== selfUserId ? <button className="button secondary compact" type="button" disabled={pending !== null} onClick={() => void toggle(account)}>{pending === account.userId ? "Salvataggio" : account.status === "ACTIVE" ? "Sospendi" : "Riattiva"}</button> : null}</td></tr>)}</tbody></table></div>
     {error ? <ErrorState message={error} /> : null}
   </>;
 }
@@ -95,7 +95,7 @@ function Companies() {
   </>;
 }
 
-function Team() {
+function Team({ selfUserId }: { readonly selfUserId: string }) {
   const [accounts, setAccounts] = useState<readonly Account[] | null>(null); const [error, setError] = useState<string>();
   const load = useCallback(() => requestJson<{ readonly accounts: readonly Account[] }>("/api/access/team").then((response) => setAccounts(response.accounts), (cause) => setError(errorText(cause))), []);
   useEffect(() => { void load(); }, [load]);
@@ -103,7 +103,7 @@ function Team() {
     <section className="ui-card"><NewAccountForm title="Nuovo accesso" onCreated={() => void load()} /></section>
     <section className="ui-card"><div className="card-heading"><h3>La tua squadra</h3></div>
       <p className="muted">Dopo aver creato un accesso, inserisci la persona nella catena da Catena e CTE per assegnarle responsabile e limiti.</p>
-      {error ? <ErrorState message={error} /> : accounts === null ? <LoadingState label="Caricamento squadra" /> : <AccountList accounts={accounts} onChanged={() => void load()} />}
+      {error ? <ErrorState message={error} /> : accounts === null ? <LoadingState label="Caricamento squadra" /> : <AccountList accounts={accounts} selfUserId={selfUserId} onChanged={() => void load()} />}
     </section>
   </>;
 }
@@ -137,7 +137,7 @@ export default function AccessPanel() {
   const detail = capabilities.platformOwner ? "Crei le aziende clienti e il loro amministratore. Ogni azienda poi crea gli accessi per la propria squadra." : capabilities.teamManager ? "Crei gli accessi per direttori, area manager e agenti della tua azienda." : "Gestisci la tua password.";
   return <div className="content-stack">
     <div className="section-header"><div><p className="eyebrow">ACCESSI</p><h2>{capabilities.platformOwner ? "Aziende e accessi" : capabilities.teamManager ? "Squadra e accessi" : "Il tuo accesso"}</h2><p className="section-detail">{detail}</p></div></div>
-    {capabilities.platformOwner ? <Companies /> : capabilities.teamManager ? <Team /> : null}
+    {capabilities.platformOwner ? <Companies /> : capabilities.teamManager ? <Team selfUserId={capabilities.userId} /> : null}
     <ChangePassword />
   </div>;
 }

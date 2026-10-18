@@ -14,7 +14,7 @@ function stores(): AccessStores {
 
 /** What the signed-in person may manage: drives which access screens the shell shows. */
 export function accessCapabilitiesResponse(principal: AuthenticatedPrincipal): Response {
-  return Response.json({ platformOwner: isPlatformOwner(principal), teamManager: canManageTeam(principal) }, { headers: HEADERS });
+  return Response.json({ userId: principal.userId, platformOwner: isPlatformOwner(principal), teamManager: canManageTeam(principal) }, { headers: HEADERS });
 }
 
 export async function companiesResponse(principal: AuthenticatedPrincipal): Promise<Response> {
