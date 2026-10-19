@@ -5,6 +5,8 @@ import { configuredMarketRefreshTenants, marketCronAuthorizationMatches, marketC
 // @ts-expect-error Node's strip-only test runner requires the explicit extension.
 import { runPunMarketRefresh } from "../../../lib/market-refresh/service.ts";
 // @ts-expect-error Node's strip-only test runner requires the explicit extension.
+import { runPsvMarketRefresh } from "../../../lib/market-refresh/psv.ts";
+// @ts-expect-error Node's strip-only test runner requires the explicit extension.
 import { observeJob } from "../../../lib/automation/observability.ts";
 
 export const runtime = "nodejs";
@@ -17,7 +19,7 @@ export async function GET(request: Request): Promise<Response> {
     const repositories = runtimeRepositories();
     const results = [];
     for (const tenantId of configuredMarketRefreshTenants()) {
-      const observed = await observeJob({ repository: repositories.jobRuns, incidents: repositories.jobIncidents, tenantId, jobKey: "MARKET_REFRESH", trigger: "CRON", now: new Date().toISOString(), operation: () => runPunMarketRefresh({ tenantId, repositories, trigger: "CRON" }), summary: (result) => ({ monthsChecked: result.monthsChecked, monthsFailed: result.monthsFailed, monthsCreated: result.monthsCreated, monthsCorrected: result.monthsCorrected }) });
+      const observed = await observeJob({ repository: repositories.jobRuns, incidents: repositories.jobIncidents, tenantId, jobKey: "MARKET_REFRESH", trigger: "CRON", now: new Date().toISOString(), operation: async () => ({ ...await runPunMarketRefresh({ tenantId, repositories, trigger: "CRON" }), psv: await runPsvMarketRefresh({ tenantId, repositories }) }), summary: (result) => ({ monthsChecked: result.monthsChecked, monthsFailed: result.monthsFailed, monthsCreated: result.monthsCreated, monthsCorrected: result.monthsCorrected, psvMonthsCreated: result.psv.monthsCreated, psvMonthsFailed: result.psv.monthsFailed }) });
       results.push(observed.value ?? { status: "ALREADY_RUNNING", runId: observed.run.payload.runId, tenantId });
     }
     return Response.json({ status: "OK", results });
