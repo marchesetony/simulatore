@@ -9,7 +9,7 @@ const HEADERS = { "cache-control": "no-store, private", "vary": "Cookie, Authori
 
 function stores(): AccessStores {
   const repositories = runtimeRepositories();
-  return { companies: repositories.companies, accounts: repositories.accessAccounts, memberships: repositories.foundationMemberships, directory: repositories.accessDirectory };
+  return { companies: repositories.companies, accounts: repositories.accessAccounts, memberships: repositories.foundationMemberships, orgChain: repositories.orgChain, directory: repositories.accessDirectory };
 }
 
 /** What the signed-in person may manage: drives which access screens the shell shows. */

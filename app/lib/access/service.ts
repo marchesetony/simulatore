@@ -5,17 +5,22 @@ import type { FoundationMembershipRecord, TenantRecord } from "../persistence/ty
 import { permissionsForMembershipRole } from "../foundation/memberships.ts";
 // @ts-expect-error Node's strip-only test runner requires the explicit extension.
 import { PLATFORM_TENANT_ID } from "./types.ts";
+// @ts-expect-error Node's strip-only test runner requires the explicit extension.
+import { buildOrgChainIndex, ORG_LEVELS, saveOrgNode } from "../hierarchy/service.ts";
+import type { HierarchyActor } from "../hierarchy/service";
+import type { OrgLevel } from "../hierarchy/types";
 import type { AccessAccount, AccessStores, AccountLevel, AccountStatus, Company } from "./types";
 
 const TENANT_PATTERN = /^tenant_[a-z0-9-]+$/;
 const USER_PATTERN = /^user_[a-z0-9-]+$/;
 const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-export const ACCOUNT_LEVELS: readonly AccountLevel[] = ["AMMINISTRATORE", "DIRETTORE", "AREA_MANAGER", "AGENTE"];
+export const ACCOUNT_LEVELS: readonly AccountLevel[] = ["AMMINISTRATORE", "DIRETTORE", "AREA_MANAGER", "AGENTE", "SUB_AGENTE"];
 const LEVEL_ROLES: Readonly<Record<AccountLevel, { readonly foundation: FoundationMembershipRecord["role"]; readonly runtime: AuthRole }>> = {
   AMMINISTRATORE: { foundation: "TENANT_ADMIN", runtime: "ADMIN" },
   DIRETTORE: { foundation: "SALES_MANAGER", runtime: "ANALYST" },
   AREA_MANAGER: { foundation: "SALES_MANAGER", runtime: "ANALYST" },
   AGENTE: { foundation: "SALES_OPERATOR", runtime: "VIEWER" },
+  SUB_AGENTE: { foundation: "SALES_OPERATOR", runtime: "VIEWER" },
 };
 
 function fail(code: string): never { throw new Error(code); }
@@ -89,6 +94,39 @@ async function provisionAccount(stores: AccessStores, input: { readonly tenantId
   }
 }
 
+function chainLevel(level: AccountLevel): OrgLevel | null { return level === "AMMINISTRATORE" ? null : level; }
+
+// Whoever manages a team acts on its chain with company authority.
+function chainActor(principal: AuthenticatedPrincipal, tenantId: string): HierarchyActor { return { userId: principal.userId, tenantId, role: "SUPER_ADMIN" }; }
+
+async function placeInChain(stores: AccessStores, principal: AuthenticatedPrincipal, tenantId: string, input: { readonly userId: string; readonly level: OrgLevel; readonly parentUserId: string | null; readonly displayName: string }, now: string): Promise<void> {
+  const memberships = (await stores.memberships.list(tenantId)).map((record) => record.payload);
+  await saveOrgNode({ orgChain: stores.orgChain, memberships }, chainActor(principal, tenantId), input, now);
+}
+
+/** The company node at the top of the chain; companies created before the chain existed get it from their first administrator. */
+async function companyRoot(stores: AccessStores, principal: AuthenticatedPrincipal, tenantId: string, now: string): Promise<string | null> {
+  const index = buildOrgChainIndex(await stores.orgChain.list(tenantId));
+  const root = [...index.nodes.values()].find((record) => record.payload.level === "AZIENDA");
+  if (root) return root.payload.userId;
+  const admin = (await stores.accounts.list(tenantId)).map((record) => record.payload).filter((account) => account.level === "AMMINISTRATORE" && account.status === "ACTIVE").sort((left, right) => left.createdAt.localeCompare(right.createdAt))[0];
+  if (!admin) return null;
+  const company = await stores.companies.get(PLATFORM_TENANT_ID, tenantId);
+  await placeInChain(stores, principal, tenantId, { userId: admin.userId, level: "AZIENDA", parentUserId: null, displayName: company?.payload.name ?? admin.displayName }, now);
+  return admin.userId;
+}
+
+/** The responsabile must already sit in the chain at a higher level than the new account. */
+async function resolveParent(stores: AccessStores, principal: AuthenticatedPrincipal, tenantId: string, level: OrgLevel, requested: unknown, now: string): Promise<string> {
+  const root = await companyRoot(stores, principal, tenantId, now);
+  const parentUserId = requested === undefined || requested === null || requested === "" ? root : requested;
+  if (typeof parentUserId !== "string" || !USER_PATTERN.test(parentUserId)) fail("ACCESS_PARENT_REQUIRED");
+  const parent = buildOrgChainIndex(await stores.orgChain.list(tenantId)).nodes.get(parentUserId);
+  if (!parent) fail("ACCESS_PARENT_NOT_FOUND");
+  if (ORG_LEVELS.indexOf(parent.payload.level) >= ORG_LEVELS.indexOf(level)) fail("ACCESS_PARENT_LEVEL_INVALID");
+  return parentUserId;
+}
+
 export async function createCompany(stores: AccessStores, principal: AuthenticatedPrincipal, body: Record<string, unknown>, now = new Date().toISOString()): Promise<{ readonly company: Company; readonly admin: AccessAccount }> {
   if (!isPlatformOwner(principal)) fail("ACCESS_DENIED");
   const name = text(body.name, "ACCESS_COMPANY_NAME_INVALID", 2, 120);
@@ -97,6 +135,7 @@ export async function createCompany(stores: AccessStores, principal: Authenticat
   const admin = typeof body.admin === "object" && body.admin !== null && !Array.isArray(body.admin) ? body.admin as Record<string, unknown> : fail("ACCESS_ADMIN_REQUIRED");
   const account = await provisionAccount(stores, { tenantId, email: normalizeEmail(admin.email), displayName: text(admin.displayName, "ACCESS_NAME_INVALID", 2, 120), level: "AMMINISTRATORE", password: validatePassword(admin.password), createdBy: principal.userId, now });
   const company = await stores.companies.put({ tenantId: PLATFORM_TENANT_ID, recordId: tenantId, payload: { tenantId, name, createdBy: principal.userId, createdAt: now }, now });
+  await placeInChain(stores, principal, tenantId, { userId: account.payload.userId, level: "AZIENDA", parentUserId: null, displayName: name }, now);
   return { company: company.payload, admin: account.payload };
 }
 
@@ -112,13 +151,19 @@ function byName(left: AccessAccount, right: AccessAccount): number { return left
 export async function createAccount(stores: AccessStores, principal: AuthenticatedPrincipal, body: Record<string, unknown>, now = new Date().toISOString()): Promise<AccessAccount> {
   const tenantId = managedTenant(principal, body.tenantId);
   if (isPlatformOwner(principal) && !(await stores.companies.get(PLATFORM_TENANT_ID, tenantId))) fail("ACCESS_COMPANY_NOT_FOUND");
-  const record = await provisionAccount(stores, { tenantId, email: normalizeEmail(body.email), displayName: text(body.displayName, "ACCESS_NAME_INVALID", 2, 120), level: level(body.level), password: validatePassword(body.password), createdBy: principal.userId, now });
+  const input = { tenantId, email: normalizeEmail(body.email), displayName: text(body.displayName, "ACCESS_NAME_INVALID", 2, 120), level: level(body.level), password: validatePassword(body.password), createdBy: principal.userId, now };
+  const orgLevel = chainLevel(input.level);
+  const parentUserId = orgLevel === null ? null : await resolveParent(stores, principal, tenantId, orgLevel, body.parentUserId, now);
+  const record = await provisionAccount(stores, input);
+  if (orgLevel !== null) await placeInChain(stores, principal, tenantId, { userId: record.payload.userId, level: orgLevel, parentUserId, displayName: input.displayName }, now);
   return record.payload;
 }
 
-export async function listTeam(stores: AccessStores, principal: AuthenticatedPrincipal, requestedTenantId?: unknown): Promise<readonly (AccessAccount & { readonly version: number })[]> {
+export async function listTeam(stores: AccessStores, principal: AuthenticatedPrincipal, requestedTenantId?: unknown): Promise<readonly (AccessAccount & { readonly version: number; readonly chainLevel: OrgLevel | null; readonly parentUserId: string | null })[]> {
   const tenantId = managedTenant(principal, requestedTenantId);
-  return (await stores.accounts.list(tenantId)).map((record) => ({ ...record.payload, version: record.version })).sort(byName);
+  const [accounts, nodes] = await Promise.all([stores.accounts.list(tenantId), stores.orgChain.list(tenantId)]);
+  const index = buildOrgChainIndex(nodes);
+  return accounts.map((record) => { const node = index.nodes.get(record.payload.userId)?.payload; return { ...record.payload, version: record.version, chainLevel: node?.level ?? null, parentUserId: node?.parentUserId ?? null }; }).sort(byName);
 }
 
 export async function setAccountStatus(stores: AccessStores, principal: AuthenticatedPrincipal, body: Record<string, unknown>, now = new Date().toISOString()): Promise<AccessAccount> {

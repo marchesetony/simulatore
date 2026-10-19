@@ -1,4 +1,4 @@
-// Commercial chain of command: Azienda > Direttore > Area Manager > Agente.
+// Commercial chain of command: Azienda > Direttore > Area Manager > Agente > Sub-agente.
 // Each level can only narrow what the level above allows; the effective limits
 // of a node are the intersection of every limit on its path from the company.
 import type { AuthenticatedPrincipal, CanonicalProductRole } from "../auth/types";
@@ -12,7 +12,7 @@ import type { CommercialLimits, CteAssignment, CteAssignmentScope, CteAssignment
 export type OrgChainRepository = DeletableTenantRecordRepository<OrgNode>;
 export type CteAssignmentRepository = TenantRecordRepository<CteAssignment>;
 
-export const ORG_LEVELS: readonly OrgLevel[] = ["AZIENDA", "DIRETTORE", "AREA_MANAGER", "AGENTE"];
+export const ORG_LEVELS: readonly OrgLevel[] = ["AZIENDA", "DIRETTORE", "AREA_MANAGER", "AGENTE", "SUB_AGENTE"];
 const VECTORS: readonly LimitVector[] = ["EE", "GAS"];
 const CATEGORIES: readonly LimitCustomerCategory[] = ["RESIDENTIAL", "NON_RESIDENTIAL"];
 const SCOPES: readonly CteAssignmentScope[] = ["ALL", "BRANCHES"];
@@ -165,7 +165,7 @@ export function hierarchyActor(principal: Pick<AuthenticatedPrincipal, "userId" 
 
 function membershipFitsLevel(membership: FoundationMembershipRecord, level: OrgLevel): boolean {
   if (level === "AZIENDA") return foundationRoleToCanonical(membership.role) === "SUPER_ADMIN";
-  if (level === "AGENTE") return membership.role === "SALES_OPERATOR";
+  if (level === "AGENTE" || level === "SUB_AGENTE") return membership.role === "SALES_OPERATOR";
   return membership.role === "SALES_MANAGER";
 }
 

@@ -31,7 +31,7 @@ function memoryRepository() {
 function principal(userId, tenantId, role) { return { userId, tenantId, role, sessionId: `session_${userId.slice(5)}`, issuedAt: at, expiresAt: "2026-10-18T16:00:00.000Z", source: "VERIFIED_SESSION" }; }
 
 const directory = new LocalAccessDirectory(memoryRepository());
-const stores = { companies: memoryRepository(), accounts: memoryRepository(), memberships: memoryRepository(), directory };
+const stores = { companies: memoryRepository(), accounts: memoryRepository(), memberships: memoryRepository(), orgChain: memoryRepository(), directory };
 const owner = principal("user_tony", PLATFORM_TENANT_ID, "ADMIN");
 
 assert.equal(isPlatformOwner(owner), true);
@@ -57,18 +57,30 @@ assert.equal((await stores.companies.list(PLATFORM_TENANT_ID)).length, 1, "faile
 const giulia = principal(lumenica.admin.userId, lumenica.company.tenantId, "ADMIN");
 assert.equal(canManageTeam(giulia), true);
 const direttore = await createAccount(stores, giulia, { displayName: "Marco Bianchi", email: "marco@lumenica.test", level: "DIRETTORE", password: "Direttore2026" }, at);
-const agente = await createAccount(stores, giulia, { displayName: "Sara Verdi", email: "sara@lumenica.test", level: "AGENTE", password: "AgenteSara26" }, at);
+const agente = await createAccount(stores, giulia, { displayName: "Sara Verdi", email: "sara@lumenica.test", level: "AGENTE", parentUserId: direttore.userId, password: "AgenteSara26" }, at);
+const subAgente = await createAccount(stores, giulia, { displayName: "Luca Neri", email: "luca@lumenica.test", level: "SUB_AGENTE", parentUserId: agente.userId, password: "SubAgente2026" }, at);
+assert.equal((await stores.memberships.get(lumenica.company.tenantId, `membership_${subAgente.userId.slice(5)}`)).payload.role, "SALES_OPERATOR");
+await assert.rejects(() => createAccount(stores, giulia, { displayName: "Troppo in basso", email: "giu@lumenica.test", level: "AGENTE", parentUserId: subAgente.userId, password: "Ruolo2026xx" }), /ACCESS_PARENT_LEVEL_INVALID/);
+await assert.rejects(() => createAccount(stores, giulia, { displayName: "Fantasma", email: "fantasma@lumenica.test", level: "AGENTE", parentUserId: "user_nessuno", password: "Ruolo2026xx" }), /ACCESS_PARENT_NOT_FOUND/);
+assert.equal((await stores.accounts.list(lumenica.company.tenantId)).length, 4, "a rejected responsabile creates no login");
+// Each account lands in the chain under its responsabile, with the company at the top.
+const chain = new Map((await stores.orgChain.list(lumenica.company.tenantId)).map((record) => [record.payload.userId, record.payload]));
+assert.deepEqual([...chain.values()].map((node) => [node.level, node.parentUserId]).sort(), [["AGENTE", direttore.userId], ["AZIENDA", null], ["DIRETTORE", lumenica.admin.userId], ["SUB_AGENTE", agente.userId]].sort());
+assert.equal(chain.get(lumenica.admin.userId).displayName, "Lumenica Energia Demo");
+const team = await listTeam(stores, giulia);
+assert.equal(team.find((item) => item.userId === subAgente.userId).parentUserId, agente.userId);
 assert.equal((await stores.memberships.get(lumenica.company.tenantId, `membership_${agente.userId.slice(5)}`)).payload.role, "SALES_OPERATOR");
 await assert.rejects(() => createAccount(stores, giulia, { tenantId: "tenant_altra", displayName: "Fuori", email: "fuori@x.test", level: "AGENTE", password: "Fuori2026xx" }), /ACCESS_DENIED/);
 await assert.rejects(() => createAccount(stores, principal(direttore.userId, lumenica.company.tenantId, "ANALYST"), { displayName: "No", email: "no@x.test", level: "AGENTE", password: "Nonpuoi2026" }), /ACCESS_DENIED/);
 await assert.rejects(() => listTeam(stores, principal(agente.userId, lumenica.company.tenantId, "VIEWER")), /ACCESS_DENIED/);
 await assert.rejects(() => createCompany(stores, giulia, { name: "Abusiva", admin: { displayName: "X", email: "x@x.test", password: "Abusiva2026" } }), /ACCESS_DENIED/);
-assert.deepEqual((await listTeam(stores, giulia)).map((item) => item.displayName), ["Giulia Rossi", "Marco Bianchi", "Sara Verdi"]);
+assert.deepEqual((await listTeam(stores, giulia)).map((item) => item.displayName), ["Giulia Rossi", "Luca Neri", "Marco Bianchi", "Sara Verdi"]);
 
 // 3. The platform owner sees every company and can also add people to one.
 await createAccount(stores, owner, { tenantId: lumenica.company.tenantId, displayName: "Secondo Admin", email: "admin2@lumenica.test", level: "AMMINISTRATORE", password: "Secondo2026x" }, at);
 await assert.rejects(() => createAccount(stores, owner, { tenantId: "tenant_inesistente", displayName: "X", email: "y@x.test", level: "AGENTE", password: "Inesiste2026" }), /ACCESS_COMPANY_NOT_FOUND/);
-assert.equal((await listCompanies(stores, owner))[0].accounts.length, 4);
+assert.equal((await listCompanies(stores, owner))[0].accounts.length, 5);
+assert.equal((await stores.orgChain.list(lumenica.company.tenantId)).length, 4, "extra administrators stay out of the commercial chain");
 
 // 4. Suspension reaches the login directory and the membership the chain reads.
 const saraRecord = (await listTeam(stores, giulia)).find((item) => item.userId === agente.userId);

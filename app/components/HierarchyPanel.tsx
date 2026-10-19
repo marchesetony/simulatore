@@ -4,7 +4,7 @@ import { useCallback, useEffect, useMemo, useState, type FormEvent } from "react
 import { ErrorState, LoadingState } from "./UiStates";
 import { requestJson, toUiError } from "../lib/ui/client";
 
-type Level = "AZIENDA" | "DIRETTORE" | "AREA_MANAGER" | "AGENTE";
+type Level = "AZIENDA" | "DIRETTORE" | "AREA_MANAGER" | "AGENTE" | "SUB_AGENTE";
 type Vector = "EE" | "GAS";
 type Category = "RESIDENTIAL" | "NON_RESIDENTIAL";
 type Limits = { readonly vectors: readonly Vector[] | null; readonly customerCategories: readonly Category[] | null; readonly excludedCteArchiveIds: readonly string[] };
@@ -15,8 +15,8 @@ type Assignment = { readonly validFrom: string; readonly validTo: string | null;
 type Cte = { readonly archiveId: string; readonly cteId: string; readonly vector: Vector; readonly supplier: string | null; readonly offerName: string | null; readonly offerCode: string | null; readonly approved: boolean; readonly assignment: Assignment | null; readonly usability: string };
 type CteList = { readonly asOf: string; readonly canAssign: boolean; readonly ctes: readonly Cte[] };
 
-const LEVELS: readonly Level[] = ["AZIENDA", "DIRETTORE", "AREA_MANAGER", "AGENTE"];
-const LEVEL_LABEL: Readonly<Record<Level, string>> = { AZIENDA: "Azienda", DIRETTORE: "Direttore", AREA_MANAGER: "Area Manager", AGENTE: "Agente" };
+const LEVELS: readonly Level[] = ["AZIENDA", "DIRETTORE", "AREA_MANAGER", "AGENTE", "SUB_AGENTE"];
+const LEVEL_LABEL: Readonly<Record<Level, string>> = { AZIENDA: "Azienda", DIRETTORE: "Direttore", AREA_MANAGER: "Area Manager", AGENTE: "Agente", SUB_AGENTE: "Sub-agente" };
 const VECTOR_LABEL: Readonly<Record<Vector, string>> = { EE: "Luce", GAS: "Gas" };
 const CATEGORY_LABEL: Readonly<Record<Category, string>> = { RESIDENTIAL: "Domestici", NON_RESIDENTIAL: "Non domestici" };
 const USABILITY_LABEL: Readonly<Record<string, string>> = { USABLE: "Utilizzabile", NOT_YET_VALID: "Non ancora valida", EXPIRED: "Scaduta", EXCLUDED_BY_LIMITS: "Esclusa dai limiti", NOT_ASSIGNED: "Non assegnata" };
@@ -89,7 +89,7 @@ export default function HierarchyPanel() {
   const placeable = chain.members.filter((item) => !item.placed);
 
   return <div className="content-stack">
-    <div className="section-header"><div><p className="eyebrow">STRUTTURA COMMERCIALE</p><h2>Catena e CTE</h2><p className="section-detail">Azienda, Direttore, Area Manager e Agente: ogni livello può solo restringere quello che il livello sopra consente.</p></div></div>
+    <div className="section-header"><div><p className="eyebrow">STRUTTURA COMMERCIALE</p><h2>Catena e CTE</h2><p className="section-detail">Azienda, Direttore, Area Manager, Agente e Sub-agente: ogni livello può solo restringere quello che il livello sopra consente.</p></div></div>
     <div className="two-columns">
       <section className="ui-card"><div className="card-heading"><h3>Catena commerciale</h3></div>
         {chain.actor.level ? <p className="muted">Il tuo livello: {LEVEL_LABEL[chain.actor.level]}. Puoi vendere: {limitsSummary(chain.actor.effectiveLimits)}.</p> : null}

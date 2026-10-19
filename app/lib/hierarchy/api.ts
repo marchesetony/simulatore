@@ -6,7 +6,7 @@ import { currentApprovedCteVersion } from "../cte/archive/service";
 import { buildHierarchyAccess, cteUsability, hierarchyActor, membershipPayloads, removeOrgNode, saveCteAssignment, saveOrgNode, subtreeUserIds, visibleOrgNodes } from "./service";
 
 const HEADERS = { "cache-control": "no-store, private", "vary": "Cookie, Authorization", "x-content-type-options": "nosniff" };
-const LEVEL_FOR_ROLE: Readonly<Record<string, readonly string[]>> = { PRODUCT_OWNER: ["AZIENDA"], PLATFORM_OWNER: ["AZIENDA"], TENANT_ADMIN: ["AZIENDA"], SALES_MANAGER: ["DIRETTORE", "AREA_MANAGER"], SALES_OPERATOR: ["AGENTE"] };
+const LEVEL_FOR_ROLE: Readonly<Record<string, readonly string[]>> = { PRODUCT_OWNER: ["AZIENDA"], PLATFORM_OWNER: ["AZIENDA"], TENANT_ADMIN: ["AZIENDA"], SALES_MANAGER: ["DIRETTORE", "AREA_MANAGER"], SALES_OPERATOR: ["AGENTE", "SUB_AGENTE"] };
 
 function today(): string { return new Date().toISOString().slice(0, 10); }
 

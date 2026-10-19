@@ -1,10 +1,11 @@
 import type { AuthRole } from "../auth/types";
 import type { DeletableTenantRecordRepository, FoundationMembershipRecord, TenantRecordRepository } from "../persistence/types";
+import type { OrgChainRepository } from "../hierarchy/service";
 
 /** The platform owner's own tenant: whoever is ADMIN here creates the client companies. */
 export const PLATFORM_TENANT_ID = "tenant_piattaforma";
 
-export type AccountLevel = "AMMINISTRATORE" | "DIRETTORE" | "AREA_MANAGER" | "AGENTE";
+export type AccountLevel = "AMMINISTRATORE" | "DIRETTORE" | "AREA_MANAGER" | "AGENTE" | "SUB_AGENTE";
 export type AccountStatus = "ACTIVE" | "SUSPENDED";
 
 export interface Company {
@@ -41,5 +42,7 @@ export interface AccessStores {
   readonly companies: TenantRecordRepository<Company>;
   readonly accounts: TenantRecordRepository<AccessAccount>;
   readonly memberships: DeletableTenantRecordRepository<FoundationMembershipRecord>;
+  /** Commercial chain: new accounts are placed under their responsabile as they are created. */
+  readonly orgChain: OrgChainRepository;
   readonly directory: AccessDirectory;
 }
