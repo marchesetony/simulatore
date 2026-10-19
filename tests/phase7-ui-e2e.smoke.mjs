@@ -54,7 +54,8 @@ assert.match(cte, /\/review/); assert.match(cte, /\/approve/); assert.match(cte,
 assert.doesNotMatch(cte, /textarea/); assert.doesNotMatch(cte, /calculate|savings|fingerprint/i);
 assert.match(shell, /CteIngestionPanel/); assert.doesNotMatch(shell, /section === "cte" \? <CtePanel/);
 assert.match(shell, /cte:create/); assert.match(shell, /operationKey\("approve"/); assert.match(shell, /operationKey\("reject"/); assert.match(shell, /operationKey\("correction"/);
-assert.match(shell, /market:create/); assert.match(shell, /operationKey\("approve"/); assert.match(shell, /operationKey\("reject"/);
+// PUN and PSV are official data: the market panel only shows them, it never creates or approves them.
+assert.doesNotMatch(shell, /market:create/); assert.doesNotMatch(shell, /\/api\/market\/archive\/" ?\+/); assert.match(shell, /non si approvano e non si modificano a mano/);
 assert.match(shell, /LoadingState/);
 assert.match(shell, /EmptyState/);
 assert.match(shell, /ErrorState/);
