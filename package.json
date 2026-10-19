@@ -20,7 +20,8 @@
     "production:bootstrap-admin": "node --experimental-strip-types scripts/bootstrap-production-admin.mjs",
     "test:hierarchy-cte-assignment": "node --experimental-strip-types tests/hierarchy-cte-assignment.smoke.mjs",
     "test:access-management": "node --experimental-strip-types tests/access-management.smoke.mjs",
-    "test:quote-window": "node --experimental-strip-types tests/quote-window.smoke.mjs"
+    "test:quote-window": "node --experimental-strip-types tests/quote-window.smoke.mjs",
+    "test:cte-commercial-adjustment": "node --experimental-strip-types tests/cte-commercial-adjustment.smoke.mjs"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.117.1",

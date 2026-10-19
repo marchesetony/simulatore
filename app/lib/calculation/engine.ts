@@ -1,3 +1,5 @@
+// @ts-expect-error Node's strip-only test runner requires the explicit extension.
+import { applyCommercialAdjustment } from "../cte/commercial-adjustment.ts";
 import { createHash } from "node:crypto";
 import type { CteArchiveRecord, CteArchiveVersion } from "../cte/archive/types";
 // @ts-expect-error Node's strip-only test runner requires the explicit extension.
@@ -274,6 +276,12 @@ export async function prepareApprovedOffer(cteRepository: CteArchiveRepository, 
   const version = readyVersion(record);
   const offer: CalculationReadyOffer = (() => { try { const result = toCalculationReadyOffer(version.contract); assertCalculationReadyFees([...result.fixedFees, ...result.variableFees, ...result.oneOffFees, ...(result.imbalance.status === "DECLARED" ? [result.imbalance.component] : []), ...result.commercialDiscounts, ...(result.passThroughComponents ?? []).flatMap((component) => component.declarationState === "EXPLICIT_COMPONENT" ? [component.fee] : [])]); return result; } catch { return fail("CALCULATION_READY_INVALID"); } })();
   assertPriceCurrency(offer, request);
+  return prepareAdjustedOffer(record, version, offer, request, marketRepository);
+}
+
+async function prepareAdjustedOffer(record: CteArchiveRecord, version: CteArchiveVersion, baseOffer: CalculationReadyOffer, request: SimulationRequest, marketRepository: MarketArchiveRepository): Promise<EligibleOffer> {
+  // Company correttivi are part of the offer the customer is quoted, in every calculation path.
+  const offer = applyCommercialAdjustment(baseOffer, record.commercialAdjustment);
   if (offer.validity.periodStart > request.supplyPeriod.periodStart || offer.validity.periodEnd < request.supplyPeriod.periodEnd || request.calculationDate < offer.validity.periodStart || request.calculationDate >= offer.validity.periodEnd) fail("CTE_VALIDITY_MISMATCH");
   if (offer.expiry.status === "EXPIRES_ON" && offer.expiry.date < request.supplyPeriod.periodEnd) fail("CTE_EXPIRED");
   if (!offer.vector || offer.vector !== request.vector) fail("VECTOR_MISMATCH");

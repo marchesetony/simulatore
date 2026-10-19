@@ -3,7 +3,15 @@ import type { CteContract } from "../types";
 export const CTE_ARCHIVE_APPROVAL_CAPABILITY = Symbol("CTE_ARCHIVE_APPROVAL_CAPABILITY");
 
 export type CteArchiveStatus = "DRAFT" | "REVIEWED" | "APPROVED" | "EXPIRED" | "REJECTED";
-export type CteArchiveEventType = "CREATED" | "CORRECTED" | "REVIEWED" | "APPROVED" | "REJECTED" | "EXPIRED" | "COMMERCIAL_BLOCKED" | "COMMERCIAL_REACTIVATED" | "COMMERCIAL_DELETED";
+export type CteArchiveEventType = "CREATED" | "CORRECTED" | "REVIEWED" | "APPROVED" | "REJECTED" | "EXPIRED" | "COMMERCIAL_BLOCKED" | "COMMERCIAL_REACTIVATED" | "COMMERCIAL_DELETED" | "COMMERCIAL_ADJUSTED";
+
+/** Company correction on an approved CTE: energy price in €/kWh or €/Smc and fixed fee in €/month, either sign. */
+export interface CteCommercialAdjustment {
+  readonly energyPriceDelta: number;
+  readonly monthlyFeeDelta: number;
+  readonly updatedAt: string;
+  readonly updatedBy: string;
+}
 export type CteCommercialStatus = "ACTIVE" | "BLOCKED" | "DELETED";
 
 export interface CteArchiveVersion {
@@ -59,6 +67,7 @@ export interface CteArchiveRecord {
   readonly reactivatedBy?: string | null;
   readonly deletedAt?: string | null;
   readonly deletedBy?: string | null;
+  readonly commercialAdjustment?: CteCommercialAdjustment | null;
 }
 
 export interface CteArchiveRepository {

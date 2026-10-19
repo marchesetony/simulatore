@@ -1,3 +1,6 @@
+// @ts-expect-error Node's strip-only test runner requires the explicit extension.
+import { parseCommercialAdjustment } from "../commercial-adjustment.ts";
+import type { CteCommercialAdjustment } from "./types";
 import { randomUUID } from "node:crypto";
 import type { CteContract } from "../types";
 import type { CteApprovedSnapshot } from "../approved-snapshot";
@@ -17,6 +20,8 @@ export interface PublicCteApprovedArchiveSummary {
   readonly validity: { readonly periodStart: string; readonly periodEnd: string };
   readonly status: "APPROVED";
   readonly commercialStatus: Exclude<CteCommercialStatus, "DELETED">;
+  /** Present only when the company set correttivi on this CTE. */
+  readonly commercialAdjustment?: CteCommercialAdjustment;
 }
 
 export interface PublicCteApprovedArchiveDetail {
@@ -154,7 +159,7 @@ export function toPublicCteApprovedArchiveSummary(record: CteArchiveRecord): Pub
   if (!approved) return null;
   const commercialStatus = commercialStatusOf(record);
   if (commercialStatus === "DELETED") return null;
-  return { archiveId: record.archiveId, vector: record.vector, offerName: approved.contract.offer.name, supplierName: approved.contract.supplier.name, validity: approved.contract.validity, status: "APPROVED", commercialStatus };
+  return { archiveId: record.archiveId, vector: record.vector, offerName: approved.contract.offer.name, supplierName: approved.contract.supplier.name, validity: approved.contract.validity, status: "APPROVED", commercialStatus, ...(record.commercialAdjustment ? { commercialAdjustment: record.commercialAdjustment } : {}) };
 }
 
 export function toPublicCteApprovedArchiveDetail(record: CteArchiveRecord, snapshot?: CteApprovedSnapshot): PublicCteApprovedArchiveDetail | null {
@@ -304,6 +309,21 @@ export async function reactivateCteArchive(repository: CteArchiveRepository, ten
   const actor = actorValue(actorValueInput);
   const when = nowValue(at);
   const next: CteArchiveRecord = { ...record, updatedAt: when, commercialStatus: "ACTIVE", reactivatedAt: when, reactivatedBy: actor, history: [...record.history, event(record, "COMMERCIAL_REACTIVATED", approved, when, actor, record.blockReason ?? null, null)] };
+  await repository.save(next);
+  return structuredClone(next);
+}
+
+export async function setCteCommercialAdjustment(repository: CteArchiveRepository, tenantId: string, archiveId: string, actorValueInput: string, input: Record<string, unknown>, at?: string): Promise<CteArchiveRecord> {
+  assertTenantId(tenantId);
+  const record = await repository.get(tenantId, archiveId);
+  if (!record) throw new Error("CTE_ARCHIVE_NOT_FOUND");
+  if (commercialStatusOf(record) === "DELETED") throw new Error("CTE_COMMERCIAL_DELETED_IMMUTABLE");
+  const approved = approvedLifecycleVersion(record);
+  const actor = actorValue(actorValueInput);
+  const when = nowValue(at);
+  const commercialAdjustment = parseCommercialAdjustment(input, actor, when);
+  const summary = commercialAdjustment ? `prezzo energia ${commercialAdjustment.energyPriceDelta}, quota fissa ${commercialAdjustment.monthlyFeeDelta} €/mese` : "correttivi azzerati";
+  const next: CteArchiveRecord = { ...record, updatedAt: when, commercialAdjustment, history: [...record.history, event(record, "COMMERCIAL_ADJUSTED", approved, when, actor, summary, null)] };
   await repository.save(next);
   return structuredClone(next);
 }
