@@ -403,3 +403,31 @@ button:focus-visible,a:focus-visible,input:focus-visible,select:focus-visible,te
 .cte-adjustment-form { display:grid; grid-template-columns:repeat(auto-fit, minmax(180px, 1fr)); gap:10px; padding:12px; border:1px solid #d7e1ec; border-radius:12px; }
 .cte-adjustment-form label { display:grid; gap:4px; font-size:12px; font-weight:700; }
 .cte-adjustment-form small, .cte-adjustment-form .button-row { grid-column:1 / -1; }
+/* Guided quote: upload the bill, check it, pick an offer, read the receipt. */
+.nav-more { margin-top:auto; padding:10px 12px; border:1px dashed var(--line); border-radius:10px; background:transparent; color:var(--muted); font-weight:700; cursor:pointer; text-align:left; }
+.quote-flow { max-width:960px; }
+.quote-steps { display:flex; gap:10px; margin:0; padding:0; list-style:none; flex-wrap:wrap; }
+.quote-steps li { display:flex; align-items:center; gap:8px; padding:8px 14px; border:1px solid var(--line); border-radius:999px; background:#fff; color:var(--muted); font-weight:700; font-size:14px; }
+.quote-steps li span { display:inline-grid; place-items:center; width:24px; height:24px; border-radius:50%; background:var(--canvas); font-size:12px; }
+.quote-steps li.active { border-color:var(--teal); color:var(--teal); }.quote-steps li.active span { background:var(--teal); color:#fff; }
+.quote-steps li.done { color:var(--ink); }.quote-steps li.done span { background:var(--teal-soft); color:var(--teal); }
+.quote-upload { display:grid; gap:18px; justify-items:start; }
+.quote-upload-button { display:inline-flex; align-items:center; min-height:56px; padding:0 28px; font-size:17px; }
+.quote-offers { display:grid; grid-template-columns:repeat(auto-fill,minmax(210px,1fr)); gap:12px; }
+.quote-offer { display:grid; gap:4px; justify-items:start; padding:16px; border:1px solid var(--line); border-radius:14px; background:#fff; color:var(--ink); text-align:left; cursor:pointer; }
+.quote-offer.best { border-color:#9fd4cd; background:var(--teal-soft); }
+.quote-offer.selected { outline:3px solid var(--teal); outline-offset:0; }
+.quote-offer-total { font-size:22px; font-weight:800; }
+.quote-offer small.positive { color:#12664f; font-weight:700; }.quote-offer small.negative,.quote-saving.negative strong { color:#8c2d2d; }
+.quote-receipt h3 { margin:0 0 12px; }
+.quote-receipt table { width:100%; border-collapse:collapse; }
+.quote-receipt th,.quote-receipt td { padding:10px 8px; border-bottom:1px dashed var(--line); text-align:right; }
+.quote-receipt th[scope="row"],.quote-receipt thead th:first-child { text-align:left; font-weight:600; }
+.quote-receipt tfoot th,.quote-receipt tfoot td { border-bottom:0; border-top:2px solid var(--ink); font-size:18px; font-weight:800; }
+.quote-saving { display:flex; justify-content:space-between; align-items:center; gap:12px; margin:0 0 16px; padding:16px 18px; border-radius:14px; background:var(--teal-soft); }
+.quote-saving strong { font-size:clamp(1.4rem,3vw,2rem); color:var(--teal); }
+.quote-saving.negative { background:#fde6e6; }
+.quote-validity { display:grid; gap:2px; margin-top:16px; padding:14px 18px; border-radius:14px; background:var(--amber-soft); color:var(--amber); }
+.quote-validity strong { font-size:18px; }
+.quote-note { margin:14px 0 0; font-size:13px; }
+@media (max-width:760px) { .quote-saving { flex-direction:column; align-items:flex-start; } .quote-receipt th,.quote-receipt td { padding:8px 4px; font-size:14px; } }
