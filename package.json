@@ -23,6 +23,7 @@
     "test:quote-window": "node --experimental-strip-types tests/quote-window.smoke.mjs",
     "test:terna-capacity-refresh": "node --experimental-strip-types tests/terna-capacity-refresh.smoke.mjs",
     "test:psv-refresh": "node --experimental-strip-types tests/psv-refresh.smoke.mjs",
+    "test:official-data-tenants": "node --experimental-strip-types tests/official-data-tenants.smoke.mjs",
     "test:cte-commercial-adjustment": "node --experimental-strip-types tests/cte-commercial-adjustment.smoke.mjs"
   },
   "dependencies": {
