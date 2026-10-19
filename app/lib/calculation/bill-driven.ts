@@ -1,5 +1,7 @@
 // @ts-expect-error Node's strip-only test runner requires the explicit extension.
 import { assertSimulationWithinLimits, cteUsability, loadHierarchyAccess } from "../hierarchy/service.ts";
+// @ts-expect-error Node's strip-only test runner requires the explicit extension.
+import { quoteWindowStart, supplyPeriodTooOld } from "./quote-window.ts";
 import type { BillDocument, BillVersion } from "../foundation/real-bill";
 // @ts-expect-error Node's strip-only test runner requires the explicit extension.
 import { getBillInScope } from "../foundation/bill-visibility.ts";
@@ -397,6 +399,8 @@ export async function prepareBillDrivenSimulation(principal: AuthenticatedPrinci
   const document = documentValue as BillDocument;
   const version = approvedVersion(document);
   const context = buildContext(document, version);
+  // Bills whose supply period started before the quote window are discarded.
+  if (context.billingPeriod.periodStart && supplyPeriodTooOld(context.billingPeriod, asOf)) fail("SOURCE_BILL_TOO_OLD");
   const records = await repositories.cteArchiveRepository.list(principal.tenantId);
   const hierarchy = repositories.orgChain && repositories.cteAssignments ? await loadHierarchyAccess(principal, { foundationMemberships: repositories.foundationMemberships, orgChain: repositories.orgChain, cteAssignments: repositories.cteAssignments }, asOf) : null;
   if (hierarchy) assertSimulationWithinLimits(hierarchy, context.vector, context.customerType);
@@ -420,11 +424,13 @@ export async function listBillDrivenSources(principal: AuthenticatedPrincipal, r
       try { approvedVersion(visible); scoped.push(visible); } catch { /* An approved pointer without an authoritative contract is not a usable source. */ }
     }
   }
+  const today = new Date().toISOString().slice(0, 10);
   return scoped.map((document) => {
     const versionId = document.currentApprovedVersionId as string;
     const version = document.versions.find((candidate) => candidate.versionId === versionId);
     const contract = version?.energyContract;
-    return { billId: document.id, billVersionId: versionId, tenantId: document.tenantId, ownerUserId: document.ownerUserId ?? null, vector: contract?.vector ?? null, supplier: contract?.currentSupplier ?? null, period: contract?.billingPeriod ?? null, status: "APPROVED" };
+    const period = contract?.billingPeriod ?? null;
+    return { billId: document.id, billVersionId: versionId, tenantId: document.tenantId, ownerUserId: document.ownerUserId ?? null, vector: contract?.vector ?? null, supplier: contract?.currentSupplier ?? null, period, status: "APPROVED", tooOld: period?.periodStart ? supplyPeriodTooOld(period, today) : false, quoteWindowStart: quoteWindowStart(today) };
   });
 }
 

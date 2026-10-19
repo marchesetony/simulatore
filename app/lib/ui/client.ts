@@ -99,6 +99,7 @@ const messages: Readonly<Record<string, string>> = {
   COMPARISON_RESPONSE_INVALID: "Risposta confronto non valida",
   EXPORT_CONTENT_TYPE_INVALID: "Tipo contenuto export non valido",
   EXPORT_FILENAME_INVALID: "Nome file export non valido",
+  SOURCE_BILL_TOO_OLD: "La bolletta si riferisce a un periodo di fornitura di oltre 4 mesi fa: carica una bolletta più recente.",
   ACCESS_DENIED: "Non hai i permessi per questa operazione.",
   ACCESS_PARENT_REQUIRED: "Scegli sotto a chi lavora la persona.",
   ACCESS_PARENT_NOT_FOUND: "Il responsabile scelto non è nella catena.",

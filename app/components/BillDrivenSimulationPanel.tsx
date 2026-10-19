@@ -1,5 +1,6 @@
 "use client";
 
+import { QUOTE_WINDOW_MONTHS, quoteWindowStart, supplyPeriodTooOld } from "../lib/calculation/quote-window";
 import { useCallback, useEffect, useState, type ReactNode } from "react";
 import { EmptyState, ErrorState, LoadingState } from "./UiStates";
 import { requestJson, toUiError } from "../lib/ui/client";
@@ -226,6 +227,7 @@ export default function BillDrivenSimulationPanel({ tenantId, readonly, prefill,
   const [pending, setPending] = useState<"calculation" | "comparison" | "bill" | "override">();
   const [error, setError] = useState<string>();
 
+  const today = new Date().toISOString().slice(0, 10);
   const loadBills = useCallback(async (signal?: AbortSignal) => { setBillState("loading"); try { const result = await requestJson<{ readonly documents: readonly ApprovedBillSummaryModel[] }>("/api/bills?view=approved", {}, signal); setBills(result.documents); setBillState("ready"); } catch (cause) { if (!signal?.aborted) { setBillState("error"); setError(messageFor(cause)); } } }, []);
   const selectBill = useCallback(async (billId: string) => {
     if (!billId) { setSelectedBill(null); setContext(null); setDraft(null); setCandidates([]); setSelectedCteId(""); setOverrideUi(null); return; }
@@ -290,7 +292,7 @@ export default function BillDrivenSimulationPanel({ tenantId, readonly, prefill,
   return <div className="content-stack">
     <div className="section-header"><div><p className="eyebrow">MOTORE PHASE 4</p><h2>Simulazioni</h2><p className="section-detail">Il flusso parte da una bolletta approvata: dati tecnici, CTE compatibili, simulazione e confronto.</p></div></div>
     <div className="two-columns">
-      <section className="ui-card"><h3>1 {UI_SEPARATOR} Seleziona bolletta</h3>{billState === "loading" ? <LoadingState label="Caricamento bollette approvate" /> : billState === "error" ? <ErrorState message="Elenco bollette non disponibile" onRetry={() => void loadBills()} /> : bills.length ? <label className="form-field"><span className="form-label">Bolletta revisionata e utilizzabile</span><select id="simulation-bill" value={selectedBill?.id ?? ""} onChange={(event) => void selectBill(event.target.value)} disabled={pending === "bill" || pending === "override"}><option value="">Selezionare</option>{bills.map((bill) => <option key={bill.id} value={bill.id}>{bill.title} {UI_SEPARATOR} {energyLabelFor(bill.vector)} {UI_SEPARATOR} {formatItalianMonth(bill.period.periodStart)}</option>)}</select></label> : <EmptyState title="Nessuna bolletta utilizzabile" detail="Sono mostrate solo bollette approvate nello scope dell'utente." />}</section>
+      <section className="ui-card"><h3>1 {UI_SEPARATOR} Seleziona bolletta</h3>{billState === "loading" ? <LoadingState label="Caricamento bollette approvate" /> : billState === "error" ? <ErrorState message="Elenco bollette non disponibile" onRetry={() => void loadBills()} /> : bills.length ? <label className="form-field"><span className="form-label">Bolletta revisionata e utilizzabile</span><select id="simulation-bill" value={selectedBill?.id ?? ""} onChange={(event) => void selectBill(event.target.value)} disabled={pending === "bill" || pending === "override"}><option value="">Selezionare</option>{bills.map((bill) => { const old = bill.period.periodStart !== null && supplyPeriodTooOld({ periodStart: bill.period.periodStart }, today); return <option key={bill.id} value={bill.id} disabled={old}>{bill.title} {UI_SEPARATOR} {energyLabelFor(bill.vector)} {UI_SEPARATOR} {formatItalianMonth(bill.period.periodStart)}{old ? ` ${UI_SEPARATOR} fornitura oltre ${QUOTE_WINDOW_MONTHS} mesi fa` : ""}</option>; })}</select><small className="muted">Si usano solo bollette con periodo di fornitura dal {formatItalianDate(quoteWindowStart(today))} in poi ({QUOTE_WINDOW_MONTHS} mesi prima di oggi).</small></label> : <EmptyState title="Nessuna bolletta utilizzabile" detail="Sono mostrate solo bollette approvate nello scope dell'utente." />}</section>
       <section className="ui-card"><h3>2 {UI_SEPARATOR} Dati rilevati</h3>{pending === "bill" ? <LoadingState label="Lettura contesto autorevole" /> : selectedBill && draft && context ? <BillSummary bill={selectedBill} draft={draft} context={context} /> : <EmptyState title="Selezionare una bolletta" detail="La simulazione non accetta dati tecnici principali inseriti manualmente." />}</section>
     </div>
     {selectedBill && draft && context ? <section className="ui-card">
