@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import type { RegulatoryValueRecord } from "../foundation/regulatory-types.ts";
 // @ts-expect-error Node's strip-only test runner requires the explicit extension.
-import { createRegulatoryValue, isAllowedAreraUrl } from "../foundation/arera-electricity-regulatory.ts";
+import { createRegulatoryValue, isAllowedAreraUrl, isAllowedOfficialRegulatoryUrl } from "../foundation/arera-electricity-regulatory.ts";
 // @ts-expect-error Node's strip-only test runner requires the explicit extension.
 import { validateChecksum } from "../foundation/regulatory-validation.ts";
 // @ts-expect-error Node's strip-only test runner requires the explicit extension.
@@ -109,7 +109,8 @@ async function acquireLease(dependencies: RegulatoryRefreshDependencies, tenantI
 
 function assertCandidate(domain: RegulatoryRefreshDomain, candidate: RegulatoryValueRecord, tenantId: string): void {
   if (candidate.tenantId !== tenantId || candidate.componentCode !== domain.componentCode || candidate.customerScope !== domain.customerScope || candidate.normalizedUnit !== domain.normalizedUnit || candidate.regulatoryVariant !== domain.regulatoryVariant) throw new Error(`REGULATORY_REFRESH_DOMAIN_MISMATCH:${regulatoryDomainKey(domain)}`);
-  if (!isAllowedAreraUrl(candidate.sourceReference)) throw new Error("OFFICIAL_SOURCE_ALLOWLIST_FAILED");
+  const allowed = domain.sourceAdapter === "TERNA_CAPACITY" ? isAllowedOfficialRegulatoryUrl(candidate.sourceReference) && new URL(candidate.sourceReference).hostname.toLowerCase().endsWith("terna.it") : isAllowedAreraUrl(candidate.sourceReference);
+  if (!allowed) throw new Error("OFFICIAL_SOURCE_ALLOWLIST_FAILED");
   if (!candidate.sourceSha256 || !/^[a-f0-9]{64}$/i.test(candidate.sourceSha256)) throw new Error("SOURCE_SHA256_INVALID");
   validateChecksum(candidate);
   const from = Date.parse(candidate.effectiveFrom); const to = candidate.effectiveTo === null ? Number.POSITIVE_INFINITY : Date.parse(candidate.effectiveTo);
@@ -230,3 +231,10 @@ export async function runRegulatoryRefresh(input: { readonly tenantId: string } 
 }
 
 export function refreshStateIsStale(state: Pick<RegulatoryRefreshState, "lastSuccessfulAt"> | null, now: string): boolean { return state === null || stale(state.lastSuccessfulAt, validDate(now)); }
+
+/** Stores and approves one official candidate for a registered domain, reusing the nightly refresh rules. */
+export async function applyRegulatoryRefreshCandidate(domain: RegulatoryRefreshDomain, candidate: RegulatoryValueRecord, dependencies: RegulatoryRefreshDependencies, tenantId: string, runId: string, now: string): Promise<{ unchanged: number; created: number; approved: number; replaced: number }> {
+  const result = await refreshDomain(domain, candidate, dependencies, tenantId, runId, now);
+  await verifyTimeline(domain, candidate, dependencies, tenantId, now);
+  return result;
+}

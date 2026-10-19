@@ -5,7 +5,7 @@ export interface RegulatoryRefreshDomain {
   readonly customerScope: RegulatoryCustomerScope;
   readonly normalizedUnit: "EUR/KWH" | "EUR/KW/YEAR" | "EUR/POD/YEAR";
   readonly regulatoryVariant?: RegulatoryVariant;
-  readonly sourceAdapter: "ARERA_ELECTRICITY";
+  readonly sourceAdapter: "ARERA_ELECTRICITY" | "TERNA_CAPACITY";
 }
 
 export const REGULATORY_REFRESH_FREQUENCY = "DAILY" as const;
@@ -51,6 +51,9 @@ const asosDomains: readonly RegulatoryRefreshDomain[] = asosVariants.flatMap((re
 /** Single source of truth shared by the economic calculator and refresh service. */
 export const CALCULATED_REGULATORY_DOMAINS: readonly RegulatoryRefreshDomain[] = Object.freeze([...residentDomains, ...bta6Domains, ...asosDomains]);
 export const AUTO_REFRESH_REGISTERED_DOMAINS = CALCULATED_REGULATORY_DOMAINS;
+
+/** Quarterly Terna capacity-market charges that CTEs pass through to the customer. */
+export const TERNA_CAPACITY_DOMAINS: readonly RegulatoryRefreshDomain[] = Object.freeze([residentScope, bta6Scope].flatMap((customerScope) => (["CAPACITY_MARKET_OFF_PEAK", "CAPACITY_MARKET_PEAK"] as const).map((componentCode) => ({ componentCode, customerScope, normalizedUnit: "EUR/KWH" as const, sourceAdapter: "TERNA_CAPACITY" as const }))));
 
 export function regulatoryDomainKey(domain: Pick<RegulatoryRefreshDomain, "componentCode" | "customerScope" | "normalizedUnit" | "regulatoryVariant">): string {
   return domain.regulatoryVariant === undefined

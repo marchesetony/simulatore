@@ -21,6 +21,7 @@
     "test:hierarchy-cte-assignment": "node --experimental-strip-types tests/hierarchy-cte-assignment.smoke.mjs",
     "test:access-management": "node --experimental-strip-types tests/access-management.smoke.mjs",
     "test:quote-window": "node --experimental-strip-types tests/quote-window.smoke.mjs",
+    "test:terna-capacity-refresh": "node --experimental-strip-types tests/terna-capacity-refresh.smoke.mjs",
     "test:cte-commercial-adjustment": "node --experimental-strip-types tests/cte-commercial-adjustment.smoke.mjs"
   },
   "dependencies": {
