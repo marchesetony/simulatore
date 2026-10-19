@@ -92,4 +92,10 @@ const offline = await runTernaCapacityRefresh({ tenantId, repositories, sourceRe
 assert.equal(offline.status, "FAILED"); assert.deepEqual(offline.errors, ["TERNA_HTTP_503"]);
 assert.ok((await repositories.approvalDomains.list(tenantId)).flatMap((record) => record.payload.effectiveApprovals ?? []).some((entry) => entry.targetRecordId === offPeak.id));
 
+// 5. The administrators' check reads the same sources and saves nothing.
+const { checkOfficialSources } = await import("../app/lib/regulatory-refresh/official-sources-check.ts");
+const report = await checkOfficialSources({ now: "2026-10-19T15:00:00.000Z", ternaFetcher: ternaSite().fetcher, areraFetcher: async () => ({ status: 503, text: async () => "" }) });
+assert.deepEqual({ status: report.terna.status, offPeak: report.terna.offPeakEurPerMwh, peak: report.terna.peakEurPerMwh, quarter: report.terna.quarter }, { status: "OK", offPeak: 4.021, peak: 18.25, quarter: "4° trimestre 2026" });
+assert.deepEqual({ status: report.psv.status, error: report.psv.error }, { status: "ERROR", error: "ARERA_HTTP_503" });
+
 console.log("terna capacity refresh smoke passed");
