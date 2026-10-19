@@ -1,5 +1,5 @@
 import { archiveError, localTenant } from "../../../lib/archive/api";
-import { toPublicCteApprovedArchiveSummary } from "../../../lib/cte/archive/service";
+import { expireCteArchives, toPublicCteApprovedArchiveSummary } from "../../../lib/cte/archive/service";
 import { runtimeRepositories } from "../../../lib/persistence/adapter";
 import { requestPrincipal } from "../../../lib/auth/request";
 import { recordRuntimeAudit } from "../../../lib/persistence/audit";
@@ -9,6 +9,8 @@ export async function GET(request: Request): Promise<Response> {
   try {
     const tenantId = await localTenant(request, "READ");
     const repository = runtimeRepositories().cteArchiveRepository;
+    // Expired CTEs leave the archive as soon as anyone looks at it, not only when the nightly job runs.
+    await expireCteArchives(repository, tenantId, "SYSTEM_CTE_EXPIRY").catch(() => undefined);
     const records = await repository.list(tenantId);
     if (new URL(request.url).searchParams.get("view") === "approved") return Response.json({ records: records.map(toPublicCteApprovedArchiveSummary).filter((record): record is NonNullable<typeof record> => record !== null) }, { headers: { "cache-control": "no-store, private" } });
     return Response.json({ records });

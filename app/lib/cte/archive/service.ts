@@ -347,6 +347,7 @@ export interface CteExpiryRunResult {
   readonly tenantId: string;
   readonly scanned: number;
   readonly expired: number;
+  readonly deleted: number;
   readonly unchanged: number;
 }
 
@@ -380,12 +381,17 @@ export async function expireCteArchive(repository: CteArchiveRepository, tenantI
 export async function expireCteArchives(repository: CteArchiveRepository, tenantId: string, actor: string, at?: string): Promise<CteExpiryRunResult> {
   assertTenantId(tenantId);
   const records = await repository.list(tenantId);
+  const when = nowValue(at);
   let expired = 0;
+  let deleted = 0;
   for (const record of records) {
-    const next = await expireCteArchive(repository, tenantId, record.archiveId, actor, at);
+    // Once its validity ends a CTE can no longer be sold, so it also leaves the commercial archive; history stays readable.
+    const approved = approvedVersionForPublic(record);
+    if (approved && commercialStatusOf(record) !== "DELETED" && isExpiredAt(approved.contract, when)) { await deleteCteArchive(repository, tenantId, record.archiveId, actor, when); deleted += 1; }
+    const next = await expireCteArchive(repository, tenantId, record.archiveId, actor, when);
     if (next.history.length !== record.history.length) expired += 1;
   }
-  return { tenantId, scanned: records.length, expired, unchanged: records.length - expired };
+  return { tenantId, scanned: records.length, expired, deleted, unchanged: records.length - expired };
 }
 
 export async function rejectCteArchive(repository: CteArchiveRepository, tenantId: string, archiveId: string, versionId: string, reviewer: string, reason: string, at?: string): Promise<CteArchiveRecord> {
