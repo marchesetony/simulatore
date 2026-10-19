@@ -337,15 +337,18 @@ function MarketPanel() {
   useEffect(() => { void (async () => { try { setRecords((await requestJson<{ readonly records: readonly MarketArchiveModel[] }>("/api/market/archive")).records); } catch (cause) { setError(uiError(cause)); } })(); }, []);
   const index = vector === "EE" ? "PUN" : "PSV";
   const version = (record: MarketArchiveModel) => Number.parseInt(String(record.record.version ?? "0"), 10) || 0;
+  // Only the last six closed months are shown: older official values are not used for quotes.
+  const today = new Date();
+  const oldestMonth = new Date(Date.UTC(today.getUTCFullYear(), today.getUTCMonth() - 6, 1)).toISOString().slice(0, 7);
   const latest = new Map<string, MarketArchiveModel>();
-  for (const record of records) if (record.vector === vector && record.index === index && record.status === "APPROVED" && (!latest.has(record.month) || version(record) > version(latest.get(record.month)!))) latest.set(record.month, record);
+  for (const record of records) if (record.month >= oldestMonth && record.vector === vector && record.index === index && record.status === "APPROVED" && (!latest.has(record.month) || version(record) > version(latest.get(record.month)!))) latest.set(record.month, record);
   const months = [...latest.values()];
   const rate = (value: unknown, digits: number) => { const amount = (value as { readonly value?: unknown } | undefined)?.value; return typeof amount === "number" ? amount.toLocaleString("it-IT", { minimumFractionDigits: digits, maximumFractionDigits: digits }) : "Non disponibile"; };
   const values = (record: MarketArchiveModel) => vector === "EE"
     ? "F1 " + rate(record.record.f1, 2) + "  F2 " + rate(record.record.f2, 2) + "  F3 " + rate(record.record.f3, 2) + "  Mono " + rate(record.record.monthly, 2) + " €/MWh"
     : rate(record.record.value, 6) + " €/Smc";
   const source = (record: MarketArchiveModel) => String((record.record.source as { readonly name?: unknown } | undefined)?.name ?? "");
-  return <div className="content-stack"><SectionHeader eyebrow="DATI UFFICIALI" title="Dati di mercato" detail="PUN dal GME e PSV da ARERA, aggiornati ogni notte. Sono dati ufficiali: non si approvano e non si modificano a mano." /><VectorTabs idPrefix="market" value={vector} onChange={setVector} /><div id="market-panel" role="tabpanel" aria-labelledby={"market-" + vector.toLowerCase() + "-tab"} tabIndex={0}><Card><h3>{index} mensile</h3>{error ? <ErrorState message={error} /> : null}{months.map((record) => <div className="data-line" key={record.archiveId}><span>{record.month}<br /><small className="muted">{source(record)}</small></span><strong>{values(record)}</strong></div>)}{months.length === 0 && !error ? <EmptyState title={"Nessun valore " + index} detail="I valori compaiono dopo il primo aggiornamento notturno." /> : null}</Card></div></div>;
+  return <div className="content-stack"><SectionHeader eyebrow="DATI UFFICIALI" title="Dati di mercato" detail="PUN dal GME e PSV da ARERA degli ultimi 6 mesi, aggiornati ogni notte. Sono dati ufficiali: non si approvano e non si modificano a mano." /><VectorTabs idPrefix="market" value={vector} onChange={setVector} /><div id="market-panel" role="tabpanel" aria-labelledby={"market-" + vector.toLowerCase() + "-tab"} tabIndex={0}><Card><h3>{index} mensile</h3>{error ? <ErrorState message={error} /> : null}{months.map((record) => <div className="data-line" key={record.archiveId}><span>{record.month}<br /><small className="muted">{source(record)}</small></span><strong>{values(record)}</strong></div>)}{months.length === 0 && !error ? <EmptyState title={"Nessun valore " + index} detail="I valori compaiono dopo il primo aggiornamento notturno." /> : null}</Card></div></div>;
 }
 
 

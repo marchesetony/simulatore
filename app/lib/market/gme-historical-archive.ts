@@ -5,6 +5,7 @@ import type { ElectricityMonthlyPunRecord } from "../energy/market-data.ts";
 
 export const GME_HISTORICAL_DISCOVERY_URL = "https://gme.mercatoelettrico.org/Home/Esiti/Elettricita/MGP/Statistiche/DatiStorici";
 export const GME_HISTORICAL_ARCHIVE_URL = "https://gme.mercatoelettrico.org/Home/Esiti/Elettricita/MGP/Statistiche/DatiStorici/moduleId/10874/controller/GmeDatiStoriciItem/action/DownloadFile?fileName=Anno2026.zip";
+export function gmeHistoricalArchiveUrl(year: string | number): string { return GME_HISTORICAL_ARCHIVE_URL.replace("fileName=Anno2026.zip", `fileName=Anno${year}.zip`); }
 export const GME_HISTORICAL_SOURCE_ID = "GME_MGP_ANNUAL_ARCHIVE";
 export const GME_HISTORICAL_PARSER_VERSION = "A7.1";
 export const GME_PUN_TIMEZONE = "Europe/Rome";
@@ -320,8 +321,11 @@ export async function loadGmeHistoricalPunRecords(input: { readonly tenantId: st
 export function createGmeHistoricalArchiveReader(input: { readonly fetcher?: GmeHistoricalFetcher; readonly archiveUrl?: string } = {}): { load(input: { readonly tenantId: string; readonly referenceMonth: string; readonly retrievedAt: string }): Promise<ElectricityMonthlyPunRecord> } {
   const cache = new Map<string, Promise<GmeHistoricalArchiveResult>>();
   return { async load({ tenantId, referenceMonth, retrievedAt }) {
-    let result = cache.get(tenantId);
-    if (!result) { result = loadGmeHistoricalPunRecords({ tenantId, retrievedAt, fetcher: input.fetcher, archiveUrl: input.archiveUrl }); cache.set(tenantId, result); }
+    // GME publishes one archive per calendar year, so each month is read from its own year's file.
+    const year = referenceMonth.slice(0, 4);
+    const key = `${tenantId}|${year}`;
+    let result = cache.get(key);
+    if (!result) { result = loadGmeHistoricalPunRecords({ tenantId, retrievedAt, fetcher: input.fetcher, archiveUrl: input.archiveUrl ?? gmeHistoricalArchiveUrl(year) }); cache.set(key, result); }
     const found = (await result).records.find((record) => record.month === referenceMonth); if (!found) fail(`GME_PT15_MONTH_MISSING:${referenceMonth}`); return found;
   } };
 }
