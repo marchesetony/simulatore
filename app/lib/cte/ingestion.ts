@@ -223,7 +223,7 @@ export function normalizeProviderExtraction(value: unknown, tenantId: string): {
 }
 
 export function getConfiguredCteOcrProvider(env: NodeJS.ProcessEnv = process.env, fetcher: typeof fetch = fetch): CteOcrProvider {
-  const provider = env.CTE_OCR_PROVIDER;
+  const provider = env.CTE_OCR_PROVIDER?.trim().toLowerCase();
   if (provider === "anthropic") return createAnthropicCteOcrProvider(env, fetcher);
   const endpoint = env.CTE_OCR_ENDPOINT;
   const apiKey = env.CTE_OCR_API_KEY;

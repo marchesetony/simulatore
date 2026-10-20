@@ -405,7 +405,7 @@ export class AnthropicTwoStageBillSdkAdapter implements BillExtractionProvider {
 export function createAnthropicBillSdkAdapter(env: NodeJS.ProcessEnv = process.env, client?: AnthropicBillSdkClient): BillExtractionProvider {
   const apiKey = env.ANTHROPIC_API_KEY?.trim();
   const model = env.ANTHROPIC_MODEL?.trim();
-  if (env.CTE_OCR_PROVIDER !== "anthropic" || !apiKey || !model) throw new AnthropicBillSdkError("BILL_OCR_PROVIDER_CONFIGURATION_INVALID");
+  if (env.CTE_OCR_PROVIDER?.trim().toLowerCase() !== "anthropic" || !apiKey || !model) throw new AnthropicBillSdkError("BILL_OCR_PROVIDER_CONFIGURATION_INVALID");
   const maxTokens = numericConfig(env.ANTHROPIC_BILL_MAX_TOKENS, ANTHROPIC_BILL_DEFAULT_MAX_TOKENS, ANTHROPIC_BILL_MIN_MAX_TOKENS, ANTHROPIC_BILL_MAX_MAX_TOKENS);
   const timeout = numericConfig(env.ANTHROPIC_BILL_TIMEOUT_MS, ANTHROPIC_BILL_DEFAULT_TIMEOUT_MS, ANTHROPIC_BILL_MIN_TIMEOUT_MS, ANTHROPIC_BILL_MAX_TIMEOUT_MS);
   let baseURL: string;
@@ -423,7 +423,7 @@ export function createAnthropicBillSdkAdapter(env: NodeJS.ProcessEnv = process.e
 export function createAnthropicTwoStageBillSdkAdapter(env: NodeJS.ProcessEnv = process.env, client?: AnthropicBillSdkClient, observe?: BillStageObserver): AnthropicTwoStageBillSdkAdapter {
   const apiKey = env.ANTHROPIC_API_KEY?.trim();
   const model = env.ANTHROPIC_MODEL?.trim();
-  if (env.CTE_OCR_PROVIDER !== "anthropic" || !apiKey || !model) throw new AnthropicBillSdkError("BILL_OCR_PROVIDER_CONFIGURATION_INVALID");
+  if (env.CTE_OCR_PROVIDER?.trim().toLowerCase() !== "anthropic" || !apiKey || !model) throw new AnthropicBillSdkError("BILL_OCR_PROVIDER_CONFIGURATION_INVALID");
   const maxTokens = numericConfig(env.ANTHROPIC_BILL_MAX_TOKENS, ANTHROPIC_BILL_DEFAULT_MAX_TOKENS, ANTHROPIC_BILL_MIN_MAX_TOKENS, ANTHROPIC_BILL_MAX_MAX_TOKENS);
   const timeout = numericConfig(env.ANTHROPIC_BILL_TIMEOUT_MS, ANTHROPIC_BILL_DEFAULT_TIMEOUT_MS, ANTHROPIC_BILL_MIN_TIMEOUT_MS, ANTHROPIC_BILL_MAX_TIMEOUT_MS);
   let baseURL: string;
