@@ -422,7 +422,7 @@ export function parseAnthropicCteResponse(body: unknown): CteProviderExtraction 
 export function createAnthropicCteOcrProvider(env: NodeJS.ProcessEnv = process.env, fetcher: FetchLike = fetch): CteOcrProvider {
   const apiKey = env.ANTHROPIC_API_KEY?.trim();
   const model = env.ANTHROPIC_MODEL?.trim();
-  if (env.CTE_OCR_PROVIDER?.trim().toLowerCase() !== "anthropic") fail("CTE_OCR_PROVIDER_NOT_CONFIGURED");
+  if (env.CTE_OCR_PROVIDER?.replace(/^\s*CTE_OCR_PROVIDER\s*=|["'\s]/gi, "").toLowerCase() !== "anthropic") fail("CTE_OCR_PROVIDER_NOT_CONFIGURED");
   if (!apiKey) fail("ANTHROPIC_API_KEY_MISSING");
   if (!model) fail("ANTHROPIC_MODEL_MISSING");
   const maxTokens = cteMaxTokens(env);
@@ -511,7 +511,7 @@ type BillSleep = (milliseconds: number) => Promise<void>;
 export function createAnthropicBillOcrProvider(env: NodeJS.ProcessEnv = process.env, fetcher: FetchLike = fetch, sleep: BillSleep = (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds))): OcrProvider {
   const apiKey = env.ANTHROPIC_API_KEY?.trim();
   const model = env.ANTHROPIC_MODEL?.trim();
-  if (env.CTE_OCR_PROVIDER?.trim().toLowerCase() !== "anthropic") billFail("BILL_OCR_PROVIDER_NOT_CONFIGURED", "CONFIG");
+  if (env.CTE_OCR_PROVIDER?.replace(/^\s*CTE_OCR_PROVIDER\s*=|["'\s]/gi, "").toLowerCase() !== "anthropic") billFail("BILL_OCR_PROVIDER_NOT_CONFIGURED", "CONFIG");
   if (!apiKey || !model) billFail("BILL_OCR_PROVIDER_CONFIGURATION_INVALID", "CONFIG");
   let maxTokens: number;
   try { maxTokens = billMaxTokens(env); } catch { billFail("BILL_OCR_PROVIDER_CONFIGURATION_INVALID", "CONFIG"); }

@@ -344,7 +344,7 @@ function structuredFail(code: string, phase: "CONFIG" | "FETCH" | "HTTP" | "PARS
 export function createAnthropicStructuredBillProvider(env: NodeJS.ProcessEnv = process.env, fetcher: FetchLike = fetch, sleep: Sleep = (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds))): StructuredBillExtractionProvider {
   const apiKey = env.ANTHROPIC_API_KEY?.trim();
   const model = env.ANTHROPIC_MODEL?.trim();
-  if (env.CTE_OCR_PROVIDER?.trim().toLowerCase() !== "anthropic" || !apiKey || !model) structuredFail("BILL_OCR_PROVIDER_CONFIGURATION_INVALID", "CONFIG");
+  if (env.CTE_OCR_PROVIDER?.replace(/^\s*CTE_OCR_PROVIDER\s*=|["'\s]/gi, "").toLowerCase() !== "anthropic" || !apiKey || !model) structuredFail("BILL_OCR_PROVIDER_CONFIGURATION_INVALID", "CONFIG");
   let maxTokens: number;
   try { maxTokens = numericConfig(env.ANTHROPIC_BILL_MAX_TOKENS, ANTHROPIC_BILL_DEFAULT_MAX_TOKENS, ANTHROPIC_BILL_MIN_MAX_TOKENS, ANTHROPIC_BILL_MAX_MAX_TOKENS, "BILL_OCR_PROVIDER_CONFIGURATION_INVALID"); } catch { structuredFail("BILL_OCR_PROVIDER_CONFIGURATION_INVALID", "CONFIG"); }
   let timeoutMs: number;
