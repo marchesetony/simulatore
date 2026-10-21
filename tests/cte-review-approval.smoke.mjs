@@ -16,7 +16,10 @@ const validCandidate = structuredClone(syntheticElectricityCte);
 const ready = cteApprovalGate({ documentType: "CTE", vector: "EE", fields: [...complete, field("commercialTerms.commercialDiscounts", null, "NOT_FOUND")], candidate: validCandidate });
 assert.equal(ready.approvalReady, true);
 assert.ok(ready.optionalNotFound.includes("Sconti commerciali"));
-const missing = cteApprovalGate({ documentType: "CTE", vector: "EE", fields: complete.filter((item) => item.path !== "supplier.supplierId"), candidate: validCandidate });
+// The supplier VAT number is optional: the tenant owning the app is the offers' holder.
+const withoutVat = cteApprovalGate({ documentType: "CTE", vector: "EE", fields: complete.filter((item) => item.path !== "supplier.supplierId"), candidate: validCandidate });
+assert.equal(withoutVat.approvalReady, true);
+const missing = cteApprovalGate({ documentType: "CTE", vector: "EE", fields: complete.filter((item) => item.path !== "supplier.name"), candidate: validCandidate });
 assert.equal(missing.approvalReady, false);
 assert.ok(missing.blockers.some((item) => item.code === "REQUIRED_FIELD_MISSING" && item.label.toLowerCase().includes("fornitore")));
 const uncertain = cteApprovalGate({ documentType: "CTE", vector: "EE", fields: complete.map((item) => item.path === "pricing.spread.amount" ? { ...item, status: "UNCERTAIN", confidence: 0.55 } : item), candidate: validCandidate });
@@ -41,7 +44,8 @@ assert.notEqual(fixed?.sourceText, String(fixed?.normalizedValue));
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const ui = await readFile(path.join(root, "app/components/CteIngestionPanel.tsx"), "utf8");
 const reviewSource = await readFile(path.join(root, "app/lib/cte/review.ts"), "utf8");
-assert.match(ui, /Mostra testo completo/);
+// Document provenance is no longer shown in the review (product decision).
+assert.doesNotMatch(ui, /Mostra testo completo/);
 assert.match(ui, /Approvazione non disponibile/);
 assert.match(ui, /Non rilevato nel documento/);
 assert.match(ui, /field\.unit/);

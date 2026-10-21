@@ -354,7 +354,8 @@ export function tryBuildAuthoritativeCteContract(record: Pick<CteIngestionRecord
   }
   const fields = reviewFieldMap(review);
   const supplierName = asString(fields.get("supplier.name"));
-  const supplierId = asString(fields.get("supplier.supplierId"));
+  // The supplier VAT number is optional: the tenant buying the app owns the offers, so the supplier name identifies them.
+  const supplierId = asString(fields.get("supplier.supplierId")) ?? (supplierName ? `supplier-${supplierName.toLowerCase().normalize("NFD").replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 80)}` : null);
   const offerName = asString(fields.get("offer.name"));
   const offerCode = asString(fields.get("offer.code"));
   const validity = asString(fields.get("validity.period"));
@@ -375,7 +376,6 @@ export function tryBuildAuthoritativeCteContract(record: Pick<CteIngestionRecord
   const typedPassThroughComponents = passThroughComponents(passThroughField);
   const requiredPaths: string[] = [];
   if (!supplierName) requiredPaths.push("supplier.name");
-  if (!supplierId) requiredPaths.push("supplier.supplierId");
   if (!offerName) requiredPaths.push("offer.name");
   if (!offerCode) requiredPaths.push("offer.code");
   if (validityDates.length < 2) requiredPaths.push("validity.periodStart", "validity.periodEnd");
@@ -520,7 +520,7 @@ function reviewField(fieldKey: string, field: CteExtractionField | undefined, ve
   if (fieldKey === "supplier.supplierId") { const extracted = supplierVat(field, evidenceField); return base(fieldKey, extracted.value, extracted.source, { status: extracted.value ? extracted.source?.status ?? "CONFIRMED" : "NOT_FOUND" }); }
   if (fieldKey === "supplier.name" || fieldKey === "offer.name") return base(fieldKey, concise(text(field)), field);
   if (fieldKey === "offer.code") return base(fieldKey, code(text(field)), field);
-  if (fieldKey === "pricing.mode") { const raw = text(field); return base(fieldKey, /indicizz|variabil.*pun|pun.*variabil/i.test(raw) ? "Indicizzata" : /fiss[oa]|prezzo fisso/i.test(raw) ? "Fissa" : concise(raw), field); }
+  if (fieldKey === "pricing.mode") { const raw = text(field); return base(fieldKey, /indicizz|index|variabil/i.test(raw) ? "Indicizzata" : /fiss[oa]|prezzo fisso|fixed/i.test(raw) ? "Fissa" : /(?:^|[^a-z])(?:pun|psv|spread)(?:[^a-z]|$)/i.test(raw) ? "Indicizzata" : concise(raw), field); }
   if (fieldKey === "pricing.reference") { const expected = expectedIndex(vector); const raw = text(field); return base(fieldKey, expected && new RegExp("\\b" + expected + "\\b", "i").test(raw) ? expected : null, field); }
   if (fieldKey === "pricing.spread.amount") return money(field, vector, vector === "GAS" ? "\u20AC/Smc" : "\u20AC/kWh");
   if (fieldKey === "pricing.fixedPrice.amount") return money(field, vector, vector === "GAS" ? "\u20AC/Smc" : "\u20AC/kWh");
@@ -591,7 +591,7 @@ export function normalizeCteReview(record: Pick<CteIngestionRecord, "fields" | "
   const fixedPricing = pricingMode === "Fissa" || (record.vector === "EE" && pricingMode === "FIXED");
   const indexedPricing = pricingMode === "Indicizzata" || pricingMode === "INDEXED";
   const requiredPricingPaths = fixedPricing ? ["pricing.fixedPrice.amount"] : indexedPricing ? ["pricing.reference", "pricing.spread.amount"] : [];
-  const requiredPaths = new Set(["supplier.name", "supplier.supplierId", "offer.name", "offer.code", "validity.periodStart", "validity.periodEnd", "eligibility.customerTypes", "pricing.mode", ...requiredPricingPaths, "taxTreatment", ...(record.vector === "EE" ? ["eligibility.voltageLevels"] : [])]);
+  const requiredPaths = new Set(["supplier.name", "offer.name", "offer.code", "validity.periodStart", "validity.periodEnd", "eligibility.customerTypes", "pricing.mode", ...requiredPricingPaths, "taxTreatment", ...(record.vector === "EE" ? ["eligibility.voltageLevels"] : [])]);
   const requiredLabels: Record<string, string> = { "supplier.name": "Fornitore", "supplier.supplierId": "Partita IVA fornitore", "offer.name": "Offerta", "offer.code": "Codice offerta", "validity.periodStart": "Validit\u00E0 iniziale", "validity.periodEnd": "Validit\u00E0 finale", "eligibility.customerTypes": "Tipo cliente", "eligibility.voltageLevels": "Livelli tensione", "pricing.mode": "Modalit\u00E0 prezzo", "pricing.reference": "Indice", "pricing.spread.amount": "Spread", "pricing.fixedPrice.amount": "Prezzo fisso", taxTreatment: "Trattamento fiscale" };
   const reviewByKey = new Map(reviewFields.map((field) => [field.fieldKey, field]));
   const sourceByKey = byPath;

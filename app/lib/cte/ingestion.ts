@@ -5,7 +5,7 @@ import { assertPassThroughComponents, validateCteContract } from "./validation.t
 import type { DocumentStoragePort } from "../foundation/real-bill";
 import type { DeletableTenantRecordRepository, TenantRecord } from "../persistence/types";
 // @ts-expect-error Node's strip-only test runner requires the explicit extension.
-import { CTE_SOURCE_TEXT_MAX_LENGTH, createAnthropicCteOcrProvider, decodeCteProviderPayload } from "./anthropic.ts";
+import { CTE_EXTRACTION_PATHS, CTE_SOURCE_TEXT_MAX_LENGTH, createAnthropicCteOcrProvider, decodeCteProviderPayload } from "./anthropic.ts";
 // @ts-expect-error Node's strip-only test runner requires the explicit extension.
 import { writeRealDiag4Json, type CteDiagnosticCapture } from "../diagnostics/real-diag-4.ts";
 // @ts-expect-error Node's strip-only test runner requires the explicit extension.
@@ -125,6 +125,7 @@ const correctionPaths = new Set([
   "supplier.name", "supplier.supplierId", "offer.name", "offer.code", "validity.periodStart", "validity.periodEnd",
   "expiry.date", "pricing.spread.amount", "pricing.fixedPrice.amount", "commercialTerms.fixedFees[0].amount",
   "commercialTerms.variableFees[0].amount", "commercialTerms.imbalance.component.amount",
+  "pricing.mode", "pricing.reference", "taxTreatment", "eligibility.customerTypes", "eligibility.voltageLevels",
 ]);
 
 function fail(code: string): never { throw new Error(code); }
@@ -455,7 +456,8 @@ export async function correctCteIngestion(input: { readonly tenantId: string; re
 }
 
 export async function confirmCteIngestion(input: { readonly tenantId: string; readonly ingestionId: string; readonly fieldPath: string; readonly actor: string; readonly repository: CteIngestionRepository }): Promise<TenantRecord<CteIngestionRecord>> {
-  if (!isCorrectionSupported(input.fieldPath)) fail("CTE_CORRECTION_FIELD_UNSUPPORTED");
+  // Confirming keeps the extracted value, so any extracted field can be confirmed by the reviewer.
+  if (!(CTE_EXTRACTION_PATHS as readonly string[]).includes(input.fieldPath)) fail("CTE_CORRECTION_FIELD_UNSUPPORTED");
   const current = await input.repository.get(input.tenantId, input.ingestionId);
   if (!current) fail("CTE_INGESTION_NOT_FOUND");
   const payload = current.payload;
