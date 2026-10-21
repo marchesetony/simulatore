@@ -511,6 +511,29 @@ function voltage(field: CteExtractionField | undefined, fields: readonly CteExtr
   }
   return base("eligibility.voltageLevels", raw ? concise(raw) : null, field);
 }
+// CTEs name the spread in many ways ("corrispettivo fisso d'acquisto", "parametro alfa", "PUN + 0,008 €/kWh"),
+// and the reader sometimes files it under another component: look for it there before calling it missing.
+const SPREAD_NAMES = String.raw`spread|corrispettivo\s+(?:fisso\s+)?(?:d['’]\s*|di\s+)acquisto|parametro\s*(?:α|alfa)|maggiorazione|margine`;
+const SPREAD_AMOUNT = String.raw`(\d+(?:[.,]\d+)?)\s*(c\s*€|€|eur(?:o)?)\s*\/\s*(kwh|mwh|smc)`;
+const SPREAD_PATTERNS = [new RegExp(String.raw`(?:${SPREAD_NAMES})[^€\d]{0,80}?${SPREAD_AMOUNT}`, "i"), new RegExp(String.raw`\b(?:PUN|PSV)\s*\+\s*${SPREAD_AMOUNT}`, "i")];
+function spread(field: CteExtractionField | undefined, fields: readonly CteExtractionField[], vector: CteIngestionRecord["vector"]): CteReviewField {
+  const unit = vector === "GAS" ? "€/Smc" : "€/kWh";
+  const direct = money(field, vector, unit);
+  if (direct.normalizedValue !== null) return direct;
+  if (fields.some((candidate) => candidate.path === "pricing.mode" && /fiss[oa]|fixed/i.test(text(candidate)))) return direct;
+  for (const candidate of fields) {
+    if (candidate.path === "pricing.fixedPrice.amount") continue;
+    const evidenceText = [typeof candidate.value === "string" ? candidate.value : "", candidate.sourceText ?? ""].join(" ").replace(/\s+/g, " ");
+    for (const pattern of SPREAD_PATTERNS) {
+      const match = pattern.exec(evidenceText);
+      if (!match) continue;
+      const found: CteExtractionField = { ...candidate, path: "pricing.spread.amount", value: `${match[1]} ${match[2]}/${match[3]}`, sourceText: match[0] };
+      const derived = money(found, vector, unit);
+      if (derived.normalizedValue !== null) return { ...derived, fieldKey: "pricing.spread.amount", label: direct.label, status: candidate.status === "UNCERTAIN" ? "UNCERTAIN" : "CONFIRMED" };
+    }
+  }
+  return direct;
+}
 function tax(field: CteExtractionField | undefined): CteReviewField {
   const raw = text(field);
   const normalized = /(?:iva[^.;]*(?:esclus|non inclus)|imposte[^.;]*(?:esclus|non inclus)|al netto[^.;]*(?:iva|imposte))/i.test(raw) ? "IVA e imposte escluse" : /iva[^.;]*(?:inclus|compres)/i.test(raw) ? "IVA inclusa" : concise(raw);
@@ -575,7 +598,7 @@ function attachSources(fields: readonly CteReviewField[]): { readonly fields: re
   return { fields: sourcedFields, sources };
 }
 
-export function normalizeCteReview(record: Pick<CteIngestionRecord, "fields" | "vector">): CteReviewModel {
+export function normalizeCteReview(record: Pick<CteIngestionRecord, "fields" | "vector"> & { readonly extractionNotes?: readonly string[] }): CteReviewModel {
   const byPath = fieldsByPath(record.fields);
   const validityStart = byPath.get("validity.periodStart");
   const validityEnd = byPath.get("validity.periodEnd");
@@ -590,7 +613,7 @@ export function normalizeCteReview(record: Pick<CteIngestionRecord, "fields" | "
     ...customerFields(byPath.get("eligibility.customerTypes")),
     reviewField("pricing.mode", byPath.get("pricing.mode"), record.vector),
     reviewField("pricing.reference", byPath.get("pricing.reference"), record.vector),
-    reviewField("pricing.spread.amount", byPath.get("pricing.spread.amount"), record.vector),
+    spread(byPath.get("pricing.spread.amount"), [...record.fields, ...(record.extractionNotes ?? []).map((note) => ({ path: "extractionNotes", value: note, status: "UNCERTAIN" as const, confidence: 0, sourcePage: null, sourceText: note }) as unknown as CteExtractionField)], record.vector),
     reviewField("pricing.fixedPrice.amount", byPath.get("pricing.fixedPrice.amount"), record.vector),
     reviewField("commercialTerms.fixedFees", byPath.get("commercialTerms.fixedFees"), record.vector),
     reviewField("commercialTerms.variableFees", byPath.get("commercialTerms.variableFees"), record.vector),
