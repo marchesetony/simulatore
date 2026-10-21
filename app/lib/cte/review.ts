@@ -486,7 +486,9 @@ function customerFields(field: CteExtractionField | undefined): readonly CteRevi
   if (excluded) result.push(base("eligibility.exclusions", excluded[1].split(/[,;]|\s+(?:e|ed)\s+/i).map(normalizeExclusion).filter(Boolean), field));
   return result;
 }
-function voltageLabel(raw: string): string | null {
+function voltageLabel(source: string): string | null {
+  // Only levels the CTE states as eligible count: "esclusi i clienti in BT", "non in bassa tensione" do not.
+  const raw = source.replace(/(?:\bnon\b|esclus\w*|eccezione|tranne|eccetto)\s+(?:\S+\s+){0,4}?(?:bassa\s+(?:o\s+media\s+|e\s+media\s+)?tensione|media\s+tensione|\b[BM]T\b)/gi, " ");
   const low = /bassa\s+(?:(?:e|o|\/)\s*media\s+)?tensione|\bBT\b/i.test(raw);
   const medium = /media\s+tensione|bassa\s+(?:e|o|\/)\s*media|\bMT\b/i.test(raw);
   return low && medium ? "BT / MT" : low ? "BT" : medium ? "MT" : null;
@@ -494,22 +496,19 @@ function voltageLabel(raw: string): string | null {
 /**
  * The voltage levels are stated in the CTE, often outside the eligibility section (e.g. "punti di
  * prelievo in bassa tensione"). When the dedicated field misses them, read them from the rest of the
- * document's evidence; failing that, microbusiness and domestic offers are low voltage by definition.
+ * document's evidence. Nothing is inferred: a level not written in the CTE is not reported.
  */
 function voltage(field: CteExtractionField | undefined, fields: readonly CteExtractionField[]): CteReviewField {
   const raw = text(field);
   const direct = voltageLabel(raw);
   if (direct) return base("eligibility.voltageLevels", direct, field);
+  // Only eligibility-related evidence: fee or loss lines also mention BT/MT without defining who the offer is for.
   for (const candidate of fields) {
-    if (candidate.path === "eligibility.voltageLevels") continue;
+    if (!["offer.name", "eligibility.customerTypes", "documentType"].includes(candidate.path)) continue;
     const evidenceText = [typeof candidate.value === "string" ? candidate.value : "", candidate.sourceText ?? ""].join(" ");
     const found = voltageLabel(evidenceText);
     if (found) return base("eligibility.voltageLevels", found, candidate, { status: candidate.status === "UNCERTAIN" ? "UNCERTAIN" : "CONFIRMED" });
   }
-  const customer = fields.find((candidate) => candidate.path === "eligibility.customerTypes");
-  const customerText = [typeof customer?.value === "string" ? customer.value : "", customer?.sourceText ?? ""].join(" ");
-  const lowVoltageCustomers = /micro\s*-?\s*business|microimpres/i.test(customerText) || /domestic/i.test(customerText) && !/non\s+domestic/i.test(customerText);
-  if (lowVoltageCustomers) return base("eligibility.voltageLevels", "BT", customer, { status: "UNCERTAIN" });
   return base("eligibility.voltageLevels", raw ? concise(raw) : null, field);
 }
 function tax(field: CteExtractionField | undefined): CteReviewField {
