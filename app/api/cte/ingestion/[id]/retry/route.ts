@@ -28,7 +28,9 @@ export async function POST(request: Request, context: Context): Promise<Response
     // review screen shows the real error code instead of a generic retry-exhausted failure.
     const attempt = () => retryCteIngestion({ tenantId: principal.tenantId, ingestionId: id, repository: repositories.cteArchives as CteIngestionRepository, storage: repositories.documentStorage, provider, providerErrorCode });
     let result = await attempt();
-    for (let tries = 1; tries < 3 && result.payload.status === "FAILED" && isRetryableAutomationError(new Error(result.payload.errorCode ?? "")); tries += 1) result = await attempt();
+    for (let tries = 1; tries < 3 && result.payload.status === "FAILED" && isRetryableAutomationError(new Error(result.payload.errorCode ?? "")); tries += 1) {
+      try { result = await attempt(); } catch (error) { console.error("CTE retry attempt failed", error instanceof Error ? `${error.name}: ${error.message}` : typeof error); break; }
+    }
     await recordRuntimeAudit({ tenantId: principal.tenantId, principal, action: "CTE_OCR_RETRY", resourceType: "CTE_INGESTION", resourceId: id, outcome: result.payload.status === "REVIEW_REQUIRED" ? "ALLOWED" : "FAILED", correlationId: "cte-ocr-ingestion-v1", metadata: { status: result.payload.status, errorCode: result.payload.errorCode } });
     return Response.json({ ingestion: toPublicCteIngestion(result) }, { headers: CTE_INGESTION_HEADERS });
   } catch (error) {
