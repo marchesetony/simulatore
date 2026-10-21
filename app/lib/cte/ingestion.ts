@@ -128,6 +128,7 @@ const correctionPaths = new Set([
 ]);
 
 function fail(code: string): never { throw new Error(code); }
+function failWithDetail(code: string, detail: string): never { throw Object.assign(new Error(code), { detail: detail.slice(0, 200) }); }
 function isRecord(value: unknown): value is Record<string, unknown> { return typeof value === "object" && value !== null && !Array.isArray(value); }
 function safeFileName(value: string): string { if (!value || value.length > 180 || /[\0\r\n\\/]/.test(value)) fail("CTE_FILE_NAME_INVALID"); return value; }
 function validContentType(value: string): value is CteDocumentContentType { return (CTE_ALLOWED_CONTENT_TYPES as readonly string[]).includes(value); }
@@ -210,13 +211,18 @@ export function normalizeProviderExtraction(value: unknown, tenantId: string): {
   const documentType = value.documentType === "CTE" || value.documentType === "UNKNOWN" ? value.documentType : fail("CTE_EXTRACTION_SCHEMA_INVALID");
   const vector = value.vector === "EE" || value.vector === "GAS" || value.vector === "UNKNOWN" ? value.vector : fail("CTE_EXTRACTION_SCHEMA_INVALID");
   if (!Array.isArray(value.fields)) fail("CTE_EXTRACTION_SCHEMA_INVALID");
-  const supplied = value.fields.map(extractionField);
-  const notes = extractionNotes(value.extractionNotes);
+  const supplied = value.fields.map((field, index) => {
+    try { return extractionField(field); } catch (error) { failWithDetail(errorCodeOf(error, "CTE_EXTRACTION_SCHEMA_INVALID"), `campo ${isRecord(field) && typeof field.path === "string" ? field.path : `#${index}`} non valido`); }
+  });
+  let notes: readonly string[];
+  try { notes = extractionNotes(value.extractionNotes); } catch { failWithDetail("CTE_EXTRACTION_SCHEMA_INVALID", "note di estrazione oltre i limiti"); }
   const allowed = new Set(expectedPaths(vector));
+  // An empty field the tool enum offers for the other vector carries no evidence, so it is dropped rather than failing the document.
+  const foreign = supplied.filter((field) => !allowed.has(field.path) && field.value !== null);
+  if (foreign.length) failWithDetail("CTE_EXTRACTION_SCHEMA_INVALID", `campi non previsti per ${vector}: ${foreign.map((field) => field.path).slice(0, 4).join(", ")}`);
   const fields = supplied.filter((field) => allowed.has(field.path));
-  if (fields.length !== supplied.length) fail("CTE_EXTRACTION_SCHEMA_INVALID");
   const seen = new Set<string>();
-  for (const field of fields) { if (seen.has(field.path)) fail("CTE_EXTRACTION_SCHEMA_INVALID"); seen.add(field.path); }
+  for (const field of fields) { if (seen.has(field.path)) failWithDetail("CTE_EXTRACTION_SCHEMA_INVALID", `campo duplicato: ${field.path}`); seen.add(field.path); }
   const candidate = bindCandidate(value.contractCandidate, tenantId, vector);
   ensureVectorSeparation(vector, fields, candidate);
   const byPath = new Map(fields.map((field) => [field.path, field]));
@@ -245,8 +251,10 @@ function newIngestionId(): string { return "cte-ingestion-" + randomUUID(); }
 function errorCodeOf(error: unknown, fallback = "CTE_OCR_PROVIDER_FAILED"): string {
   return error instanceof Error && /^[A-Z0-9_]+$/.test(error.message) ? error.message : fallback;
 }
-function diagnosticsOf(error: unknown): CteProviderDiagnostics | null {
-  return isRecord(error) && isRecord(error.diagnostics) ? error.diagnostics as unknown as CteProviderDiagnostics : null;
+function diagnosticsOf(error: unknown, previous: CteProviderDiagnostics | null = null): CteProviderDiagnostics | null {
+  if (isRecord(error) && isRecord(error.diagnostics)) return error.diagnostics as unknown as CteProviderDiagnostics;
+  const detail = isRecord(error) && typeof error.detail === "string" ? error.detail : errorCodeOf(error);
+  return previous ? { ...previous, internalErrorCode: errorCodeOf(error), providerMessage: `Controllo interno: ${detail}` } : null;
 }
 
 async function persistCteDiagnostics(ingestionId: string, provider: CteOcrProvider | undefined): Promise<void> {
@@ -319,7 +327,7 @@ export async function createCteIngestion(input: {
     } catch (error) {
       const capture = input.provider.getProviderPayloadCapture?.();
       if (capture) try { await persistCteProviderPayload({ tenantId: input.tenantId, documentId: ingestionId, attemptNumber: 1, capture }); } catch { console.error("[CTE_PROVIDER_DIAGNOSTICS] persistence failed"); }
-      status = "FAILED"; errorCode = errorCodeOf(error); providerDiagnostics = diagnosticsOf(error);
+      status = "FAILED"; errorCode = errorCodeOf(error); providerDiagnostics = diagnosticsOf(error, providerDiagnostics);
     }
     attempts.push(attempt({ fromStatus: "OCR_PROCESSING", toStatus: status, outcome: status === "REVIEW_REQUIRED" ? "SUCCEEDED" : "FAILED", errorCode, startedAt, completedAt: nowIso(), providerDiagnostics }));
   }
@@ -391,7 +399,7 @@ export async function retryCteIngestion(input: {
       } catch (error) {
         const capture = input.provider.getProviderPayloadCapture?.();
         if (capture) try { await persistCteProviderPayload({ tenantId: input.tenantId, documentId: previous.documentId, attemptNumber: history.length + 1, capture }); } catch { console.error("[CTE_PROVIDER_DIAGNOSTICS] persistence failed"); }
-        errorCode = errorCodeOf(error); providerDiagnostics = diagnosticsOf(error);
+        errorCode = errorCodeOf(error); providerDiagnostics = diagnosticsOf(error, providerDiagnostics);
       }
     }
     await persistCteDiagnostics(input.ingestionId, input.provider);

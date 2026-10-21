@@ -376,7 +376,7 @@ function decodeProviderField(value: unknown, index: number): Record<string, unkn
   if (!kindValid) issues.push(issue(`${prefix}.valuePayload`, "VALUE_KIND"));
   const structuredPath = value.path === "commercialTerms.passThroughComponents" || CTE_OBJECT_PATHS.includes(value.path as typeof CTE_OBJECT_PATHS[number]);
   if (kind !== "NULL" && (structuredPath ? kind !== "JSON" && !textSemantic : kind === "JSON")) issues.push(issue(`${prefix}.valueKind`, "PATH_KIND"));
-  if (value.path === "commercialTerms.passThroughComponents" && (!Array.isArray(rawParsed) || rawParsed.some((item) => !isRecord(item)))) issues.push(issue(`${prefix}.valuePayload`, "PASS_THROUGH_INVALID"));
+  if (value.path === "commercialTerms.passThroughComponents" && kind !== "NULL" && (!Array.isArray(rawParsed) || rawParsed.some((item) => !isRecord(item)))) issues.push(issue(`${prefix}.valuePayload`, "PASS_THROUGH_INVALID"));
   if (kind === "NULL" && value.status !== "NOT_FOUND") issues.push(issue(`${prefix}.status`, "NULL_REQUIRES_NOT_FOUND"));
   if (value.status === "NOT_FOUND" && (kind !== "NULL" || parsed !== null || value.sourcePage !== 0 || value.sourceText !== "")) issues.push(issue(`${prefix}`, "NOT_FOUND_REQUIRES_SENTINELS"));
   if (issues.length) fail("CTE_EXTRACTION_SCHEMA_INVALID", issues);
@@ -397,7 +397,7 @@ function decodeProviderEnvelope(input: Record<string, unknown>): Record<string, 
   const decodedFields = input.fields.map((field, index) => decodeProviderField(field, index));
   return {
     ...input,
-    fields: decodedFields.map((field) => field.path === "commercialTerms.passThroughComponents"
+    fields: decodedFields.map((field) => field.path === "commercialTerms.passThroughComponents" && field.value !== null
       ? { ...field, value: canonicalPassThroughComponents(field.value, decodedFields) }
       : field),
   };
@@ -513,7 +513,7 @@ export function createAnthropicCteOcrProvider(env: NodeJS.ProcessEnv = process.e
           if (error instanceof AnthropicCteResponseError) {
             diagnosticCapture = buildCteDiagnosticCapture(body, error);
             providerPayloadCapture = { requestId: requestId(response, body), provider: "anthropic", model, timestamp: new Date().toISOString(), responseStatus: response.status, rawPayload: body, normalizedPayload: null, schemaValidation: { status: "FAIL", errorCode: error.code, issuePaths: error.issuePaths, issueCodes: error.issueCodes } };
-            error.diagnostics = { ...diagnostics, internalErrorCode: error.code };
+            error.diagnostics = { ...diagnostics, internalErrorCode: error.code, providerMessage: error.issuePaths.length ? `Campi non validi: ${error.issuePaths.slice(0, 5).map((path, at) => `${path}:${error.issueCodes[at] ?? "INVALID"}`).join(", ")}` : null };
           }
           throw error;
         }
