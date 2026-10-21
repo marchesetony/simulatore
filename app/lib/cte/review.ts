@@ -487,11 +487,31 @@ function customerFields(field: CteExtractionField | undefined): readonly CteRevi
   if (excluded) result.push(base("eligibility.exclusions", excluded[1].split(/[,;]|\s+(?:e|ed)\s+/i).map(normalizeExclusion).filter(Boolean), field));
   return result;
 }
-function voltage(field: CteExtractionField | undefined): CteReviewField {
+function voltageLabel(raw: string): string | null {
+  const low = /bassa\s+(?:(?:e|o|\/)\s*media\s+)?tensione|\bBT\b/i.test(raw);
+  const medium = /media\s+tensione|bassa\s+(?:e|o|\/)\s*media|\bMT\b/i.test(raw);
+  return low && medium ? "BT / MT" : low ? "BT" : medium ? "MT" : null;
+}
+/**
+ * The voltage levels are stated in the CTE, often outside the eligibility section (e.g. "punti di
+ * prelievo in bassa tensione"). When the dedicated field misses them, read them from the rest of the
+ * document's evidence; failing that, microbusiness and domestic offers are low voltage by definition.
+ */
+function voltage(field: CteExtractionField | undefined, fields: readonly CteExtractionField[]): CteReviewField {
   const raw = text(field);
-  const low = /bassa\s+(?:(?:e|o)\s+media\s+)?tensione|\bBT\b/i.test(raw);
-  const medium = /media\s+tensione|\bMT\b/i.test(raw);
-  return base("eligibility.voltageLevels", low && medium ? "BT / MT" : low ? "BT" : medium ? "MT" : concise(raw), field);
+  const direct = voltageLabel(raw);
+  if (direct) return base("eligibility.voltageLevels", direct, field);
+  for (const candidate of fields) {
+    if (candidate.path === "eligibility.voltageLevels") continue;
+    const evidenceText = [typeof candidate.value === "string" ? candidate.value : "", candidate.sourceText ?? ""].join(" ");
+    const found = voltageLabel(evidenceText);
+    if (found) return base("eligibility.voltageLevels", found, candidate, { status: candidate.status === "UNCERTAIN" ? "UNCERTAIN" : "CONFIRMED" });
+  }
+  const customer = fields.find((candidate) => candidate.path === "eligibility.customerTypes");
+  const customerText = [typeof customer?.value === "string" ? customer.value : "", customer?.sourceText ?? ""].join(" ");
+  const lowVoltageCustomers = /micro\s*-?\s*business|microimpres/i.test(customerText) || /domestic/i.test(customerText) && !/non\s+domestic/i.test(customerText);
+  if (lowVoltageCustomers) return base("eligibility.voltageLevels", "BT", customer, { status: "UNCERTAIN" });
+  return base("eligibility.voltageLevels", raw ? concise(raw) : null, field);
 }
 function tax(field: CteExtractionField | undefined): CteReviewField {
   const raw = text(field);
@@ -583,7 +603,7 @@ export function normalizeCteReview(record: Pick<CteIngestionRecord, "fields" | "
     reviewField("commercialTerms.economicDuration", byPath.get("commercialTerms.economicDuration"), record.vector),
     reviewField("commercialTerms.lossSemantics", byPath.get("commercialTerms.lossSemantics"), record.vector),
     reviewField("commercialTerms.exitFee", byPath.get("commercialTerms.exitFee"), record.vector),
-    voltage(byPath.get("eligibility.voltageLevels")),
+    voltage(byPath.get("eligibility.voltageLevels"), record.fields),
     tax(byPath.get("taxTreatment")),
   ].filter((field): field is CteReviewField => field !== null);
   const expiry = byPath.get("expiry.date");
