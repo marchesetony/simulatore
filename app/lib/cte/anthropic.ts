@@ -4,6 +4,8 @@ import type { BillOcrErrorCode } from "../ingestion/errors.ts";
 // @ts-expect-error Node's strip-only test runner requires the explicit extension.
 import { buildCteDiagnosticCapture, type CteDiagnosticCapture } from "../diagnostics/real-diag-4.ts";
 import type { CteProviderPayloadCapture } from "./provider-diagnostics.ts";
+// @ts-expect-error Node's strip-only test runner requires the explicit extension.
+import { assertPassThroughComponents } from "./validation.ts";
 
 export const ANTHROPIC_VERSION = "2023-06-01";
 export const ANTHROPIC_TOOL_NAME = "extract_cte";
@@ -377,6 +379,11 @@ function canonicalSemanticValue(path: string, parsed: unknown, sourceText: strin
   }
   return parsed;
 }
+/** Accepts the shapes the model uses for dispatching/capacity lines: a list, a single object, a wrapper object or plain strings. */
+function passThroughItems(parsed: unknown): Record<string, unknown>[] {
+  const list = Array.isArray(parsed) ? parsed : isRecord(parsed) ? (Object.values(parsed).find(Array.isArray) as unknown[] | undefined) ?? [parsed] : [];
+  return list.flatMap((item) => isRecord(item) ? [item] : typeof item === "string" && item.trim() ? [{ componentName: item.trim() }] : []);
+}
 function canonicalPassThroughComponents(value: unknown, fields: readonly Record<string, unknown>[]): readonly Record<string, unknown>[] {
   if (!Array.isArray(value)) return [];
   const effectiveFrom = canonicalIsoDate(fieldValue(fields, "validity.periodStart"));
@@ -429,17 +436,18 @@ function decodeProviderField(value: unknown, index: number): Record<string, unkn
   const rawParsed = parsed;
   const semanticPath = CTE_OBJECT_PATHS.includes(value.path as typeof CTE_OBJECT_PATHS[number]);
   const textSemantic = semanticPath && (kind === "TEXT" || kind === "NUMBER");
+  const passThroughList = value.path === "commercialTerms.passThroughComponents" && kind === "JSON" ? passThroughItems(parsed) : null;
   const commercialList = legacyCommercialArrayPaths.has(String(value.path)) && kind === "JSON" && (Array.isArray(parsed) || isRecord(parsed));
-  const normalizedParsed = semanticPath && kind !== "NULL" ? canonicalSemanticValue(value.path as string, parsed, typeof value.sourceText === "string" ? value.sourceText : "") : commercialList && isRecord(parsed) ? [parsed] : parsed;
+  const normalizedParsed = semanticPath && kind !== "NULL" ? canonicalSemanticValue(value.path as string, parsed, typeof value.sourceText === "string" ? value.sourceText : "") : commercialList && isRecord(parsed) ? [parsed] : passThroughList !== null ? passThroughList : parsed;
   const kindValid = kind === "NULL" ? rawParsed === null : kind === "TEXT" ? typeof rawParsed === "string" : kind === "NUMBER" ? typeof rawParsed === "number" && Number.isFinite(rawParsed) : isRecord(rawParsed) || Array.isArray(rawParsed);
   if (!kindValid) issues.push(issue(`${prefix}.valuePayload`, "VALUE_KIND"));
   const structuredPath = value.path === "commercialTerms.passThroughComponents" || CTE_OBJECT_PATHS.includes(value.path as typeof CTE_OBJECT_PATHS[number]);
   if (kind !== "NULL" && (structuredPath ? kind !== "JSON" && !textSemantic : kind === "JSON" && !commercialList)) issues.push(issue(`${prefix}.valueKind`, "PATH_KIND"));
-  if (value.path === "commercialTerms.passThroughComponents" && kind !== "NULL" && (!Array.isArray(rawParsed) || rawParsed.some((item) => !isRecord(item)))) issues.push(issue(`${prefix}.valuePayload`, "PASS_THROUGH_INVALID"));
+  if (value.path === "commercialTerms.passThroughComponents" && kind !== "NULL" && kind !== "JSON" && (!Array.isArray(rawParsed) || rawParsed.some((item) => !isRecord(item)))) issues.push(issue(`${prefix}.valuePayload`, "PASS_THROUGH_INVALID"));
   if (kind === "NULL" && value.status !== "NOT_FOUND") issues.push(issue(`${prefix}.status`, "NULL_REQUIRES_NOT_FOUND"));
   if (value.status === "NOT_FOUND" && (kind !== "NULL" || parsed !== null || value.sourcePage !== 0 || value.sourceText !== "")) issues.push(issue(`${prefix}`, "NOT_FOUND_REQUIRES_SENTINELS"));
   if (issues.length) fail("CTE_EXTRACTION_SCHEMA_INVALID", issues);
-  if (semanticPath && kind !== "NULL" && normalizedParsed === null) return { ...notFoundField(value.path as string), unreadable: true };
+  if ((semanticPath || value.path === "commercialTerms.passThroughComponents") && kind !== "NULL" && (normalizedParsed === null || Array.isArray(normalizedParsed) && normalizedParsed.length === 0)) return { ...notFoundField(value.path as string), unreadable: true };
   return {
     path: value.path,
     value: normalizedParsed,
@@ -461,6 +469,11 @@ function decodeProviderEnvelope(input: Record<string, unknown>): Record<string, 
   const notes: string[] = [];
   const duration = decoded.find((field) => field.path === "commercialTerms.economicDuration")?.value ?? null;
   const decodedFields = decoded.map((field) => {
+    if (field.path === "commercialTerms.passThroughComponents" && Array.isArray(field.value)) {
+      const components = canonicalPassThroughComponents(field.value, decoded);
+      try { assertPassThroughComponents(components); return { ...field, value: components }; }
+      catch { notes.push("Oneri di dispacciamento/capacità letti ma non interpretabili: da compilare in revisione."); return notFoundField("commercialTerms.passThroughComponents"); }
+    }
     if (field.unreadable) { notes.push(`Campo ${String(field.path)} letto ma non interpretabile: da compilare in revisione.`); const { unreadable: _unreadable, ...rest } = field; return rest; }
     if (field.path !== "commercialTerms.exitFee" || !isRecord(field.value) || field.value.durationReference !== null) return field;
     if (duration !== null) return { ...field, value: { ...field.value, durationReference: duration } };
