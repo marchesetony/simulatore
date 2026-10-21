@@ -66,5 +66,20 @@ export function cteMessage(code: string): string {
 
 export function cteError(error: unknown, fallback = "CTE_INGESTION_FAILED"): Response {
   const code = boundedCteCode(error, fallback);
-  return Response.json({ error: { code, message: cteMessage(code), correlationId: CTE_INGESTION_CORRELATION_ID } }, { status: cteStatus(code), headers: CTE_INGESTION_HEADERS });
+  const detail = code === fallback ? unexpectedErrorDetail(error) : null;
+  return Response.json({ error: { code, message: cteMessage(code), correlationId: CTE_INGESTION_CORRELATION_ID, ...(detail ? { detail } : {}) } }, { status: cteStatus(code), headers: CTE_INGESTION_HEADERS });
+}
+
+/** A short, credential-free description of an unexpected error, so a failure can be diagnosed from the screen. */
+export function unexpectedErrorDetail(error: unknown): string | null {
+  if (!(error instanceof Error)) return null;
+  const rawCode = (error as { code?: unknown }).code;
+  const systemCode = typeof rawCode === "string" ? ` [${rawCode}]` : "";
+  const text = `${error.name}${systemCode}: ${error.message}`
+    .replace(/sk-ant-[\w-]+/gi, "[chiave]")
+    .replace(/(?:bearer|apikey|api-key|authorization)\s*[:=]?\s*\S+/gi, "[credenziale]")
+    .replace(/[A-Za-z0-9+/_=-]{40,}/g, "[…]")
+    .replace(/\s+/g, " ")
+    .trim();
+  return text ? text.slice(0, 240) : null;
 }

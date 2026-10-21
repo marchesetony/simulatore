@@ -2,17 +2,20 @@ export interface ApiErrorData {
   readonly code?: unknown;
   readonly message?: unknown;
   readonly correlationId?: unknown;
+  readonly detail?: unknown;
 }
 
 export class UiApiError extends Error {
   readonly code: string;
   readonly correlationId: string | null;
+  readonly detail: string | null;
 
-  constructor(code: string, message: string, correlationId: string | null = null) {
+  constructor(code: string, message: string, correlationId: string | null = null, detail: string | null = null) {
     super(message);
     this.name = "UiApiError";
     this.code = code;
     this.correlationId = correlationId;
+    this.detail = detail;
   }
 }
 
@@ -134,7 +137,8 @@ function errorFrom(value: unknown, fallback: string): UiApiError {
   if (typeof value !== "object" || value === null) return new UiApiError(fallback, messageFor(fallback));
   const item = value as ApiErrorData;
   const code = safeCode(item.code, fallback);
-  return new UiApiError(code, messageFor(code), safeCorrelation(item.correlationId));
+  const detail = typeof item.detail === "string" && item.detail.trim() ? item.detail.trim().slice(0, 240) : null;
+  return new UiApiError(code, messageFor(code), safeCorrelation(item.correlationId), detail);
 }
 
 export function toUiError(error: unknown, fallback = "UI_REQUEST_FAILED"): UiApiError {
