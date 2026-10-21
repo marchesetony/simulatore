@@ -38,7 +38,8 @@ assert.equal(byKey.get("commercialTerms.oneOffFees")?.description, "Gestione ser
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const ui = await readFile(path.join(root, "app/components/CteIngestionPanel.tsx"), "utf8");
 const css = await readFile(path.join(root, "app/globals.css"), "utf8");
-for (const label of ["Fornitore e offerta", "Ambito di applicazione", "Struttura prezzo", "Componenti commerciali", "Trattamento fiscale", "Non rilevati", "Conferma", "Modifica", "Modifica dati", "Salva modifiche", "Annulla", "Componente", "Importo", "Unità/periodicità", "Condizioni", "Revisione"]) assert.ok(ui.includes(label), `missing compact review label: ${label}`);
+// One "Modifica" button edits the whole review (product decision): no per-field buttons, no "Modifica dati".
+for (const label of ["Fornitore e offerta", "Ambito di applicazione", "Struttura prezzo", "Componenti commerciali", "Trattamento fiscale", "Non rilevati", "Conferma", "Modifica", "Salva modifiche", "Annulla", "Componente", "Importo", "Unità/periodicità", "Condizioni", "Revisione"]) assert.ok(ui.includes(label), `missing compact review label: ${label}`);
 assert.doesNotMatch(ui, /Dettagli tecnici/);
 assert.doesNotMatch(ui, /Voci facoltative non rilevate/);
 assert.doesNotMatch(ui, /<TechnicalDetails/);

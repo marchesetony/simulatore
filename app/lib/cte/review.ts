@@ -476,11 +476,12 @@ function customerFields(field: CteExtractionField | undefined): readonly CteRevi
   const result: CteReviewField[] = [];
   let customer = concise(raw);
   if (/non\s+domestic[oi]/i.test(raw) && /altri\s+usi/i.test(raw)) customer = /business/i.test(raw) ? "Non domestico \u2013 Altri usi Business" : "Non domestico \u2013 Altri usi";
-  else if (customer) customer = customer.split(/[,;.]/, 1)[0].trim();
+  // Keep thousands separators: "Clienti non domestici (>50.000 kWh/anno)" must not stop at "50".
+  else if (customer) customer = customer.split(/;|,(?!\d)|\.(?!\d)/, 1)[0].trim();
   result.push(base("eligibility.customerTypes", customer, field));
   const range = raw.match(/(?:oltre|tra|da)\s+([\d.,]+)\s*(?:kwh(?:\/anno)?\s*)?(?:e|-)\s*fino\s+a\s+([\d.,]+)\s*kwh(?:\/anno)?/i) ?? raw.match(/([\d.,]+)\s*kwh[^.]*?fino\s+a\s+([\d.,]+)\s*kwh/i);
   if (range) result.push(base("eligibility.consumptionRange", `Oltre ${range[1]} e fino a ${range[2]} kWh/anno`, field));
-  const lowerBound = !range && raw.match(/(?:superiore|maggiore)\s+a\s+([\d.,]+)\s*kwh(?:\/anno|\/a)?/i);
+  const lowerBound = !range && (raw.match(/(?:superiore|maggiore)\s+a\s+([\d.,]+)\s*kwh(?:\/anno|\/a)?/i) ?? raw.match(/>\s*([\d.,]+)\s*kwh/i));
   if (lowerBound) result.push(base("eligibility.consumptionRange", `> ${lowerBound[1]} kWh/anno`, field));
   const excluded = raw.match(/esclus\w*\s*(?::|-)?\s*(.+)$/i);
   if (excluded) result.push(base("eligibility.exclusions", excluded[1].split(/[,;]|\s+(?:e|ed)\s+/i).map(normalizeExclusion).filter(Boolean), field));
