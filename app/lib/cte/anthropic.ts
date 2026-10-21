@@ -379,6 +379,17 @@ function canonicalSemanticValue(path: string, parsed: unknown, sourceText: strin
   }
   return parsed;
 }
+function flattenToText(parsed: unknown): string | null {
+  const parts: string[] = [];
+  const walk = (item: unknown): void => {
+    if (typeof item === "string" && item.trim()) parts.push(item.trim());
+    else if (typeof item === "number" && Number.isFinite(item)) parts.push(String(item));
+    else if (Array.isArray(item)) item.forEach(walk);
+    else if (isRecord(item)) Object.values(item).forEach(walk);
+  };
+  walk(parsed);
+  return parts.length ? parts.join(", ").slice(0, CTE_SOURCE_TEXT_MAX_LENGTH) : null;
+}
 /** Accepts the shapes the model uses for dispatching/capacity lines: a list, a single object, a wrapper object or plain strings. */
 function passThroughItems(parsed: unknown): Record<string, unknown>[] {
   const list = Array.isArray(parsed) ? parsed : isRecord(parsed) ? (Object.values(parsed).find(Array.isArray) as unknown[] | undefined) ?? [parsed] : [];
@@ -438,11 +449,13 @@ function decodeProviderField(value: unknown, index: number): Record<string, unkn
   const textSemantic = semanticPath && (kind === "TEXT" || kind === "NUMBER");
   const passThroughList = value.path === "commercialTerms.passThroughComponents" && kind === "JSON" ? passThroughItems(parsed) : null;
   const commercialList = legacyCommercialArrayPaths.has(String(value.path)) && kind === "JSON" && (Array.isArray(parsed) || isRecord(parsed));
-  const normalizedParsed = semanticPath && kind !== "NULL" ? canonicalSemanticValue(value.path as string, parsed, typeof value.sourceText === "string" ? value.sourceText : "") : commercialList && isRecord(parsed) ? [parsed] : passThroughList !== null ? passThroughList : parsed;
+  // Descriptive fields (customer types, voltage levels, tax treatment…) are read from text downstream, so a JSON list is flattened into it.
+  const descriptiveList = kind === "JSON" && !semanticPath && value.path !== "commercialTerms.passThroughComponents" && !legacyCommercialArrayPaths.has(String(value.path)) && !/^(pricing\.|documentType$|vector$)/.test(String(value.path)) ? flattenToText(parsed) : null;
+  const normalizedParsed = semanticPath && kind !== "NULL" ? canonicalSemanticValue(value.path as string, parsed, typeof value.sourceText === "string" ? value.sourceText : "") : descriptiveList !== null ? descriptiveList : commercialList && isRecord(parsed) ? [parsed] : passThroughList !== null ? passThroughList : parsed;
   const kindValid = kind === "NULL" ? rawParsed === null : kind === "TEXT" ? typeof rawParsed === "string" : kind === "NUMBER" ? typeof rawParsed === "number" && Number.isFinite(rawParsed) : isRecord(rawParsed) || Array.isArray(rawParsed);
   if (!kindValid) issues.push(issue(`${prefix}.valuePayload`, "VALUE_KIND"));
   const structuredPath = value.path === "commercialTerms.passThroughComponents" || CTE_OBJECT_PATHS.includes(value.path as typeof CTE_OBJECT_PATHS[number]);
-  if (kind !== "NULL" && (structuredPath ? kind !== "JSON" && !textSemantic : kind === "JSON" && !commercialList)) issues.push(issue(`${prefix}.valueKind`, "PATH_KIND"));
+  if (kind !== "NULL" && (structuredPath ? kind !== "JSON" && !textSemantic : kind === "JSON" && !commercialList && descriptiveList === null)) issues.push(issue(`${prefix}.valueKind`, "PATH_KIND"));
   if (value.path === "commercialTerms.passThroughComponents" && kind !== "NULL" && kind !== "JSON" && (!Array.isArray(rawParsed) || rawParsed.some((item) => !isRecord(item)))) issues.push(issue(`${prefix}.valuePayload`, "PASS_THROUGH_INVALID"));
   if (kind === "NULL" && value.status !== "NOT_FOUND") issues.push(issue(`${prefix}.status`, "NULL_REQUIRES_NOT_FOUND"));
   if (value.status === "NOT_FOUND" && (kind !== "NULL" || parsed !== null || value.sourcePage !== 0 || value.sourceText !== "")) issues.push(issue(`${prefix}`, "NOT_FOUND_REQUIRES_SENTINELS"));
