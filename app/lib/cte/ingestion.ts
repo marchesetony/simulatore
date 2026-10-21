@@ -311,7 +311,7 @@ export async function createCteIngestion(input: {
       const extracted = normalizeProviderExtraction(providerExtraction, input.tenantId);
       if (!extracted.candidate && extracted.fields.every((field) => field.value === null)) fail("CTE_OCR_NO_USABLE_EVIDENCE");
       const capture = input.provider.getProviderPayloadCapture?.();
-      if (capture) await persistCteProviderPayload({ tenantId: input.tenantId, documentId: ingestionId, attemptNumber: 1, capture });
+      if (capture) try { await persistCteProviderPayload({ tenantId: input.tenantId, documentId: ingestionId, attemptNumber: 1, capture }); } catch { console.error("[CTE_PROVIDER_DIAGNOSTICS] persistence failed"); }
       documentType = extracted.documentType; vector = extracted.vector; fields = extracted.fields; candidate = extracted.candidate; status = "REVIEW_REQUIRED";
       extractionNotesValue = extracted.extractionNotes;
     } catch (error) {
@@ -384,7 +384,7 @@ export async function retryCteIngestion(input: {
         const extracted = normalizeProviderExtraction(providerExtraction, input.tenantId);
         if (!extracted.candidate && extracted.fields.every((field) => field.value === null)) fail("CTE_OCR_NO_USABLE_EVIDENCE");
         const capture = input.provider.getProviderPayloadCapture?.();
-        if (capture) await persistCteProviderPayload({ tenantId: input.tenantId, documentId: previous.documentId, attemptNumber: history.length + 1, capture });
+        if (capture) try { await persistCteProviderPayload({ tenantId: input.tenantId, documentId: previous.documentId, attemptNumber: history.length + 1, capture }); } catch { console.error("[CTE_PROVIDER_DIAGNOSTICS] persistence failed"); }
         status = "REVIEW_REQUIRED"; errorCode = null; outcome = "SUCCEEDED"; documentType = extracted.documentType; vector = extracted.vector; fields = extracted.fields; extractionNotesValue = extracted.extractionNotes; candidate = extracted.candidate;
       } catch (error) {
         const capture = input.provider.getProviderPayloadCapture?.();
