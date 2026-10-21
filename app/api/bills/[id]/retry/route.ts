@@ -40,3 +40,5 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
     return Response.json({ error: { code, message } }, { status, headers: HEADERS });
   }
 }
+
+export const maxDuration = 300;

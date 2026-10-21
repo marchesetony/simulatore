@@ -162,3 +162,5 @@ function messageFor(code: string): string {
     default: return "Bill ingestion failed";
   }
 }
+
+export const maxDuration = 300;

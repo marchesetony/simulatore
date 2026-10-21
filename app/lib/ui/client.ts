@@ -83,6 +83,7 @@ const messages: Readonly<Record<string, string>> = {
   CTE_OCR_PROVIDER_FAILED: "Elaborazione Anthropic non disponibile",
   CTE_OCR_RESPONSE_INVALID: "Risposta Anthropic non valida",
   CTE_OCR_TOOL_USE_MISSING: "Estrazione Anthropic mancante",
+  CTE_INGESTION_FAILED: "Analisi del documento non riuscita",
   CTE_OCR_OUTPUT_TRUNCATED: "Risposta Anthropic troncata prima dell’estrazione completa",
   CTE_OCR_PROVIDER_REFUSAL: "Il provider Anthropic ha rifiutato l’estrazione",
   CTE_OCR_PROVIDER_RESPONSE_UNKNOWN: "Risposta Anthropic non riconosciuta",

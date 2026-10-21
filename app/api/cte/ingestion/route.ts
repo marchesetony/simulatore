@@ -5,6 +5,7 @@ import { CTE_MAX_DOCUMENT_BYTES, createCteIngestion, getConfiguredCteOcrProvider
 import { cteError, CTE_INGESTION_HEADERS } from "../../../lib/cte/ingestion-api";
 
 export const runtime = "nodejs";
+export const maxDuration = 300;
 
 export async function GET(request: Request): Promise<Response> {
   try {
