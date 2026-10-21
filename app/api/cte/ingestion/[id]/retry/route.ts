@@ -31,7 +31,7 @@ export async function POST(request: Request, context: Context): Promise<Response
     for (let tries = 1; tries < 3 && result.payload.status === "FAILED" && isRetryableAutomationError(new Error(result.payload.errorCode ?? "")); tries += 1) {
       try { result = await attempt(); } catch (error) { console.error("CTE retry attempt failed", error instanceof Error ? `${error.name}: ${error.message}` : typeof error); break; }
     }
-    await recordRuntimeAudit({ tenantId: principal.tenantId, principal, action: "CTE_OCR_RETRY", resourceType: "CTE_INGESTION", resourceId: id, outcome: result.payload.status === "REVIEW_REQUIRED" ? "ALLOWED" : "FAILED", correlationId: "cte-ocr-ingestion-v1", metadata: { status: result.payload.status, errorCode: result.payload.errorCode } });
+    await recordRuntimeAudit({ tenantId: principal.tenantId, principal, action: "CTE_OCR_RETRY", resourceType: "CTE_INGESTION", resourceId: id, outcome: result.payload.status === "REVIEW_REQUIRED" ? "ALLOWED" : "FAILED", correlationId: "cte-ocr-ingestion-v1", metadata: { status: result.payload.status, resultCode: result.payload.errorCode ?? "NONE" } });
     return Response.json({ ingestion: toPublicCteIngestion(result) }, { headers: CTE_INGESTION_HEADERS });
   } catch (error) {
     console.error("CTE retry failed", error instanceof Error ? `${error.name}: ${error.message}` : typeof error);
