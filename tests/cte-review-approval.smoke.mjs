@@ -23,7 +23,9 @@ const missing = cteApprovalGate({ documentType: "CTE", vector: "EE", fields: com
 assert.equal(missing.approvalReady, false);
 assert.ok(missing.blockers.some((item) => item.code === "REQUIRED_FIELD_MISSING" && item.label.toLowerCase().includes("fornitore")));
 const uncertain = cteApprovalGate({ documentType: "CTE", vector: "EE", fields: complete.map((item) => item.path === "pricing.spread.amount" ? { ...item, status: "UNCERTAIN", confidence: 0.55 } : item), candidate: validCandidate });
-assert.ok(uncertain.blockers.some((item) => item.code === "REQUIRED_FIELD_UNCERTAIN" && item.fieldKey === "pricing.spread.amount"));
+// A value read from the document is taken as correct: low confidence alone no longer blocks approval (product decision).
+assert.equal(uncertain.blockers.some((item) => item.code === "REQUIRED_FIELD_UNCERTAIN"), false);
+assert.equal(uncertain.approvalReady, true);
 const unclassified = cteApprovalGate({ documentType: "UNKNOWN", vector: "UNKNOWN", fields: [], candidate: null });
 assert.ok(unclassified.blockers.some((item) => item.code === "CLASSIFICATION_UNCONFIRMED"));
 assert.ok(unclassified.blockers.some((item) => item.code === "AUTHORITATIVE_CONTRACT_MISSING"));

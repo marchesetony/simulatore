@@ -411,7 +411,6 @@ export function tryBuildAuthoritativeCteContract(record: Pick<CteIngestionRecord
       : null;
   if (!pricing) return authoritativeFailure("CTE_AUTHORITATIVE_PRICING_UNSUPPORTED", ["pricing.mode", "pricing.fixedPrice.amount"]);
   const expiryRaw = record.fields.find((field) => field.path === "expiry.date");
-  if (expiryRaw?.status === "UNCERTAIN") return authoritativeFailure("CTE_AUTHORITATIVE_FIELD_UNCERTAIN", ["expiry.date"]);
   const expiryDate = expiryRaw && expiryRaw.status !== "NOT_FOUND" && expiryRaw.value !== null
     ? isoDate(date(expiryRaw.value) ?? (typeof expiryRaw.sourceText === "string" ? date(expiryRaw.sourceText) : null) ?? "")
     : null;
@@ -628,8 +627,8 @@ export function normalizeCteReview(record: Pick<CteIngestionRecord, "fields" | "
     const hasReviewValue = reviewField?.normalizedValue !== null && reviewField?.normalizedValue !== undefined;
     const value = hasReviewValue ? reviewField?.normalizedValue : rawField?.value ?? null;
     const status = hasReviewValue ? reviewField?.status : rawField?.status ?? reviewField?.status;
+    // Only missing data blocks approval: a value read from the document is taken as correct and fixed with Modifica if needed.
     if (!rawField && !reviewField || value === null || status === "NOT_FOUND") blockers.push({ code: "REQUIRED_FIELD_MISSING", fieldKey: path, label: `Campo obbligatorio non rilevato: ${requiredLabels[path] ?? path}`, required: true });
-    else if (status === "UNCERTAIN") blockers.push({ code: "REQUIRED_FIELD_UNCERTAIN", fieldKey: path, label: `Campo obbligatorio incerto: ${requiredLabels[path] ?? path}`, required: true });
   }
   const optionalNotFound = reviewFields.filter((field) => !requiredPaths.has(field.fieldKey) && (field.status === "NOT_FOUND" || field.normalizedValue === null)).map((field) => field.label);
   const commercialFields = reviewFields.filter((field) => field.status !== "NOT_FOUND" && field.normalizedValue !== null).map((field) => requiredPaths.has(field.fieldKey) ? { ...field, required: true } : field);

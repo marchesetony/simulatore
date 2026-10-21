@@ -356,6 +356,8 @@ export async function retryCteIngestion(input: {
   readonly storage: DocumentStoragePort;
   readonly provider?: CteOcrProvider;
   readonly providerErrorCode?: CteProviderConfigurationError;
+  /** Re-read a document already in review (e.g. after the extractor improved); its current reading is kept if this fails. */
+  readonly reread?: boolean;
 }): Promise<TenantRecord<CteIngestionRecord>> {
   const lockKey = `${input.tenantId}:${input.ingestionId}`;
   if (activeRetries.has(lockKey)) fail("CTE_OCR_RETRY_IN_PROGRESS");
@@ -364,7 +366,7 @@ export async function retryCteIngestion(input: {
     const current = await input.repository.get(input.tenantId, input.ingestionId);
     if (!current) fail("CTE_INGESTION_NOT_FOUND");
     const previous = current.payload;
-    if (previous.status !== "FAILED" && previous.status !== "PROVIDER_NOT_CONFIGURED") fail("CTE_RETRY_STATE_INVALID");
+    if (previous.status !== "FAILED" && previous.status !== "PROVIDER_NOT_CONFIGURED" && !(input.reread && previous.status === "REVIEW_REQUIRED")) fail("CTE_RETRY_STATE_INVALID");
     const startedAt = nowIso();
     const history = [...(previous.attempts ?? [])];
     if (history.length === 0 && previous.errorCode) history.push(attempt({ fromStatus: previous.status, toStatus: previous.status, outcome: previous.status === "PROVIDER_NOT_CONFIGURED" ? "PROVIDER_NOT_CONFIGURED" : "FAILED", errorCode: previous.errorCode, startedAt: current.updatedAt, completedAt: current.updatedAt, providerDiagnostics: previous.providerDiagnostics }));
@@ -403,6 +405,7 @@ export async function retryCteIngestion(input: {
         errorCode = errorCodeOf(error); providerDiagnostics = diagnosticsOf(error, providerDiagnostics);
       }
     }
+    if (previous.status === "REVIEW_REQUIRED" && status !== "REVIEW_REQUIRED") { status = "REVIEW_REQUIRED"; documentType = previous.documentType; vector = previous.vector; fields = previous.fields; extractionNotesValue = previous.extractionNotes; candidate = previous.candidate; }
     await persistCteDiagnostics(input.ingestionId, input.provider);
     const completedAt = nowIso();
     const nextAttempt = attempt({ fromStatus: previous.status, toStatus: status, outcome, errorCode, startedAt, completedAt, providerDiagnostics });
