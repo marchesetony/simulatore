@@ -166,6 +166,7 @@ export interface CteIngestionModel {
   readonly candidatePreview: Record<string, unknown> | null;
   readonly corrections: readonly { readonly version: number; readonly fieldPath: string; readonly previousValue: string | number | null; readonly nextValue: string | number; readonly actor: string; readonly correctedAt: string }[];
   readonly errorCode: string | null;
+  readonly providerDetail?: string | null;
   readonly approvedArchiveId: string | null;
 }
 

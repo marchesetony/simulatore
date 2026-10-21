@@ -45,6 +45,8 @@ export interface CteProviderDiagnostics {
   readonly contentBlockTypes: readonly string[];
   readonly toolName: string | null;
   readonly internalErrorCode: string | null;
+  /** The provider's own short error text (credentials stripped), when it rejected the request. */
+  readonly providerMessage?: string | null;
 }
 
 export interface CteIngestionAttempt {
@@ -268,7 +270,7 @@ function publicRecord(record: TenantRecord<CteIngestionRecord>): Record<string, 
   const reviewMap = new Map([...review.commercialFields, ...review.notFoundFields].map((field) => [field.fieldKey, field]));
   const offerName = typeof reviewMap.get("offer.name")?.normalizedValue === "string" ? reviewMap.get("offer.name")?.normalizedValue : authoritative?.offer.name ?? null;
   const supplierName = typeof reviewMap.get("supplier.name")?.normalizedValue === "string" ? reviewMap.get("supplier.name")?.normalizedValue : authoritative?.supplier.name ?? null;
-  return { ingestionId: payload.ingestionId, documentId: payload.documentId, fileName: typeof offerName === "string" ? offerName : payload.fileName, offerName, supplierName, contentType: payload.contentType, size: payload.size, createdAt: record.createdAt, updatedAt: record.updatedAt, status: payload.status, documentType: payload.documentType, vector: payload.vector, currency: review.currency, fields: payload.fields, reviewFields: review.commercialFields, notFoundFields: review.notFoundFields, sources: review.sources, approvalGate: cteApprovalGate(serverRecord), extractionNotes: payload.extractionNotes, candidatePreview: authoritative ? { readyForApproval: authoritative.approval.status === "NEEDS_REVIEW" } : null, corrections: payload.corrections, errorCode: payload.errorCode, approvedArchiveId: payload.approvedArchiveId };
+  return { ingestionId: payload.ingestionId, documentId: payload.documentId, fileName: typeof offerName === "string" ? offerName : payload.fileName, offerName, supplierName, contentType: payload.contentType, size: payload.size, createdAt: record.createdAt, updatedAt: record.updatedAt, status: payload.status, documentType: payload.documentType, vector: payload.vector, currency: review.currency, fields: payload.fields, reviewFields: review.commercialFields, notFoundFields: review.notFoundFields, sources: review.sources, approvalGate: cteApprovalGate(serverRecord), extractionNotes: payload.extractionNotes, candidatePreview: authoritative ? { readyForApproval: authoritative.approval.status === "NEEDS_REVIEW" } : null, corrections: payload.corrections, errorCode: payload.errorCode, providerDetail: payload.status === "FAILED" ? payload.providerDiagnostics?.providerMessage ?? null : null, approvedArchiveId: payload.approvedArchiveId };
 }
 
 export function toPublicCteIngestion(record: TenantRecord<CteIngestionRecord>): Record<string, unknown> { return publicRecord(record); }

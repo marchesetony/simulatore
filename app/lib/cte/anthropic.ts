@@ -216,6 +216,24 @@ function responseDiagnostics(body: unknown, model: string, httpStatus: number | 
     internalErrorCode: null,
   };
 }
+function sanitizeProviderText(value: string): string {
+  return value.replace(/sk-ant-[\w-]+/gi, "[chiave]").replace(/[A-Za-z0-9+/_=-]{40,}/g, "[…]").replace(/\s+/g, " ").trim().slice(0, 240);
+}
+
+/** Anthropic explains a rejected request (unknown model, no credit, bad input) in its error body; keep that text. */
+async function providerErrorMessage(response: Response): Promise<string | null> {
+  try {
+    const body: unknown = await response.json();
+    const error = isRecord(body) && isRecord(body.error) ? body.error : null;
+    const type = typeof error?.type === "string" ? error.type : null;
+    const message = typeof error?.message === "string" ? error.message : null;
+    const text = [type, message].filter(Boolean).join(": ");
+    return sanitizeProviderText(`HTTP ${response.status}${text ? ` · ${text}` : ""}`);
+  } catch {
+    return `HTTP ${response.status}`;
+  }
+}
+
 function failWithDiagnostics(code: string, diagnostics: CteProviderDiagnostics): never {
   const error = new AnthropicCteResponseError(code);
   error.diagnostics = { ...diagnostics, internalErrorCode: code };
@@ -450,12 +468,12 @@ export function createAnthropicCteOcrProvider(env: NodeJS.ProcessEnv = process.e
         try { response = await Promise.race([fetcher(endpoint, { method: "POST", headers: { "x-api-key": apiKey, "anthropic-version": ANTHROPIC_VERSION, "content-type": "application/json" }, body: JSON.stringify(payload), signal: timeout.signal }), timeoutFailure]); }
         catch (error) {
           if (error instanceof DOMException && error.name === "AbortError") failWithDiagnostics("CTE_OCR_PROVIDER_TIMEOUT", responseDiagnostics(null, model, null));
-          failWithDiagnostics("CTE_OCR_PROVIDER_FAILED", responseDiagnostics(null, model, null));
+          failWithDiagnostics("CTE_OCR_PROVIDER_FAILED", { ...responseDiagnostics(null, model, null), providerMessage: sanitizeProviderText(`Connessione non riuscita: ${error instanceof Error ? error.message : "errore di rete"}`) });
         }
         const statusDiagnostics = responseDiagnostics(null, model, response.status);
         if (response.status === 401 || response.status === 403) failWithDiagnostics("CTE_OCR_PROVIDER_AUTH_FAILED", statusDiagnostics);
         if (response.status === 429) failWithDiagnostics("CTE_OCR_PROVIDER_RATE_LIMITED", statusDiagnostics);
-        if (!response.ok) failWithDiagnostics("CTE_OCR_PROVIDER_FAILED", statusDiagnostics);
+        if (!response.ok) failWithDiagnostics("CTE_OCR_PROVIDER_FAILED", { ...statusDiagnostics, providerMessage: await providerErrorMessage(response) });
         let body: unknown;
         try { body = await Promise.race([response.json(), timeoutFailure]); }
         catch (error) {
