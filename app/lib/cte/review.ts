@@ -119,7 +119,8 @@ function numeric(value: unknown): number | null {
   const result = Number(normalized);
   return Number.isFinite(result) ? result : null;
 }
-function italianNumber(value: number): string { return new Intl.NumberFormat("it-IT", { minimumFractionDigits: 2, maximumFractionDigits: 3 }).format(value); }
+// Spreads are often stated with 4-6 decimals (e.g. 0,01045 €/kWh): never round them away.
+function italianNumber(value: number): string { return new Intl.NumberFormat("it-IT", { minimumFractionDigits: 2, maximumFractionDigits: 6 }).format(value); }
 function statusOf(fields: readonly (CteExtractionField | undefined)[]): CteExtractionFieldStatus {
   if (fields.some((field) => field?.status === "CORRECTED")) return "CORRECTED";
   if (fields.some((field) => field?.status === "UNCERTAIN")) return "UNCERTAIN";
@@ -461,8 +462,12 @@ function normalizeExclusion(value: string): string {
 }
 function money(field: CteExtractionField | undefined, vector: CteIngestionRecord["vector"], defaultUnit: string): CteReviewField {
   const raw = text(field);
-  const value = numeric(field?.value) ?? numeric(field?.sourceText);
-  const unit = /\/\s*pod/i.test(raw) ? "\u20AC/POD" : /\/\s*(?:kwh|kWh)/.test(raw) ? "\u20AC/kWh" : /\/\s*(?:smc|Smc)/.test(raw) ? "\u20AC/Smc" : /\/\s*(?:mese|month|mensil)/i.test(raw) ? "\u20AC/mese" : defaultUnit;
+  const stated = numeric(field?.value) ?? numeric(field?.sourceText);
+  // Bring €/MWh and c€/kWh (or c€/Smc) to the €/kWh and €/Smc used everywhere else.
+  const perMwh = /\/\s*mwh/i.test(raw);
+  const cents = /c\s*€|cent(?:esimi)?\s+di\s+euro|\bcent\b/i.test(raw) && /kwh|smc/i.test(raw);
+  const value = stated === null ? null : perMwh ? Number((stated / 1000).toPrecision(12)) : cents ? Number((stated / 100).toPrecision(12)) : stated;
+  const unit = perMwh ? "\u20AC/kWh" : /\/\s*pod/i.test(raw) ? "\u20AC/POD" : /\/\s*(?:kwh|kWh)/.test(raw) ? "\u20AC/kWh" : /\/\s*(?:smc|Smc)/.test(raw) ? "\u20AC/Smc" : /\/\s*(?:mese|month|mensil)/i.test(raw) ? "\u20AC/mese" : defaultUnit;
   const periodicity = /annuo|anno/i.test(raw) ? "anno" : /mese|mensil/i.test(raw) ? "mese" : undefined;
   const conditions = [...raw.matchAll(/(?:al netto|incluse?|escluse?|secondo)[^.;]*/gi)].map((match) => match[0].trim()).filter(Boolean);
   return base(field?.path ?? "", value, field, { unit, periodicity, conditions: conditions.length ? conditions : undefined });
