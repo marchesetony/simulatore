@@ -413,7 +413,8 @@ export async function retryCteIngestion(input: {
 }
 
 function valueFromText(path: string, value: string): string | number {
-  if (/amount$/.test(path)) { const number = Number(value); if (!Number.isFinite(number) || number < 0) fail("CTE_CORRECTION_VALUE_INVALID"); return number; }
+  // Italian input: "0,125" and "0,125 €/kWh" are both 0.125.
+  if (/amount$/.test(path)) { const compact = value.replace(/[€\s]|\/.*$/g, ""); const number = Number(compact.includes(",") ? compact.replace(/\./g, "").replace(",", ".") : compact); if (!Number.isFinite(number) || number < 0) fail("CTE_CORRECTION_VALUE_INVALID"); return number; }
   if (/periodStart|periodEnd|expiry\.date$/.test(path) && !/^\d{4}-\d{2}-\d{2}$/.test(value)) fail("CTE_CORRECTION_VALUE_INVALID");
   if (!value.trim() || value.length > 500) fail("CTE_CORRECTION_VALUE_INVALID");
   return value.trim();
