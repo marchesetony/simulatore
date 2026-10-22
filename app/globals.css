@@ -493,3 +493,14 @@ button:focus-visible,a:focus-visible,input:focus-visible,select:focus-visible,te
 .cte-archive-group.is-consumer h3 { color:#c62828; }
 .cte-archive-group.is-business h3 { color:#1f4fb5; }
 .cte-archive-group.is-both h3, .cte-archive-group.is-unknown h3 { color:var(--navy); }
+
+/* Competitor bill summary and CTEs left out, on the offers step. */
+.quote-bill-summary h3 { margin:0 0 10px; }
+.quote-bill-grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(200px,1fr)); gap:8px 16px; margin:0; }
+.quote-bill-grid dt { font-size:12px; color:var(--muted, #667085); }
+.quote-bill-grid dd { margin:2px 0 0; font-weight:700; overflow-wrap:anywhere; }
+.quote-missing { margin:12px 0 0; color:#b42318; font-weight:600; }
+.quote-excluded { margin-top:14px; }
+.quote-excluded summary { cursor:pointer; font-weight:600; }
+.quote-excluded ul { margin:8px 0 0; padding-left:18px; display:grid; gap:4px; }
+.quote-excluded em { font-style:normal; color:#b54708; font-weight:600; margin-left:6px; }

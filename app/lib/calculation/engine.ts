@@ -282,8 +282,9 @@ export async function prepareApprovedOffer(cteRepository: CteArchiveRepository, 
 async function prepareAdjustedOffer(record: CteArchiveRecord, version: CteArchiveVersion, baseOffer: CalculationReadyOffer, request: SimulationRequest, marketRepository: MarketArchiveRepository): Promise<EligibleOffer> {
   // Company correttivi are part of the offer the customer is quoted, in every calculation path.
   const offer = applyCommercialAdjustment(baseOffer, record.commercialAdjustment);
-  if (offer.validity.periodStart > request.supplyPeriod.periodStart || offer.validity.periodEnd < request.supplyPeriod.periodEnd || request.calculationDate < offer.validity.periodStart || request.calculationDate >= offer.validity.periodEnd) fail("CTE_VALIDITY_MISMATCH");
-  if (offer.expiry.status === "EXPIRES_ON" && offer.expiry.date < request.supplyPeriod.periodEnd) fail("CTE_EXPIRED");
+  // The bill period is only the consumption basis: the offer must be subscribable on the calculation date.
+  if (request.calculationDate < offer.validity.periodStart || request.calculationDate >= offer.validity.periodEnd) fail("CTE_VALIDITY_MISMATCH");
+  if (offer.expiry.status === "EXPIRES_ON" && offer.expiry.date <= request.calculationDate) fail("CTE_EXPIRED");
   if (!offer.vector || offer.vector !== request.vector) fail("VECTOR_MISMATCH");
   if (!offer.vector || !record.versions.some((candidate) => candidate.versionId === version.versionId && candidate.status === "APPROVED")) fail("CTE_NOT_APPROVED");
   const contract = version.contract;

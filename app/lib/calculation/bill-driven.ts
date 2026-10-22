@@ -364,8 +364,8 @@ async function evaluateCte(repository: BillDrivenRepositories["marketArchiveRepo
   if (version.status !== "APPROVED" || version.contract.approval.status !== "APPROVED") return offerMetadata(record, version, offer, "NOT_COMPATIBLE", "REVIEW_REQUIRED", "NOT_READY", ["REVIEW_REQUIRED"]);
   if (expired(offer.validity.periodEnd, asOf) || (offer.expiry.status === "EXPIRES_ON" && expired(offer.expiry.date, asOf))) return offerMetadata(record, version, offer, "NOT_COMPATIBLE", "CTE_EXPIRED", "READY", ["EXPIRED_CTE"]);
   if (offer.vector !== context.vector) return offerMetadata(record, version, offer, "NOT_COMPATIBLE", "VECTOR_MISMATCH");
-  if (offer.validity.periodStart > context.billingPeriod.periodStart || offer.validity.periodEnd < context.billingPeriod.periodEnd) return offerMetadata(record, version, offer, "NOT_COMPATIBLE", "CTE_VALIDITY_MISMATCH", "READY", ["VALIDITY_MISMATCH"]);
-  if (offer.expiry.status === "EXPIRES_ON" && offer.expiry.date < context.billingPeriod.periodEnd) return offerMetadata(record, version, offer, "NOT_COMPATIBLE", "CTE_EXPIRED", "READY", ["EXPIRED_CTE"]);
+  // The competitor bill is only the consumption basis: the CTE must be subscribable today, not during the past bill period.
+  if (offer.validity.periodStart > asOf) return offerMetadata(record, version, offer, "NOT_COMPATIBLE", "CTE_VALIDITY_MISMATCH", "READY", ["VALIDITY_MISMATCH"]);
   const customerScope: CteCommercialCustomerScope | undefined = context.vector === "EE"
     ? context.classification.regulatoryCustomerScope as CteCommercialCustomerScope | null ?? undefined
     : context.customerType === "RESIDENTIAL" ? "DOMESTIC_GAS" : "NON_DOMESTIC_GAS";

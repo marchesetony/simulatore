@@ -10,15 +10,17 @@ type Step = "bill" | "review" | "offers";
 type Pending = "upload" | "open" | "confirm" | "offers" | "proposal";
 type Context = {
   readonly billId: string; readonly billVersionId: string; readonly vector: "EE" | "GAS"; readonly customerType: "RESIDENTIAL" | "NON_RESIDENTIAL";
-  readonly supply: { readonly pod: string | null; readonly pdr: string | null; readonly voltageLevel: "LV" | "MV" | "HV" | "EHV" | null };
+  readonly supply: { readonly pod: string | null; readonly pdr: string | null; readonly voltageLevel: "LV" | "MV" | "HV" | "EHV" | null; readonly contractedPowerKw?: number | null };
+  readonly consumption?: { readonly annual: number | null; readonly period: { readonly f1: number | null; readonly f2: number | null; readonly f3: number | null; readonly smc: number | null } };
+  readonly currentOffer?: { readonly name: string | null; readonly code: string | null };
   readonly billingPeriod: { readonly periodStart: string; readonly periodEnd: string };
   readonly currentSupplier: string;
   readonly classification: { readonly domestic: boolean };
   readonly missingRequiredData: readonly string[];
 };
-type Candidate = { readonly archiveId: string; readonly cteVersionId: string | null; readonly supplier: string; readonly offer: { readonly name: string; readonly code: string }; readonly validity: { readonly periodStart: string; readonly periodEnd: string }; readonly finalStatus?: string; readonly calculationReadiness: string };
+type Candidate = { readonly archiveId: string; readonly cteVersionId: string | null; readonly supplier: string; readonly offer: { readonly name: string; readonly code: string }; readonly validity: { readonly periodStart: string; readonly periodEnd: string }; readonly finalStatus?: string; readonly calculationReadiness: string; readonly compatibilityReason?: string };
 type Offer = { readonly rank: number; readonly calculation: CalculationModel; readonly supplier: string; readonly offerName: string; readonly receipt: QuoteReceipt };
-type Quote = { readonly bill: BillDocumentModel; readonly context: Context; readonly comparison: ComparisonModel; readonly offers: readonly Offer[] };
+type Quote = { readonly bill: BillDocumentModel; readonly context: Context; readonly comparison: ComparisonModel; readonly offers: readonly Offer[]; readonly candidates?: readonly Candidate[] };
 
 // The seven fields the server needs confirmed before a bill can be used.
 const FIELDS: readonly { readonly name: string; readonly label: string }[] = [
@@ -34,6 +36,37 @@ function euro(value: number | null): string { return value === null ? "—" : EU
 function date(value: string | null): string { return value && /^\d{4}-\d{2}-\d{2}$/.test(value) ? DATE.format(new Date(`${value}T00:00:00Z`)) : "Non indicata"; }
 function daysUntil(value: string | null, today: string): number | null { return value ? Math.round((Date.parse(`${value}T00:00:00Z`) - Date.parse(`${today}T00:00:00Z`)) / 86_400_000) : null; }
 function message(cause: unknown): string { return toUiError(cause).message; }
+const NUMBER = new Intl.NumberFormat("it-IT", { maximumFractionDigits: 0 });
+function amount(value: number | null | undefined, unit: string): string { return value === null || value === undefined ? "—" : `${NUMBER.format(value)} ${unit}`; }
+const VOLTAGE: Record<string, string> = { LV: "Bassa tensione (BT)", MV: "Media tensione (MT)", HV: "Alta tensione (AT)", EHV: "Altissima tensione (AAT)" };
+const MISSING: Record<string, string> = { customerType: "tipo cliente", billingPeriod: "periodo fatturato", POD: "POD", PDR: "PDR", voltageLevel: "livello di tensione", F1: "consumo F1", F2: "consumo F2", F3: "consumo F3", SMC: "consumo in Smc", technicalClassification: "uso della fornitura" };
+// Why a CTE is not proposed for this bill, in the words the agent reads.
+const EXCLUSION: Record<string, string> = {
+  CTE_NOT_ACTIVE: "CTE bloccata", REVIEW_REQUIRED: "CTE da riapprovare", CTE_EXPIRED: "CTE scaduta", VECTOR_MISMATCH: "Tipo fornitura diverso",
+  CTE_VALIDITY_MISMATCH: "Non ancora sottoscrivibile", CUSTOMER_NOT_ELIGIBLE: "Tipo cliente non ammesso (Consumer/Business)", VOLTAGE_NOT_ELIGIBLE: "Livello di tensione non previsto",
+  TAX_TREATMENT_INCOMPATIBLE: "Trattamento fiscale diverso", IMBALANCE_UNAVAILABLE: "Sbilanciamento non indicato nella CTE", FEE_UNIT_MISMATCH: "Unità dei costi non coerente",
+  BILL_DATA_INSUFFICIENT: "Dati della bolletta incompleti", MONTHLY_PROFILE_REQUIRED: "Servono i consumi mese per mese", COMPATIBLE_MARKET_DATA_UNAVAILABLE: "Manca l'indice PUN/PSV del periodo", CALCULATION_READY_INVALID: "CTE non calcolabile", COMPATIBLE: "Calcolo non riuscito per questa bolletta",
+};
+function exclusion(candidate: Candidate): string { return EXCLUSION[candidate.compatibilityReason ?? ""] ?? "Non adatta a questa bolletta"; }
+
+function BillSummary({ context }: { readonly context: Context }): ReactNode {
+  const ee = context.vector === "EE";
+  const period = context.consumption?.period;
+  const rows: readonly (readonly [string, string])[] = [
+    ["Tipo fornitura", ee ? "Energia elettrica" : "Gas"],
+    ["Cliente", context.customerType === "RESIDENTIAL" ? "Consumer" : "Business"],
+    [ee ? "POD" : "PDR", (ee ? context.supply.pod : context.supply.pdr) ?? "—"],
+    ...(ee ? [["Tensione", context.supply.voltageLevel ? VOLTAGE[context.supply.voltageLevel] : "—"] as const, ["Potenza impegnata", amount(context.supply.contractedPowerKw, "kW")] as const] : []),
+    ["Fornitore attuale", [context.currentSupplier, context.currentOffer?.name].filter(Boolean).join(" · ") || "—"],
+    ["Periodo fatturato", `${date(context.billingPeriod.periodStart)} – ${date(context.billingPeriod.periodEnd)}`],
+    ["Consumo del periodo", ee ? `F1 ${amount(period?.f1, "kWh")} · F2 ${amount(period?.f2, "kWh")} · F3 ${amount(period?.f3, "kWh")}` : amount(period?.smc, "Smc")],
+    ["Consumo annuo", amount(context.consumption?.annual, ee ? "kWh" : "Smc")],
+  ];
+  return <section className="ui-card quote-bill-summary"><h3>Dati della bolletta usati per la scelta</h3>
+    <dl className="quote-bill-grid">{rows.map(([label, value]) => <div key={label}><dt>{label}</dt><dd>{value}</dd></div>)}</dl>
+    {context.missingRequiredData.length ? <p className="quote-missing" role="alert">Mancano: {context.missingRequiredData.map((code) => MISSING[code] ?? code).join(", ")}. Ricarica una bolletta più completa o chiedi all'amministratore di correggerla.</p> : null}
+  </section>;
+}
 
 function offersFrom(bill: BillDocumentModel, context: Context, candidates: readonly Candidate[], comparison: ComparisonModel): readonly Offer[] {
   // The server ranks the offers; the list keeps its order.
@@ -98,12 +131,11 @@ export default function QuickQuoteFlow({ readonly }: { readonly readonly: boolea
     try {
       const bill = (await requestJson<{ readonly document: BillDocumentModel }>(`/api/bills/${encodeURIComponent(billId)}?view=approved`)).document;
       const prepared = await requestJson<{ readonly context: Context; readonly candidates: readonly Candidate[] }>(`/api/simulation/context?billId=${encodeURIComponent(billId)}&taxTreatment=EXCLUDED`);
-      if (prepared.context.missingRequiredData.length) throw new Error("Dalla bolletta mancano dati necessari al calcolo. Chiedi all'amministratore di completarla.");
       const anchor = prepared.candidates.find((item) => item.finalStatus === "ELIGIBLE" && item.calculationReadiness === "READY" && item.cteVersionId);
-      if (!anchor) { setQuote({ bill, context: prepared.context, comparison: { comparisonId: "", fingerprint: "", tenantId: "", vector: prepared.context.vector, results: [], excludedOffers: [], ranking: [], warnings: [] }, offers: [] }); return; }
+      if (!anchor) { setQuote({ bill, context: prepared.context, comparison: { comparisonId: "", fingerprint: "", tenantId: "", vector: prepared.context.vector, results: [], excludedOffers: [], ranking: [], warnings: [] }, offers: [], candidates: prepared.candidates }); return; }
       const comparison = (await requestJson<{ readonly result: ComparisonModel }>("/api/comparison", { method: "POST", body: JSON.stringify({ sourceBill: { billId, version: prepared.context.billVersionId }, cteId: anchor.archiveId, cteVersionId: anchor.cteVersionId }) })).result;
       const offers = offersFrom(bill, prepared.context, prepared.candidates, comparison);
-      setQuote({ bill, context: prepared.context, comparison, offers });
+      setQuote({ bill, context: prepared.context, comparison, offers, candidates: prepared.candidates });
       setSelectedId(offers[0]?.calculation.calculationId ?? null);
     } catch (cause) { setError(cause instanceof Error && cause.message.startsWith("Dalla bolletta") ? cause.message : message(cause)); } finally { setPending(undefined); }
   };
@@ -143,6 +175,9 @@ export default function QuickQuoteFlow({ readonly }: { readonly readonly: boolea
     } catch (cause) { setError(message(cause)); setPending(undefined); }
   };
 
+  // CTEs of the same supply type that were not proposed, with the reason.
+  const proposed = new Set(quote?.offers.map((offer) => offer.calculation.sourceCte.archiveId) ?? []);
+  const excluded = (quote?.candidates ?? []).filter((candidate) => !proposed.has(candidate.archiveId) && candidate.compatibilityReason !== "VECTOR_MISMATCH");
   const selected = quote?.offers.find((offer) => offer.calculation.calculationId === selectedId) ?? null;
 
   const saveProposal = async () => {
@@ -182,6 +217,7 @@ export default function QuickQuoteFlow({ readonly }: { readonly readonly: boolea
       <div className="button-row"><button className="button primary" type="button" onClick={() => void confirm()} disabled={readonly || Boolean(pending)}>{pending === "confirm" ? "Salvataggio" : "I dati sono corretti, mostra le offerte"}</button></div>
     </section> : null}
     {step === "offers" ? pending === "offers" ? <LoadingState label="Calcolo delle offerte per questa bolletta" /> : quote ? <>
+      <BillSummary context={quote.context} />
       <section className="ui-card"><h3>Offerte utilizzabili per {quote.context.vector === "EE" ? "questa fornitura di luce" : "questa fornitura di gas"}</h3>
         {quote.offers.length ? <div className="quote-offers">{quote.offers.map((offer, index) => <button key={offer.calculation.calculationId} type="button" className={`quote-offer${offer.calculation.calculationId === selectedId ? " selected" : ""}${index === 0 ? " best" : ""}`} onClick={() => { setSelectedId(offer.calculation.calculationId); setProposal(null); }} aria-pressed={offer.calculation.calculationId === selectedId}>
           {index === 0 ? <span className="status-badge positive">La più conveniente</span> : null}
@@ -190,7 +226,9 @@ export default function QuickQuoteFlow({ readonly }: { readonly readonly: boolea
           {offer.receipt.savingsPercent !== null ? <small className={offer.receipt.savingsPercent >= 0 ? "positive" : "negative"}>{offer.receipt.savingsPercent >= 0 ? "Risparmio" : "Più cara"} {PERCENT.format(Math.abs(offer.receipt.savingsPercent))}%</small> : null}
           <small>Valida fino al {date(offer.receipt.validUntil)}</small>
         </button>)}</div> : <EmptyState title="Nessuna offerta utilizzabile" detail="Nessuna CTE a te assegnata è adatta a questa bolletta. Chiedi all'amministratore di assegnartene una." />}
-        {quote.comparison.excludedOffers.length ? <p className="muted">{quote.comparison.excludedOffers.length} {quote.comparison.excludedOffers.length === 1 ? "offerta non è adatta" : "offerte non sono adatte"} a questa bolletta.</p> : null}
+        {excluded.length ? <details className="quote-excluded"><summary>{excluded.length} {excluded.length === 1 ? "CTE non adatta" : "CTE non adatte"} a questa bolletta</summary>
+          <ul>{excluded.map((candidate) => <li key={candidate.archiveId}><strong>{candidate.offer.name || candidate.offer.code}</strong> <span className="muted">{candidate.supplier}</span> <em>{exclusion(candidate)}</em></li>)}</ul>
+        </details> : null}
       </section>
       {selected ? <><Receipt offer={selected} today={today} /><div className="button-row"><button className="button primary" type="button" onClick={() => void saveProposal()} disabled={readonly || Boolean(pending)}>{pending === "proposal" ? "Preparazione" : "Scarica la proposta in PDF"}</button>{proposal ? <span className="muted" role="status">Proposta salvata in Proposte.</span> : null}</div></> : null}
     </> : null : null}
