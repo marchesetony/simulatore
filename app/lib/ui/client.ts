@@ -2,17 +2,20 @@ export interface ApiErrorData {
   readonly code?: unknown;
   readonly message?: unknown;
   readonly correlationId?: unknown;
+  readonly detail?: unknown;
 }
 
 export class UiApiError extends Error {
   readonly code: string;
   readonly correlationId: string | null;
+  readonly detail: string | null;
 
-  constructor(code: string, message: string, correlationId: string | null = null) {
+  constructor(code: string, message: string, correlationId: string | null = null, detail: string | null = null) {
     super(message);
     this.name = "UiApiError";
     this.code = code;
     this.correlationId = correlationId;
+    this.detail = detail;
   }
 }
 
@@ -72,6 +75,7 @@ const messages: Readonly<Record<string, string>> = {
   BILL_OCR_RESPONSE_INVALID: "La risposta del servizio di lettura non è valida.",
   BILL_OCR_PROVIDER_REFUSAL: "Il servizio di lettura ha rifiutato l'estrazione.",
   BILL_OCR_PROVIDER_FAILED: "Servizio di lettura temporaneamente non disponibile.",
+  CTE_EXPIRY_DATE_INVALID: "Data di scadenza non valida: deve essere oggi o successiva e non prima dell'inizio di validità.",
   CTE_OCR_PROVIDER_NOT_CONFIGURED: "Provider Anthropic non configurato",
   ANTHROPIC_API_KEY_MISSING: "Configurazione Anthropic incompleta: chiave server mancante",
   ANTHROPIC_MODEL_MISSING: "Configurazione Anthropic incompleta: modello server mancante",
@@ -83,6 +87,7 @@ const messages: Readonly<Record<string, string>> = {
   CTE_OCR_PROVIDER_FAILED: "Elaborazione Anthropic non disponibile",
   CTE_OCR_RESPONSE_INVALID: "Risposta Anthropic non valida",
   CTE_OCR_TOOL_USE_MISSING: "Estrazione Anthropic mancante",
+  CTE_INGESTION_FAILED: "Analisi del documento non riuscita",
   CTE_OCR_OUTPUT_TRUNCATED: "Risposta Anthropic troncata prima dell’estrazione completa",
   CTE_OCR_PROVIDER_REFUSAL: "Il provider Anthropic ha rifiutato l’estrazione",
   CTE_OCR_PROVIDER_RESPONSE_UNKNOWN: "Risposta Anthropic non riconosciuta",
@@ -90,6 +95,23 @@ const messages: Readonly<Record<string, string>> = {
   CTE_EXTRACTION_SCHEMA_INVALID: "Schema di estrazione non valido",
   CTE_EXTRACTION_CONTRACT_INVALID: "Contratto estratto non valido",
   CTE_VECTOR_FIELD_MIXED: "Campi EE/GAS incompatibili",
+  CTE_CORRECTION_VALUE_INVALID: "Valore non valido: controlla il dato inserito (per le date usa gg/mm/aaaa).",
+  CTE_CORRECTION_FIELD_UNSUPPORTED: "Questo dato non si può correggere da qui.",
+  CTE_ARCHIVE_ALREADY_EXISTS: "Questa CTE è già presente in Archivio approvato.",
+  CTE_APPROVED_VALIDITY_OVERLAP: "La stessa offerta è già in Archivio approvato per un periodo che si sovrappone: cancella il doppione oppure blocca o cancella quella già approvata.",
+  SOURCE_BILL_VECTOR_UNKNOWN: "Dalla bolletta non si capisce se è luce o gas. Ricarica un PDF più leggibile.",
+  SOURCE_BILL_SUPPLIER_MISSING: "Nella bolletta non abbiamo trovato il fornitore attuale. Correggilo nei dati e riprova.",
+  SOURCE_BILL_PERIOD_MISSING: "Nella bolletta non abbiamo trovato il periodo fatturato. Ricarica un PDF completo.",
+  SOURCE_BILL_CUSTOMER_TYPE_MISSING: "Dalla bolletta non si capisce se il cliente è Consumer o Business. Ricarica il PDF completo, con la pagina delle caratteristiche della fornitura.",
+  SOURCE_BILL_POD_MISSING: "Nella bolletta non abbiamo trovato un POD valido (IT…). Ricarica il PDF completo.",
+  SOURCE_BILL_PDR_MISSING: "Nella bolletta non abbiamo trovato un PDR valido (14 cifre). Ricarica il PDF completo.",
+  SOURCE_BILL_VOLTAGE_MISSING: "Nella bolletta non abbiamo trovato la tensione di alimentazione (BT, MT). Ricarica il PDF completo.",
+  SOURCE_BILL_CONSUMPTION_INCONSISTENT: "I consumi F1, F2 e F3 letti non tornano con il consumo totale della bolletta. Ricarica il PDF.",
+  SOURCE_BILL_CONTEXT_UNAVAILABLE: "Non riusciamo a usare questa bolletta per il confronto: ricaricala come nuovo PDF.",
+  CTE_INGESTION_NOT_FOUND: "Il documento non è più presente (già cancellato o approvato): ricarica l'elenco.",
+  CTE_EXPIRED: "La CTE risulta già scaduta: aggiorna la scadenza prima di approvarla.",
+  CTE_VERSION_STALE: "La CTE è stata modificata nel frattempo: ricarica la pagina e riprova.",
+  CTE_INGESTION_APPROVED_IMMUTABLE: "Questa CTE è già approvata e non può essere modificata.",
   CTE_APPROVAL_BLOCKED: "Approvazione non disponibile: completare i campi obbligatori e la revisione",
   PROPOSAL_RESPONSE_INVALID: "Risposta proposta non valida",
   PROPOSAL_ID_REQUIRED: "La proposta archiviata non è disponibile",
@@ -99,11 +121,29 @@ const messages: Readonly<Record<string, string>> = {
   COMPARISON_RESPONSE_INVALID: "Risposta confronto non valida",
   EXPORT_CONTENT_TYPE_INVALID: "Tipo contenuto export non valido",
   EXPORT_FILENAME_INVALID: "Nome file export non valido",
+  SOURCE_BILL_TOO_OLD: "La bolletta si riferisce a un periodo di fornitura di oltre 4 mesi fa: carica una bolletta più recente.",
+  MARKET_OFFICIAL_DATA_READ_ONLY: "PUN e PSV sono dati ufficiali: arrivano in automatico da GME e ARERA e non si modificano a mano.",
+  ACCESS_DENIED: "Non hai i permessi per questa operazione.",
+  ACCESS_PARENT_REQUIRED: "Scegli sotto a chi lavora la persona.",
+  ACCESS_PARENT_NOT_FOUND: "Il responsabile scelto non è nella catena.",
+  ACCESS_PARENT_LEVEL_INVALID: "Il responsabile deve avere un ruolo più alto di quello che stai creando.",
+  ACCESS_EMAIL_TAKEN: "Esiste già un accesso con questa email.",
+  ACCESS_EMAIL_INVALID: "Email non valida.",
+  ACCESS_PASSWORD_WEAK: "La password deve avere almeno 10 caratteri, con lettere e numeri.",
+  ACCESS_PASSWORD_INCORRECT: "La password attuale non è corretta.",
+  ACCESS_PASSWORD_UNCHANGED: "La nuova password deve essere diversa da quella attuale.",
+  ACCESS_NAME_INVALID: "Inserisci nome e cognome.",
+  ACCESS_COMPANY_NAME_INVALID: "Inserisci la ragione sociale.",
+  ACCESS_COMPANY_EXISTS: "Esiste già un'azienda con questo nome.",
+  ACCESS_SELF_EDIT_DENIED: "Non puoi sospendere il tuo stesso accesso.",
+  ACCESS_DIRECTORY_UNAVAILABLE: "Servizio accessi non disponibile. Riprova.",
+  PERSISTENCE_VERSION_CONFLICT: "Qualcun altro ha modificato questo accesso. Ricarica la pagina.",
   UI_REQUEST_FAILED: "Operazione non disponibile. Codice UI_REQUEST_FAILED",
 };
 
 function safeCode(value: unknown, fallback: string): string {
-  return typeof value === "string" && SAFE_CODE.test(value) && Object.prototype.hasOwnProperty.call(messages, value) ? value : fallback;
+  // Any well-formed server code is shown, so an error is never reduced to a bare HTTP status.
+  return typeof value === "string" && SAFE_CODE.test(value) ? value : fallback;
 }
 
 function safeCorrelation(value: unknown): string | null {
@@ -116,7 +156,8 @@ function errorFrom(value: unknown, fallback: string): UiApiError {
   if (typeof value !== "object" || value === null) return new UiApiError(fallback, messageFor(fallback));
   const item = value as ApiErrorData;
   const code = safeCode(item.code, fallback);
-  return new UiApiError(code, messageFor(code), safeCorrelation(item.correlationId));
+  const detail = typeof item.detail === "string" && item.detail.trim() ? item.detail.trim().slice(0, 240) : null;
+  return new UiApiError(code, messageFor(code), safeCorrelation(item.correlationId), detail);
 }
 
 export function toUiError(error: unknown, fallback = "UI_REQUEST_FAILED"): UiApiError {

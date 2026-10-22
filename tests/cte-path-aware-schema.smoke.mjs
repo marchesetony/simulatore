@@ -14,6 +14,8 @@ assert.deepEqual(CTE_ARRAY_PATHS_ALLOWED_BY_VALIDATOR, [
   "commercialTerms.oneOffFees",
   "commercialTerms.commercialDiscounts",
   "commercialTerms.imbalance",
+  // Options, extra services and insurance policies listed in the CTE (product decision: read every cost).
+  "commercialTerms.additionalServices",
 ]);
 const fieldSchema = ANTHROPIC_CTE_TOOL.input_schema.properties.fields.items;
 assert.equal(fieldSchema.type, "object");

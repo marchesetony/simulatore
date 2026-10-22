@@ -18,7 +18,8 @@ try {
   await reviewCteArchive(repository, tenant, source.archiveId, source.currentWorkingVersionId, "reviewer", "2026-08-07T00:00:00.000Z");
   const approved = await approveCteArchive(repository, tenant, source.archiveId, source.currentWorkingVersionId, "reviewer", "decision-ee", "2026-08-07T00:00:01.000Z", async () => {});
   const summary = toPublicCteApprovedArchiveSummary(approved);
-  assert.deepEqual(summary, { archiveId: source.archiveId, vector: "EE", offerName: syntheticElectricityCte.offer.name, supplierName: syntheticElectricityCte.supplier.name, validity: syntheticElectricityCte.validity, status: "APPROVED", commercialStatus: "ACTIVE" });
+  // The summary also carries segment (Consumer/Business, shown next to the offer name) and activeUntil, the date the CTE stops being usable (expiry date or end of validity).
+  assert.deepEqual(summary, { archiveId: source.archiveId, vector: "EE", offerName: syntheticElectricityCte.offer.name, supplierName: syntheticElectricityCte.supplier.name, validity: syntheticElectricityCte.validity, activeUntil: syntheticElectricityCte.expiry.status === "EXPIRES_ON" ? syntheticElectricityCte.expiry.date : syntheticElectricityCte.validity.periodEnd, segment: syntheticElectricityCte.eligibility.customerTypes.includes("RESIDENTIAL") && syntheticElectricityCte.eligibility.customerTypes.includes("NON_RESIDENTIAL") ? "Consumer e Business" : syntheticElectricityCte.eligibility.customerTypes.includes("RESIDENTIAL") ? "Consumer" : "Business", status: "APPROVED", commercialStatus: "ACTIVE" });
   assert.doesNotMatch(JSON.stringify(summary), /recordId|tenantId|cteId|offerId|versionId|objectKey|ingestionId/);
   const detail = toPublicCteApprovedArchiveDetail(approved);
   assert.equal(detail.status, "APPROVED");

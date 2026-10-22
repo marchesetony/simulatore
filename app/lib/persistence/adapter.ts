@@ -1,4 +1,7 @@
 import type { CteAssignmentRepository, OrgChainRepository } from "../hierarchy/service";
+import type { AccessAccount, AccessDirectory, Company } from "../access/types";
+// @ts-expect-error Node's strip-only test runner requires the explicit extension.
+import { LocalAccessDirectory } from "../access/local-directory.ts";
 import type { BillRepository, DocumentStoragePort } from "../foundation/real-bill";
 import type { RegulatoryValueRecord } from "../foundation/regulatory-types.ts";
 import type { RegulatoryApprovalDomainState } from "../regulatory-approval-domain.ts";
@@ -46,6 +49,9 @@ export interface ProductionStorageAdapter {
   readonly jobIncidents: TenantRecordRepository<JobIncidentRecord>;
   readonly orgChain?: OrgChainRepository;
   readonly cteAssignments?: CteAssignmentRepository;
+  readonly companies?: TenantRecordRepository<Company>;
+  readonly accessAccounts?: TenantRecordRepository<AccessAccount>;
+  readonly accessDirectory?: AccessDirectory;
 }
 
 export interface RuntimeRepositories {
@@ -77,6 +83,9 @@ export interface RuntimeRepositories {
   readonly jobIncidents: TenantRecordRepository<JobIncidentRecord>;
   readonly orgChain: OrgChainRepository;
   readonly cteAssignments: CteAssignmentRepository;
+  readonly companies: TenantRecordRepository<Company>;
+  readonly accessAccounts: TenantRecordRepository<AccessAccount>;
+  readonly accessDirectory: AccessDirectory;
 }
 
 let productionStorageAdapter: ProductionStorageAdapter | null = null;
@@ -88,6 +97,10 @@ let productionStorageAdapter: ProductionStorageAdapter | null = null;
 function unavailableHierarchyStore(): DeletableTenantRecordRepository<never> {
   const fail = async (): Promise<never> => { throw new Error("HIERARCHY_STORAGE_UNAVAILABLE"); };
   return { get: async () => null, list: async () => [], put: fail, append: fail, delete: fail };
+}
+function unavailableAccessDirectory(): AccessDirectory {
+  const fail = async (): Promise<never> => { throw new Error("ACCESS_DIRECTORY_UNAVAILABLE"); };
+  return { createLogin: fail, linkUser: fail, setMembership: fail, removeLogin: fail, loginFor: fail, verifyPassword: fail, setPassword: fail };
 }
 function hasMethods(value: unknown, methods: readonly string[]): boolean {
   if (typeof value !== "object" || value === null) return false;
@@ -121,7 +134,7 @@ export function runtimeRepositories(): RuntimeRepositories {
   const config = getRuntimeConfig();
   if (config.runtimeMode === "production") {
     if (!productionStorageAdapter) throw new Error("PERSISTENCE_ADAPTER_UNAVAILABLE");
-    return { ...productionStorageAdapter, eligibilityOverrides: productionStorageAdapter.eligibilityOverrides ?? productionStorageAdapter.cteArchives as EligibilityOverrideRepository, marketRefreshState: productionStorageAdapter.marketRefreshState ?? productionStorageAdapter.marketDataArchives, marketRefreshRuns: productionStorageAdapter.marketRefreshRuns ?? productionStorageAdapter.marketDataArchives, marketRefreshLocks: productionStorageAdapter.marketRefreshLocks ?? productionStorageAdapter.marketDataArchives, orgChain: productionStorageAdapter.orgChain ?? unavailableHierarchyStore() as OrgChainRepository, cteAssignments: productionStorageAdapter.cteAssignments ?? unavailableHierarchyStore() as CteAssignmentRepository };
+    return { ...productionStorageAdapter, eligibilityOverrides: productionStorageAdapter.eligibilityOverrides ?? productionStorageAdapter.cteArchives as EligibilityOverrideRepository, marketRefreshState: productionStorageAdapter.marketRefreshState ?? productionStorageAdapter.marketDataArchives, marketRefreshRuns: productionStorageAdapter.marketRefreshRuns ?? productionStorageAdapter.marketDataArchives, marketRefreshLocks: productionStorageAdapter.marketRefreshLocks ?? productionStorageAdapter.marketDataArchives, orgChain: productionStorageAdapter.orgChain ?? unavailableHierarchyStore() as OrgChainRepository, cteAssignments: productionStorageAdapter.cteAssignments ?? unavailableHierarchyStore() as CteAssignmentRepository, companies: productionStorageAdapter.companies ?? unavailableHierarchyStore(), accessAccounts: productionStorageAdapter.accessAccounts ?? unavailableHierarchyStore(), accessDirectory: productionStorageAdapter.accessDirectory ?? unavailableAccessDirectory() };
   }
   const local = new LocalFilesystemAdapter("var/phase6");
   return {
@@ -146,6 +159,9 @@ export function runtimeRepositories(): RuntimeRepositories {
     eligibilityOverrides: local.collection("eligibility-overrides"),
     orgChain: local.collection("org-chain") as OrgChainRepository,
     cteAssignments: local.collection("cte-assignments"),
+    companies: local.collection<Company>("companies"),
+    accessAccounts: local.collection<AccessAccount>("access-accounts"),
+    accessDirectory: new LocalAccessDirectory(local.collection("access-logins")),
     regulatoryRefreshState: local.collection("regulatory-refresh-state"),
     regulatoryRefreshRuns: local.collection("regulatory-refresh-runs"),
     marketRefreshState: local.collection("market-refresh-state"),

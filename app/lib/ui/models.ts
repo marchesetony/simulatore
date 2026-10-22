@@ -49,8 +49,11 @@ export interface CteApprovedArchiveSummaryModel {
   readonly offerName: string;
   readonly supplierName: string;
   readonly validity: { readonly periodStart: string; readonly periodEnd: string };
+  readonly activeUntil?: string;
+  readonly segment?: "Consumer" | "Business" | "Consumer e Business" | null;
   readonly status: "APPROVED";
   readonly commercialStatus: "ACTIVE" | "BLOCKED";
+  readonly commercialAdjustment?: { readonly energyPriceDelta: number; readonly monthlyFeeDelta: number; readonly updatedAt: string } | null;
 }
 
 export interface CteApprovedPriceModel {
@@ -165,6 +168,7 @@ export interface CteIngestionModel {
   readonly candidatePreview: Record<string, unknown> | null;
   readonly corrections: readonly { readonly version: number; readonly fieldPath: string; readonly previousValue: string | number | null; readonly nextValue: string | number; readonly actor: string; readonly correctedAt: string }[];
   readonly errorCode: string | null;
+  readonly providerDetail?: string | null;
   readonly approvedArchiveId: string | null;
 }
 

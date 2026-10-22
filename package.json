@@ -18,7 +18,14 @@
     "test:bill-anthropic-two-stage-probe": "node --experimental-strip-types scripts/bill-anthropic-two-stage-probe.mjs",
     "test:production-adapters": "node --experimental-strip-types tests/production-adapters.smoke.mjs",
     "production:bootstrap-admin": "node --experimental-strip-types scripts/bootstrap-production-admin.mjs",
-    "test:hierarchy-cte-assignment": "node --experimental-strip-types tests/hierarchy-cte-assignment.smoke.mjs"
+    "test:hierarchy-cte-assignment": "node --experimental-strip-types tests/hierarchy-cte-assignment.smoke.mjs",
+    "test:access-management": "node --experimental-strip-types tests/access-management.smoke.mjs",
+    "test:quote-window": "node --experimental-strip-types tests/quote-window.smoke.mjs",
+    "test:terna-capacity-refresh": "node --experimental-strip-types tests/terna-capacity-refresh.smoke.mjs",
+    "test:psv-refresh": "node --experimental-strip-types tests/psv-refresh.smoke.mjs",
+    "test:quote-receipt": "node --experimental-strip-types tests/quote-receipt.smoke.mjs",
+    "test:official-data-tenants": "node --experimental-strip-types tests/official-data-tenants.smoke.mjs",
+    "test:cte-commercial-adjustment": "node --experimental-strip-types tests/cte-commercial-adjustment.smoke.mjs"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.117.1",

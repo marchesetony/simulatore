@@ -1,3 +1,5 @@
+// @ts-expect-error Node's strip-only test runner requires the explicit extension.
+import { applyCommercialAdjustment } from "../cte/commercial-adjustment.ts";
 import { createHash } from "node:crypto";
 import type { CteArchiveRecord, CteArchiveVersion } from "../cte/archive/types";
 // @ts-expect-error Node's strip-only test runner requires the explicit extension.
@@ -274,8 +276,15 @@ export async function prepareApprovedOffer(cteRepository: CteArchiveRepository, 
   const version = readyVersion(record);
   const offer: CalculationReadyOffer = (() => { try { const result = toCalculationReadyOffer(version.contract); assertCalculationReadyFees([...result.fixedFees, ...result.variableFees, ...result.oneOffFees, ...(result.imbalance.status === "DECLARED" ? [result.imbalance.component] : []), ...result.commercialDiscounts, ...(result.passThroughComponents ?? []).flatMap((component) => component.declarationState === "EXPLICIT_COMPONENT" ? [component.fee] : [])]); return result; } catch { return fail("CALCULATION_READY_INVALID"); } })();
   assertPriceCurrency(offer, request);
-  if (offer.validity.periodStart > request.supplyPeriod.periodStart || offer.validity.periodEnd < request.supplyPeriod.periodEnd || request.calculationDate < offer.validity.periodStart || request.calculationDate >= offer.validity.periodEnd) fail("CTE_VALIDITY_MISMATCH");
-  if (offer.expiry.status === "EXPIRES_ON" && offer.expiry.date < request.supplyPeriod.periodEnd) fail("CTE_EXPIRED");
+  return prepareAdjustedOffer(record, version, offer, request, marketRepository);
+}
+
+async function prepareAdjustedOffer(record: CteArchiveRecord, version: CteArchiveVersion, baseOffer: CalculationReadyOffer, request: SimulationRequest, marketRepository: MarketArchiveRepository): Promise<EligibleOffer> {
+  // Company correttivi are part of the offer the customer is quoted, in every calculation path.
+  const offer = applyCommercialAdjustment(baseOffer, record.commercialAdjustment);
+  // The bill period is only the consumption basis: the offer must be subscribable on the calculation date.
+  if (request.calculationDate < offer.validity.periodStart || request.calculationDate >= offer.validity.periodEnd) fail("CTE_VALIDITY_MISMATCH");
+  if (offer.expiry.status === "EXPIRES_ON" && offer.expiry.date <= request.calculationDate) fail("CTE_EXPIRED");
   if (!offer.vector || offer.vector !== request.vector) fail("VECTOR_MISMATCH");
   if (!offer.vector || !record.versions.some((candidate) => candidate.versionId === version.versionId && candidate.status === "APPROVED")) fail("CTE_NOT_APPROVED");
   const contract = version.contract;
@@ -305,10 +314,10 @@ export async function calculatePreparedOffer(request: SimulationRequest, prepare
     if (!cteRuntime.ready) throw new CalculationEngineError(cteRuntime.blockers[0] ?? "REGULATORY_RUNTIME_VALUE_MISSING");
   }
   let regulated: Awaited<ReturnType<typeof calculateRegulatedEeSubset>> | null = null;
-  if (request.vector === "EE" && request.sourceBill) {
+  // A competitor bill without its technical readings (supply use, BTA6 power basis) is quoted on commercial costs only.
+  if (request.vector === "EE" && request.sourceBill && dependencies.trustedElectricityContext) {
     const trustedElectricityContext = dependencies.trustedElectricityContext;
     const regulatoryBridge = dependencies.regulatoryBridge;
-    if (!trustedElectricityContext) throw new CalculationEngineError("REGULATORY_TRUST_CONTEXT_REQUIRED");
     if (!regulatoryBridge) throw new CalculationEngineError("REGULATORY_BRIDGE_REQUIRED");
     await assertNoKnownDomesticTierDivergence(dependencies.regulatoryRefreshState, request.tenantId);
     const execution: RegulatedEeExecutionContext = { trustedElectricityContext, regulatoryBridge };

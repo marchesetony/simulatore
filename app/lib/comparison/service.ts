@@ -76,7 +76,9 @@ export function comparisonCostOf(result: CalculationResult): ComparisonCostSelec
   if (result.costScope === "COMMERCIAL_PLUS_REGULATED_PARTIAL" && result.totalCommercialPlusRegulatedSubsetCost !== null) return { comparisonCost: result.totalCommercialPlusRegulatedSubsetCost, comparisonCostBasis: "COMMERCIAL_PLUS_REGULATED_PARTIAL", regulatedComponentsIncluded: canonicalComponentSet(result.regulatedComponentsIncluded) };
   return null;
 }
-export function comparisonCompletenessKey(result: CalculationResult): string | null { const selection = comparisonCostOf(result); if (selection === null) return null; const contractual = contractualCoverageKey(result); return `${selection.comparisonCostBasis}|${selection.regulatedComponentsIncluded.join(",")}${contractual === null ? "" : `|CONTRACTUAL=${contractual}`}`; }
+// A commercial-only comparison (competitor bill without the regulated context) ranks the seller's own costs:
+// how each CTE declares dispatching or capacity does not make it incomparable.
+export function comparisonCompletenessKey(result: CalculationResult): string | null { const selection = comparisonCostOf(result); if (selection === null) return null; const contractual = selection.comparisonCostBasis === "COMMERCIAL_ONLY" ? null : contractualCoverageKey(result); return `${selection.comparisonCostBasis}|${selection.regulatedComponentsIncluded.join(",")}${contractual === null ? "" : `|CONTRACTUAL=${contractual}`}`; }
 function compareResults(left: CalculationResult, right: CalculationResult): number {
   const leftCost = comparisonCostOf(left)?.comparisonCost.minorUnits ?? Number.MAX_SAFE_INTEGER;
   const rightCost = comparisonCostOf(right)?.comparisonCost.minorUnits ?? Number.MAX_SAFE_INTEGER;

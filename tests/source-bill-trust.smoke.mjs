@@ -187,9 +187,10 @@ try {
   await assertAsyncCode(() => resolveTrustedElectricityContextFromSourceBill(repository, tenantA, request(tenantA, { billId: gas.id, version: gas.currentApprovedVersionId })), "SOURCE_BILL_VECTOR_MISMATCH");
 
   const missingPower = await seed({ repository, storage, tenantId: tenantA, extraction: eeExtraction({}, facts({ committed: null })) });
-  await assertAsyncCode(() => resolveTrustedElectricityContextFromSourceBill(repository, tenantA, request(tenantA, { billId: missingPower.id, version: missingPower.currentApprovedVersionId })), "CONTRACTED_POWER_REQUIRED");
+  // Product rule (competitor bill quotes): a missing technical reading drops the trusted context, so the quote runs on generic charges instead of failing.
+  assert.equal(await resolveTrustedElectricityContextFromSourceBill(repository, tenantA, request(tenantA, { billId: missingPower.id, version: missingPower.currentApprovedVersionId })), null);
   const missingBta6AvailablePower = await seed({ repository, storage, tenantId: tenantA, extraction: eeExtraction({}, facts({ supplyUse: "Altri usi", committed: "25 kW", available: null })) });
-  await assertAsyncCode(() => resolveTrustedElectricityContextFromSourceBill(repository, tenantA, request(tenantA, { billId: missingBta6AvailablePower.id, version: missingBta6AvailablePower.currentApprovedVersionId }, { customerCategory: "NON_RESIDENTIAL", residency: undefined })), "AVAILABLE_POWER_REQUIRED_FOR_BT_TARIFF_CLASS");
+  assert.equal(await resolveTrustedElectricityContextFromSourceBill(repository, tenantA, request(tenantA, { billId: missingBta6AvailablePower.id, version: missingBta6AvailablePower.currentApprovedVersionId }, { customerCategory: "NON_RESIDENTIAL", residency: undefined })), null);
 
   await assertAsyncCode(() => resolveTrustedElectricityContextFromSourceBill(repository, tenantA, request(tenantA, sourceBill, { voltageLevel: "MV" })), "SOURCE_BILL_VOLTAGE_MISMATCH");
   await assertAsyncCode(() => resolveTrustedElectricityContextFromSourceBill(repository, tenantA, request(tenantA, sourceBill, { customerCategory: "NON_RESIDENTIAL", residency: undefined })), "SOURCE_BILL_CUSTOMER_CATEGORY_MISMATCH");

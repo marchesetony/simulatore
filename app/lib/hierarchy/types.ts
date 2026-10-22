@@ -1,4 +1,4 @@
-export type OrgLevel = "AZIENDA" | "DIRETTORE" | "AREA_MANAGER" | "AGENTE";
+export type OrgLevel = "AZIENDA" | "DIRETTORE" | "AREA_MANAGER" | "AGENTE" | "SUB_AGENTE";
 export type LimitVector = "EE" | "GAS";
 export type LimitCustomerCategory = "RESIDENTIAL" | "NON_RESIDENTIAL";
 

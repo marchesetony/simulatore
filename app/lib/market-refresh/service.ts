@@ -125,7 +125,7 @@ function canonicalCandidate(bundle: PunSourceBundle, referenceMonth: string): Pu
 function nextVersion(records: readonly MarketArchiveRecord[]): number { return records.reduce((max, record) => Math.max(max, Number.parseInt(record.record.version, 10) || 0), 0) + 1; }
 function pendingVersion(candidate: ElectricityMonthlyPunRecord, current: MarketArchiveRecord | undefined, all: readonly MarketArchiveRecord[]): ElectricityMonthlyPunRecord {
   if (!current) return { ...candidate, recordId: `gme-pun-${candidate.month}`, version: "1", parentVersionId: null, approval: { status: "NEEDS_REVIEW", reason: "OFFICIAL_SOURCE_RECONCILED" } };
-  const version = nextVersion(all.filter((record) => record.month === candidate.month));
+  const version = nextVersion(all.filter((record) => record.vector === "EE" && record.month === candidate.month));
   return { ...candidate, recordId: `gme-pun-${candidate.month}-v${version}`, version: String(version), parentVersionId: current.archiveId, approval: { status: "NEEDS_REVIEW", reason: "OFFICIAL_SOURCE_CORRECTION" } };
 }
 function initialState(tenantId: string): MarketRefreshState { return { tenantId, status: "NEVER_SUCCESSFUL", lastAttemptAt: null, lastSuccessfulAt: null, nextExpectedCheckAt: null, consecutiveFailures: 0, lastCheckedAtByMonth: {}, errors: [] }; }
@@ -176,7 +176,7 @@ export async function runPunMarketRefresh(input: { readonly tenantId: string } &
         const candidate = canonicalCandidate(bundle, referenceMonth);
         if (candidate.record.tenantId !== input.tenantId) throw new Error("TENANT_ACCESS_DENIED");
         const existing = await input.repositories.marketArchiveRepository.list(input.tenantId);
-        const sameMonth = existing.filter((record) => record.month === referenceMonth && record.status === "APPROVED").sort(compareMarketVersions);
+        const sameMonth = existing.filter((record) => record.vector === "EE" && record.index === "PUN" && record.month === referenceMonth && record.status === "APPROVED").sort(compareMarketVersions);
         const current = sameMonth[0];
         if (current && valuesEqual(current.record as ElectricityMonthlyPunRecord, candidate.record)) { monthsComplete += 1; monthsUnchanged += 1; continue; }
         monthsComplete += 1;
