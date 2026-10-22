@@ -460,3 +460,7 @@ button:focus-visible,a:focus-visible,input:focus-visible,select:focus-visible,te
 .cte-row-top { justify-content:flex-start; align-items:flex-end; }
 .cte-row-top .cte-approved-document { flex:0 1 auto; }
 .cte-row-bottom .cte-adjustment:not(.cte-adjustment-form) { flex-direction:column; align-items:flex-start; gap:2px; }
+.cte-expiry-fix { display:flex; flex-wrap:wrap; align-items:flex-end; gap:8px; margin-top:10px; }
+.cte-expiry-fix label { display:grid; gap:4px; font-size:12px; font-weight:700; color:var(--navy); }
+.cte-expiry-fix input { min-height:34px; padding:4px 8px; border:1px solid #c4d1df; border-radius:8px; background:#fff; }
+.cte-expiry-fix .button { min-height:34px; }

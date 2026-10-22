@@ -418,13 +418,25 @@ export async function retryCteIngestion(input: {
 function valueFromText(path: string, value: string): string | number {
   // Italian input: "0,125", "0,125 €/kWh" and "0,125 Eur/kWh" are all 0.125.
   if (/amount$/.test(path)) { const compact = value.replace(/\/.*$/, "").replace(/€|\beur(?:o)?\b|\s/gi, ""); const number = Number(compact.includes(",") ? compact.replace(/\./g, "").replace(",", ".") : compact); if (!Number.isFinite(number) || number < 0) fail("CTE_CORRECTION_VALUE_INVALID"); return number; }
-  if (/periodStart|periodEnd|expiry\.date$/.test(path) && !/^\d{4}-\d{2}-\d{2}$/.test(value)) fail("CTE_CORRECTION_VALUE_INVALID");
+  if (/periodStart|periodEnd|expiry\.date$/.test(path)) {
+    // The review shows dates as dd/mm/yyyy, so accept what the operator sees as well as ISO.
+    const italian = /^(\d{1,2})[/.-](\d{1,2})[/.-](\d{4})$/.exec(value.trim());
+    const iso = italian ? `${italian[3]}-${italian[2].padStart(2, "0")}-${italian[1].padStart(2, "0")}` : value.trim();
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(iso) || new Date(`${iso}T00:00:00Z`).toISOString().slice(0, 10) !== iso) fail("CTE_CORRECTION_VALUE_INVALID");
+    return iso;
+  }
   if (!value.trim() || value.length > 500) fail("CTE_CORRECTION_VALUE_INVALID");
   return value.trim();
 }
 
 function setCorrection(candidate: CteContract, fieldPath: string, next: string | number): CteContract {
   const clone = structuredClone(candidate) as unknown as Record<string, unknown>;
+  // A corrected expiry is always a dated expiry, even when the reading found none.
+  if (fieldPath === "expiry.date") {
+    clone.expiry = { status: "EXPIRES_ON", date: next };
+    try { validateCteContract(clone); } catch { fail("CTE_CORRECTION_VALUE_INVALID"); }
+    return clone as unknown as CteContract;
+  }
   const parts = fieldPath.replace(/\[(\d+)\]/g, ".$1").split(".");
   let cursor: Record<string, unknown> | unknown[] = clone;
   for (let index = 0; index < parts.length - 1; index += 1) {
@@ -440,6 +452,13 @@ function setCorrection(candidate: CteContract, fieldPath: string, next: string |
   return clone as unknown as CteContract;
 }
 
+/** Applies a correction to its field, adding the field when the reading never returned it (for example a missing expiry). */
+function withCorrectedField(fields: CteIngestionRecord["fields"], path: string, value: string | number, manualSource: boolean): CteIngestionRecord["fields"] {
+  const corrected = (field: CteIngestionRecord["fields"][number]) => ({ ...field, value, confidence: 1, status: "CORRECTED" as const, ...(manualSource ? { sourcePage: null, sourceText: "Correzione manuale" } : {}) });
+  if (fields.some((field) => field.path === path)) return fields.map((field) => field.path === path ? corrected(field) : field);
+  return [...fields, { path, value, confidence: 1, status: "CORRECTED" as const, sourcePage: null, sourceText: "Correzione manuale" }];
+}
+
 export async function correctCteIngestion(input: { readonly tenantId: string; readonly ingestionId: string; readonly fieldPath: string; readonly value: string; readonly actor: string; readonly repository: CteIngestionRepository }): Promise<TenantRecord<CteIngestionRecord>> {
   if (!isCorrectionSupported(input.fieldPath)) fail("CTE_CORRECTION_FIELD_UNSUPPORTED");
   const current = await input.repository.get(input.tenantId, input.ingestionId);
@@ -448,14 +467,14 @@ export async function correctCteIngestion(input: { readonly tenantId: string; re
   if (payload.status === "APPROVED") fail("CTE_INGESTION_APPROVED_IMMUTABLE");
   const nextValue = valueFromText(input.fieldPath, input.value);
   if (!payload.candidate) {
-    const fields = payload.fields.map((field) => field.path === input.fieldPath ? { ...field, value: nextValue, confidence: 1, status: "CORRECTED" as const } : field);
+    const fields = withCorrectedField(payload.fields, input.fieldPath, nextValue, false);
     const correction: CteCorrection = { version: current.version + 1, fieldPath: input.fieldPath, previousValue: payload.fields.find((field) => field.path === input.fieldPath)?.value ?? null, nextValue, actor: input.actor, correctedAt: nowIso() };
     return input.repository.put({ tenantId: input.tenantId, recordId: current.recordId, expectedVersion: current.version, payload: { ...payload, status: "REVIEW_REQUIRED", fields, corrections: [...payload.corrections, correction], errorCode: null }, now: correction.correctedAt });
   }
   const nextCandidate = setCorrection(payload.reviewedCandidate ?? payload.candidate, input.fieldPath, nextValue);
   const previous = payload.fields.find((field) => field.path === input.fieldPath)?.value ?? null;
   const correction: CteCorrection = { version: current.version + 1, fieldPath: input.fieldPath, previousValue: previous, nextValue, actor: input.actor, correctedAt: nowIso() };
-  const fields = payload.fields.map((field) => field.path === input.fieldPath ? { ...field, value: nextValue, confidence: 1, status: "CORRECTED" as const, sourcePage: null, sourceText: "Correzione manuale" } : field);
+  const fields = withCorrectedField(payload.fields, input.fieldPath, nextValue, true);
   return input.repository.put({ tenantId: input.tenantId, recordId: current.recordId, expectedVersion: current.version, payload: { ...payload, status: "REVIEW_REQUIRED", fields, reviewedCandidate: nextCandidate, corrections: [...payload.corrections, correction], errorCode: null }, now: correction.correctedAt });
 }
 
