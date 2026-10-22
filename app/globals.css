@@ -464,3 +464,10 @@ button:focus-visible,a:focus-visible,input:focus-visible,select:focus-visible,te
 .cte-expiry-fix label { display:grid; gap:4px; font-size:12px; font-weight:700; color:var(--navy); }
 .cte-expiry-fix input { min-height:34px; padding:4px 8px; border:1px solid #c4d1df; border-radius:8px; background:#fff; }
 .cte-expiry-fix .button { min-height:34px; }
+.cte-active-dates { color:var(--navy); font-size:14px; font-weight:400; }
+.cte-active-dates .cte-date-start { font-weight:400; }
+.cte-active-dates .cte-date-end { color:#d9740b; font-weight:800; }
+.cte-row-top .cte-approved-document strong { font-size:calc(1em + 4px); }
+.cte-row-bottom .cte-adjustment:not(.cte-adjustment-form) { position:relative; }
+.cte-row-bottom .cte-adjustment:not(.cte-adjustment-form) > small { position:absolute; top:calc(100% + 2px); left:0; white-space:nowrap; }
+.cte-row-bottom { padding-bottom:14px; }
