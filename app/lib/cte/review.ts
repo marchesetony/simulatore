@@ -509,8 +509,9 @@ function customerFields(field: CteExtractionField | undefined): readonly CteRevi
 function voltageLabel(source: string): string | null {
   // Only levels the CTE states as eligible count: "esclusi i clienti in BT", "non in bassa tensione" do not.
   const raw = source.replace(/(?:\bnon\b|esclus\w*|eccezione|tranne|eccetto)\s+(?:\S+\s+){0,4}?(?:bassa\s+(?:o\s+media\s+|e\s+media\s+)?tensione|media\s+tensione|\b[BM]T\b)/gi, " ");
-  const low = /bassa\s+(?:(?:e|o|\/)\s*media\s+)?tensione|\bBT\b/i.test(raw);
-  const medium = /media\s+tensione|bassa\s+(?:e|o|\/)\s*media|\bMT\b/i.test(raw);
+  // BTA/MTA are the ARERA classes for low/medium voltage "altri usi" and state the level as clearly as BT/MT.
+  const low = /bassa\s+(?:(?:e|o|\/)\s*media\s+)?tensione|\bBT\b|\bBTA\d?\b/i.test(raw);
+  const medium = /media\s+tensione|bassa\s+(?:e|o|\/)\s*media|\bMT\b|\bMTA\d?\b/i.test(raw);
   return low && medium ? "BT / MT" : low ? "BT" : medium ? "MT" : null;
 }
 /**
@@ -518,7 +519,7 @@ function voltageLabel(source: string): string | null {
  * prelievo in bassa tensione"). When the dedicated field misses them, read them from the rest of the
  * document's evidence. Nothing is inferred: a level not written in the CTE is not reported.
  */
-function voltage(field: CteExtractionField | undefined, fields: readonly CteExtractionField[]): CteReviewField {
+function voltage(field: CteExtractionField | undefined, fields: readonly CteExtractionField[], notes: readonly string[] = []): CteReviewField {
   // Domestic supplies are always low voltage (BT), even when the CTE does not say so.
   const customer = fields.find((candidate) => candidate.path === "eligibility.customerTypes");
   const customerText = customer ? text(customer) : "";
@@ -533,6 +534,17 @@ function voltage(field: CteExtractionField | undefined, fields: readonly CteExtr
     const found = voltageLabel(evidenceText);
     if (found) return base("eligibility.voltageLevels", found, candidate, { status: candidate.status === "UNCERTAIN" ? "UNCERTAIN" : "CONFIRMED" });
   }
+  // Last resort: the rest of what was read from the CTE (other sections and reader notes). Only a level written
+  // in the document is reported, and only when the whole text names a single consistent answer.
+  const found = new Set<string>();
+  let evidence: CteExtractionField | undefined;
+  for (const candidate of [...fields, ...notes.map((note) => ({ path: "extractionNotes", value: note, confidence: 0, sourcePage: null, sourceText: note, status: "UNCERTAIN" as const }))]) {
+    if (candidate.path === "eligibility.voltageLevels") continue;
+    const label = voltageLabel([typeof candidate.value === "string" ? candidate.value : "", candidate.sourceText ?? ""].join(" "));
+    if (label) { found.add(label); evidence ??= candidate; }
+  }
+  if (found.size === 1 && evidence) return base("eligibility.voltageLevels", [...found][0], evidence, { status: "UNCERTAIN" });
+  if (found.has("BT / MT") || (found.has("BT") && found.has("MT"))) return base("eligibility.voltageLevels", "BT / MT", evidence, { status: "UNCERTAIN" });
   return base("eligibility.voltageLevels", raw ? concise(raw) : null, field);
 }
 // CTEs name the spread in many ways ("corrispettivo fisso d'acquisto", "parametro alfa", "PUN + 0,008 €/kWh"),
@@ -657,7 +669,7 @@ export function normalizeCteReview(record: Pick<CteIngestionRecord, "fields" | "
     reviewField("commercialTerms.economicDuration", byPath.get("commercialTerms.economicDuration"), record.vector),
     reviewField("commercialTerms.lossSemantics", byPath.get("commercialTerms.lossSemantics"), record.vector),
     reviewField("commercialTerms.exitFee", byPath.get("commercialTerms.exitFee"), record.vector),
-    voltage(byPath.get("eligibility.voltageLevels"), record.fields),
+    voltage(byPath.get("eligibility.voltageLevels"), record.fields, record.extractionNotes ?? []),
     tax(byPath.get("taxTreatment")),
   ].filter((field): field is CteReviewField => field !== null);
   const expiry = byPath.get("expiry.date");
