@@ -35,9 +35,9 @@ export async function POST(request: Request): Promise<Response> {
     let dependencies;
     if (parsedSimulation.vector === "EE" && parsedSimulation.sourceBill) {
       const trustedElectricityContext = await resolveTrustedElectricityContextFromSourceBill(repositories.billRepository, tenantId, parsedSimulation);
-      if (!trustedElectricityContext) throw new Error("REGULATORY_TRUST_CONTEXT_REQUIRED");
+      // Without the bill\'s technical readings the quote runs on commercial costs only (regulated charges skipped).
       const regulatoryBridge = new ProductionRegulatoryPersistenceBridge(repositories.regulatoryValues, repositories.approvalDomains);
-      dependencies = { trustedElectricityContext, regulatoryBridge, regulatoryRuntimeResolver: new ProductionCteRegulatoryRuntimeResolver(regulatoryBridge), regulatoryRefreshState: repositories.regulatoryRefreshState };
+      dependencies = { ...(trustedElectricityContext ? { trustedElectricityContext } : {}), regulatoryBridge, regulatoryRuntimeResolver: new ProductionCteRegulatoryRuntimeResolver(regulatoryBridge), regulatoryRefreshState: repositories.regulatoryRefreshState };
     }
     const hierarchy = await loadHierarchyAccess(principal, repositories, resolved.simulation.calculationDate);
     const result = await compareApprovedOffers(repositories.cteArchiveRepository, repositories.marketArchiveRepository, parsedSimulation, { ...(dependencies ?? {}), cteUsable: (archiveId) => cteUsability(hierarchy, archiveId) === "USABLE" });

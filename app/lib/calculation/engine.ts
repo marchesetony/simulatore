@@ -314,10 +314,10 @@ export async function calculatePreparedOffer(request: SimulationRequest, prepare
     if (!cteRuntime.ready) throw new CalculationEngineError(cteRuntime.blockers[0] ?? "REGULATORY_RUNTIME_VALUE_MISSING");
   }
   let regulated: Awaited<ReturnType<typeof calculateRegulatedEeSubset>> | null = null;
-  if (request.vector === "EE" && request.sourceBill) {
+  // A competitor bill without its technical readings (supply use, BTA6 power basis) is quoted on commercial costs only.
+  if (request.vector === "EE" && request.sourceBill && dependencies.trustedElectricityContext) {
     const trustedElectricityContext = dependencies.trustedElectricityContext;
     const regulatoryBridge = dependencies.regulatoryBridge;
-    if (!trustedElectricityContext) throw new CalculationEngineError("REGULATORY_TRUST_CONTEXT_REQUIRED");
     if (!regulatoryBridge) throw new CalculationEngineError("REGULATORY_BRIDGE_REQUIRED");
     await assertNoKnownDomesticTierDivergence(dependencies.regulatoryRefreshState, request.tenantId);
     const execution: RegulatedEeExecutionContext = { trustedElectricityContext, regulatoryBridge };
