@@ -95,6 +95,13 @@ const messages: Readonly<Record<string, string>> = {
   CTE_EXTRACTION_SCHEMA_INVALID: "Schema di estrazione non valido",
   CTE_EXTRACTION_CONTRACT_INVALID: "Contratto estratto non valido",
   CTE_VECTOR_FIELD_MIXED: "Campi EE/GAS incompatibili",
+  CTE_CORRECTION_VALUE_INVALID: "Valore non valido: controlla il dato inserito (per le date usa gg/mm/aaaa).",
+  CTE_CORRECTION_FIELD_UNSUPPORTED: "Questo dato non si può correggere da qui.",
+  CTE_ARCHIVE_ALREADY_EXISTS: "Questa CTE è già presente in Archivio approvato.",
+  CTE_APPROVED_VALIDITY_OVERLAP: "La stessa offerta è già in Archivio approvato per un periodo che si sovrappone: cancella il doppione oppure blocca o cancella quella già approvata.",
+  CTE_EXPIRED: "La CTE risulta già scaduta: aggiorna la scadenza prima di approvarla.",
+  CTE_VERSION_STALE: "La CTE è stata modificata nel frattempo: ricarica la pagina e riprova.",
+  CTE_INGESTION_APPROVED_IMMUTABLE: "Questa CTE è già approvata e non può essere modificata.",
   CTE_APPROVAL_BLOCKED: "Approvazione non disponibile: completare i campi obbligatori e la revisione",
   PROPOSAL_RESPONSE_INVALID: "Risposta proposta non valida",
   PROPOSAL_ID_REQUIRED: "La proposta archiviata non è disponibile",
@@ -125,7 +132,8 @@ const messages: Readonly<Record<string, string>> = {
 };
 
 function safeCode(value: unknown, fallback: string): string {
-  return typeof value === "string" && SAFE_CODE.test(value) && Object.prototype.hasOwnProperty.call(messages, value) ? value : fallback;
+  // Any well-formed server code is shown, so an error is never reduced to a bare HTTP status.
+  return typeof value === "string" && SAFE_CODE.test(value) ? value : fallback;
 }
 
 function safeCorrelation(value: unknown): string | null {
