@@ -49,6 +49,7 @@ export interface CteApprovedArchiveSummaryModel {
   readonly offerName: string;
   readonly supplierName: string;
   readonly validity: { readonly periodStart: string; readonly periodEnd: string };
+  readonly activeUntil?: string;
   readonly status: "APPROVED";
   readonly commercialStatus: "ACTIVE" | "BLOCKED";
   readonly commercialAdjustment?: { readonly energyPriceDelta: number; readonly monthlyFeeDelta: number; readonly updatedAt: string } | null;

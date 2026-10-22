@@ -402,10 +402,24 @@ export function tryBuildAuthoritativeCteContract(record: Pick<CteIngestionRecord
   const lossSemantics = asSemantic<CteLossSemantics>(fields.get("commercialTerms.lossSemantics"));
   const exitFee = asSemantic<CteExitFee>(fields.get("commercialTerms.exitFee"));
   const discountsField = fields.get("commercialTerms.commercialDiscounts");
-  const discounts = discountsField && discountsField.status !== "NOT_FOUND" && discountsField.normalizedValue !== null
+  // "Sconti: nessuno" means there is no discount, not an amount to map.
+  const noDiscount = typeof discountsField?.normalizedValue === "string" && /^\s*(?:nessun[oa]?|assent[ei]|non\s+previst[ie]|non\s+presenti|none|n\/a|-|—)\s*\.?\s*$/i.test(discountsField.normalizedValue);
+  const discounts = discountsField && !noDiscount && discountsField.status !== "NOT_FOUND" && discountsField.normalizedValue !== null
     ? feeComponent(discountsField, `${record.ingestionId}-discount`, record.vector, tax, expectedUnit)
     : null;
-  if ((fields.get("commercialTerms.fixedFees")?.normalizedValue !== null && !fixed) || (fields.get("commercialTerms.variableFees")?.normalizedValue !== null && !variable) || (fields.get("commercialTerms.imbalance")?.normalizedValue !== null && !imbalance) || (fields.get("commercialTerms.oneOffFees")?.normalizedValue !== null && !oneOff) || (discountsField && discountsField.normalizedValue !== null && !discounts) || (fields.get("commercialTerms.economicDuration")?.normalizedValue !== null && !economicDuration) || (fields.get("commercialTerms.lossSemantics")?.normalizedValue !== null && !lossSemantics) || (fields.get("commercialTerms.exitFee")?.normalizedValue !== null && !exitFee)) return authoritativeFailure("CTE_AUTHORITATIVE_MAPPING_INVALID", ["commercialTerms"]);
+  // Name the exact component that cannot be mapped, so the operator knows what to fix with Modifica.
+  // A component the reader did not return at all (undefined) is simply absent, not unmappable.
+  const unmapped = [
+    fields.get("commercialTerms.fixedFees")?.normalizedValue != null && !fixed ? "commercialTerms.fixedFees" : null,
+    fields.get("commercialTerms.variableFees")?.normalizedValue != null && !variable ? "commercialTerms.variableFees" : null,
+    fields.get("commercialTerms.imbalance")?.normalizedValue != null && !imbalance ? "commercialTerms.imbalance" : null,
+    fields.get("commercialTerms.oneOffFees")?.normalizedValue != null && !oneOff ? "commercialTerms.oneOffFees" : null,
+    discountsField && !noDiscount && discountsField.normalizedValue != null && !discounts ? "commercialTerms.commercialDiscounts" : null,
+    fields.get("commercialTerms.economicDuration")?.normalizedValue != null && !economicDuration ? "commercialTerms.economicDuration" : null,
+    fields.get("commercialTerms.lossSemantics")?.normalizedValue != null && !lossSemantics ? "commercialTerms.lossSemantics" : null,
+    fields.get("commercialTerms.exitFee")?.normalizedValue != null && !exitFee ? "commercialTerms.exitFee" : null,
+  ].filter((path): path is string => path !== null);
+  if (unmapped.length) return authoritativeFailure("CTE_AUTHORITATIVE_MAPPING_INVALID", unmapped);
   const pricing = !fixedPricing
     ? { mode: "INDEXED" as const, reference: expectedIndex(record.vector) as "PUN" | "PSV", spread: { amount: spread as number, currency: "EUR" as const, unit: expectedUnit, taxTreatment: tax } }
     : fixedPricing
@@ -445,7 +459,7 @@ export function tryBuildAuthoritativeCteContract(record: Pick<CteIngestionRecord
     pricing,
     commercialTerms: { fixedFees: fixed ? [fixed] : [], variableFees: variable ? [variable] : [], imbalance: imbalance ? { status: "DECLARED" as const, component: imbalance } : { status: "NOT_DECLARED" as const, reason: "NOT_PROVIDED" as const }, oneOffFees: exitFee ? [] : oneOff ? [oneOff] : [], commercialDiscounts: discounts ? [discounts] : [], ...(typedPassThroughComponents === null ? {} : { passThroughComponents: typedPassThroughComponents }), ...(economicDuration ? { economicDuration } : {}), ...(lossSemantics ? { lossSemantics } : {}), ...(exitFee ? { exitFee } : {}), ...(punResolutionRule ? { punRule: punResolutionRule } : {}), ...(structuredCapacitySchedule ? { capacityMarketSchedule: structuredCapacitySchedule } : {}), ...(dispatching ? { dispatchingReference: dispatching } : {}), ...(losses ? { lossReference: losses } : {}) },
   } as CteContract;
-  try { validateCteContract(contract); } catch { return authoritativeFailure("CTE_AUTHORITATIVE_SCHEMA_INVALID", ["contract"]); }
+  try { validateCteContract(contract); } catch (error) { const code = (error as { code?: unknown })?.code; return authoritativeFailure("CTE_AUTHORITATIVE_SCHEMA_INVALID", [typeof code === "string" ? code : "contract"]); }
   return { contract, errorCode: null, validationPaths: [] };
 }
 
@@ -686,7 +700,7 @@ export function cteApprovalGate(record: Pick<CteIngestionRecord, "fields" | "vec
     try { validateCteContract(persistedCandidate); } catch { blockers.push({ code: "AUTHORITATIVE_CONTRACT_INVALID", label: "Contratto autorevole non valido: schema da verificare", required: true }); }
   } else if (record.ingestionId && record.documentId && record.tenantId && blockers.length === 0) {
     const built = tryBuildAuthoritativeCteContract(record as Pick<CteIngestionRecord, "ingestionId" | "documentId" | "fields" | "vector" | "documentType"> & { readonly tenantId: string });
-    if (!built.contract) blockers.push({ code: "AUTHORITATIVE_CONTRACT_MISSING", label: built.errorCode === "CTE_AUTHORITATIVE_FIELD_UNCERTAIN" ? "Contratto autorevole: confermare i campi obbligatori incerti" : built.errorCode === "CTE_AUTHORITATIVE_FIELD_MISSING" ? `Dati obbligatori mancanti: ${[...new Set(built.validationPaths.map((path) => labels[path] ?? path))].join(", ")}` : "Contratto autorevole non valido: verifica server non completata", required: true });
+    if (!built.contract) blockers.push({ code: "AUTHORITATIVE_CONTRACT_MISSING", label: built.errorCode === "CTE_AUTHORITATIVE_FIELD_UNCERTAIN" ? "Contratto autorevole: confermare i campi obbligatori incerti" : built.errorCode === "CTE_AUTHORITATIVE_FIELD_MISSING" ? `Dati obbligatori mancanti: ${[...new Set(built.validationPaths.map((path) => labels[path] ?? path))].join(", ")}` : built.errorCode === "CTE_AUTHORITATIVE_MAPPING_INVALID" ? `Dati da correggere con Modifica: ${[...new Set(built.validationPaths.map((path) => labels[path] ?? path))].join(", ")}` : `Verifica del contratto non riuscita (${built.errorCode ?? "errore"}${built.validationPaths.length ? ": " + built.validationPaths.join(", ") : ""})`, required: true });
   } else if (!persistedCandidate) {
     blockers.push({ code: "AUTHORITATIVE_CONTRACT_MISSING", label: "Contratto autorevole non ancora disponibile", required: true });
   }

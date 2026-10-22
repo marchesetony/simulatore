@@ -75,6 +75,7 @@ const messages: Readonly<Record<string, string>> = {
   BILL_OCR_RESPONSE_INVALID: "La risposta del servizio di lettura non è valida.",
   BILL_OCR_PROVIDER_REFUSAL: "Il servizio di lettura ha rifiutato l'estrazione.",
   BILL_OCR_PROVIDER_FAILED: "Servizio di lettura temporaneamente non disponibile.",
+  CTE_EXPIRY_DATE_INVALID: "Data di scadenza non valida: deve essere oggi o successiva e non prima dell'inizio di validità.",
   CTE_OCR_PROVIDER_NOT_CONFIGURED: "Provider Anthropic non configurato",
   ANTHROPIC_API_KEY_MISSING: "Configurazione Anthropic incompleta: chiave server mancante",
   ANTHROPIC_MODEL_MISSING: "Configurazione Anthropic incompleta: modello server mancante",

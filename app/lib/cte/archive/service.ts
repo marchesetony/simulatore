@@ -22,6 +22,8 @@ export interface PublicCteApprovedArchiveSummary {
   readonly commercialStatus: Exclude<CteCommercialStatus, "DELETED">;
   /** Present only when the company set correttivi on this CTE. */
   readonly commercialAdjustment?: CteCommercialAdjustment;
+  /** Last day the CTE can be sold: its expiry date, or the end of validity when none is declared. */
+  readonly activeUntil: string;
 }
 
 export interface PublicCteApprovedArchiveDetail {
@@ -159,7 +161,7 @@ export function toPublicCteApprovedArchiveSummary(record: CteArchiveRecord): Pub
   if (!approved) return null;
   const commercialStatus = commercialStatusOf(record);
   if (commercialStatus === "DELETED") return null;
-  return { archiveId: record.archiveId, vector: record.vector, offerName: approved.contract.offer.name, supplierName: approved.contract.supplier.name, validity: approved.contract.validity, status: "APPROVED", commercialStatus, ...(record.commercialAdjustment ? { commercialAdjustment: record.commercialAdjustment } : {}) };
+  return { archiveId: record.archiveId, vector: record.vector, offerName: approved.contract.offer.name, supplierName: approved.contract.supplier.name, validity: approved.contract.validity, activeUntil: approved.contract.expiry.status === "EXPIRES_ON" ? approved.contract.expiry.date : approved.contract.validity.periodEnd, status: "APPROVED", commercialStatus, ...(record.commercialAdjustment ? { commercialAdjustment: record.commercialAdjustment } : {}) };
 }
 
 export function toPublicCteApprovedArchiveDetail(record: CteArchiveRecord, snapshot?: CteApprovedSnapshot): PublicCteApprovedArchiveDetail | null {
@@ -326,6 +328,29 @@ export async function setCteCommercialAdjustment(repository: CteArchiveRepositor
   const next: CteArchiveRecord = { ...record, updatedAt: when, commercialAdjustment, history: [...record.history, event(record, "COMMERCIAL_ADJUSTED", approved, when, actor, summary, null)] };
   await repository.save(next);
   return structuredClone(next);
+}
+
+/**
+ * Changes only the expiry date of an approved CTE. The new date becomes a new approved version
+ * (correction, review and approval by the same administrator), so history keeps the previous one.
+ */
+export async function changeCteExpiry(repository: CteArchiveRepository, input: { readonly tenantId: string; readonly archiveId: string; readonly date: string; readonly actor: string; readonly audit: CteApprovalAuditWriter; readonly now?: string }): Promise<CteArchiveRecord> {
+  assertTenantId(input.tenantId);
+  const record = await repository.get(input.tenantId, input.archiveId);
+  if (!record) throw new Error("CTE_ARCHIVE_NOT_FOUND");
+  const approved = currentApproved(record);
+  if (!approved) throw new Error("CTE_ARCHIVE_NOT_APPROVED");
+  const italian = /^(\d{2})\/(\d{2})\/(\d{4})$/.exec(input.date.trim());
+  const date = italian ? `${italian[3]}-${italian[2]}-${italian[1]}` : input.date.trim();
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(date) || Number.isNaN(Date.parse(date))) throw new Error("CTE_EXPIRY_DATE_INVALID");
+  const when = nowValue(input.now);
+  if (date < when.slice(0, 10) || date < approved.contract.validity.periodStart) throw new Error("CTE_EXPIRY_DATE_INVALID");
+  // A later expiry extends validity too, because a CTE cannot expire after its validity ends.
+  const validity = date > approved.contract.validity.periodEnd ? { ...approved.contract.validity, periodEnd: date } : approved.contract.validity;
+  const contract = { ...approved.contract, validity, expiry: { status: "EXPIRES_ON" as const, date } } as CteContract;
+  const corrected = await createCteCorrection(repository, { tenantId: input.tenantId, archiveId: input.archiveId, expectedVersionId: record.currentWorkingVersionId, contract, actor: input.actor, reason: `Scadenza modificata al ${date}`, now: when });
+  const reviewed = await reviewCteArchive(repository, input.tenantId, input.archiveId, corrected.currentWorkingVersionId, input.actor, when);
+  return approveCteArchive(repository, input.tenantId, input.archiveId, reviewed.currentWorkingVersionId, input.actor, `expiry-${randomUUID()}`, when, input.audit);
 }
 
 export async function deleteCteArchive(repository: CteArchiveRepository, tenantId: string, archiveId: string, actorValueInput: string, at?: string): Promise<CteArchiveRecord> {

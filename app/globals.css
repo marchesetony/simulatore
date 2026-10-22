@@ -432,3 +432,6 @@ button:focus-visible,a:focus-visible,input:focus-visible,select:focus-visible,te
 .quote-validity strong { font-size:18px; }
 .quote-note { margin:14px 0 0; font-size:13px; }
 @media (max-width:760px) { .quote-saving { flex-direction:column; align-items:flex-start; } .quote-receipt th,.quote-receipt td { padding:8px 4px; font-size:14px; } }
+.cte-active-period { display:flex; flex-wrap:wrap; align-items:center; gap:.5rem; }
+.cte-active-period > strong { color:var(--navy); font-weight:800; }
+.cte-active-period input[type="date"] { min-height:2.25rem; }

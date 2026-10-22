@@ -119,7 +119,7 @@ function Review({ ingestion, readonly, pending, editing, corrections, onCorrecti
   return <><CteContractSummary model={canonicalCteReviewView(ingestion)} readonly={readonly} pending={pending} editing={editing} corrections={corrections} onCorrection={onCorrection} onStartEdit={onStartEdit} onSaveAll={onSaveAll} onCancelAll={onCancelAll} onRetry={onRetry} onReread={onReread} /><ReceivedDeleteAction ingestion={ingestion} readonly={readonly} /></>;
 }
 
-type CommercialAction = "block" | "reactivate" | "delete";
+type CommercialAction = "block" | "reactivate" | "delete" | "adjust" | "expiry";
 function CommercialLifecycleActions({ record, readonly }: { readonly record: CteApprovedArchiveSummaryModel; readonly readonly: boolean }) {
   const status = record.commercialStatus ?? "ACTIVE";
   const [confirming, setConfirming] = useState<CommercialAction | null>(null);
@@ -173,9 +173,26 @@ function CommercialAdjustment({ record, canAdjust }: { readonly record: CteAppro
   </div>;
 }
 
+/** Only the expiry of an approved CTE can be changed; everything else stays as read from the document. */
+function ExpiryEditor({ record, canEdit }: { readonly record: CteApprovedArchiveSummaryModel; readonly canEdit: boolean }) {
+  const until = record.activeUntil ?? record.validity.periodEnd;
+  const [open, setOpen] = useState(false);
+  const [date, setDate] = useState(until);
+  const [busy, setBusy] = useState(false);
+  const save = async () => {
+    setBusy(true);
+    try {
+      await requestJson(`/api/cte/archive/${encodeURIComponent(record.archiveId)}/expiry`, { method: "POST", body: JSON.stringify({ date }) });
+      globalThis.dispatchEvent(new CustomEvent("cte:commercial-updated", { detail: { archiveId: record.archiveId, action: "expiry" } }));
+      setOpen(false);
+    } catch (cause) { globalThis.dispatchEvent(new CustomEvent("cte:commercial-error", { detail: errorText(cause) })); } finally { setBusy(false); }
+  };
+  return <div className="cte-active-period"><strong>Attiva dal {approvedDate(record.validity.periodStart)} al {approvedDate(until)}</strong>{open ? <span className="button-row"><input type="date" aria-label="Nuova data di scadenza" value={date} onChange={(event) => setDate(event.target.value)} disabled={busy} /><button className="button secondary compact" type="button" onClick={() => { setDate(until); setOpen(false); }} disabled={busy}>Annulla</button><button className="button primary compact" type="button" onClick={() => void save()} disabled={busy || !date}>{busy ? "Salvataggio" : "Salva scadenza"}</button></span> : canEdit ? <button className="button secondary compact" type="button" onClick={() => setOpen(true)}>Modifica scadenza</button> : null}</div>;
+}
+
 function ApprovedArchiveRow({ record, readonly, canAdjust, onOpen }: { readonly record: CteApprovedArchiveSummaryModel; readonly readonly: boolean; readonly canAdjust: boolean; readonly onOpen: () => void }) {
   const commercialStatus = record.commercialStatus ?? "ACTIVE";
-  return <div className="data-line cte-approved-archive-row"><button className="cte-approved-document" aria-label={`${ARCHIVE_OFFER_LABEL}: ${record.offerName}`} type="button" onClick={onOpen}><span><strong>{record.offerName}</strong><small>{record.supplierName} · {approvedPeriod(record.validity)} · {record.vector}</small></span></button><span className="cte-approved-badges"><strong className="status-badge positive">Approvata</strong><strong className={`status-badge ${commercialStatus === "BLOCKED" ? "negative" : "positive"}`}>{commercialStatus === "BLOCKED" ? "Bloccata" : "Attiva"}</strong></span><CommercialLifecycleActions record={record} readonly={readonly} /><CommercialAdjustment record={record} canAdjust={canAdjust && !readonly} /></div>;
+  return <div className="data-line cte-approved-archive-row"><button className="cte-approved-document" aria-label={`${ARCHIVE_OFFER_LABEL}: ${record.offerName}`} type="button" onClick={onOpen}><span><strong>{record.offerName}</strong><small>{record.supplierName} · {record.vector === "GAS" ? "Gas" : "Energia elettrica"}</small></span></button><ExpiryEditor record={record} canEdit={canAdjust && !readonly} /><span className="cte-approved-badges"><strong className="status-badge positive">Approvata</strong><strong className={`status-badge ${commercialStatus === "BLOCKED" ? "negative" : "positive"}`}>{commercialStatus === "BLOCKED" ? "Bloccata" : "Attiva"}</strong></span><CommercialLifecycleActions record={record} readonly={readonly} /><CommercialAdjustment record={record} canAdjust={canAdjust && !readonly} /></div>;
 }
 
 function ApprovedCteDetail({ detail, onBack }: { readonly detail: CteApprovedArchiveDetailModel; readonly onBack: () => void }) {
@@ -183,7 +200,6 @@ function ApprovedCteDetail({ detail, onBack }: { readonly detail: CteApprovedArc
 }
 
 function approvedDate(value: string): string { const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value); return match ? `${match[3]}/${match[2]}/${match[1]}` : value; }
-function approvedPeriod(value: { readonly periodStart: string; readonly periodEnd: string }): string { return `${approvedDate(value.periodStart)} – ${approvedDate(value.periodEnd)}`; }
 
 export default function CteIngestionPanel({ readonly, canAdjust = false }: { readonly readonly: boolean; readonly canAdjust?: boolean }) {
   const [vector, setVector] = useState<UiVector>("EE");
