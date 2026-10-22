@@ -26,6 +26,10 @@ import { assertUsableEligibilityOverride, isEligibilityOverrideable, type Eligib
 import { queryApprovedHistoricalMarketData } from "../market/service.ts";
 // @ts-expect-error Node's strip-only test runner requires the explicit extension.
 import { monthsInSimulationPeriod, parseSimulationRequest } from "./input.ts";
+// @ts-expect-error Node's strip-only test runner requires the explicit extension.
+import { runPunMarketRefresh } from "../market-refresh/service.ts";
+// @ts-expect-error Node's strip-only test runner requires the explicit extension.
+import { runPsvMarketRefresh } from "../market-refresh/psv.ts";
 import type { SimulationRequest } from "./types";
 // @ts-expect-error Node's strip-only test runner requires the explicit extension.
 import { buildBillSupplyProfile, validateBillSupplyProfile, type BillSupplyProfile } from "../ingestion/bill-supply-profile.ts";
@@ -49,7 +53,7 @@ export class BillDrivenSimulationError extends Error {
 const fail = (code: string): never => { throw new BillDrivenSimulationError(code); };
 const NO_STORE_HEADERS = { "cache-control": "no-store, private", "vary": "Cookie, Authorization", "x-content-type-options": "nosniff" } as const;
 
-export type BillDrivenRepositories = Pick<RuntimeRepositories, "billRepository" | "foundationMemberships" | "cteArchiveRepository" | "marketArchiveRepository"> & { readonly eligibilityOverrides?: RuntimeRepositories["eligibilityOverrides"]; readonly orgChain?: RuntimeRepositories["orgChain"]; readonly cteAssignments?: RuntimeRepositories["cteAssignments"] };
+export type BillDrivenRepositories = Pick<RuntimeRepositories, "billRepository" | "foundationMemberships" | "cteArchiveRepository" | "marketArchiveRepository"> & { readonly marketRefreshState?: RuntimeRepositories["marketRefreshState"]; readonly marketRefreshRuns?: RuntimeRepositories["marketRefreshRuns"]; readonly marketRefreshLocks?: RuntimeRepositories["marketRefreshLocks"]; readonly eligibilityOverrides?: RuntimeRepositories["eligibilityOverrides"]; readonly orgChain?: RuntimeRepositories["orgChain"]; readonly cteAssignments?: RuntimeRepositories["cteAssignments"] };
 
 export interface ContractExpiryStatus {
   readonly status: "KNOWN" | "UNKNOWN";
@@ -399,6 +403,25 @@ async function evaluateCte(repository: BillDrivenRepositories["marketArchiveRepo
   return offerMetadata(record, version, offer, "COMPATIBLE", "COMPATIBLE");
 }
 
+/**
+ * The indexes a quote needs come from the official sources (PUN from GME, PSV from ARERA).
+ * When a bill month is not in the archive yet, it is fetched and approved now instead of waiting for the nightly refresh.
+ */
+async function ensureOfficialIndexes(repositories: BillDrivenRepositories, context: BillDrivenSimulationContext): Promise<void> {
+  const months = monthsInSimulationPeriod(context.billingPeriod);
+  const index = context.vector === "EE" ? "PUN" : "PSV";
+  const stored = await repositories.marketArchiveRepository.list(context.tenantId);
+  if (months.every((month) => stored.some((record) => record.status === "APPROVED" && record.vector === context.vector && record.index === index && record.month === month))) return;
+  // Only the runtime wiring carries the refresh stores; callers without them never reach the network.
+  if (!repositories.marketRefreshState || !repositories.marketRefreshRuns || !repositories.marketRefreshLocks) return;
+  try {
+    if (context.vector === "GAS") { await runPsvMarketRefresh({ tenantId: context.tenantId, repositories }); return; }
+    await runPunMarketRefresh({ tenantId: context.tenantId, repositories: { marketArchiveRepository: repositories.marketArchiveRepository, marketRefreshState: repositories.marketRefreshState, marketRefreshRuns: repositories.marketRefreshRuns, marketRefreshLocks: repositories.marketRefreshLocks }, trigger: "MANUAL" });
+  } catch {
+    // A source outage leaves those CTEs marked as missing the index, as before.
+  }
+}
+
 export async function prepareBillDrivenSimulation(principal: AuthenticatedPrincipal, repositories: BillDrivenRepositories, billId: string, taxTreatment?: TaxInclusionState, asOf = new Date().toISOString().slice(0, 10)): Promise<BillDrivenPreparation> {
   if (typeof billId !== "string" || !billId.trim()) fail("SOURCE_BILL_ID_REQUIRED");
   const documentValue = await getBillInScope(principal, repositories, billId);
@@ -411,6 +434,7 @@ export async function prepareBillDrivenSimulation(principal: AuthenticatedPrinci
   const records = await repositories.cteArchiveRepository.list(principal.tenantId);
   const hierarchy = repositories.orgChain && repositories.cteAssignments ? await loadHierarchyAccess(principal, { foundationMemberships: repositories.foundationMemberships, orgChain: repositories.orgChain, cteAssignments: repositories.cteAssignments }, asOf) : null;
   if (hierarchy) assertSimulationWithinLimits(hierarchy, context.vector, context.customerType);
+  await ensureOfficialIndexes(repositories, context);
   const candidates: CteEligibilityCandidate[] = [];
   for (const record of records) {
     // CTEs outside the operator's assignment or validity window are not offered at all.
