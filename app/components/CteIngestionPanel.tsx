@@ -163,13 +163,13 @@ function CommercialAdjustment({ record, canAdjust }: { readonly record: CteAppro
       setOpen(false);
     } catch (cause) { globalThis.dispatchEvent(new CustomEvent("cte:commercial-error", { detail: errorText(cause) })); } finally { setBusy(false); }
   };
-  const summary = current ? `Correttivi: prezzo energia ${formatDelta(current.energyPriceDelta, unit)} · quota fissa ${formatDelta(current.monthlyFeeDelta, "€/mese")}` : "Nessun correttivo";
-  if (!open) return <div className="cte-adjustment"><small className="muted">{summary}</small>{canAdjust ? <button className="button secondary compact" type="button" onClick={() => setOpen(true)}>Correttivi</button> : null}</div>;
-  return <div className="cte-adjustment cte-adjustment-form" role="group" aria-label="Correttivi commerciali">
+  const summary = current ? `Ricarico o sconto: prezzo energia ${formatDelta(current.energyPriceDelta, unit)} · quota fissa ${formatDelta(current.monthlyFeeDelta, "€/mese")}` : "Nessun ricarico o sconto";
+  if (!open) return <div className="cte-adjustment"><small className="muted">{summary}</small>{canAdjust ? <button className="button secondary compact" type="button" onClick={() => setOpen(true)}>Ricarico o sconto</button> : null}</div>;
+  return <div className="cte-adjustment cte-adjustment-form" role="group" aria-label="Ricarico o sconto">
     <label>Prezzo energia ({unit})<input inputMode="decimal" value={energy} onChange={(event) => setEnergy(event.target.value)} disabled={busy} /></label>
     <label>Quota fissa (€/mese)<input inputMode="decimal" value={fee} onChange={(event) => setFee(event.target.value)} disabled={busy} /></label>
     <small className="muted">Valori in più o in meno rispetto alla CTE: per esempio -0,005 abbassa il prezzo di mezzo centesimo. Si applicano a tutte le simulazioni e proposte nuove.</small>
-    <div className="button-row"><button className="button secondary" type="button" onClick={() => setOpen(false)} disabled={busy}>Annulla</button><button className="button primary" type="button" onClick={() => void save()} disabled={busy}>{busy ? "Salvataggio" : "Salva correttivi"}</button></div>
+    <div className="button-row"><button className="button secondary" type="button" onClick={() => setOpen(false)} disabled={busy}>Annulla</button><button className="button primary" type="button" onClick={() => void save()} disabled={busy}>{busy ? "Salvataggio" : "Salva ricarico o sconto"}</button></div>
   </div>;
 }
 
