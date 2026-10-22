@@ -432,7 +432,15 @@ button:focus-visible,a:focus-visible,input:focus-visible,select:focus-visible,te
 .quote-validity strong { font-size:18px; }
 .quote-note { margin:14px 0 0; font-size:13px; }
 @media (max-width:760px) { .quote-saving { flex-direction:column; align-items:flex-start; } .quote-receipt th,.quote-receipt td { padding:8px 4px; font-size:14px; } }
-.cte-active-period { display:flex; flex-wrap:wrap; align-items:center; gap:.5rem; }
-.cte-active-period > strong { color:var(--navy); font-weight:800; }
-.cte-active-period input[type="date"] { min-height:2.25rem; }
+.cte-active-period { display:flex; flex-wrap:wrap; align-items:center; gap:8px; padding:8px 12px; border:2px solid #3a8fb0; border-radius:10px; background:#e8f4f9; }
+.cte-active-period > strong { color:var(--navy); font-size:14px; font-weight:800; white-space:nowrap; }
+.cte-active-period .button-row { margin-top:0; align-items:center; }
+.cte-active-period input[type="date"] { min-height:34px; padding:4px 8px; border:1px solid #3a8fb0; border-radius:8px; background:#fff; font-weight:700; color:var(--navy); }
+.cte-active-period .button.compact { min-height:34px; }
+.cte-review-toolbar { display:flex; flex-wrap:wrap; align-items:center; gap:8px; padding-top:4px; }
+.cte-review-toolbar .button { min-height:34px; padding:6px 12px; font-size:12px; }
+.cte-review-toolbar .button.tool-edit { color:#fff; background:#2f6f9f; }
+.cte-review-toolbar .button.tool-reread { color:#1f6b5c; border-color:#9fd3c6; background:#eaf7f3; }
+.cte-review-toolbar .button.tool-delete { color:#8c2d2d; border-color:#edb9b9; background:#fff4f4; margin-left:auto; }
+.cte-review-toolbar .cte-delete-confirmation { flex-basis:100%; }
 .app-build { position:fixed; right:.5rem; bottom:.25rem; font-size:.7rem; color:var(--muted, #6b7280); opacity:.7; pointer-events:none; }

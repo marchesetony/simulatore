@@ -31,7 +31,7 @@ export interface CteReviewSource {
 }
 
 export interface CteApprovalBlocker {
-  readonly code: "REQUIRED_FIELD_MISSING" | "REQUIRED_FIELD_UNCERTAIN" | "CLASSIFICATION_UNCONFIRMED" | "AUTHORITATIVE_CONTRACT_MISSING" | "AUTHORITATIVE_CONTRACT_INVALID";
+  readonly code: "REQUIRED_FIELD_MISSING" | "REQUIRED_FIELD_UNCERTAIN" | "CLASSIFICATION_UNCONFIRMED" | "AUTHORITATIVE_CONTRACT_MISSING" | "AUTHORITATIVE_CONTRACT_INVALID" | "CTE_EXPIRED";
   readonly fieldKey?: string;
   readonly label: string;
   readonly required: true;
@@ -691,19 +691,25 @@ export function normalizeCteReview(record: Pick<CteIngestionRecord, "fields" | "
   return { currency: currency(text(currencyField)), commercialFields, notFoundFields, sources: sourced.sources, approvalGate };
 }
 
-export function cteApprovalGate(record: Pick<CteIngestionRecord, "fields" | "vector" | "documentType" | "candidate"> & Partial<Pick<CteIngestionRecord, "reviewedCandidate" | "ingestionId" | "documentId" | "status">> & { readonly tenantId?: string }): CteApprovalGate {
+export function cteApprovalGate(record: Pick<CteIngestionRecord, "fields" | "vector" | "documentType" | "candidate"> & Partial<Pick<CteIngestionRecord, "reviewedCandidate" | "ingestionId" | "documentId" | "status">> & { readonly tenantId?: string }, now?: string): CteApprovalGate {
   const review = normalizeCteReview(record);
   const blockers = [...review.approvalGate.blockers];
   if (record.documentType !== "CTE" || (record.vector !== "EE" && record.vector !== "GAS")) blockers.push({ code: "CLASSIFICATION_UNCONFIRMED", label: "Classificazione del documento non confermata", required: true });
   const persistedCandidate = record.reviewedCandidate ?? record.candidate;
+  let contract: CteContract | null = null;
   if (persistedCandidate) {
-    try { validateCteContract(persistedCandidate); } catch { blockers.push({ code: "AUTHORITATIVE_CONTRACT_INVALID", label: "Contratto autorevole non valido: schema da verificare", required: true }); }
+    try { validateCteContract(persistedCandidate); contract = persistedCandidate as CteContract; } catch { blockers.push({ code: "AUTHORITATIVE_CONTRACT_INVALID", label: "Contratto autorevole non valido: schema da verificare", required: true }); }
   } else if (record.ingestionId && record.documentId && record.tenantId && blockers.length === 0) {
     const built = tryBuildAuthoritativeCteContract(record as Pick<CteIngestionRecord, "ingestionId" | "documentId" | "fields" | "vector" | "documentType"> & { readonly tenantId: string });
+    contract = built.contract ?? null;
     if (!built.contract) blockers.push({ code: "AUTHORITATIVE_CONTRACT_MISSING", label: built.errorCode === "CTE_AUTHORITATIVE_FIELD_UNCERTAIN" ? "Contratto autorevole: confermare i campi obbligatori incerti" : built.errorCode === "CTE_AUTHORITATIVE_FIELD_MISSING" ? `Dati obbligatori mancanti: ${[...new Set(built.validationPaths.map((path) => labels[path] ?? path))].join(", ")}` : built.errorCode === "CTE_AUTHORITATIVE_MAPPING_INVALID" ? `Dati da correggere con Modifica: ${[...new Set(built.validationPaths.map((path) => labels[path] ?? path))].join(", ")}` : `Verifica del contratto non riuscita (${built.errorCode ?? "errore"}${built.validationPaths.length ? ": " + built.validationPaths.join(", ") : ""})`, required: true });
   } else if (!persistedCandidate) {
     blockers.push({ code: "AUTHORITATIVE_CONTRACT_MISSING", label: "Contratto autorevole non ancora disponibile", required: true });
   }
+  // An expired CTE cannot be archived, so say it here instead of failing when Approva is pressed.
+  const until = contract ? (contract.expiry.status === "EXPIRES_ON" ? contract.expiry.date : contract.validity.periodEnd) : null;
+  const today = (now ?? new Date().toISOString()).slice(0, 10);
+  if (contract && until && (contract.expiry.status === "EXPIRES_ON" ? today > until : today >= until)) blockers.push({ code: "CTE_EXPIRED", label: `CTE scaduta il ${until.split("-").reverse().join("/")}: se la data letta è sbagliata correggi validità o scadenza con Modifica`, required: true });
   return { approvalReady: record.status === "APPROVED" ? false : blockers.length === 0, blockers, optionalNotFound: review.approvalGate.optionalNotFound };
 }
 
