@@ -91,7 +91,7 @@ const EXCLUSION: Record<string, string> = {
   CTE_NOT_ACTIVE: "CTE bloccata", REVIEW_REQUIRED: "CTE da riapprovare", CTE_EXPIRED: "CTE scaduta", VECTOR_MISMATCH: "Tipo fornitura diverso",
   CTE_VALIDITY_MISMATCH: "Non ancora sottoscrivibile", CUSTOMER_NOT_ELIGIBLE: "Tipo cliente non ammesso (Consumer/Business)", VOLTAGE_NOT_ELIGIBLE: "Livello di tensione non previsto",
   TAX_TREATMENT_INCOMPATIBLE: "Trattamento fiscale diverso", IMBALANCE_UNAVAILABLE: "Sbilanciamento non indicato nella CTE", FEE_UNIT_MISMATCH: "Unità dei costi non coerente",
-  BILL_DATA_INSUFFICIENT: "Dati della bolletta incompleti", MONTHLY_PROFILE_REQUIRED: "Servono i consumi mese per mese", COMPATIBLE_MARKET_DATA_UNAVAILABLE: "Manca l'indice PUN/PSV del periodo", CALCULATION_READY_INVALID: "CTE non calcolabile", COMPATIBLE: "Calcolo non riuscito per questa bolletta",
+  BILL_DATA_INSUFFICIENT: "Dati della bolletta incompleti", MONTHLY_PROFILE_REQUIRED: "Servono i consumi mese per mese", COMPATIBLE_MARKET_DATA_UNAVAILABLE: "Manca l'indice PUN/PSV del periodo", CALCULATION_READY_INVALID: "CTE non calcolabile", CONSUMPTION_NOT_ELIGIBLE: "Consumo annuo fuori dalla fascia della CTE", COMPATIBLE: "Calcolo non riuscito per questa bolletta",
 };
 function exclusion(candidate: Candidate): string { return EXCLUSION[candidate.compatibilityReason ?? ""] ?? "Non adatta a questa bolletta"; }
 
@@ -168,6 +168,13 @@ function BillContractFacts({ bill }: { readonly bill: BillDocumentModel }): Reac
   return <dl className="quote-bill-grid quote-contract-facts">{rows.map(([label, value]) => <div key={label}><dt>{label}</dt><dd>{value}</dd></div>)}</dl>;
 }
 
+function estimatedFromPeriod(context: Context, ee: boolean): string {
+  const period = context.consumption?.period;
+  const billed = ee ? (period?.f1 ?? 0) + (period?.f2 ?? 0) + (period?.f3 ?? 0) : period?.smc ?? 0;
+  const days = (Date.parse(`${context.billingPeriod.periodEnd}T00:00:00Z`) - Date.parse(`${context.billingPeriod.periodStart}T00:00:00Z`)) / 86_400_000 + 1;
+  return billed > 0 && days >= 20 ? `${amount(Math.round(billed / days * 365), ee ? "kWh" : "Smc")} (stimato dal periodo)` : "—";
+}
+
 function BillSummary({ context }: { readonly context: Context }): ReactNode {
   const ee = context.vector === "EE";
   const period = context.consumption?.period;
@@ -179,12 +186,12 @@ function BillSummary({ context }: { readonly context: Context }): ReactNode {
     ["Fornitore attuale", [context.currentSupplier, context.currentOffer?.name].filter(Boolean).join(" · ") || "—"],
     ["Periodo fatturato", `${date(context.billingPeriod.periodStart)} – ${date(context.billingPeriod.periodEnd)}`],
     ["Consumo del periodo", ee ? `F1 ${amount(period?.f1, "kWh")} · F2 ${amount(period?.f2, "kWh")} · F3 ${amount(period?.f3, "kWh")}` : amount(period?.smc, "Smc")],
-    ["Consumo annuo", amount(context.consumption?.annual, ee ? "kWh" : "Smc")],
+    ["Consumo annuo", context.consumption?.annual != null ? amount(context.consumption.annual, ee ? "kWh" : "Smc") : estimatedFromPeriod(context, ee)],
   ];
   return <section className="ui-card quote-bill-summary"><h3>Dati della bolletta usati per la scelta</h3>
     <dl className="quote-bill-grid">{rows.map(([label, value]) => <div key={label}><dt>{label}</dt><dd>{value}</dd></div>)}</dl>
     {context.economicReconciled === false ? <p className="quote-warning">Le voci di costo lette non sommano esattamente al totale della bolletta: il risparmio mostrato è indicativo.</p> : null}
-    {context.missingRequiredData.length ? <p className="quote-missing" role="alert">Mancano: {context.missingRequiredData.map((code) => MISSING[code] ?? code).join(", ")}. Ricarica una bolletta più completa o chiedi all'amministratore di correggerla.</p> : null}
+    {context.missingRequiredData.length ? <p className="quote-missing" role="alert">Mancano: {context.missingRequiredData.map((code) => MISSING[code] ?? code).join(", ")}. Ricarica una bolletta più completa.</p> : null}
   </section>;
 }
 
