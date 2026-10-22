@@ -19,8 +19,9 @@ type Context = {
   readonly missingRequiredData: readonly string[];
   readonly economicReconciled?: boolean;
 };
-type Candidate = { readonly archiveId: string; readonly cteVersionId: string | null; readonly supplier: string; readonly offer: { readonly name: string; readonly code: string }; readonly validity: { readonly periodStart: string; readonly periodEnd: string }; readonly finalStatus?: string; readonly calculationReadiness: string; readonly compatibilityReason?: string };
-type Offer = { readonly rank: number; readonly calculation: CalculationModel; readonly supplier: string; readonly offerName: string; readonly receipt: QuoteReceipt };
+type Candidate = { readonly archiveId: string; readonly cteVersionId: string | null; readonly supplier: string; readonly offer: { readonly name: string; readonly code: string }; readonly validity: { readonly periodStart: string; readonly periodEnd: string }; readonly finalStatus?: string; readonly calculationReadiness: string; readonly compatibilityReason?: string; readonly pricingType?: "INDEXED" | "FIXED" | null; readonly pricingReference?: string | null; readonly terms?: Terms };
+type Terms = { readonly fixedPrice: number | null; readonly spread: number | null; readonly priceUnit: "EUR_PER_KWH" | "EUR_PER_SMC"; readonly monthlyFixedFee: number | null };
+type Offer = { readonly rank: number; readonly calculation: CalculationModel; readonly supplier: string; readonly offerName: string; readonly receipt: QuoteReceipt; readonly candidate: Candidate };
 type Quote = { readonly bill: BillDocumentModel; readonly context: Context; readonly comparison: ComparisonModel; readonly offers: readonly Offer[]; readonly candidates?: readonly Candidate[] };
 
 // The seven fields the server needs confirmed before a bill can be used.
@@ -93,7 +94,30 @@ const EXCLUSION: Record<string, string> = {
   TAX_TREATMENT_INCOMPATIBLE: "Trattamento fiscale diverso", IMBALANCE_UNAVAILABLE: "Sbilanciamento non indicato nella CTE", FEE_UNIT_MISMATCH: "Unità dei costi non coerente",
   BILL_DATA_INSUFFICIENT: "Dati della bolletta incompleti", MONTHLY_PROFILE_REQUIRED: "Servono i consumi mese per mese", COMPATIBLE_MARKET_DATA_UNAVAILABLE: "Manca l'indice PUN/PSV del periodo", CALCULATION_READY_INVALID: "CTE non calcolabile", CONSUMPTION_NOT_ELIGIBLE: "Consumo annuo fuori dalla fascia della CTE", CONDOMINIUM_ONLY: "Offerta riservata ai condomini", COMPATIBLE: "Calcolo non riuscito per questa bolletta",
 };
-function exclusion(candidate: Candidate): string { return EXCLUSION[candidate.compatibilityReason ?? ""] ?? "Non adatta a questa bolletta"; }
+// Why the calculation of an eligible CTE was set aside, in the words the agent reads.
+const CALCULATION_EXCLUSION: Record<string, string> = {
+  MARKET_DATA_MISSING: "Manca l'indice PUN/PSV del periodo", MARKET_DATA_INVALID: "Indice PUN/PSV non valido", MONTHLY_PROFILE_REQUIRED: "Servono i consumi mese per mese", FEE_UNIT_MISMATCH: "Unità dei costi della CTE non coerente",
+  IMBALANCE_UNAVAILABLE: "Sbilanciamento non indicato nella CTE", CALCULATION_READY_INVALID: "CTE incompleta: ricontrolla prezzi e costi in archivio", CALCULATION_INPUT_INVALID: "Consumi della bolletta non utilizzabili per questa CTE",
+  COMPARISON_INCOMPATIBLE: "Costi della CTE non confrontabili con le altre", CTE_VALIDITY_MISMATCH: "Non ancora sottoscrivibile", CTE_EXPIRED: "CTE scaduta", VOLTAGE_NOT_ELIGIBLE: "Livello di tensione non previsto", CUSTOMER_NOT_ELIGIBLE: "Tipo cliente non ammesso (Consumer/Business)", ONE_OFF_FEE_UNIT_INVALID: "Costo una tantum con unità non valida",
+};
+function exclusion(candidate: Candidate, comparison?: ComparisonModel): string {
+  const failed = candidate.compatibilityReason === "COMPATIBLE" ? comparison?.excludedOffers.find((item) => item.archiveId === candidate.archiveId) : undefined;
+  if (failed) return CALCULATION_EXCLUSION[failed.code] ?? `Calcolo non riuscito (${failed.code})`;
+  return EXCLUSION[candidate.compatibilityReason ?? ""] ?? "Non adatta a questa bolletta";
+}
+const RATE = new Intl.NumberFormat("it-IT", { minimumFractionDigits: 4, maximumFractionDigits: 6 });
+// Price lines the agent quotes from the CTE: fixed price or spread on the index, and the monthly PCV.
+function termLines(candidate: Candidate): readonly string[] {
+  const terms = candidate.terms;
+  if (!terms) return [];
+  const unit = terms.priceUnit === "EUR_PER_SMC" ? "€/Smc" : "€/kWh";
+  const index = candidate.pricingReference === "PSV" ? "PSV" : "PUN";
+  return [
+    terms.fixedPrice !== null ? `Prezzo fisso ${RATE.format(terms.fixedPrice)} ${unit}` : null,
+    terms.spread !== null ? `${terms.fixedPrice !== null ? "Spread" : `${index} + spread`} ${RATE.format(terms.spread)} ${unit}` : terms.fixedPrice === null ? "Spread non indicato nella CTE" : null,
+    `PCV mensile ${terms.monthlyFixedFee === null ? "non indicata nella CTE" : `${EURO.format(terms.monthlyFixedFee)} al mese`}`,
+  ].filter((line): line is string => line !== null);
+}
 
 function italianDate(value: string | null | undefined): string | null {
   if (!value) return null;
@@ -204,7 +228,7 @@ function offersFrom(bill: BillDocumentModel, context: Context, candidates: reado
     const candidate = candidates.find((item) => item.archiveId === calculation.sourceCte.archiveId && (item.finalStatus === "ELIGIBLE" || item.finalStatus === "ELIGIBLE_BY_OVERRIDE"));
     if (!candidate) return [];
     const receipt = buildQuoteReceipt({ vector: calculation.vector, offerSupplyCost: calculation.totalCommercialCost.amount, analysis: bill.analystReview.economics.economicAnalysis, domestic: context.classification.domestic, validUntil: candidate.validity.periodEnd });
-    return [{ rank: entry.rank, calculation, supplier: entry.supplier, offerName: candidate.offer.name || entry.offerCode, receipt }];
+    return [{ rank: entry.rank, calculation, supplier: entry.supplier, offerName: candidate.offer.name || entry.offerCode, receipt, candidate }];
   });
 }
 
@@ -367,12 +391,13 @@ export default function QuickQuoteFlow({ readonly }: { readonly readonly: boolea
         {quote.offers.length ? <div className="quote-offers">{quote.offers.map((offer, index) => <button key={offer.calculation.calculationId} type="button" className={`quote-offer${offer.calculation.calculationId === selectedId ? " selected" : ""}${index === 0 ? " best" : ""}`} onClick={() => { setSelectedId(offer.calculation.calculationId); setProposal(null); }} aria-pressed={offer.calculation.calculationId === selectedId}>
           {index === 0 ? <span className="status-badge positive">La più conveniente</span> : null}
           <strong>{offer.supplier}</strong><span>{offer.offerName}</span>
+          {termLines(offer.candidate).map((line) => <span key={line} className="quote-offer-term">{line}</span>)}
           <span className="quote-offer-total">{euro(offer.receipt.offerTotal ?? offer.receipt.rows[0].offer)}</span>
           {offer.receipt.savingsPercent !== null ? <small className={offer.receipt.savingsPercent >= 0 ? "positive" : "negative"}>{offer.receipt.savingsPercent >= 0 ? "Risparmio" : "Più cara"} {PERCENT.format(Math.abs(offer.receipt.savingsPercent))}%</small> : null}
           <small>Valida fino al {date(offer.receipt.validUntil)}</small>
         </button>)}</div> : <EmptyState title="Nessuna offerta utilizzabile" detail="Nessuna CTE a te assegnata è adatta a questa bolletta. Chiedi all'amministratore di assegnartene una." />}
         {excluded.length ? <details className="quote-excluded"><summary>{excluded.length} {excluded.length === 1 ? "CTE non adatta" : "CTE non adatte"} a questa bolletta</summary>
-          <ul>{excluded.map((candidate) => <li key={candidate.archiveId}><strong>{candidate.offer.name || candidate.offer.code}</strong> <span className="muted">{candidate.supplier}</span> <em>{exclusion(candidate)}</em></li>)}</ul>
+          <ul>{excluded.map((candidate) => <li key={candidate.archiveId}><strong>{candidate.offer.name || candidate.offer.code}</strong> <span className="muted">{candidate.supplier}</span> <em>{exclusion(candidate, quote.comparison)}</em></li>)}</ul>
         </details> : null}
       </section>
       {selected ? <><Receipt offer={selected} today={today} /><div className="button-row"><button className="button primary" type="button" onClick={() => void saveProposal()} disabled={readonly || Boolean(pending)}>{pending === "proposal" ? "Preparazione" : "Scarica la proposta in PDF"}</button>{proposal ? <span className="muted" role="status">Proposta salvata in Proposte.</span> : null}</div></> : null}

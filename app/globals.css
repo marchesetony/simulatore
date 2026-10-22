@@ -419,6 +419,7 @@ button:focus-visible,a:focus-visible,input:focus-visible,select:focus-visible,te
 .quote-offer.best { border-color:#9fd4cd; background:var(--teal-soft); }
 .quote-offer.selected { outline:3px solid var(--teal); outline-offset:0; }
 .quote-offer-total { font-size:22px; font-weight:800; }
+.quote-offer-term { font-size:14px; font-weight:700; color:var(--accent, #2f6f6a); }
 .quote-offer small.positive { color:#12664f; font-weight:700; }.quote-offer small.negative,.quote-saving.negative strong { color:#8c2d2d; }
 .quote-receipt h3 { margin:0 0 12px; }
 .quote-receipt table { width:100%; border-collapse:collapse; }

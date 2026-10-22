@@ -137,6 +137,8 @@ export interface CteEligibilityCandidate {
   readonly validity: { readonly periodStart: string; readonly periodEnd: string };
   readonly pricingType: "INDEXED" | "FIXED" | null;
   readonly pricingReference: "PUN" | "PSV" | "NONE" | null;
+  /** What the agent quotes to the customer: energy price or spread on the index, and the monthly fixed fee (PCV). */
+  readonly terms?: { readonly fixedPrice: number | null; readonly spread: number | null; readonly priceUnit: "EUR_PER_KWH" | "EUR_PER_SMC"; readonly monthlyFixedFee: number | null };
   readonly eligibilityStatus: "COMPATIBLE" | "NOT_COMPATIBLE";
   readonly compatibilityReason: string;
   readonly calculationReadiness: "READY" | "MARKET_DATA_MISSING" | "NOT_READY";
@@ -347,10 +349,21 @@ function requestFromContext(context: BillDrivenSimulationContext, taxTreatment: 
   return { ...common, vector: "GAS", consumption: { basis: "PERIOD", unit: "SMC", smc, correctionCoefficient: context.consumption.correctionCoefficient === null ? { required: false } : { required: true, value: context.consumption.correctionCoefficient } } };
 }
 
+/** Seller fixed fees as one monthly amount: per month as written, per year divided by twelve. */
+function monthlyFixedFeeOf(fees: readonly { readonly amount: number; readonly unit: string; readonly monthlyEquivalent?: number }[]): number | null {
+  const monthly = fees.map((fee) => fee.monthlyEquivalent ?? (fee.unit === "EUR_PER_MONTH" || fee.unit === "EUR_PER_POD" ? fee.amount : fee.unit === "EUR_PER_YEAR" ? fee.amount / 12 : null));
+  return monthly.length && monthly.every((value) => value !== null) ? Math.round((monthly as number[]).reduce((sum, value) => sum + value, 0) * 100) / 100 : null;
+}
+function termsOf(contract: CteArchiveVersion["contract"]): CteEligibilityCandidate["terms"] {
+  const pricing = contract.pricing;
+  const spread = pricing.mode === "INDEXED" ? pricing.spread.amount : pricing.spread.status === "DECLARED" ? pricing.spread.component.amount : null;
+  return { fixedPrice: pricing.mode === "FIXED" ? pricing.fixedPrice.amount : null, spread, priceUnit: contract.vector === "GAS" ? "EUR_PER_SMC" : "EUR_PER_KWH", monthlyFixedFee: monthlyFixedFeeOf(contract.commercialTerms.fixedFees) };
+}
+
 function offerMetadata(record: CteArchiveRecord, version: CteArchiveVersion, offer: CalculationReadyOffer | null, status: CteEligibilityCandidate["eligibilityStatus"], reason: string, calculationReadiness: CteEligibilityCandidate["calculationReadiness"] = "READY", reasonCodes: readonly EligibilityReasonCode[] = []): CteEligibilityCandidate {
   const contract = version.contract;
   const finalStatus = calculationReadiness === "NOT_READY" || reason === "REVIEW_REQUIRED" ? "BLOCKED" : status === "COMPATIBLE" ? "ELIGIBLE" : "NOT_ELIGIBLE";
-  return { cteId: record.cteId, archiveId: record.archiveId, cteVersionId: version.versionId, cteVersion: contract.version, supplier: contract.supplier.name, offer: { name: contract.offer.name, code: contract.offer.code }, validity: contract.validity, pricingType: offer?.pricing.mode ?? null, pricingReference: offer?.pricing.reference ?? null, eligibilityStatus: status, compatibilityReason: reason, calculationReadiness, ...(reasonCodes.length ? { reasonCodes } : {}), finalStatus, overrideRequestable: finalStatus === "NOT_ELIGIBLE" && reasonCodes.length > 0 && reasonCodes.every(isEligibilityOverrideable) };
+  return { cteId: record.cteId, archiveId: record.archiveId, cteVersionId: version.versionId, cteVersion: contract.version, supplier: contract.supplier.name, offer: { name: contract.offer.name, code: contract.offer.code }, validity: contract.validity, pricingType: offer?.pricing.mode ?? null, pricingReference: offer?.pricing.reference ?? null, ...(() => { try { return { terms: termsOf(contract) }; } catch { return {}; } })(), eligibilityStatus: status, compatibilityReason: reason, calculationReadiness, ...(reasonCodes.length ? { reasonCodes } : {}), finalStatus, overrideRequestable: finalStatus === "NOT_ELIGIBLE" && reasonCodes.length > 0 && reasonCodes.every(isEligibilityOverrideable) };
 }
 
 async function applyAuthorizedOverride(principal: AuthenticatedPrincipal, repositories: BillDrivenRepositories, context: BillDrivenSimulationContext, candidate: CteEligibilityCandidate): Promise<CteEligibilityCandidate> {
