@@ -99,6 +99,7 @@ const messages: Readonly<Record<string, string>> = {
   CTE_CORRECTION_FIELD_UNSUPPORTED: "Questo dato non si può correggere da qui.",
   CTE_ARCHIVE_ALREADY_EXISTS: "Questa CTE è già presente in Archivio approvato.",
   CTE_APPROVED_VALIDITY_OVERLAP: "La stessa offerta è già in Archivio approvato per un periodo che si sovrappone: cancella il doppione oppure blocca o cancella quella già approvata.",
+  CTE_INGESTION_NOT_FOUND: "Il documento non è più presente (già cancellato o approvato): ricarica l'elenco.",
   CTE_EXPIRED: "La CTE risulta già scaduta: aggiorna la scadenza prima di approvarla.",
   CTE_VERSION_STALE: "La CTE è stata modificata nel frattempo: ricarica la pagina e riprova.",
   CTE_INGESTION_APPROVED_IMMUTABLE: "Questa CTE è già approvata e non può essere modificata.",
