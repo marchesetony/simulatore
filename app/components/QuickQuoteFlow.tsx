@@ -27,6 +27,33 @@ const FIELDS: readonly { readonly name: string; readonly label: string }[] = [
   { name: "customerName", label: "Intestatario" }, { name: "supplier", label: "Fornitore attuale" }, { name: "pod", label: "POD / PDR" }, { name: "billingPeriod", label: "Periodo fatturato" },
   { name: "billedConsumption", label: "Consumo fatturato" }, { name: "annualConsumption", label: "Consumo annuo" }, { name: "totalAmount", label: "Totale bolletta" },
 ];
+const NUMERIC_FIELDS = new Set(["billedConsumption", "annualConsumption", "totalAmount"]);
+const ISO_DATE = /(\d{4})-(\d{2})-(\d{2})/g;
+const IT_DATE = /(\d{1,2})\/(\d{1,2})\/(\d{4})/g;
+// Read values are machine-formatted (1658.683, 2026-09-01); the agent reads and types them the Italian way.
+function toDisplay(name: string, raw: string | null | undefined): string {
+  const value = raw ?? "";
+  if (NUMERIC_FIELDS.has(name) && /^-?\d+(\.\d+)?$/.test(value.trim())) {
+    const decimals = value.split(".")[1]?.length ?? 0;
+    // Thousands always get a dot, also on four-digit numbers (1.658,683).
+    const fixed = Number(value).toFixed(name === "totalAmount" ? Math.max(2, decimals) : decimals);
+    const [whole, fraction] = fixed.split(".");
+    return `${whole.replace(/\B(?=(\d{3})+(?!\d))/g, ".")}${fraction ? `,${fraction}` : ""}`;
+  }
+  if (name === "billingPeriod") return value.replace(ISO_DATE, (_, y, m, d) => `${d}/${m}/${y}`);
+  return value;
+}
+function toMachine(name: string, display: string, raw: string | null | undefined): string {
+  const value = display.trim();
+  if (value === toDisplay(name, raw).trim()) return raw ?? "";
+  if (NUMERIC_FIELDS.has(name)) {
+    const plain = value.replace(/[€\s]/g, "");
+    const normalized = plain.includes(",") ? plain.replace(/\./g, "").replace(",", ".") : /^\d{1,3}(\.\d{3})+$/.test(plain) ? plain.replace(/\./g, "") : plain;
+    return normalized;
+  }
+  if (name === "billingPeriod") return value.replace(IT_DATE, (_, d, m, y) => `${y}-${m.padStart(2, "0")}-${d.padStart(2, "0")}`);
+  return value;
+}
 const MAX_BILL_BYTES = 10 * 1024 * 1024;
 const DATE = new Intl.DateTimeFormat("it-IT", { day: "numeric", month: "long", year: "numeric", timeZone: "UTC" });
 const EURO = new Intl.NumberFormat("it-IT", { style: "currency", currency: "EUR" });
@@ -36,7 +63,7 @@ function euro(value: number | null): string { return value === null ? "—" : EU
 function date(value: string | null): string { return value && /^\d{4}-\d{2}-\d{2}$/.test(value) ? DATE.format(new Date(`${value}T00:00:00Z`)) : "Non indicata"; }
 function daysUntil(value: string | null, today: string): number | null { return value ? Math.round((Date.parse(`${value}T00:00:00Z`) - Date.parse(`${today}T00:00:00Z`)) / 86_400_000) : null; }
 function message(cause: unknown): string { return toUiError(cause).message; }
-const NUMBER = new Intl.NumberFormat("it-IT", { maximumFractionDigits: 0 });
+const NUMBER = new Intl.NumberFormat("it-IT", { maximumFractionDigits: 0, useGrouping: "always" });
 function amount(value: number | null | undefined, unit: string): string { return value === null || value === undefined ? "—" : `${NUMBER.format(value)} ${unit}`; }
 const VOLTAGE: Record<string, string> = { LV: "Bassa tensione (BT)", MV: "Media tensione (MT)", HV: "Alta tensione (AT)", EHV: "Altissima tensione (AAT)" };
 const MISSING: Record<string, string> = { customerType: "tipo cliente", billingPeriod: "periodo fatturato", POD: "POD", PDR: "PDR", voltageLevel: "livello di tensione", F1: "consumo F1", F2: "consumo F2", F3: "consumo F3", SMC: "consumo in Smc", technicalClassification: "uso della fornitura" };
@@ -48,6 +75,52 @@ const EXCLUSION: Record<string, string> = {
   BILL_DATA_INSUFFICIENT: "Dati della bolletta incompleti", MONTHLY_PROFILE_REQUIRED: "Servono i consumi mese per mese", COMPATIBLE_MARKET_DATA_UNAVAILABLE: "Manca l'indice PUN/PSV del periodo", CALCULATION_READY_INVALID: "CTE non calcolabile", COMPATIBLE: "Calcolo non riuscito per questa bolletta",
 };
 function exclusion(candidate: Candidate): string { return EXCLUSION[candidate.compatibilityReason ?? ""] ?? "Non adatta a questa bolletta"; }
+
+function italianDate(value: string | null | undefined): string | null {
+  if (!value) return null;
+  const iso = /^(\d{4})-(\d{2})-(\d{2})/.exec(value);
+  return iso ? `${iso[3]}/${iso[2]}/${iso[1]}` : value;
+}
+function monthsIn(period: { readonly periodStart: string | null; readonly periodEnd: string | null } | undefined): number | null {
+  if (!period?.periodStart || !period.periodEnd) return null;
+  const days = (Date.parse(`${period.periodEnd}T00:00:00Z`) - Date.parse(`${period.periodStart}T00:00:00Z`)) / 86_400_000 + 1;
+  return days > 0 ? Math.max(1, Math.round(days / 30.4)) : null;
+}
+function decimal(value: string | null | undefined): number | null {
+  if (!value) return null;
+  const plain = value.replace(/[€\s]/g, "");
+  const parsed = Number(plain.includes(",") ? plain.replace(/\./g, "").replace(",", ".") : plain);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+// Monthly PCV: the per-month price when the bill states one, otherwise the billed amount spread over the months billed.
+function monthlyPcv(bill: BillDocumentModel): number | null {
+  const lines = (bill.structuredBill?.economicChargeLines ?? []).filter((line) => line.code === "PCV" || /^PCV\b|commercializzazione e vendita/i.test(line.description));
+  if (!lines.length) return null;
+  const perMonth = lines.find((line) => /mese|month/i.test(`${line.unit} ${line.rawUnit ?? ""}`));
+  if (perMonth) return decimal(perMonth.unitPrice);
+  const total = lines.reduce((sum, line) => sum + (decimal(line.amount) ?? 0), 0);
+  const read = bill.structuredBill?.billingPeriod;
+  const months = monthsIn(bill.normalized?.billingPeriod ?? (read?.status === "FOUND" && read.value ? { periodStart: read.value.from, periodEnd: read.value.to } : undefined));
+  return total && months ? total / months : null;
+}
+
+function BillContractFacts({ bill }: { readonly bill: BillDocumentModel }): ReactNode {
+  const receipt = bill.analystReview.receipt;
+  const type = bill.structuredBill?.customerType.status === "FOUND" ? bill.structuredBill.customerType.value : null;
+  const expiry = italianDate(receipt.contractExpiryDate.value) ?? italianDate(receipt.economicConditionsExpiryDate.value);
+  const renewal = receipt.contractDurationType === "INDEFINITE" ? "Tempo indeterminato" : null;
+  const spread = receipt.spread.status === "FOUND" ? ` + spread ${receipt.spread.value}` : "";
+  const price = receipt.priceMechanism === "FIXED" ? `Prezzo fisso${receipt.fixedPrice.value ? ` ${receipt.fixedPrice.value}` : ""}` : receipt.priceMechanism === "INDEXED_PUN_PLUS_SPREAD" ? `Indicizzato ${bill.resolvedVector === "GAS" ? "PSV" : "PUN"}${spread}` : receipt.priceMechanism === "HYBRID" ? "Misto (fisso e indicizzato)" : "Non indicato";
+  const pcv = monthlyPcv(bill);
+  const rows: readonly (readonly [string, ReactNode])[] = [
+    ["Tipo contratto", type === "RESIDENTIAL" ? <span className="cte-segment-consumer">Consumer</span> : type === "NON_RESIDENTIAL" ? <span className="cte-segment-business">Business</span> : "Non indicato"],
+    ["Cliente attivo dal", italianDate(receipt.contractStartDate.value) ?? "Non indicato"],
+    ["Scadenza o rinnovo", expiry ?? renewal ?? "Non indicata"],
+    ["Tipo di prezzo", price],
+    ["PCV mensile", pcv === null ? "Non indicata" : `${EURO.format(pcv)} al mese`],
+  ];
+  return <dl className="quote-bill-grid quote-contract-facts">{rows.map(([label, value]) => <div key={label}><dt>{label}</dt><dd>{value}</dd></div>)}</dl>;
+}
 
 function BillSummary({ context }: { readonly context: Context }): ReactNode {
   const ee = context.vector === "EE";
@@ -150,7 +223,7 @@ export default function QuickQuoteFlow({ readonly }: { readonly readonly: boolea
       const document = (await requestForm<{ readonly document: BillDocumentModel }>("/api/bills", body)).document;
       if (document.status === "FAILED" || document.status === "PROVIDER_NOT_CONFIGURED") throw new Error("BILL_READ_FAILED");
       setDraft(document);
-      setValues(Object.fromEntries(FIELDS.map((field) => [field.name, document.fields[field.name]?.value ?? ""])));
+      setValues(Object.fromEntries(FIELDS.map((field) => [field.name, toDisplay(field.name, document.fields[field.name]?.value)])));
       setStep("review");
     } catch (cause) { setError(cause instanceof Error && cause.message === "BILL_READ_FAILED" ? "Non siamo riusciti a leggere la bolletta. Riprova con un PDF più nitido." : message(cause)); } finally { setPending(undefined); }
   };
@@ -213,6 +286,7 @@ export default function QuickQuoteFlow({ readonly }: { readonly readonly: boolea
     </section> : null}
     {step === "review" && draft ? <section className="ui-card">
       <h3>Controlla i dati letti dalla bolletta</h3><p className="muted">Correggi solo se qualcosa è sbagliato, poi prosegui.</p>
+      <BillContractFacts bill={draft} />
       <div className="form-grid">{FIELDS.map((field) => <label className="form-field" key={field.name}><span className="form-label">{field.label}</span><input value={values[field.name] ?? ""} onChange={(event) => setValues((current) => ({ ...current, [field.name]: event.target.value }))} disabled={Boolean(pending)} /></label>)}</div>
       <div className="button-row"><button className="button primary" type="button" onClick={() => void confirm()} disabled={readonly || Boolean(pending)}>{pending === "confirm" ? "Salvataggio" : "I dati sono corretti, mostra le offerte"}</button></div>
     </section> : null}
