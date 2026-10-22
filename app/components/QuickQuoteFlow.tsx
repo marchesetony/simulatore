@@ -60,6 +60,19 @@ function unitOf(name: string, vector: string): string {
   if (name === "billedConsumption" || name === "annualConsumption") return vector === "GAS" ? " (Smc)" : " (kWh)";
   return name === "totalAmount" ? " (€)" : "";
 }
+// When the bill does not print the annual consumption, it is estimated from the billed period (kWh/day x 365).
+function estimatedAnnual(document: BillDocumentModel): string | null {
+  const billed = Number(document.fields.billedConsumption?.value);
+  const dates = /(\d{4}-\d{2}-\d{2}).*?(\d{4}-\d{2}-\d{2})/.exec(document.fields.billingPeriod?.value ?? "");
+  if (!Number.isFinite(billed) || billed <= 0 || !dates) return null;
+  const days = (Date.parse(`${dates[2]}T00:00:00Z`) - Date.parse(`${dates[1]}T00:00:00Z`)) / 86_400_000 + 1;
+  return days >= 20 ? String(Math.round(billed / days * 365)) : null;
+}
+function readValues(document: BillDocumentModel): Record<string, string> {
+  const values = Object.fromEntries(FIELDS.map((field) => [field.name, toDisplay(field.name, document.fields[field.name]?.value)]));
+  if (!values.annualConsumption?.trim()) { const estimate = estimatedAnnual(document); if (estimate) values.annualConsumption = toDisplay("annualConsumption", estimate); }
+  return values;
+}
 const MAX_BILL_BYTES = 10 * 1024 * 1024;
 const DATE = new Intl.DateTimeFormat("it-IT", { day: "numeric", month: "long", year: "numeric", timeZone: "UTC" });
 const EURO = new Intl.NumberFormat("it-IT", { style: "currency", currency: "EUR" });
@@ -257,7 +270,7 @@ export default function QuickQuoteFlow({ readonly }: { readonly readonly: boolea
       const document = (await requestForm<{ readonly document: BillDocumentModel }>("/api/bills", body)).document;
       if (document.status === "FAILED" || document.status === "PROVIDER_NOT_CONFIGURED") throw new Error("BILL_READ_FAILED");
       setDraft(document);
-      setValues(Object.fromEntries(FIELDS.map((field) => [field.name, toDisplay(field.name, document.fields[field.name]?.value)])));
+      setValues(readValues(document));
       setStep("review");
     } catch (cause) { setError(cause instanceof Error && cause.message === "BILL_READ_FAILED" ? "Non siamo riusciti a leggere la bolletta. Riprova con un PDF più nitido." : message(cause)); } finally { setPending(undefined); }
   };
@@ -269,7 +282,7 @@ export default function QuickQuoteFlow({ readonly }: { readonly readonly: boolea
     try {
       const document = (await requestJson<{ readonly document: BillDocumentModel }>(`/api/bills/${encodeURIComponent(billId)}`)).document;
       setDraft(document);
-      setValues(Object.fromEntries(FIELDS.map((field) => [field.name, toDisplay(field.name, document.fields[field.name]?.value)])));
+      setValues(readValues(document));
       setStep("review");
     } catch (cause) { setError(message(cause)); } finally { setPending(undefined); }
   };
@@ -338,7 +351,7 @@ export default function QuickQuoteFlow({ readonly }: { readonly readonly: boolea
     {step === "review" && draft ? <section className="ui-card">
       <h3>Dati letti dalla bolletta</h3><p className="muted">Li usiamo per trovare le CTE adatte. Se vedi un errore evidente puoi correggerlo, altrimenti prosegui.</p>
       <BillContractFacts bill={draft} />
-      <div className="form-grid">{FIELDS.map((field) => <label className="form-field" key={field.name}><span className="form-label">{field.label}{unitOf(field.name, draft.resolvedVector)}</span><input value={values[field.name] ?? ""} onChange={(event) => setValues((current) => ({ ...current, [field.name]: event.target.value }))} disabled={Boolean(pending)} /></label>)}</div>
+      <div className="form-grid">{FIELDS.map((field) => <label className="form-field" key={field.name}><span className="form-label">{field.label}{unitOf(field.name, draft.resolvedVector)}{field.name === "annualConsumption" && !draft.fields.annualConsumption?.value && values.annualConsumption ? " · stimato dal periodo" : ""}</span><input value={values[field.name] ?? ""} onChange={(event) => setValues((current) => ({ ...current, [field.name]: event.target.value }))} disabled={Boolean(pending)} /></label>)}</div>
       <div className="button-row"><button className="button primary" type="button" onClick={() => void confirm()} disabled={readonly || Boolean(pending)}>{pending === "confirm" ? "Ricerca in corso" : "Cerca le CTE utilizzabili"}</button></div>
     </section> : null}
     {step === "offers" ? pending === "offers" ? <LoadingState label="Calcolo delle offerte per questa bolletta" /> : quote ? <>
