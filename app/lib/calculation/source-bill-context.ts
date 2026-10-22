@@ -97,13 +97,22 @@ async function resolveApprovedSourceBillContext(
   return { supplyContext, structuredBill, billId: document.id, approvedVersionId };
 }
 
+// Technical readings that refine regulated charges (supply use, BTA6 power basis) but are often missing on a competitor bill.
+const OPTIONAL_TRUST_CODES = /^(BTA6_|SUPPLY_USE|POWER_|AVAILABLE_POWER|CONTRACTED_POWER|REGULATORY_SCOPE|VOLTAGE_LEVEL|DOMESTIC_)/;
+
 export async function resolveTrustedElectricityContextFromSourceBill(
   billRepository: Pick<BillRepository, "get">,
   tenantId: string,
   request: ElectricitySimulationRequest,
 ): Promise<ElectricitySupplyContext | null> {
-  const resolved = await resolveApprovedSourceBillContext(billRepository, tenantId, request);
-  return resolved?.supplyContext ?? null;
+  try {
+    const resolved = await resolveApprovedSourceBillContext(billRepository, tenantId, request);
+    return resolved?.supplyContext ?? null;
+  } catch (error) {
+    // Without those readings the quote still runs on the generic electricity charges instead of failing.
+    if (error instanceof SourceBillContextError && OPTIONAL_TRUST_CODES.test(error.code)) return null;
+    throw error;
+  }
 }
 
 export async function resolveTrustedElectricityFiscalContextFromSourceBill(
