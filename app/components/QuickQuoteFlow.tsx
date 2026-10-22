@@ -17,6 +17,7 @@ type Context = {
   readonly currentSupplier: string;
   readonly classification: { readonly domestic: boolean };
   readonly missingRequiredData: readonly string[];
+  readonly economicReconciled?: boolean;
 };
 type Candidate = { readonly archiveId: string; readonly cteVersionId: string | null; readonly supplier: string; readonly offer: { readonly name: string; readonly code: string }; readonly validity: { readonly periodStart: string; readonly periodEnd: string }; readonly finalStatus?: string; readonly calculationReadiness: string; readonly compatibilityReason?: string };
 type Offer = { readonly rank: number; readonly calculation: CalculationModel; readonly supplier: string; readonly offerName: string; readonly receipt: QuoteReceipt };
@@ -169,6 +170,7 @@ function BillSummary({ context }: { readonly context: Context }): ReactNode {
   ];
   return <section className="ui-card quote-bill-summary"><h3>Dati della bolletta usati per la scelta</h3>
     <dl className="quote-bill-grid">{rows.map(([label, value]) => <div key={label}><dt>{label}</dt><dd>{value}</dd></div>)}</dl>
+    {context.economicReconciled === false ? <p className="quote-warning">Le voci di costo lette non sommano esattamente al totale della bolletta: il risparmio mostrato è indicativo.</p> : null}
     {context.missingRequiredData.length ? <p className="quote-missing" role="alert">Mancano: {context.missingRequiredData.map((code) => MISSING[code] ?? code).join(", ")}. Ricarica una bolletta più completa o chiedi all'amministratore di correggerla.</p> : null}
   </section>;
 }
@@ -260,6 +262,18 @@ export default function QuickQuoteFlow({ readonly }: { readonly readonly: boolea
     } catch (cause) { setError(cause instanceof Error && cause.message === "BILL_READ_FAILED" ? "Non siamo riusciti a leggere la bolletta. Riprova con un PDF più nitido." : message(cause)); } finally { setPending(undefined); }
   };
 
+  // An already loaded bill opens on its read data first, like a new upload.
+  const openBill = async (billId: string) => {
+    if (pending) return;
+    setPending("open"); setError(undefined);
+    try {
+      const document = (await requestJson<{ readonly document: BillDocumentModel }>(`/api/bills/${encodeURIComponent(billId)}`)).document;
+      setDraft(document);
+      setValues(Object.fromEntries(FIELDS.map((field) => [field.name, toDisplay(field.name, document.fields[field.name]?.value)])));
+      setStep("review");
+    } catch (cause) { setError(message(cause)); } finally { setPending(undefined); }
+  };
+
   // Confirms what was read, saves what the user corrected, approves the bill and moves on to the offers.
   const confirm = async () => {
     if (!draft || readonly || pending) return;
@@ -268,6 +282,11 @@ export default function QuickQuoteFlow({ readonly }: { readonly readonly: boolea
     setPending("confirm"); setError(undefined);
     try {
       let current = draft;
+      const machineValue = (name: string) => toMachine(name, values[name] ?? "", draft.fields[name]?.value);
+      // An already approved bill with nothing corrected goes straight to the CTE search.
+      if (draft.currentApprovedVersionId && draft.currentApprovedVersionId === draft.currentVersionId && FIELDS.every((field) => machineValue(field.name) === (draft.fields[field.name]?.value ?? ""))) {
+        setDraft(null); setPending(undefined); await loadOffers(draft.id); return;
+      }
       const unchanged = FIELDS.filter((field) => values[field.name].trim() === (current.fields[field.name]?.value ?? "") && !current.fields[field.name]?.confirmed).map((field) => field.name);
       if (unchanged.length) current = (await requestJson<{ readonly document: BillDocumentModel }>(`/api/bills/${encodeURIComponent(current.id)}`, { method: "PATCH", body: JSON.stringify({ operation: "confirm-fields", versionId: current.currentVersionId, fields: unchanged }) })).document;
       for (const field of FIELDS.filter((item) => values[item.name].trim() !== (draft.fields[item.name]?.value ?? ""))) {
@@ -311,9 +330,9 @@ export default function QuickQuoteFlow({ readonly }: { readonly readonly: boolea
     <div className="section-header"><div><h2>Nuova simulazione</h2><p className="section-detail">Carica la bolletta del cliente: ti mostriamo le offerte che puoi proporgli e quanto risparmia.</p></div>{step !== "bill" ? <button className="button secondary" type="button" onClick={restart} disabled={Boolean(pending)}>Ricomincia</button> : null}</div>
     <Steps step={step} />
     {step === "bill" ? <section className="ui-card quote-upload">
-      {pending === "upload" ? <LoadingState label="Lettura della bolletta in corso" /> : <>
+      {pending === "upload" || pending === "open" ? <LoadingState label={pending === "open" ? "Apertura della bolletta" : "Lettura della bolletta in corso"} /> : <>
         <label className="button primary quote-upload-button">Carica bolletta (PDF)<input className="visually-hidden" type="file" accept="application/pdf" onChange={(event) => void upload(event)} disabled={readonly || Boolean(pending)} /></label>
-        {archive.length ? <label className="form-field"><span className="form-label">Oppure usa una bolletta già caricata</span><select value="" onChange={(event) => { if (event.target.value) void loadOffers(event.target.value); }} disabled={Boolean(pending)}><option value="">Scegli la bolletta</option>{archive.map((bill) => <option key={bill.id} value={bill.id}>{bill.title}{bill.supplier ? ` · ${bill.supplier}` : ""}{bill.period.periodStart ? ` · ${date(bill.period.periodStart)}` : ""}</option>)}</select></label> : null}
+        {archive.length ? <label className="form-field"><span className="form-label">Oppure usa una bolletta già caricata</span><select value="" onChange={(event) => { if (event.target.value) void openBill(event.target.value); }} disabled={Boolean(pending)}><option value="">Scegli la bolletta</option>{archive.map((bill) => <option key={bill.id} value={bill.id}>{bill.title}{bill.supplier ? ` · ${bill.supplier}` : ""}{bill.period.periodStart ? ` · ${date(bill.period.periodStart)}` : ""}</option>)}</select></label> : null}
       </>}
     </section> : null}
     {step === "review" && draft ? <section className="ui-card">

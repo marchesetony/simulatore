@@ -119,6 +119,8 @@ export interface BillDrivenSimulationContext {
     readonly status: "READY" | "PARTIAL";
   };
   readonly alerts: readonly BillDrivenContextAlert[];
+  /** False when the read bill lines do not add up to the bill total: savings are then indicative. */
+  readonly economicReconciled: boolean;
   readonly missingRequiredData: readonly string[];
 }
 
@@ -211,17 +213,17 @@ function approvedVersion(document: BillDocument): BillVersion {
   if (!contract) fail(version.structuredBill ? `SOURCE_BILL_${structuredBillContractIssue(version.structuredBill) ?? "CONTEXT_UNAVAILABLE"}` : "SOURCE_BILL_CONTEXT_UNAVAILABLE");
   const approvedContract = contract as NonNullable<BillVersion["energyContract"]>;
   if (approvedContract.tenantId !== document.tenantId || approvedContract.billId !== document.id || approvedContract.version !== "1") fail("SOURCE_BILL_CONTEXT_UNAVAILABLE");
-  assertEconomicReconciliation(version);
   return version;
 }
 
-function assertEconomicReconciliation(version: BillVersion): void {
+function economicallyReconciled(version: BillVersion): boolean {
   const extraction = version.structuredBill;
-  if (!extraction || extraction.economicChargeLines.length === 0) return;
+  if (!extraction || extraction.economicChargeLines.length === 0) return true;
   const priorBalance = extraction.extendedFacts.find((fact) => fact.code === "OUTSTANDING_AMOUNT")?.value ?? null;
   const inputs: BillEconomicComponentInput[] = extraction.economicChargeLines.map((line) => ({ code: line.code, description: line.description, quantity: line.quantity, unit: line.unit, unitPrice: line.unitPrice, amount: line.amount, period: line.periodRaw, rawDescription: line.rawDescription, rawValue: line.rawValue, rawUnit: line.rawUnit, rawQuantity: line.rawQuantity, rawUnitPrice: line.rawUnitPrice, rawAmount: line.rawAmount, rawPeriod: line.rawPeriod, documentEvidence: line.documentEvidence, status: line.status }));
   const analysis = buildCurrentBillEconomicAnalysis(inputs, extraction.totalAmount.value, { priorBalance });
-  if (analysis.totals.reconciliationStatus !== "RECONCILED") fail("SOURCE_BILL_RECONCILIATION_REQUIRED");
+  // A competitor bill whose read lines do not add up to its total is still quotable: the agent is told the saving is indicative.
+  return analysis.totals.reconciliationStatus === "RECONCILED";
 }
 
 function profileFor(extraction: StructuredBillExtraction): BillSupplyProfile | null {
@@ -324,6 +326,7 @@ function buildContext(document: BillDocument, version: BillVersion): BillDrivenS
       status: missing.length === 0 ? "READY" : "PARTIAL",
     },
     alerts: deriveBillDrivenContextAlerts({ vector: contract.vector, domestic, contractedPowerKw }),
+    economicReconciled: economicallyReconciled(version),
     missingRequiredData: missing,
   };
 }

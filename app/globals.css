@@ -505,3 +505,4 @@ button:focus-visible,a:focus-visible,input:focus-visible,select:focus-visible,te
 .quote-excluded ul { margin:8px 0 0; padding-left:18px; display:grid; gap:4px; }
 .quote-excluded em { font-style:normal; color:#b54708; font-weight:600; margin-left:6px; }
 .quote-contract-facts { margin:6px 0 16px; padding:12px; border-radius:10px; background:var(--surface-2, #f6f7f9); }
+.quote-warning { margin:12px 0 0; color:#b54708; font-weight:600; }
