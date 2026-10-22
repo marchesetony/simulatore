@@ -107,6 +107,8 @@ export interface BillDrivenSimulationContext {
     readonly correctionCoefficient: number | null;
   };
   readonly currentSupplier: string;
+  /** Account holder as printed on the bill, used to recognise condominium supplies. */
+  readonly customerName: string | null;
   readonly currentOffer: { readonly name: string | null; readonly code: string | null };
   readonly contractExpiry: ContractExpiryStatus;
   readonly economicBaseline: { readonly amount: number; readonly currency: "EUR"; readonly source: "APPROVED_BILL" } | null;
@@ -314,6 +316,7 @@ function buildContext(document: BillDocument, version: BillVersion): BillDrivenS
       correctionCoefficient: contract.vector === "GAS" && contract.consumption.correctionCoefficient.status === "KNOWN" ? contract.consumption.correctionCoefficient.value : null,
     },
     currentSupplier: contract.currentSupplier,
+    customerName: contract.customer?.name?.status === "KNOWN" ? contract.customer.name.value : null,
     currentOffer: { name: known(contract.offer.offerName), code: known(contract.offer.offerCode) },
     contractExpiry: structured ? expiryFromFacts(structured) : { status: "UNKNOWN" },
     economicBaseline: baselineAmount === null ? null : { amount: baselineAmount, currency: "EUR", source: "APPROVED_BILL" },
@@ -364,11 +367,11 @@ function expired(value: string, asOf: string): boolean { return value <= asOf; }
 
 type AnnualRule = { readonly operator: ">" | ">=" | "<" | "<=" | "="; readonly value: number };
 /** The CTE's annual consumption band: the reviewed rule, or the threshold written in the offer name (Be Strong >80.000 kWh/A). */
-function annualConsumptionRuleOf(contract: CteArchiveVersion["contract"]): AnnualRule | null {
+function annualConsumptionRulesOf(contract: CteArchiveVersion["contract"]): readonly AnnualRule[] {
   const rule = contract.eligibility.annualConsumptionRule;
-  if (rule) return { operator: rule.operator, value: rule.value };
   const named = /([<>]=?)\s*(\d{1,3}(?:[.\s]\d{3})+|\d+)\s*(?:kwh|smc)/i.exec(contract.offer.name ?? "");
-  return named ? { operator: named[1] as AnnualRule["operator"], value: Number(named[2].replace(/[.\s]/g, "")) } : null;
+  // Both the reviewed band and the threshold in the offer name must hold.
+  return [...(rule ? [{ operator: rule.operator, value: rule.value }] : []), ...(named ? [{ operator: named[1] as AnnualRule["operator"], value: Number(named[2].replace(/[.\s]/g, "")) }] : [])];
 }
 function annualConsumptionWithin(rule: AnnualRule, annual: number | null): boolean {
   if (annual === null) return false;
@@ -403,8 +406,13 @@ async function evaluateCte(repository: BillDrivenRepositories["marketArchiveRepo
   if (offer.validity.periodStart > asOf) return offerMetadata(record, version, offer, "NOT_COMPATIBLE", "CTE_VALIDITY_MISMATCH", "READY", ["VALIDITY_MISMATCH"]);
   // Candidate rule for a competitor bill: first Consumer or Business, then the annual consumption band, then the voltage.
   if (!version.contract.eligibility.customerTypes.includes(context.customerType)) return offerMetadata(record, version, offer, "NOT_COMPATIBLE", "CUSTOMER_NOT_ELIGIBLE", "READY", ["CUSTOMER_LEGAL_TYPE_MISMATCH"]);
-  const consumptionRule = annualConsumptionRuleOf(version.contract);
-  if (consumptionRule && !annualConsumptionWithin(consumptionRule, annualConsumptionOf(context))) return offerMetadata(record, version, offer, "NOT_COMPATIBLE", "CONSUMPTION_NOT_ELIGIBLE");
+  // Offers named for one kind of supply only fit that supply: "per MT" needs medium voltage, "Condomini" a condominium holder.
+  const offerName = version.contract.offer.name ?? "";
+  if (context.vector === "EE" && /\bMT\b/.test(offerName) && context.supply.voltageLevel !== "MV") return offerMetadata(record, version, offer, "NOT_COMPATIBLE", "VOLTAGE_NOT_ELIGIBLE", "READY", ["VOLTAGE_MISMATCH"]);
+  if (context.vector === "EE" && /\bBT\b/.test(offerName) && context.supply.voltageLevel !== "LV") return offerMetadata(record, version, offer, "NOT_COMPATIBLE", "VOLTAGE_NOT_ELIGIBLE", "READY", ["VOLTAGE_MISMATCH"]);
+  if (/condomin/i.test(offerName) && !/condomin|\bcond\.?\s/i.test(context.customerName ?? "")) return offerMetadata(record, version, offer, "NOT_COMPATIBLE", "CONDOMINIUM_ONLY");
+  const annual = annualConsumptionOf(context);
+  if (annualConsumptionRulesOf(version.contract).some((rule) => !annualConsumptionWithin(rule, annual))) return offerMetadata(record, version, offer, "NOT_COMPATIBLE", "CONSUMPTION_NOT_ELIGIBLE");
   if (context.vector === "EE" && version.contract.vector === "EE" && (!context.supply.voltageLevel || !version.contract.eligibility.voltageLevels.includes(context.supply.voltageLevel))) return offerMetadata(record, version, offer, "NOT_COMPATIBLE", "VOLTAGE_NOT_ELIGIBLE", "READY", ["VOLTAGE_MISMATCH"]);
   if (taxTreatment !== undefined && offer.taxTreatment !== taxTreatment) return offerMetadata(record, version, offer, "NOT_COMPATIBLE", "TAX_TREATMENT_INCOMPATIBLE");
   if (offer.imbalance.status === "NOT_DECLARED" && offer.imbalance.reason === "NOT_PROVIDED") return offerMetadata(record, version, offer, "NOT_COMPATIBLE", "IMBALANCE_UNAVAILABLE");

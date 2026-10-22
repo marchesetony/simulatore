@@ -91,7 +91,7 @@ const EXCLUSION: Record<string, string> = {
   CTE_NOT_ACTIVE: "CTE bloccata", REVIEW_REQUIRED: "CTE da riapprovare", CTE_EXPIRED: "CTE scaduta", VECTOR_MISMATCH: "Tipo fornitura diverso",
   CTE_VALIDITY_MISMATCH: "Non ancora sottoscrivibile", CUSTOMER_NOT_ELIGIBLE: "Tipo cliente non ammesso (Consumer/Business)", VOLTAGE_NOT_ELIGIBLE: "Livello di tensione non previsto",
   TAX_TREATMENT_INCOMPATIBLE: "Trattamento fiscale diverso", IMBALANCE_UNAVAILABLE: "Sbilanciamento non indicato nella CTE", FEE_UNIT_MISMATCH: "Unità dei costi non coerente",
-  BILL_DATA_INSUFFICIENT: "Dati della bolletta incompleti", MONTHLY_PROFILE_REQUIRED: "Servono i consumi mese per mese", COMPATIBLE_MARKET_DATA_UNAVAILABLE: "Manca l'indice PUN/PSV del periodo", CALCULATION_READY_INVALID: "CTE non calcolabile", CONSUMPTION_NOT_ELIGIBLE: "Consumo annuo fuori dalla fascia della CTE", COMPATIBLE: "Calcolo non riuscito per questa bolletta",
+  BILL_DATA_INSUFFICIENT: "Dati della bolletta incompleti", MONTHLY_PROFILE_REQUIRED: "Servono i consumi mese per mese", COMPATIBLE_MARKET_DATA_UNAVAILABLE: "Manca l'indice PUN/PSV del periodo", CALCULATION_READY_INVALID: "CTE non calcolabile", CONSUMPTION_NOT_ELIGIBLE: "Consumo annuo fuori dalla fascia della CTE", CONDOMINIUM_ONLY: "Offerta riservata ai condomini", COMPATIBLE: "Calcolo non riuscito per questa bolletta",
 };
 function exclusion(candidate: Candidate): string { return EXCLUSION[candidate.compatibilityReason ?? ""] ?? "Non adatta a questa bolletta"; }
 
