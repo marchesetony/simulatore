@@ -24,6 +24,8 @@ export interface PublicCteApprovedArchiveSummary {
   readonly commercialAdjustment?: CteCommercialAdjustment;
   /** Last day the CTE can be sold: its expiry date, or the end of validity when none is declared. */
   readonly activeUntil: string;
+  /** Who the offer is for, as read from the CTE: Consumer (domestic), Business (non-domestic) or both. */
+  readonly segment: "Consumer" | "Business" | "Consumer e Business" | null;
 }
 
 export interface PublicCteApprovedArchiveDetail {
@@ -156,12 +158,18 @@ function publicContract(contract: CteContract, snapshot?: CteApprovedSnapshot): 
   };
 }
 
+function segmentOf(types: readonly string[]): PublicCteApprovedArchiveSummary["segment"] {
+  const consumer = types.includes("RESIDENTIAL");
+  const business = types.includes("NON_RESIDENTIAL");
+  return consumer && business ? "Consumer e Business" : consumer ? "Consumer" : business ? "Business" : null;
+}
+
 export function toPublicCteApprovedArchiveSummary(record: CteArchiveRecord): PublicCteApprovedArchiveSummary | null {
   const approved = approvedVersionForPublic(record);
   if (!approved) return null;
   const commercialStatus = commercialStatusOf(record);
   if (commercialStatus === "DELETED") return null;
-  return { archiveId: record.archiveId, vector: record.vector, offerName: approved.contract.offer.name, supplierName: approved.contract.supplier.name, validity: approved.contract.validity, activeUntil: approved.contract.expiry.status === "EXPIRES_ON" ? approved.contract.expiry.date : approved.contract.validity.periodEnd, status: "APPROVED", commercialStatus, ...(record.commercialAdjustment ? { commercialAdjustment: record.commercialAdjustment } : {}) };
+  return { archiveId: record.archiveId, vector: record.vector, offerName: approved.contract.offer.name, supplierName: approved.contract.supplier.name, validity: approved.contract.validity, activeUntil: approved.contract.expiry.status === "EXPIRES_ON" ? approved.contract.expiry.date : approved.contract.validity.periodEnd, segment: segmentOf(approved.contract.eligibility.customerTypes), status: "APPROVED", commercialStatus, ...(record.commercialAdjustment ? { commercialAdjustment: record.commercialAdjustment } : {}) };
 }
 
 export function toPublicCteApprovedArchiveDetail(record: CteArchiveRecord, snapshot?: CteApprovedSnapshot): PublicCteApprovedArchiveDetail | null {

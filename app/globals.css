@@ -471,3 +471,5 @@ button:focus-visible,a:focus-visible,input:focus-visible,select:focus-visible,te
 .cte-row-bottom .cte-adjustment:not(.cte-adjustment-form) { position:relative; }
 .cte-row-bottom .cte-adjustment:not(.cte-adjustment-form) > small { position:absolute; top:calc(100% + 2px); left:0; white-space:nowrap; }
 .cte-row-bottom { padding-bottom:14px; }
+.cte-offer-title { display:flex; flex-wrap:wrap; align-items:baseline; gap:4px 10px; }
+.cte-segment { color:#c62828; font-size:14px; font-style:normal; font-weight:900; text-transform:uppercase; letter-spacing:.02em; }
