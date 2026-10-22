@@ -444,3 +444,16 @@ button:focus-visible,a:focus-visible,input:focus-visible,select:focus-visible,te
 .cte-review-toolbar .button.tool-delete { color:#8c2d2d; border-color:#edb9b9; background:#fff4f4; margin-left:auto; }
 .cte-review-toolbar .cte-delete-confirmation { flex-basis:100%; }
 .app-build { position:fixed; right:.5rem; bottom:.25rem; font-size:.7rem; color:var(--muted, #6b7280); opacity:.7; pointer-events:none; }
+
+/* Approved archive row on two levels: name and status on top, dates and actions below. */
+.cte-approved-archive-row { display:grid !important; grid-template-columns:1fr; gap:8px; padding:12px 0; }
+.cte-row-top { display:flex; flex-wrap:wrap; align-items:flex-start; justify-content:space-between; gap:8px 16px; min-width:0; }
+.cte-row-top .cte-approved-document { flex:1 1 260px; }
+.cte-row-bottom { display:flex; flex-wrap:wrap; align-items:center; gap:8px; min-width:0; }
+.cte-row-bottom .cte-active-period { padding:4px 10px; border-width:1px; }
+.cte-row-bottom .cte-active-period > strong { font-size:13px; white-space:normal; }
+.cte-row-bottom .button, .cte-row-bottom .button.compact { min-height:32px; padding:5px 10px; font-size:11px; }
+.cte-row-bottom .cte-commercial-actions { flex:0 0 auto; }
+.cte-row-bottom .cte-adjustment { flex-basis:auto; gap:6px; }
+.cte-row-bottom .cte-adjustment small { font-size:11px; }
+.cte-row-bottom .cte-adjustment-form, .cte-row-bottom .cte-commercial-confirmation { flex-basis:100%; }

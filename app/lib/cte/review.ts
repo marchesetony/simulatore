@@ -414,7 +414,8 @@ export function tryBuildAuthoritativeCteContract(record: Pick<CteIngestionRecord
     fields.get("commercialTerms.variableFees")?.normalizedValue != null && !variable ? "commercialTerms.variableFees" : null,
     fields.get("commercialTerms.imbalance")?.normalizedValue != null && !imbalance ? "commercialTerms.imbalance" : null,
     fields.get("commercialTerms.oneOffFees")?.normalizedValue != null && !oneOff ? "commercialTerms.oneOffFees" : null,
-    discountsField && !noDiscount && discountsField.normalizedValue != null && !discounts ? "commercialTerms.commercialDiscounts" : null,
+    // A discount described only in words (for example "Porta un amico", conditional on a referral) stays visible
+    // in the review but is not applied to calculations, so it never blocks approval.
     fields.get("commercialTerms.economicDuration")?.normalizedValue != null && !economicDuration ? "commercialTerms.economicDuration" : null,
     fields.get("commercialTerms.lossSemantics")?.normalizedValue != null && !lossSemantics ? "commercialTerms.lossSemantics" : null,
     fields.get("commercialTerms.exitFee")?.normalizedValue != null && !exitFee ? "commercialTerms.exitFee" : null,
