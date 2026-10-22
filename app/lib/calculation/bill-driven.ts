@@ -30,7 +30,7 @@ import type { SimulationRequest } from "./types";
 // @ts-expect-error Node's strip-only test runner requires the explicit extension.
 import { buildBillSupplyProfile, validateBillSupplyProfile, type BillSupplyProfile } from "../ingestion/bill-supply-profile.ts";
 // @ts-expect-error Node's strip-only test runner requires the explicit extension.
-import { validateStructuredBillExtraction, type StructuredBillExtraction } from "../ingestion/structured-bill.ts";
+import { structuredBillContract, structuredBillContractIssue, validateStructuredBillExtraction, type StructuredBillExtraction } from "../ingestion/structured-bill.ts";
 // @ts-expect-error Node's strip-only test runner requires the explicit extension.
 import { buildTrustedElectricitySupplyContext, type ElectricitySupplyContext } from "./trusted-ee-supply-context.ts";
 import type { BillEconomicComponentInput } from "../foundation/bill-economic-analysis.ts";
@@ -201,10 +201,14 @@ function approvedVersion(document: BillDocument): BillVersion {
   const versionId = document.currentApprovedVersionId ?? fail("SOURCE_BILL_NOT_APPROVED");
   const versionValue = document.versions.find((candidate) => candidate.versionId === versionId);
   if (!versionValue) fail("SOURCE_BILL_VERSION_NOT_FOUND");
-  const version = versionValue as BillVersion;
+  const stored = versionValue as BillVersion;
+  // Bills read before the reading became tolerant (voltage in volts, unreconciled monthly detail) get their contract rebuilt from the same approved reading.
+  const rebuilt = !stored.energyContract && stored.structuredBill ? structuredBillContract({ extraction: stored.structuredBill, tenantId: document.tenantId, billId: document.id, versionId: stored.versionId }) : null;
+  const version: BillVersion = rebuilt ? { ...stored, energyContract: rebuilt } : stored;
   if (!document.approvals.some((approval) => approval.versionId === versionId) || document.lifecycleState === "DELETED" || document.lifecycleState === "SCHEDULED_DELETION") fail("SOURCE_BILL_NOT_APPROVED");
   const contract = version.energyContract;
-  if (!contract) fail("SOURCE_BILL_CONTEXT_UNAVAILABLE");
+  // Say which reading is missing, so the agent knows what to fix on the bill.
+  if (!contract) fail(version.structuredBill ? `SOURCE_BILL_${structuredBillContractIssue(version.structuredBill) ?? "CONTEXT_UNAVAILABLE"}` : "SOURCE_BILL_CONTEXT_UNAVAILABLE");
   const approvedContract = contract as NonNullable<BillVersion["energyContract"]>;
   if (approvedContract.tenantId !== document.tenantId || approvedContract.billId !== document.id || approvedContract.version !== "1") fail("SOURCE_BILL_CONTEXT_UNAVAILABLE");
   assertEconomicReconciliation(version);

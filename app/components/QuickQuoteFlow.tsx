@@ -187,7 +187,7 @@ function offersFrom(bill: BillDocumentModel, context: Context, candidates: reado
 }
 
 function Steps({ step }: { readonly step: Step }): ReactNode {
-  const items: readonly { readonly id: Step; readonly label: string }[] = [{ id: "bill", label: "Carica la bolletta" }, { id: "review", label: "Controlla i dati" }, { id: "offers", label: "Scegli l'offerta" }];
+  const items: readonly { readonly id: Step; readonly label: string }[] = [{ id: "bill", label: "Carica la bolletta" }, { id: "review", label: "Dati letti" }, { id: "offers", label: "Scegli l'offerta" }];
   const current = items.findIndex((item) => item.id === step);
   return <ol className="quote-steps">{items.map((item, index) => <li key={item.id} className={index === current ? "active" : index < current ? "done" : ""}><span>{index + 1}</span>{item.label}</li>)}</ol>;
 }
@@ -317,10 +317,10 @@ export default function QuickQuoteFlow({ readonly }: { readonly readonly: boolea
       </>}
     </section> : null}
     {step === "review" && draft ? <section className="ui-card">
-      <h3>Controlla i dati letti dalla bolletta</h3><p className="muted">Correggi solo se qualcosa è sbagliato, poi prosegui.</p>
+      <h3>Dati letti dalla bolletta</h3><p className="muted">Li usiamo per trovare le CTE adatte. Se vedi un errore evidente puoi correggerlo, altrimenti prosegui.</p>
       <BillContractFacts bill={draft} />
       <div className="form-grid">{FIELDS.map((field) => <label className="form-field" key={field.name}><span className="form-label">{field.label}{unitOf(field.name, draft.resolvedVector)}</span><input value={values[field.name] ?? ""} onChange={(event) => setValues((current) => ({ ...current, [field.name]: event.target.value }))} disabled={Boolean(pending)} /></label>)}</div>
-      <div className="button-row"><button className="button primary" type="button" onClick={() => void confirm()} disabled={readonly || Boolean(pending)}>{pending === "confirm" ? "Salvataggio" : "I dati sono corretti, mostra le offerte"}</button></div>
+      <div className="button-row"><button className="button primary" type="button" onClick={() => void confirm()} disabled={readonly || Boolean(pending)}>{pending === "confirm" ? "Ricerca in corso" : "Cerca le CTE utilizzabili"}</button></div>
     </section> : null}
     {step === "offers" ? pending === "offers" ? <LoadingState label="Calcolo delle offerte per questa bolletta" /> : quote ? <>
       <BillSummary context={quote.context} />
