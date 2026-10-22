@@ -475,3 +475,21 @@ button:focus-visible,a:focus-visible,input:focus-visible,select:focus-visible,te
 .cte-segment { color:#c62828; font-size:14px; font-style:normal; font-weight:900; text-transform:uppercase; letter-spacing:.02em; }
 .cte-segment .cte-segment-consumer { color:#c62828; }
 .cte-segment .cte-segment-business { color:#1f4fb5; }
+
+/* CTE archive: compact header, coloured vector tabs (EE amber, GAS blue) and Consumer/Business groups. */
+.cte-header-card { padding-top:18px; padding-bottom:18px; }
+.cte-header-row { display:flex; flex-wrap:wrap; align-items:flex-end; justify-content:space-between; gap:12px 24px; margin-bottom:12px; }
+.cte-header-row h2 { margin:2px 0 4px; font-size:1.6rem; }
+.cte-header-row .section-detail { margin:0; font-size:13px; max-width:640px; }
+.cte-header-card .cte-dropzone { padding:10px 14px; }
+.cte-vector-ee { --vector-accent:#e08a00; --vector-soft:#fff4dc; }
+.cte-vector-gas { --vector-accent:#1f6fd1; --vector-soft:#e6f0fc; }
+.cte-vector-ee > .ui-card, .cte-vector-gas > .ui-card { border-top:4px solid var(--vector-accent); }
+.vector-tabs button[aria-selected="true"]#cte-ee-tab { color:#fff; background:#e08a00; box-shadow:0 2px 7px #f0c27a; }
+.vector-tabs button[aria-selected="true"]#cte-gas-tab { color:#fff; background:#1f6fd1; box-shadow:0 2px 7px #9cc0ee; }
+.cte-archive-groups { display:grid; gap:14px; }
+.cte-archive-group h3 { display:flex; align-items:center; gap:8px; margin:0 0 4px; padding:6px 10px; border-radius:8px; font-size:14px; font-weight:900; text-transform:uppercase; letter-spacing:.03em; background:var(--vector-soft, #f5f8fb); }
+.cte-archive-group h3 span { min-width:22px; padding:1px 7px; border-radius:999px; background:#fff; color:var(--navy); font-size:12px; text-align:center; }
+.cte-archive-group.is-consumer h3 { color:#c62828; }
+.cte-archive-group.is-business h3 { color:#1f4fb5; }
+.cte-archive-group.is-both h3, .cte-archive-group.is-unknown h3 { color:var(--navy); }
