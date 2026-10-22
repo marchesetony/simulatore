@@ -66,7 +66,8 @@ assert.match(css, /color:#0891B2/);
 assert.match(css, /border:1px solid #C7DDE5/);
 assert.match(ui, /summaryDisplayValue/);
 assert.match(ui, /cte-spread-item/);
-assert.match(css, /\.cte-review-layout > \.cte-review-group:nth-child\(3\) \.cte-summary-grid \{ grid-template-columns:repeat\(3/);
+// Price structure is now the second group, next to the offer (product decision: key data first).
+assert.match(css, /\.cte-review-layout > \.cte-review-group:nth-child\(2\) \.cte-summary-grid \{ grid-template-columns:repeat\(3/);
 assert.match(css, /\.cte-spread-item \{ padding:7px 10px; border:1px solid #A5F3FC/);
 assert.match(css, /\.cte-spread-item > strong \{ margin-top:0; color:#0E7490; font-size:1\.2rem; font-weight:800/);
 assert.match(css, /\.cte-summary-meta:empty \{ display:none; \}/);

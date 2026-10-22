@@ -116,11 +116,11 @@ const commonFieldPaths = [
   "validity.periodStart", "validity.periodEnd", "expiry.date", "eligibility.customerTypes",
   "pricing.mode", "currency", "taxTreatment", "commercialTerms.fixedFees", "commercialTerms.variableFees",
   "commercialTerms.oneOffFees", "commercialTerms.commercialDiscounts", "commercialTerms.imbalance", "commercialTerms.passThroughComponents",
-  "commercialTerms.economicDuration", "commercialTerms.lossSemantics", "commercialTerms.exitFee",
+  "commercialTerms.economicDuration", "commercialTerms.lossSemantics", "commercialTerms.exitFee", "commercialTerms.additionalServices",
 ] as const;
 const eeFieldPaths = ["eligibility.voltageLevels", "pricing.reference", "pricing.spread.amount", "pricing.fixedPrice.amount"] as const;
 const gasFieldPaths = ["pricing.reference", "pricing.spread.amount", "pricing.fixedPrice.amount"] as const;
-const legacyCommercialArrayPaths = new Set(["commercialTerms.fixedFees", "commercialTerms.variableFees", "commercialTerms.oneOffFees", "commercialTerms.commercialDiscounts", "commercialTerms.imbalance"]);
+const legacyCommercialArrayPaths = new Set(["commercialTerms.fixedFees", "commercialTerms.variableFees", "commercialTerms.oneOffFees", "commercialTerms.commercialDiscounts", "commercialTerms.imbalance", "commercialTerms.additionalServices"]);
 const correctionPaths = new Set([
   "supplier.name", "supplier.supplierId", "offer.name", "offer.code", "validity.periodStart", "validity.periodEnd",
   "expiry.date", "pricing.spread.amount", "pricing.fixedPrice.amount", "commercialTerms.fixedFees[0].amount",

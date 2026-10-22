@@ -76,6 +76,7 @@ const labels: Record<string, string> = {
   "commercialTerms.imbalance": "Sbilanciamento",
   "commercialTerms.oneOffFees": "Una tantum",
   "commercialTerms.commercialDiscounts": "Sconti commerciali",
+  "commercialTerms.additionalServices": "Opzioni e servizi aggiuntivi",
   "commercialTerms.passThroughComponents": "Componenti contrattuali pass-through",
   "commercialTerms.economicDuration": "Durata condizioni economiche",
   "commercialTerms.lossSemantics": "Semantica perdite di rete",
@@ -170,20 +171,21 @@ function feeUnit(value: string | undefined, vector: CteIngestionRecord["vector"]
   return null;
 }
 
+// Values read from the CTE are taken as correct (product decision): an uncertain reading still builds the contract.
 function asString(field: CteReviewField | undefined): string | null {
-  return field?.status !== "UNCERTAIN" && typeof field?.normalizedValue === "string" && field.normalizedValue.trim() ? field.normalizedValue.trim() : null;
+  return typeof field?.normalizedValue === "string" && field.normalizedValue.trim() ? field.normalizedValue.trim() : null;
 }
 
 function asNumber(field: CteReviewField | undefined): number | null {
-  return field?.status !== "UNCERTAIN" && typeof field?.normalizedValue === "number" && Number.isFinite(field.normalizedValue) && field.normalizedValue >= 0 ? field.normalizedValue : null;
+  return typeof field?.normalizedValue === "number" && Number.isFinite(field.normalizedValue) && field.normalizedValue >= 0 ? field.normalizedValue : null;
 }
 
 function asSemantic<T extends object>(field: CteReviewField | undefined): T | null {
-  return field?.status !== "UNCERTAIN" && field?.normalizedValue !== null && typeof field?.normalizedValue === "object" && !Array.isArray(field.normalizedValue) ? field.normalizedValue as T : null;
+  return field !== undefined && field.normalizedValue !== null && typeof field.normalizedValue === "object" && !Array.isArray(field.normalizedValue) ? field.normalizedValue as T : null;
 }
 
 function customerTypes(field: CteReviewField | undefined): readonly ("RESIDENTIAL" | "NON_RESIDENTIAL")[] | null {
-  if (!field || field.status === "UNCERTAIN" || field.normalizedValue === null) return null;
+  if (!field || field.normalizedValue === null) return null;
   const values = Array.isArray(field.normalizedValue) ? field.normalizedValue : [field.normalizedValue];
   const result = values.flatMap((value) => {
     if (typeof value !== "string") return [];
@@ -475,7 +477,9 @@ function customerFields(field: CteExtractionField | undefined): readonly CteRevi
   const raw = text(field);
   const result: CteReviewField[] = [];
   let customer = concise(raw);
-  if (/non\s+domestic[oi]/i.test(raw) && /altri\s+usi/i.test(raw)) customer = /business/i.test(raw) ? "Non domestico \u2013 Altri usi Business" : "Non domestico \u2013 Altri usi";
+  if (/^\s*(?:NON_?DOMESTIC|NON_?RESIDENTIAL|BUSINESS)\s*$/i.test(raw)) customer = "Non domestico";
+  else if (/^\s*(?:DOMESTIC|RESIDENTIAL)\s*$/i.test(raw)) customer = "Domestico";
+  else if (/non\s+domestic[oi]/i.test(raw) && /altri\s+usi/i.test(raw)) customer = /business/i.test(raw) ? "Non domestico \u2013 Altri usi Business" : "Non domestico \u2013 Altri usi";
   // Keep thousands separators: "Clienti non domestici (>50.000 kWh/anno)" must not stop at "50".
   else if (customer) customer = customer.split(/;|,(?!\d)|\.(?!\d)/, 1)[0].trim();
   result.push(base("eligibility.customerTypes", customer, field));
@@ -500,6 +504,10 @@ function voltageLabel(source: string): string | null {
  * document's evidence. Nothing is inferred: a level not written in the CTE is not reported.
  */
 function voltage(field: CteExtractionField | undefined, fields: readonly CteExtractionField[]): CteReviewField {
+  // Domestic supplies are always low voltage (BT), even when the CTE does not say so.
+  const customer = fields.find((candidate) => candidate.path === "eligibility.customerTypes");
+  const customerText = customer ? text(customer) : "";
+  if (/domestic|residential/i.test(customerText) && !/non[\s_-]*domestic|non[\s_-]*residential|business|altri\s+usi/i.test(customerText)) return base("eligibility.voltageLevels", "BT", customer, { status: "CONFIRMED" });
   const raw = text(field);
   const direct = voltageLabel(raw);
   if (direct) return base("eligibility.voltageLevels", direct, field);
@@ -537,7 +545,8 @@ function spread(field: CteExtractionField | undefined, fields: readonly CteExtra
 }
 function tax(field: CteExtractionField | undefined): CteReviewField {
   const raw = text(field);
-  const normalized = /(?:iva[^.;]*(?:esclus|non inclus)|imposte[^.;]*(?:esclus|non inclus)|al netto[^.;]*(?:iva|imposte))/i.test(raw) ? "IVA e imposte escluse" : /iva[^.;]*(?:inclus|compres)/i.test(raw) ? "IVA inclusa" : concise(raw);
+  // The reader sometimes answers with English codes (EXCLUDING_TAXES): show them in Italian too.
+  const normalized = /(?:iva[^.;]*(?:esclus|non inclus)|imposte[^.;]*(?:esclus|non inclus)|al netto[^.;]*(?:iva|imposte)|exclud\w*_?tax|tax\w*_?exclud|\bnet\b)/i.test(raw) ? "IVA e imposte escluse" : /(?:iva[^.;]*(?:inclus|compres)|includ\w*_?tax|tax\w*_?includ)/i.test(raw) ? "IVA inclusa" : concise(raw);
   return base("taxTreatment", normalized, field);
 }
 function supplierVat(field: CteExtractionField | undefined, fallback: CteExtractionField | undefined): { readonly value: string | null; readonly source: CteExtractionField | undefined } {
@@ -551,6 +560,12 @@ function supplierVat(field: CteExtractionField | undefined, fallback: CteExtract
     }
   }
   return { value: null, source: field ?? fallback };
+}
+// A fee row shows one amount; when the CTE lists more (e.g. 15 €/mese plus an annual charge) keep every line visible.
+function withAllLines(result: CteReviewField, field: CteExtractionField | undefined): CteReviewField {
+  const raw = text(field);
+  const amounts = raw.match(/\d+(?:[.,]\d+)?\s*(?:\u20AC|eur(?:o)?\b)|(?:\u20AC|eur(?:o)?)\s*\d+(?:[.,]\d+)?/gi) ?? [];
+  return amounts.length > 1 ? { ...result, description: raw.slice(0, 600) } : result;
 }
 function oneOffDescription(raw: string): string | undefined {
   const description = raw
@@ -571,8 +586,9 @@ function reviewField(fieldKey: string, field: CteExtractionField | undefined, ve
   if (fieldKey === "pricing.reference") { const expected = expectedIndex(vector); const raw = text(field); return base(fieldKey, expected && new RegExp("\\b" + expected + "\\b", "i").test(raw) ? expected : null, field); }
   if (fieldKey === "pricing.spread.amount") return money(field, vector, vector === "GAS" ? "\u20AC/Smc" : "\u20AC/kWh");
   if (fieldKey === "pricing.fixedPrice.amount") return money(field, vector, vector === "GAS" ? "\u20AC/Smc" : "\u20AC/kWh");
-  if (fieldKey === "commercialTerms.fixedFees") return money(field, vector, "\u20AC");
-  if (fieldKey === "commercialTerms.variableFees" || fieldKey === "commercialTerms.imbalance") return money(field, vector, vector === "GAS" ? "\u20AC/Smc" : "\u20AC/kWh");
+  if (fieldKey === "commercialTerms.fixedFees") return withAllLines(money(field, vector, "\u20AC"), field);
+  if (fieldKey === "commercialTerms.variableFees" || fieldKey === "commercialTerms.imbalance") return withAllLines(money(field, vector, vector === "GAS" ? "\u20AC/Smc" : "\u20AC/kWh"), field);
+  if (fieldKey === "commercialTerms.additionalServices") { const raw = text(field); return base(fieldKey, raw ? raw.slice(0, 600) : null, field); }
   if (fieldKey === "commercialTerms.commercialDiscounts") return base(fieldKey, concise(text(field)), field);
   if (fieldKey === "commercialTerms.oneOffFees") { const result = money(field, vector, "\u20AC"); const description = oneOffDescription(text(field)); return description ? { ...result, description } : result; }
   if (fieldKey === "commercialTerms.passThroughComponents") return base(fieldKey, Array.isArray(field?.value) ? field.value as readonly CtePassThroughComponent[] : null, field);
@@ -621,6 +637,7 @@ export function normalizeCteReview(record: Pick<CteIngestionRecord, "fields" | "
     reviewField("commercialTerms.imbalance", byPath.get("commercialTerms.imbalance"), record.vector),
     reviewField("commercialTerms.oneOffFees", byPath.get("commercialTerms.oneOffFees"), record.vector),
     reviewField("commercialTerms.commercialDiscounts", byPath.get("commercialTerms.commercialDiscounts"), record.vector),
+    reviewField("commercialTerms.additionalServices", byPath.get("commercialTerms.additionalServices"), record.vector),
     reviewField("commercialTerms.passThroughComponents", byPath.get("commercialTerms.passThroughComponents"), record.vector),
     reviewField("commercialTerms.economicDuration", byPath.get("commercialTerms.economicDuration"), record.vector),
     reviewField("commercialTerms.lossSemantics", byPath.get("commercialTerms.lossSemantics"), record.vector),
@@ -669,7 +686,7 @@ export function cteApprovalGate(record: Pick<CteIngestionRecord, "fields" | "vec
     try { validateCteContract(persistedCandidate); } catch { blockers.push({ code: "AUTHORITATIVE_CONTRACT_INVALID", label: "Contratto autorevole non valido: schema da verificare", required: true }); }
   } else if (record.ingestionId && record.documentId && record.tenantId && blockers.length === 0) {
     const built = tryBuildAuthoritativeCteContract(record as Pick<CteIngestionRecord, "ingestionId" | "documentId" | "fields" | "vector" | "documentType"> & { readonly tenantId: string });
-    if (!built.contract) blockers.push({ code: "AUTHORITATIVE_CONTRACT_MISSING", label: built.errorCode === "CTE_AUTHORITATIVE_FIELD_UNCERTAIN" ? "Contratto autorevole: confermare i campi obbligatori incerti" : built.errorCode === "CTE_AUTHORITATIVE_FIELD_MISSING" ? "Contratto autorevole: completare i campi obbligatori" : "Contratto autorevole non valido: verifica server non completata", required: true });
+    if (!built.contract) blockers.push({ code: "AUTHORITATIVE_CONTRACT_MISSING", label: built.errorCode === "CTE_AUTHORITATIVE_FIELD_UNCERTAIN" ? "Contratto autorevole: confermare i campi obbligatori incerti" : built.errorCode === "CTE_AUTHORITATIVE_FIELD_MISSING" ? `Dati obbligatori mancanti: ${[...new Set(built.validationPaths.map((path) => labels[path] ?? path))].join(", ")}` : "Contratto autorevole non valido: verifica server non completata", required: true });
   } else if (!persistedCandidate) {
     blockers.push({ code: "AUTHORITATIVE_CONTRACT_MISSING", label: "Contratto autorevole non ancora disponibile", required: true });
   }
