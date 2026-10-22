@@ -165,7 +165,7 @@ function CommercialAdjustment({ record, canAdjust }: { readonly record: CteAppro
     } catch (cause) { globalThis.dispatchEvent(new CustomEvent("cte:commercial-error", { detail: errorText(cause) })); } finally { setBusy(false); }
   };
   const summary = current ? `Ricarico o sconto: prezzo energia ${formatDelta(current.energyPriceDelta, unit)} · quota fissa ${formatDelta(current.monthlyFeeDelta, "€/mese")}` : "Nessun ricarico o sconto";
-  if (!open) return <div className="cte-adjustment"><small className="muted">{summary}</small>{canAdjust ? <button className="button secondary compact" type="button" onClick={() => setOpen(true)}>Ricarico o sconto</button> : null}</div>;
+  if (!open) return <div className="cte-adjustment">{canAdjust ? <button className="button secondary compact" type="button" onClick={() => setOpen(true)}>Ricarico o sconto</button> : null}<small className="muted">{summary}</small></div>;
   return <div className="cte-adjustment cte-adjustment-form" role="group" aria-label="Ricarico o sconto">
     <label>Prezzo energia ({unit})<input inputMode="decimal" value={energy} onChange={(event) => setEnergy(event.target.value)} disabled={busy} /></label>
     <label>Quota fissa (€/mese)<input inputMode="decimal" value={fee} onChange={(event) => setFee(event.target.value)} disabled={busy} /></label>

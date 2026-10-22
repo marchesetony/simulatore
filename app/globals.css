@@ -457,3 +457,6 @@ button:focus-visible,a:focus-visible,input:focus-visible,select:focus-visible,te
 .cte-row-bottom .cte-adjustment { flex-basis:auto; gap:6px; }
 .cte-row-bottom .cte-adjustment small { font-size:11px; }
 .cte-row-bottom .cte-adjustment-form, .cte-row-bottom .cte-commercial-confirmation { flex-basis:100%; }
+.cte-row-top { justify-content:flex-start; align-items:flex-end; }
+.cte-row-top .cte-approved-document { flex:0 1 auto; }
+.cte-row-bottom .cte-adjustment:not(.cte-adjustment-form) { flex-direction:column; align-items:flex-start; gap:2px; }
