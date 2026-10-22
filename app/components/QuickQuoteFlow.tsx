@@ -54,6 +54,11 @@ function toMachine(name: string, display: string, raw: string | null | undefined
   if (name === "billingPeriod") return value.replace(IT_DATE, (_, d, m, y) => `${y}-${m.padStart(2, "0")}-${d.padStart(2, "0")}`);
   return value;
 }
+// Consumption is in kWh for electricity and Smc for gas; amounts are in euro.
+function unitOf(name: string, vector: string): string {
+  if (name === "billedConsumption" || name === "annualConsumption") return vector === "GAS" ? " (Smc)" : " (kWh)";
+  return name === "totalAmount" ? " (€)" : "";
+}
 const MAX_BILL_BYTES = 10 * 1024 * 1024;
 const DATE = new Intl.DateTimeFormat("it-IT", { day: "numeric", month: "long", year: "numeric", timeZone: "UTC" });
 const EURO = new Intl.NumberFormat("it-IT", { style: "currency", currency: "EUR" });
@@ -88,36 +93,63 @@ function monthsIn(period: { readonly periodStart: string | null; readonly period
 }
 function decimal(value: string | null | undefined): number | null {
   if (!value) return null;
-  const plain = value.replace(/[€\s]/g, "");
+  const plain = value.replace(/[^\d,.-]/g, "");
   const parsed = Number(plain.includes(",") ? plain.replace(/\./g, "").replace(",", ".") : plain);
   return Number.isFinite(parsed) ? parsed : null;
 }
-// Monthly PCV: the per-month price when the bill states one, otherwise the billed amount spread over the months billed.
+const SELLER_FIXED_CODES = new Set(["PCV", "COMMERCIALIZATION_FIXED_FEE", "SELLER_FIXED_FEE", "SELLER_FIXED", "COMMERCIALIZATION", "OTHER_SELLER_FIXED_CHARGE"]);
+const PER_MONTH = /mese|month|€\/m\b|eur\/m\b/i;
+function factValue(bill: BillDocumentModel, ...codes: readonly string[]): string | null {
+  for (const code of codes) {
+    const found = bill.structuredBill?.extendedFacts.find((fact) => fact.code === code && fact.status === "FOUND" && fact.value.trim());
+    if (found) return found.value.trim();
+  }
+  return null;
+}
+// Monthly PCV: the seller's fixed fee (PCV, quota fissa di vendita, commercializzazione) per month, never network or power charges.
 function monthlyPcv(bill: BillDocumentModel): number | null {
-  const lines = (bill.structuredBill?.economicChargeLines ?? []).filter((line) => line.code === "PCV" || /^PCV\b|commercializzazione e vendita/i.test(line.description));
-  if (!lines.length) return null;
-  const perMonth = lines.find((line) => /mese|month/i.test(`${line.unit} ${line.rawUnit ?? ""}`));
+  const lines = (bill.structuredBill?.economicChargeLines ?? []).filter((line) => {
+    const text = `${line.description} ${line.rawDescription ?? ""}`;
+    const unit = `${line.unit} ${line.rawUnit ?? ""}`;
+    if (/kw\b|kw\/|potenza|rete|oneri|trasporto|distribuzione/i.test(`${text} ${unit}`) && !/pcv|vendita/i.test(text)) return false;
+    return SELLER_FIXED_CODES.has(line.code) || /\bpcv\b|commercializzazione|quota fissa.*vendita|vendita.*quota fissa/i.test(text) || (/vendita/i.test(text) && PER_MONTH.test(unit));
+  });
+  const perMonth = lines.find((line) => PER_MONTH.test(`${line.unit} ${line.rawUnit ?? ""}`) && decimal(line.unitPrice) !== null);
   if (perMonth) return decimal(perMonth.unitPrice);
+  const fact = decimal(factValue(bill, "PCV", "COMMERCIALIZATION_FIXED_FEE", "SELLER_FIXED_FEE"));
+  if (fact !== null) return fact;
+  if (!lines.length) return null;
   const total = lines.reduce((sum, line) => sum + (decimal(line.amount) ?? 0), 0);
   const read = bill.structuredBill?.billingPeriod;
   const months = monthsIn(bill.normalized?.billingPeriod ?? (read?.status === "FOUND" && read.value ? { periodStart: read.value.from, periodEnd: read.value.to } : undefined));
-  return total && months ? total / months : null;
+  return months ? total / months : null;
+}
+function priceType(bill: BillDocumentModel): string {
+  const receipt = bill.analystReview.receipt;
+  const text = [factValue(bill, "PRICE_MECHANISM_RAW"), factValue(bill, "PRICE_FORMULA_RAW"), factValue(bill, "INDEX_NAME")].filter(Boolean).join(" ");
+  const index = /psv/i.test(text) || bill.resolvedVector === "GAS" ? "PSV" : "PUN";
+  const spread = factValue(bill, "SPREAD", "ENERGY_SPREAD");
+  const fixed = factValue(bill, "FIXED_PRICE", "ENERGY_FIXED_PRICE", "MONORARIO_PRICE");
+  const indexed = /variabil|indicizz|pun|psv|index/i.test(text) || receipt.priceMechanism === "INDEXED_PUN_PLUS_SPREAD";
+  if (indexed) return `Indicizzato ${index}${spread ? ` + spread ${spread}` : ""}`;
+  if (/fiss/i.test(text) || receipt.priceMechanism === "FIXED") return `Prezzo fisso${fixed ? ` ${fixed}` : ""}`;
+  return receipt.priceMechanism === "HYBRID" ? "Misto (fisso e indicizzato)" : "Non indicato";
 }
 
 function BillContractFacts({ bill }: { readonly bill: BillDocumentModel }): ReactNode {
   const receipt = bill.analystReview.receipt;
   const type = bill.structuredBill?.customerType.status === "FOUND" ? bill.structuredBill.customerType.value : null;
-  const expiry = italianDate(receipt.contractExpiryDate.value) ?? italianDate(receipt.economicConditionsExpiryDate.value);
-  const renewal = receipt.contractDurationType === "INDEFINITE" ? "Tempo indeterminato" : null;
-  const spread = receipt.spread.status === "FOUND" ? ` + spread ${receipt.spread.value}` : "";
-  const price = receipt.priceMechanism === "FIXED" ? `Prezzo fisso${receipt.fixedPrice.value ? ` ${receipt.fixedPrice.value}` : ""}` : receipt.priceMechanism === "INDEXED_PUN_PLUS_SPREAD" ? `Indicizzato ${bill.resolvedVector === "GAS" ? "PSV" : "PUN"}${spread}` : receipt.priceMechanism === "HYBRID" ? "Misto (fisso e indicizzato)" : "Non indicato";
+  const start = italianDate(receipt.contractStartDate.value ?? factValue(bill, "CONTRACT_START_DATE")) ?? italianDate(receipt.economicConditionsStartDate.value ?? factValue(bill, "ECONOMIC_CONDITIONS_START_DATE"));
+  const conditionsEnd = italianDate(receipt.economicConditionsExpiryDate.value ?? factValue(bill, "ECONOMIC_EXPIRY"));
+  const contractEnd = receipt.contractDurationType === "INDEFINITE" || /indeterminat/i.test(factValue(bill, "CONTRACT_EXPIRY", "CONTRACT_INDEFINITE") ?? "") ? "contratto a tempo indeterminato" : italianDate(receipt.contractExpiryDate.value);
+  const expiry = [conditionsEnd ? `Condizioni fino al ${conditionsEnd}` : null, contractEnd ? (conditionsEnd ? contractEnd : contractEnd.replace(/^c/, "C")) : null].filter(Boolean).join(" · ");
   const pcv = monthlyPcv(bill);
   const rows: readonly (readonly [string, ReactNode])[] = [
     ["Tipo contratto", type === "RESIDENTIAL" ? <span className="cte-segment-consumer">Consumer</span> : type === "NON_RESIDENTIAL" ? <span className="cte-segment-business">Business</span> : "Non indicato"],
-    ["Cliente attivo dal", italianDate(receipt.contractStartDate.value) ?? "Non indicato"],
-    ["Scadenza o rinnovo", expiry ?? renewal ?? "Non indicata"],
-    ["Tipo di prezzo", price],
-    ["PCV mensile", pcv === null ? "Non indicata" : `${EURO.format(pcv)} al mese`],
+    ["Attivo dal", start ?? "Non indicato"],
+    ["Scadenza o rinnovo", expiry || "Non indicata"],
+    ["Tipo di prezzo", priceType(bill)],
+    ["PCV mensile (quota fissa vendita)", pcv === null ? "Non indicata" : `${EURO.format(pcv)} al mese`],
   ];
   return <dl className="quote-bill-grid quote-contract-facts">{rows.map(([label, value]) => <div key={label}><dt>{label}</dt><dd>{value}</dd></div>)}</dl>;
 }
@@ -287,7 +319,7 @@ export default function QuickQuoteFlow({ readonly }: { readonly readonly: boolea
     {step === "review" && draft ? <section className="ui-card">
       <h3>Controlla i dati letti dalla bolletta</h3><p className="muted">Correggi solo se qualcosa è sbagliato, poi prosegui.</p>
       <BillContractFacts bill={draft} />
-      <div className="form-grid">{FIELDS.map((field) => <label className="form-field" key={field.name}><span className="form-label">{field.label}</span><input value={values[field.name] ?? ""} onChange={(event) => setValues((current) => ({ ...current, [field.name]: event.target.value }))} disabled={Boolean(pending)} /></label>)}</div>
+      <div className="form-grid">{FIELDS.map((field) => <label className="form-field" key={field.name}><span className="form-label">{field.label}{unitOf(field.name, draft.resolvedVector)}</span><input value={values[field.name] ?? ""} onChange={(event) => setValues((current) => ({ ...current, [field.name]: event.target.value }))} disabled={Boolean(pending)} /></label>)}</div>
       <div className="button-row"><button className="button primary" type="button" onClick={() => void confirm()} disabled={readonly || Boolean(pending)}>{pending === "confirm" ? "Salvataggio" : "I dati sono corretti, mostra le offerte"}</button></div>
     </section> : null}
     {step === "offers" ? pending === "offers" ? <LoadingState label="Calcolo delle offerte per questa bolletta" /> : quote ? <>
