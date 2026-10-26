@@ -35,6 +35,8 @@ const IT_DATE = /(\d{1,2})\/(\d{1,2})\/(\d{4})/g;
 // Read values are machine-formatted (1658.683, 2026-09-01); the agent reads and types them the Italian way.
 function toDisplay(name: string, raw: string | null | undefined): string {
   const value = raw ?? "";
+  // A consumption read as 17.520 is seventeen thousand kWh, as the server parses it, not 17,52.
+  if (name !== "totalAmount" && /^\d{1,3}(\.\d{3})+$/.test(value.trim())) return value.trim();
   if (NUMERIC_FIELDS.has(name) && /^-?\d+(\.\d+)?$/.test(value.trim())) {
     const decimals = value.split(".")[1]?.length ?? 0;
     // Thousands always get a dot, also on four-digit numbers (1.658,683).
@@ -148,12 +150,38 @@ function priceType(bill: BillDocumentModel): string {
   const receipt = bill.analystReview.receipt;
   const text = [factValue(bill, "PRICE_MECHANISM_RAW"), factValue(bill, "PRICE_FORMULA_RAW"), factValue(bill, "INDEX_NAME")].filter(Boolean).join(" ");
   const index = /psv/i.test(text) || bill.resolvedVector === "GAS" ? "PSV" : "PUN";
-  const spread = factValue(bill, "SPREAD", "ENERGY_SPREAD");
   const fixed = factValue(bill, "FIXED_PRICE", "ENERGY_FIXED_PRICE", "MONORARIO_PRICE");
   const indexed = /variabil|indicizz|pun|psv|index/i.test(text) || receipt.priceMechanism === "INDEXED_PUN_PLUS_SPREAD";
-  if (indexed) return `Indicizzato ${index}${spread ? ` + spread ${spread}` : ""}`;
+  if (indexed) return `Indicizzato ${index}`;
   if (/fiss/i.test(text) || receipt.priceMechanism === "FIXED") return `Prezzo fisso${fixed ? ` ${fixed}` : ""}`;
   return receipt.priceMechanism === "HYBRID" ? "Misto (fisso e indicizzato)" : "Non indicato";
+}
+
+function indexedBill(bill: BillDocumentModel): boolean {
+  const text = [factValue(bill, "PRICE_MECHANISM_RAW"), factValue(bill, "PRICE_FORMULA_RAW"), factValue(bill, "INDEX_NAME")].filter(Boolean).join(" ");
+  return /variabil|indicizz|pun|psv|index/i.test(text) || bill.analystReview.receipt.priceMechanism === "INDEXED_PUN_PLUS_SPREAD";
+}
+const SPREAD_CODES = new Set(["SPREAD", "ENERGY_SPREAD"]);
+// The spread the current supplier adds to the index: the stated value, or the unit price of the spread line on the bill.
+function billSpread(bill: BillDocumentModel): string {
+  const unitOfPrice = bill.resolvedVector === "GAS" ? "€/Smc" : "€/kWh";
+  const format = (raw: string | null | undefined): string | null => { const value = decimal(raw ?? null); return value === null ? null : `${RATE.format(value)} ${unitOfPrice}`; };
+  const fact = format(factValue(bill, "SPREAD", "ENERGY_SPREAD"));
+  if (fact) return fact;
+  const line = (bill.structuredBill?.economicChargeLines ?? []).find((item) => SPREAD_CODES.has(item.code) || /spread|maggiorazione sul pun|componente di vendita variabile/i.test(`${item.description} ${item.rawDescription ?? ""}`));
+  return format(line?.unitPrice) ?? "Non indicato in bolletta";
+}
+// How the index is applied over time: one price, three bands, F1/F23, peak and off-peak, or hourly.
+function punStructure(bill: BillDocumentModel): string {
+  const found = (code: string) => factValue(bill, code) !== null;
+  const lines = bill.structuredBill?.economicChargeLines ?? [];
+  const text = [factValue(bill, "PRICE_TIME_STRUCTURE_RAW"), factValue(bill, "PRICE_MECHANISM_RAW"), factValue(bill, "PRICE_FORMULA_RAW"), factValue(bill, "INDEX_NAME"), ...lines.map((line) => `${line.description} ${line.rawDescription ?? ""}`)].filter(Boolean).join(" ");
+  if (/off[\s-]?peak|fuori picco|\bpeak\b|\bpicco\b/i.test(text)) return "Peak / off-peak";
+  if (/pun orario|orari[oa] gme|prezzo orario|su base oraria/i.test(text)) return "PUN orario";
+  if (/\bF23\b|F2\s*[-+/]\s*F3|biorari/i.test(text) || found("PRICE_F23")) return "Biorario (F1 e F23)";
+  if (/fasc|multiorari|triorari|\bF1\b.*\bF2\b.*\bF3\b/i.test(text) || ["PUN_F1", "PUN_F2", "PUN_F3", "PRICE_F1", "PRICE_F2"].some(found) || lines.some((line) => /^PUN_F[123]$/.test(line.code))) return "A fasce (F1, F2, F3)";
+  if (/monorari|orario unico|prezzo unico|fascia unica/i.test(text) || found("PUN_SINGLE") || found("MONORARIO_PRICE") || lines.some((line) => line.code === "PUN_SINGLE")) return "Monorario";
+  return "Non indicata in bolletta";
 }
 
 function BillContractFacts({ bill }: { readonly bill: BillDocumentModel }): ReactNode {
@@ -169,6 +197,7 @@ function BillContractFacts({ bill }: { readonly bill: BillDocumentModel }): Reac
     ["Attivo dal", start ?? "Non indicato"],
     ["Scadenza o rinnovo", expiry || "Non indicata"],
     ["Tipo di prezzo", priceType(bill)],
+    ...(indexedBill(bill) ? [[`Spread sul ${bill.resolvedVector === "GAS" ? "PSV" : "PUN"}`, billSpread(bill)] as const, [`Struttura del ${bill.resolvedVector === "GAS" ? "PSV" : "PUN"}`, bill.resolvedVector === "GAS" ? "Mensile" : punStructure(bill)] as const] : []),
     ["PCV mensile (quota fissa vendita)", pcv === null ? "Non indicata" : `${EURO.format(pcv)} al mese`],
   ];
   return <dl className="quote-bill-grid quote-contract-facts">{rows.map(([label, value]) => <div key={label}><dt>{label}</dt><dd>{value}</dd></div>)}</dl>;
