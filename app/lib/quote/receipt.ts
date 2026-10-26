@@ -7,7 +7,7 @@ import type { BillEconomicAnalysis } from "../foundation/bill-economic-analysis"
  * consumption and period, so they are carried over from the bill. VAT follows the new taxable amount.
  */
 export type QuoteReceiptRowKey = "ENERGY" | "NETWORK" | "SYSTEM" | "TAXES";
-export interface QuoteReceiptRow { readonly key: QuoteReceiptRowKey; readonly label: string; readonly current: number | null; readonly offer: number | null }
+export interface QuoteReceiptRow { readonly key: QuoteReceiptRowKey; readonly label: string; readonly current: number | null; readonly offer: number | null; readonly difference?: number | null; readonly details?: readonly QuoteReceiptDetail[] }
 export interface QuoteReceipt {
   readonly status: "COMPLETE" | "OFFER_ONLY";
   readonly rows: readonly QuoteReceiptRow[];
@@ -174,6 +174,45 @@ function quotasOf(input: QuoteReceiptInput, currentEnergy: number | null, offerE
   return rows;
 }
 
+const QUOTA_LABEL: Readonly<Record<Quota, string>> = { CONSUMPTION: "quota energia (\u20ac/kWh)", FIXED: "quota fissa (\u20ac/mese)", POWER: "quota potenza (\u20ac/kW)" };
+// Scontrino order asked by Tony (26/10): the four Bolletta 2.0 sections first, aggregated, then each charge they contain on its own line.
+function withDetails(input: QuoteReceiptInput, rows: readonly QuoteReceiptRow[], hasBill: boolean): readonly QuoteReceiptRow[] {
+  const components = (input.analysis?.components ?? []).filter((line) => line.includedInReconciliation !== false && !line.aggregate);
+  const consumptionUnit = input.vector === "EE" ? "\u20ac/kWh" : "\u20ac/Smc";
+  const entries = (pairs: readonly (readonly [string, string, number | null, number | null])[]): readonly QuoteReceiptDetail[] => {
+    const merged = new Map<string, { label: string; current: number | null; offer: number | null }>();
+    for (const [key, label, current, offer] of pairs) {
+      const entry = merged.get(key) ?? { label, current: null, offer: null };
+      if (current !== null) entry.current = (entry.current ?? 0) + current;
+      if (offer !== null) entry.offer = (entry.offer ?? 0) + offer;
+      merged.set(key, entry);
+    }
+    return [...merged.entries()].sort(([a], [b]) => (DETAIL_ORDER.indexOf(a) + 1 || 99) - (DETAIL_ORDER.indexOf(b) + 1 || 99)).map(([key, value]) => ({ key, label: value.label, current: hasBill && value.current !== null ? cents(value.current) : null, offer: value.offer === null ? null : cents(value.offer), difference: hasBill ? cents((value.offer ?? 0) - (value.current ?? 0)) : null }));
+  };
+  const seller = entries([
+    ...components.filter((line) => SELLER_GROUPS.has(line.group ?? "")).flatMap((line) => { const value = amountOf(line.amount); const key = billDetail(line); return value === null ? [] : [[key, DETAIL_LABEL[key] ?? key, value, null] as const]; }),
+    ...(input.offerComponents ?? []).map((component) => { const key = offerDetail(component); return [key, DETAIL_LABEL[key] ?? key, null, (component.sign === "DISCOUNT" ? -1 : 1) * component.amount.amount] as const; }),
+  ]);
+  const regulated = (group: string) => entries(components.filter((line) => line.group === group).flatMap((line) => {
+    const value = amountOf(line.amount); if (value === null) return [];
+    const quota = billQuota(line); const key = quota ?? "OTHER";
+    return [[key, quota ? QUOTA_LABEL[quota].replace("\u20ac/kWh", consumptionUnit) : "altre voci", value, value] as const];
+  }));
+  const excise = sumKnown(components.filter((line) => line.classification === "ACCISE").map((line) => amountOf(line.amount)));
+  return rows.map((row) => {
+    const difference = row.current === null || row.offer === null ? null : cents(row.offer - row.current);
+    if (row.key === "ENERGY") return { ...row, difference, details: seller };
+    if (row.key === "NETWORK") return { ...row, difference, details: regulated("REGULATED_NETWORK") };
+    if (row.key === "SYSTEM") return { ...row, difference, details: regulated("SYSTEM_CHARGES") };
+    if (row.current === null || row.offer === null || excise === null) return { ...row, difference, details: [] };
+    // Excise follows the kWh and is the same for every supplier; VAT follows the new taxable amount.
+    return { ...row, difference, details: [
+      { key: "EXCISE", label: "Accise", current: excise, offer: excise, difference: 0 },
+      { key: "VAT", label: "IVA", current: cents(row.current - excise), offer: cents(row.offer - excise), difference: cents(row.offer - row.current) },
+    ] };
+  });
+}
+
 export function buildQuoteReceipt(input: QuoteReceiptInput): QuoteReceipt {
   const offerEnergy = cents(input.offerSupplyCost);
   const totals = input.analysis?.totals ?? null;
@@ -189,15 +228,15 @@ export function buildQuoteReceipt(input: QuoteReceiptInput): QuoteReceipt {
     { key: "ENERGY", label: input.vector === "EE" ? "Spesa per la materia energia" : "Spesa per la materia gas naturale", current: currentEnergy, offer: offerEnergy },
     { key: "NETWORK", label: "Trasporto e gestione del contatore", current: network, offer: network },
     { key: "SYSTEM", label: "Oneri di sistema", current: system, offer: system },
-    { key: "TAXES", label: "Imposte e IVA", current: taxesIncluded ? currentTaxes : null, offer: offerTaxes },
+    { key: "TAXES", label: "Imposte (accise e IVA)", current: taxesIncluded ? currentTaxes : null, offer: offerTaxes },
   ];
   if (currentEnergy === null) {
-    return { status: "OFFER_ONLY", rows, currentTotal: null, offerTotal: null, savings: null, savingsPercent: null, taxesIncluded: false, vatRate: null, vatRateEstimated: false, validUntil: input.validUntil, quotas: quotasOf(input, null, offerEnergy, network, system, null, null) };
+    return { status: "OFFER_ONLY", rows: withDetails(input, rows, false), currentTotal: null, offerTotal: null, savings: null, savingsPercent: null, taxesIncluded: false, vatRate: null, vatRateEstimated: false, validUntil: input.validUntil, quotas: quotasOf(input, null, offerEnergy, network, system, null, null) };
   }
   const shared = (network ?? 0) + (system ?? 0);
   const currentTotal = cents(currentEnergy + shared + (taxesIncluded ? currentTaxes : 0));
   const offerTotal = cents(offerEnergy + shared + (offerTaxes ?? 0));
   const savings = cents(currentTotal - offerTotal);
   const savingsPercent = currentTotal > 0 ? Math.round((savings / currentTotal) * 1000) / 10 : null;
-  return { status: "COMPLETE", rows, currentTotal, offerTotal, savings, savingsPercent, taxesIncluded, vatRate: taxesIncluded ? vatRate : null, vatRateEstimated: taxesIncluded && printedRate === null, validUntil: input.validUntil, quotas: quotasOf(input, currentEnergy, offerEnergy, network, system, taxesIncluded ? currentTaxes : null, offerTaxes) };
+  return { status: "COMPLETE", rows: withDetails(input, rows, true), currentTotal, offerTotal, savings, savingsPercent, taxesIncluded, vatRate: taxesIncluded ? vatRate : null, vatRateEstimated: taxesIncluded && printedRate === null, validUntil: input.validUntil, quotas: quotasOf(input, currentEnergy, offerEnergy, network, system, taxesIncluded ? currentTaxes : null, offerTaxes) };
 }

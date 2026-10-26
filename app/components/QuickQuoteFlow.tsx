@@ -429,19 +429,27 @@ function Receipt({ offer, today, business, context, bill }: { readonly offer: Of
       <strong>{euro(Math.abs(annualSaving))}{annualCurrent ? ` (${PERCENT.format(Math.abs(annualSaving / annualCurrent * 100))}%)` : ""}</strong>
     </div> : null}
     {receipt.status === "COMPLETE" ? null : <p className="inline-warning" role="status">La bolletta non riporta la spesa per la materia energia: mostriamo solo il costo della nuova offerta.</p>}
-    {/* ARERA scontrino dell'energia: quota per consumi, quota fissa, quota potenza, then excise and VAT, with the difference per line (Tony, 26/10). */}
+    {/* Scontrino (Tony, 26/10): materia energia, trasporto e gestione del contatore, oneri di sistema, imposte e accise aggregated first,
+        then every charge they contain (energia, dispacciamento, capacity, sbilanciamento, PCV, Flex, accise, IVA…) on its own line. */}
     <div className="responsive-table"><table className="quote-scontrino">
       <caption>Periodo della bolletta: {date(context.billingPeriod.periodStart)} – {date(context.billingPeriod.periodEnd)} · stessi consumi per entrambe le colonne</caption>
       <thead><tr><th scope="col">Voce</th><th scope="col">Bolletta attuale</th><th scope="col">CTE simulata</th><th scope="col">Differenza</th></tr></thead>
-      <tbody>{receipt.quotas.flatMap((row) => [<tr key={row.key} className={row.difference !== null && Math.abs(row.difference) >= 0.01 ? "changed" : undefined}>
-        <th scope="row">{row.label}<small>{row.basis}{row.currentSeller !== null || row.offerSeller !== null ? ` · di cui vendita ${euro(row.currentSeller)} → ${euro(row.offerSeller)}` : ""}</small></th>
-        <td>{euro(row.current)}</td><td>{euro(row.offer)}</td><td className={difference(row.difference)}>{signedEuro(row.difference)}</td>
-      </tr>, ...row.details.map((item) => <tr key={`${row.key}-${item.key}`} className={`quote-detail-row${item.difference !== null && Math.abs(item.difference) >= 0.01 ? " changed" : ""}`}>
+      <tbody>{receipt.rows.flatMap((row) => [<tr key={row.key} className={`quote-section-row${row.difference != null && Math.abs(row.difference) >= 0.01 ? " changed" : ""}`}>
+        <th scope="row">{row.label}</th><td>{euro(row.current)}</td><td>{euro(row.offer)}</td><td className={difference(row.difference ?? null)}>{signedEuro(row.difference ?? null)}</td>
+      </tr>, ...(row.details ?? []).map((item) => <tr key={`${row.key}-${item.key}`} className={`quote-detail-row${item.difference !== null && Math.abs(item.difference) >= 0.01 ? " changed" : ""}`}>
         <th scope="row">{item.label}</th>
         <td>{item.current === null ? (receipt.status === "COMPLETE" ? "non in bolletta" : "—") : euro(item.current)}</td><td>{item.offer === null ? "non nella CTE" : euro(item.offer)}</td><td className={difference(item.difference)}>{signedEuro(item.difference)}</td>
       </tr>)])}</tbody>
       {receipt.status === "COMPLETE" ? <tfoot><tr><th scope="row">{receipt.taxesIncluded ? "Totale" : "Totale imposte escluse"}</th><td>{euro(receipt.currentTotal)}</td><td>{euro(receipt.offerTotal)}</td><td className={difference(receipt.savings === null ? null : -receipt.savings)}>{signedEuro(receipt.savings === null ? null : -receipt.savings)}</td></tr></tfoot> : null}
     </table></div>
+    {/* The same totals by ARERA quota (consumi, fissa, potenza), for the scontrino dell'energia of the revised Bolletta 2.0. */}
+    <details className="quote-detail">
+      <summary>Riepilogo per quote (quota energia, quota fissa, quota potenza)</summary>
+      <div className="responsive-table"><table>
+        <thead><tr><th scope="col">Quota</th><th scope="col">Bolletta attuale</th><th scope="col">CTE simulata</th><th scope="col">Differenza</th></tr></thead>
+        <tbody>{receipt.quotas.map((row) => <tr key={row.key}><th scope="row">{row.label}<small>{row.basis}</small></th><td>{euro(row.current)}</td><td>{euro(row.offer)}</td><td className={difference(row.difference)}>{signedEuro(row.difference)}</td></tr>)}</tbody>
+      </table></div>
+    </details>
     <OfferBox offer={offer} bill={bill} context={context} />
     <div className="quote-validity">
       <span>Offerta valida fino al</span><strong>{date(receipt.validUntil)}</strong>

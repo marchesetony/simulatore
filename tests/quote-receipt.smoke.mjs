@@ -75,5 +75,13 @@ const detailed = buildQuoteReceipt({ vector: "EE", offerSupplyCost: 95, domestic
 ] });
 assert.deepEqual(detailed.quotas[0].details.map((item) => [item.key, item.current, item.offer, item.difference]), [["ENERGY", 70, 66, -4], ["DISPATCHING", 6, 6, 0], ["CAPACITY", 4, null, -4], ["IMBALANCE", null, 5, 5]]);
 assert.deepEqual(detailed.quotas[1].details.map((item) => [item.key, item.current, item.offer]), [["PCV", 15, 15], ["OPTIONS", null, 3]]);
+// 8. Order asked by Tony (26/10): materia energia, trasporto, oneri di sistema, imposte (accise e IVA) aggregated first,
+//    then each charge they contain; the details of a section add up to the section.
+assert.deepEqual(detailed.rows.map((row) => row.key), ["ENERGY", "NETWORK", "SYSTEM", "TAXES"]);
+assert.deepEqual(detailed.rows[0].details.map((item) => [item.key, item.current, item.offer]), [["ENERGY", 70, 66], ["DISPATCHING", 6, 6], ["CAPACITY", 4, null], ["IMBALANCE", null, 5], ["PCV", 15, 15], ["OPTIONS", null, 3]]);
+assert.equal(detailed.rows[0].details.reduce((sum, item) => sum + (item.offer ?? 0), 0), detailed.rows[0].offer);
+assert.deepEqual(scontrino.rows[1].details.map((item) => [item.key, item.current, item.offer]), [["CONSUMPTION", 12, 12], ["FIXED", 8, 8], ["POWER", 10, 10]]);
+assert.deepEqual(scontrino.rows[3].details.map((item) => [item.label, item.current, item.offer]), [["Accise", 5, 5], ["IVA", 15, 14.3]]);
+assert.equal(scontrino.rows[3].label, "Imposte (accise e IVA)");
 
 console.log("quote receipt smoke passed");
