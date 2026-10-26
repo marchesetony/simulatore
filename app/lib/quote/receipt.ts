@@ -31,13 +31,15 @@ export interface QuoteReceipt {
   readonly quotas: readonly QuoteReceiptQuota[];
   /** The bill's transport and system charges checked against the official ARERA values computed on the same consumption. */
   readonly officialCheck?: Readonly<Record<"NETWORK" | "SYSTEM", OfficialCheck>>;
+  /** Bill items left out of the comparison (prior-period adjustments, late-payment interest, deposits, TV licence...). */
+  readonly excluded?: readonly { readonly label: string; readonly amount: number }[];
 }
 export interface OfficialCheck { readonly status: "VERIFIED" | "DIFFERENCE" | "NOT_AVAILABLE"; readonly official: number | null; readonly difference: number | null; readonly reason: string | null }
 export type QuoteReceiptQuotaKey = "CONSUMPTION" | "FIXED" | "POWER" | "OTHER" | "EXCISE" | "VAT" | "TAXES";
 /** One line of the scontrino: what the bill paid, what the simulated CTE pays, and how much of it is the seller's. */
 export interface QuoteReceiptQuota { readonly key: QuoteReceiptQuotaKey; readonly label: string; readonly basis: string; readonly current: number | null; readonly offer: number | null; readonly difference: number | null; readonly currentSeller: number | null; readonly offerSeller: number | null; readonly details: readonly QuoteReceiptDetail[] }
 /** One named charge inside a quota (energia, dispacciamento, capacity, sbilanciamento, PCV, trasporto, oneri), bill against CTE. */
-export interface QuoteReceiptDetail { readonly key: string; readonly label: string; readonly current: number | null; readonly offer: number | null; readonly difference: number | null }
+export interface QuoteReceiptDetail { readonly key: string; readonly label: string; readonly current: number | null; readonly offer: number | null; readonly difference: number | null; readonly missingReason?: string }
 export interface QuoteReceiptOfferComponent { readonly category: string; readonly sign: string; readonly label?: string; readonly formulaId?: string; readonly amount: { readonly amount: number }; readonly formulaInputs?: Readonly<Record<string, string | number | boolean>> }
 export interface QuoteReceiptInput {
   readonly vector: "EE" | "GAS";
@@ -48,6 +50,8 @@ export interface QuoteReceiptInput {
   readonly offerComponents?: readonly QuoteReceiptOfferComponent[];
   /** VAT rate chosen for the new offer when the company qualifies for a reduced rate; excise stays the bill's (Tony, 26/10). */
   readonly offerVatRate?: number | null;
+  /** The calculation's warnings: OFFICIAL_VALUE_MISSING:<kind>:<reason> marks a charge priced only from official values that were missing. */
+  readonly warnings?: readonly string[];
 }
 
 const VAT_RATES = [0.04, 0.05, 0.1, 0.22] as const;
@@ -118,20 +122,42 @@ function regulatedQuota(component: QuoteReceiptOfferComponent): Quota {
 const signed = (component: QuoteReceiptOfferComponent): number => (component.sign === "DISCOUNT" ? -1 : 1) * component.amount.amount;
 const sellerComponents = (input: QuoteReceiptInput) => (input.offerComponents ?? []).filter((component) => regulatedSide(component) === null || regulatedSide(component) === "DISPATCHING");
 const officialOf = (input: QuoteReceiptInput, side: "NETWORK" | "SYSTEM") => (input.offerComponents ?? []).filter((component) => regulatedSide(component) === side);
-// A bill is checked against the official amount within rounding: half a euro or 0,5% of the official amount.
+// No resolution grants a tolerance: tariffs carry 6 decimals and each line is rounded to the cent, so the bill may differ
+// from the official amount by at most 0,01 EUR per component summed (base di calcolo approvata da Tony, 26/10).
 function officialCheck(bill: number | null, components: readonly QuoteReceiptOfferComponent[], hasOfficial: boolean): OfficialCheck {
   if (!hasOfficial) return { status: "NOT_AVAILABLE", official: null, difference: null, reason: "valori ufficiali ARERA del periodo non calcolati per questa fornitura" };
   const official = cents(components.reduce((total, component) => total + signed(component), 0));
   if (bill === null) return { status: "NOT_AVAILABLE", official, difference: null, reason: "importo non letto in bolletta" };
   const difference = cents(bill - official);
-  return Math.abs(difference) <= Math.max(0.5, Math.abs(official) * 0.005) ? { status: "VERIFIED", official, difference, reason: null } : { status: "DIFFERENCE", official, difference, reason: null };
+  return Math.abs(difference) <= 0.01 * components.length + 1e-9 ? { status: "VERIFIED", official, difference, reason: null } : { status: "DIFFERENCE", official, difference, reason: null };
 }
+
+const MISSING_KEY: Readonly<Record<string, string>> = { DISPATCHING: "DISPATCHING", CAPACITY_MARKET: "CAPACITY", LOSSES: "LOSSES" };
+const MISSING_REASON: Readonly<Record<string, string>> = {
+  OFFICIAL_VALUE_MISSING: "valore ufficiale ARERA/Terna del periodo non in archivio",
+  PEAK_HOUR_KWH_MISSING: "servono i kWh prelevati nelle ore di picco Terna",
+  AVAILABLE_POWER_MISSING: "potenza disponibile non letta in bolletta",
+};
+function missingOfficial(input: QuoteReceiptInput): ReadonlyMap<string, string> {
+  const result = new Map<string, string>();
+  for (const warning of input.warnings ?? []) {
+    const [prefix, kind, reason] = warning.split(":");
+    const key = MISSING_KEY[kind ?? ""];
+    if (prefix === "OFFICIAL_VALUE_MISSING" && key && !result.has(key)) result.set(key, MISSING_REASON[reason ?? ""] ?? "valore ufficiale mancante");
+  }
+  return result;
+}
+// Reactive energy is an ARERA charge tied to the customer's plant: the same on both sides (base di calcolo, 26/10).
+// Every other "altre partite" line (prior periods, interest, deposits, indemnities, TV licence) stays out of the comparison.
+type BillLine = NonNullable<QuoteReceiptInput["analysis"]>["components"][number];
+const otherItems = (input: QuoteReceiptInput): readonly BillLine[] => (input.analysis?.components ?? []).filter((line) => line.group === "OTHER_ITEMS" && !line.aggregate && line.includedInReconciliation !== false && amountOf(line.amount) !== null);
+const isReactive = (line: BillLine): boolean => /reattiv/i.test(`${line.description} ${line.rawDescription ?? ""}`);
 
 // Charges the bill and the CTE both name, so each one is compared on its own line and never hidden in an aggregate (Tony, 26/10).
 const DETAIL_LABEL: Readonly<Record<string, string>> = {
   ENERGY: "Prezzo energia (indice + spread o prezzo fisso)", LOSSES: "Perdite di rete", COMMERCIALIZATION: "Commercializzazione", DISPATCHING: "Dispacciamento",
   CAPACITY: "Mercato della capacità (capacity market)", IMBALANCE: "Sbilanciamento", SELLER_OTHER: "Altri corrispettivi di vendita", PCV: "Quota fissa di vendita (PCV)",
-  OPTIONS: "Opzioni e servizi a pagamento (es. Flex)", ONE_OFF: "Corrispettivi una tantum", NETWORK: "Trasporto e gestione del contatore", SYSTEM: "Oneri di sistema",
+  OPTIONS: "Opzioni e servizi a pagamento (es. Flex)", ONE_OFF: "Corrispettivi una tantum", REACTIVE: "Energia reattiva", NETWORK: "Trasporto e gestione del contatore", SYSTEM: "Oneri di sistema",
 };
 const DETAIL_ORDER = Object.keys(DETAIL_LABEL);
 function billDetail(line: { readonly classification: string; readonly group?: string; readonly description: string }): string {
@@ -236,11 +262,17 @@ function withDetails(input: QuoteReceiptInput, rows: readonly QuoteReceiptRow[],
       if (offer !== null) entry.offer = (entry.offer ?? 0) + offer;
       merged.set(key, entry);
     }
-    return [...merged.entries()].sort(([a], [b]) => (DETAIL_ORDER.indexOf(a) + 1 || 99) - (DETAIL_ORDER.indexOf(b) + 1 || 99)).map(([key, value]) => ({ key, label: value.label, current: hasBill && value.current !== null ? cents(value.current) : null, offer: value.offer === null ? null : cents(value.offer), difference: hasBill ? cents((value.offer ?? 0) - (value.current ?? 0)) : null }));
+    return [...merged.entries()].sort(([a], [b]) => (DETAIL_ORDER.indexOf(a) + 1 || 99) - (DETAIL_ORDER.indexOf(b) + 1 || 99)).map(([key, value]) => {
+      const missingReason = value.offer === null ? missing.get(key) : undefined;
+      return { key, label: value.label, current: hasBill && value.current !== null ? cents(value.current) : null, offer: value.offer === null ? null : cents(value.offer), difference: hasBill && missingReason === undefined ? cents((value.offer ?? 0) - (value.current ?? 0)) : null, ...(missingReason ? { missingReason } : {}) };
+    });
   };
+  const missing = missingOfficial(input);
   const seller = entries([
     ...components.filter((line) => SELLER_GROUPS.has(line.group ?? "")).flatMap((line) => { const value = amountOf(line.amount); const key = billDetail(line); return value === null ? [] : [[key, DETAIL_LABEL[key] ?? key, value, null] as const]; }),
     ...sellerComponents(input).map((component) => { const key = regulatedSide(component) === "DISPATCHING" ? "DISPATCHING" : offerDetail(component); return [key, DETAIL_LABEL[key] ?? key, null, signed(component)] as const; }),
+    // A charge the base requires but whose official value is missing still gets its line, with the reason.
+    ...[...missing.keys()].map((key) => [key, DETAIL_LABEL[key] ?? key, null, null] as const),
   ]);
   const label = (quota: Quota | null) => quota ? QUOTA_LABEL[quota].replace("\u20ac/kWh", consumptionUnit) : "altre voci";
   const regulated = (group: string, side: "NETWORK" | "SYSTEM") => {
@@ -252,6 +284,7 @@ function withDetails(input: QuoteReceiptInput, rows: readonly QuoteReceiptRow[],
         return [[quota ?? "OTHER", label(quota), value, official.length ? null : value] as const];
       }),
       ...official.map((component) => { const quota = regulatedQuota(component); return [quota, label(quota), null, signed(component)] as const; }),
+      ...(side === "NETWORK" ? otherItems(input).filter(isReactive).map((line) => ["REACTIVE", DETAIL_LABEL.REACTIVE, amountOf(line.amount), amountOf(line.amount)] as const) : []),
     ]);
   };
   const excise = sumKnown(components.filter((line) => line.classification === "ACCISE").map((line) => amountOf(line.amount)));
@@ -275,13 +308,16 @@ export function buildQuoteReceipt(input: QuoteReceiptInput): QuoteReceipt {
   const offerEnergy = cents(input.offerSupplyCost + regulatedDispatching);
   const totals = input.analysis?.totals ?? null;
   const currentEnergy = totals ? sumKnown([totals.sellerEnergyTotal, totals.sellerCommercializationTotal, totals.sellerOtherTotal]) : null;
-  const network = totals?.regulatedNetworkTotal ?? null;
+  const billNetwork = totals?.regulatedNetworkTotal ?? null;
+  const reactive = sumKnown(otherItems(input).filter(isReactive).map((line) => amountOf(line.amount)));
+  const network = billNetwork === null && reactive === null ? null : cents((billNetwork ?? 0) + (reactive ?? 0));
   const system = totals?.systemChargesTotal ?? null;
+  const excluded = otherItems(input).filter((line) => !isReactive(line)).map((line) => ({ label: line.description, amount: amountOf(line.amount) ?? 0 }));
   const officialNetwork = officialOf(input, "NETWORK");
   const officialSystem = officialOf(input, "SYSTEM");
   const hasOfficial = officialNetwork.length + officialSystem.length > 0;
-  const check = { NETWORK: officialCheck(network, officialNetwork, hasOfficial), SYSTEM: officialCheck(system, officialSystem, hasOfficial) };
-  const offerNetwork = hasOfficial ? check.NETWORK.official ?? 0 : network;
+  const check = { NETWORK: officialCheck(billNetwork, officialNetwork, hasOfficial), SYSTEM: officialCheck(system, officialSystem, hasOfficial) };
+  const offerNetwork = hasOfficial ? cents((check.NETWORK.official ?? 0) + (reactive ?? 0)) : network;
   const offerSystem = hasOfficial ? check.SYSTEM.official ?? 0 : system;
   const currentTaxes = totals?.taxTotal ?? null;
   const printedRate = input.analysis ? billVatRate(input.analysis) : null;
@@ -303,13 +339,13 @@ export function buildQuoteReceipt(input: QuoteReceiptInput): QuoteReceipt {
     { key: "TAXES", label: "Imposte (accise e IVA)", current: taxesIncluded ? currentTaxes : null, offer: offerTaxes },
   ];
   if (currentEnergy === null) {
-    return { status: "OFFER_ONLY", rows: withDetails(input, rows, false), currentTotal: null, offerTotal: null, savings: null, savingsPercent: null, taxesIncluded: false, vatRate: null, vatRateEstimated: false, validUntil: input.validUntil, quotas: quotasOf(input, null, offerEnergy, network, system, null, null, offerNetwork, offerSystem), officialCheck: check };
+    return { status: "OFFER_ONLY", rows: withDetails(input, rows, false), currentTotal: null, offerTotal: null, savings: null, savingsPercent: null, taxesIncluded: false, vatRate: null, vatRateEstimated: false, validUntil: input.validUntil, quotas: quotasOf(input, null, offerEnergy, network, system, null, null, offerNetwork, offerSystem), officialCheck: check, excluded };
   }
   const currentTotal = cents(currentEnergy + (network ?? 0) + (system ?? 0) + (taxesIncluded ? currentTaxes : 0));
   const offerTotal = cents(offerEnergy + (offerNetwork ?? 0) + (offerSystem ?? 0) + (offerTaxes ?? 0));
   const savings = cents(currentTotal - offerTotal);
   const savingsPercent = currentTotal > 0 ? Math.round((savings / currentTotal) * 1000) / 10 : null;
-  return { status: "COMPLETE", rows: withDetails(input, rows, true), currentTotal, offerTotal, savings, savingsPercent, taxesIncluded, vatRate: taxesIncluded ? chosenRate ?? vatRate : null, vatRateEstimated: taxesIncluded && chosenRate === null && printedRate === null, billVatRate: taxesIncluded ? vatRate : null, validUntil: input.validUntil, quotas: quotasOf(input, currentEnergy, offerEnergy, network, system, taxesIncluded ? currentTaxes : null, offerTaxes, offerNetwork, offerSystem), officialCheck: check };
+  return { status: "COMPLETE", rows: withDetails(input, rows, true), currentTotal, offerTotal, savings, savingsPercent, taxesIncluded, vatRate: taxesIncluded ? chosenRate ?? vatRate : null, vatRateEstimated: taxesIncluded && chosenRate === null && printedRate === null, billVatRate: taxesIncluded ? vatRate : null, validUntil: input.validUntil, quotas: quotasOf(input, currentEnergy, offerEnergy, network, system, taxesIncluded ? currentTaxes : null, offerTaxes, offerNetwork, offerSystem), officialCheck: check, excluded };
 }
 
 /** Whether the bill's regulated charges match the official ARERA (network, system charges) and Terna (dispatching, capacity) values of the period. */

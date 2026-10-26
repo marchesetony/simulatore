@@ -29,25 +29,45 @@ const prepared = {
   },
   markets: [],
 };
-const quote = await calculatePreparedOffer(request(true), prepared);
-const byKind = (kind) => quote.components.filter((component) => component.formulaInputs?.kind === kind).map((component) => component.amount.amount);
-assert.deepEqual(byKind("DISPATCHING"), [11.55], "1.000 kWh x 0,01155 from the CTE");
-assert.deepEqual(byKind("CAPACITY_MARKET"), [13.49, 5], "BT capacity 0,01349 and capacity libero 0,005; the MV value is not applied to a BT supply");
-// Tony (26/10): "le perdite di rete sono sempre presenti". With no official record the TIS Tabella 4 colonna A factor for the
-// voltage applies (BT 10%) to the energy price: 1.000 kWh x 0,1 EUR x 10% = 10 EUR.
-assert.deepEqual(byKind("LOSSES"), [10], "BT standard losses 10% of the energy cost");
-assert.equal(quote.totalCommercialCost.amount, 100 + 10 + 11.55 + 13.49 + 5);
+// Base di calcolo approvata da Tony (26/10): dispacciamento e capacity solo dai valori ufficiali ARERA/Terna del periodo,
+// maggiorati delle perdite (TIS Tabella 4: BT 10%); il valore scritto nella CTE serve solo da controllo.
+prepared.version.contract.commercialTerms = { dispatchingReference: prepared.offer.dispatchingReference, capacityMarketSchedule: prepared.offer.capacityMarketSchedule };
+const officialValue = (kind, value) => ({ kind, value, unit: "EUR/KWH", authority: "ARERA", officialIdentifier: `official-${kind}`, sourceReference: "https://www.arera.it/", effectiveFrom: "2026-07-01", effectiveTo: null, recordId: kind, recordVersion: "1", provenance: { sourceSha256: "a".repeat(64), checksum: "c", applicationBasis: "test" } });
+const resolver = (dispatching, capacity) => ({ resolveDispatching: async () => dispatching === null ? null : officialValue("DISPATCHING", dispatching), resolveCapacity: async () => capacity === null ? null : officialValue("CAPACITY_MARKET", capacity), resolveLoss: async () => null });
+const context = (availablePowerKw) => ({ vector: "EE", contractedPowerKw: availablePowerKw, availablePowerKw, supplyUseCategory: "NON_DOMESTIC", domesticResidenceStatus: "NOT_APPLICABLE", voltageLevel: "LV", regulatoryCustomerScope: "NON_DOMESTIC_BT", asosClass: "UNKNOWN", energyIntensiveStatus: "UNKNOWN", asosClassTemporalStatus: "UNKNOWN" });
+const deps = (dispatching, capacity, power) => ({ regulatoryRuntimeResolver: resolver(dispatching, capacity), regulatoryBridge: { list: async () => [] }, ...(power === undefined ? {} : { trustedElectricityContext: context(power) }) });
+const quote = await calculatePreparedOffer(request(true), prepared, deps(0.0105, 0.004275, 30));
+const byKind = (result, kind) => result.components.filter((component) => component.formulaInputs?.kind === kind).map((component) => component.amount.amount);
+// 1.000 kWh: dispatching 0,0105 x 1,10 = 11,55; capacity BT up to 55 kW 0,004275 x 1,10 = 4,70; Capacity Market libero is the CTE's own charge, 5.
+assert.deepEqual(byKind(quote, "DISPATCHING"), [11.55]);
+assert.deepEqual(byKind(quote, "CAPACITY_MARKET"), [5, 4.7]);
+// Losses: 1.000 kWh x 0,1 EUR x 10% = 10 EUR, always present (Tony, 26/10).
+assert.deepEqual(byKind(quote, "LOSSES"), [10], "BT standard losses 10% of the energy cost");
+assert.equal(quote.totalCommercialCost.amount, 100 + 10 + 11.55 + 5 + 4.7);
+assert.equal(quote.warnings.some((warning) => warning.startsWith("OFFICIAL_VALUE_MISSING")), false);
+// Without official values nothing is estimated from the CTE's "attualmente pari a": the reason goes in the warnings.
+const noOfficial = await calculatePreparedOffer(request(true), prepared, deps(null, null, 30));
+assert.deepEqual(byKind(noOfficial, "DISPATCHING"), []);
+assert.ok(noOfficial.warnings.includes("OFFICIAL_VALUE_MISSING:DISPATCHING:OFFICIAL_VALUE_MISSING"));
+assert.ok(noOfficial.warnings.includes("OFFICIAL_VALUE_MISSING:CAPACITY_MARKET:OFFICIAL_VALUE_MISSING"));
+// BT above 55 kW: the charge needs the kWh in Terna's peak hours, which the bill quote does not have yet.
+const large = await calculatePreparedOffer(request(true), prepared, deps(0.0105, 0.004275, 98));
+assert.deepEqual(byKind(large, "CAPACITY_MARKET"), [5]);
+assert.ok(large.warnings.includes("OFFICIAL_VALUE_MISSING:CAPACITY_MARKET:PEAK_HOUR_KWH_MISSING"));
+// Unknown available power on a BT supply: the 55 kW rule cannot be applied.
+const unknown = await calculatePreparedOffer(request(true), prepared, deps(0.0105, 0.004275));
+assert.ok(unknown.warnings.includes("OFFICIAL_VALUE_MISSING:CAPACITY_MARKET:AVAILABLE_POWER_MISSING"));
 // Capacity Market libero "al lordo delle perdite di rete" is applied to the energy plus losses: 0,005 x 1,10.
 const gross = structuredClone(prepared);
 gross.offer.capacityMarketSchedule[2].lossTreatment = "GROSS_OF_LOSSES";
-const grossQuote = await calculatePreparedOffer(request(true), gross);
-assert.deepEqual(grossQuote.components.filter((component) => component.formulaInputs?.kind === "CAPACITY_MARKET").map((component) => component.amount.amount), [13.49, 5.5]);
+const grossQuote = await calculatePreparedOffer(request(true), gross, deps(0.0105, 0.004275, 30));
+assert.deepEqual(byKind(grossQuote, "CAPACITY_MARKET"), [5.5, 4.7]);
 // MT supply: TIS Tabella 4 colonna A gives 3,8%.
 const mvRequest = parseSimulationRequest({ ...JSON.parse(JSON.stringify(request(true))), voltageLevel: "MV" }, tenant);
-const mvPrepared = structuredClone(prepared);
-const mv = await calculatePreparedOffer(mvRequest, mvPrepared).catch((error) => error);
-assert.ok(!(mv instanceof Error), String(mv?.message)); assert.deepEqual(mv.components.filter((component) => component.formulaInputs?.kind === "LOSSES").map((component) => component.amount.amount), [3.8]);
+const mv = await calculatePreparedOffer(mvRequest, structuredClone(prepared)).catch((error) => error);
+assert.ok(!(mv instanceof Error), String(mv?.message)); assert.deepEqual(byKind(mv, "LOSSES"), [3.8]);
 // Outside a bill quote the engine behaves as before: no CTE pass-through is added.
-const plain = await calculatePreparedOffer(request(false), prepared);
+const plainPrepared = structuredClone(prepared); plainPrepared.version.contract.commercialTerms = {};
+const plain = await calculatePreparedOffer(request(false), plainPrepared);
 assert.equal(plain.totalCommercialCost.amount, 100);
 console.log("CTE_PASS_THROUGH_BILL_QUOTE=PASS");

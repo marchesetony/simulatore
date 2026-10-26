@@ -531,3 +531,5 @@ button:focus-visible,a:focus-visible,input:focus-visible,select:focus-visible,te
 .quote-vat { display:grid; gap:4px; margin:12px 0 0; }
 .quote-vat select { max-width:320px; padding:8px; border-radius:10px; border:1px solid var(--line); }
 .quote-vat small { color:var(--muted, #667); font-size:12px; }
+.quote-excluded { margin-top: 12px; font-size: 0.9em; color: var(--muted, #555); }
+.quote-excluded ul { margin: 4px 0 0; padding-left: 18px; }

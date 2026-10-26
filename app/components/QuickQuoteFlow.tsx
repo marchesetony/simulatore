@@ -283,7 +283,7 @@ function offersFrom(bill: BillDocumentModel, context: Context, candidates: reado
     // Only the CTEs the eligibility check allows for this bill are offered.
     const candidate = candidates.find((item) => item.archiveId === calculation.sourceCte.archiveId && (item.finalStatus === "ELIGIBLE" || item.finalStatus === "ELIGIBLE_BY_OVERRIDE"));
     if (!candidate) return [];
-    const receipt = buildQuoteReceipt({ vector: calculation.vector, offerSupplyCost: calculation.totalCommercialCost.amount, analysis: bill.analystReview.economics.economicAnalysis, domestic: context.classification.domestic, validUntil: candidate.validity.periodEnd, offerComponents: calculation.components });
+    const receipt = buildQuoteReceipt({ vector: calculation.vector, offerSupplyCost: calculation.totalCommercialCost.amount, analysis: bill.analystReview.economics.economicAnalysis, domestic: context.classification.domestic, validUntil: candidate.validity.periodEnd, offerComponents: calculation.components, warnings: calculation.warnings });
     return [{ rank: entry.rank, calculation, supplier: entry.supplier, offerName: candidate.offer.name || entry.offerCode, receipt, candidate }];
   });
 }
@@ -433,7 +433,7 @@ function OfferBox({ offer, bill, context }: { readonly offer: Offer; readonly bi
 const VAT_CHOICES = [0.22, 0.1, 0.05, 0.04] as const;
 function Receipt({ offer: quoted, today, business, context, bill }: { readonly offer: Offer; readonly today: string; readonly business: boolean; readonly context: Context; readonly bill: BillDocumentModel }): ReactNode {
   const [offerVatRate, setOfferVatRate] = useState<number | null>(null);
-  const receipt = offerVatRate === null ? quoted.receipt : buildQuoteReceipt({ vector: quoted.calculation.vector, offerSupplyCost: quoted.calculation.totalCommercialCost.amount, analysis: bill.analystReview.economics.economicAnalysis, domestic: context.classification.domestic, validUntil: quoted.candidate.validity.periodEnd, offerComponents: quoted.calculation.components, offerVatRate });
+  const receipt = offerVatRate === null ? quoted.receipt : buildQuoteReceipt({ vector: quoted.calculation.vector, offerSupplyCost: quoted.calculation.totalCommercialCost.amount, analysis: bill.analystReview.economics.economicAnalysis, domestic: context.classification.domestic, validUntil: quoted.candidate.validity.periodEnd, offerComponents: quoted.calculation.components, warnings: quoted.calculation.warnings, offerVatRate });
   const offer: Offer = { ...quoted, receipt };
   // Same saving per kWh (or Smc) as on the bill, simulated over 12 months of the annual consumption.
   const basis = annualBasis(context);
@@ -466,10 +466,11 @@ function Receipt({ offer: quoted, today, business, context, bill }: { readonly o
         <th scope="row">{row.label}<VerificationNote bill={bill} rowKey={row.key} receipt={receipt} /></th><td>{euro(row.current)}</td><td>{euro(row.offer)}</td><td className={difference(row.difference ?? null)}>{signedEuro(row.difference ?? null)}</td>
       </tr>, ...(row.details ?? []).map((item) => <tr key={`${row.key}-${item.key}`} className={`quote-detail-row${item.difference !== null && Math.abs(item.difference) >= 0.01 ? " changed" : ""}`}>
         <th scope="row">{item.label}{row.key === "ENERGY" && item.current !== null ? <VerificationNote bill={bill} rowKey={item.key} /> : null}</th>
-        <td>{item.current === null ? (receipt.status === "COMPLETE" ? "non in bolletta" : "—") : euro(item.current)}</td><td>{item.offer === null ? "non nella CTE" : euro(item.offer)}</td><td className={difference(item.difference)}>{signedEuro(item.difference)}</td>
+        <td>{item.current === null ? (receipt.status === "COMPLETE" ? "non in bolletta" : "—") : euro(item.current)}</td><td>{item.offer !== null ? euro(item.offer) : item.missingReason ? <small className="quote-check open">Non calcolato: {item.missingReason}</small> : "non nella CTE"}</td><td className={difference(item.difference)}>{signedEuro(item.difference)}</td>
       </tr>)])}</tbody>
       {receipt.status === "COMPLETE" ? <tfoot><tr><th scope="row">{receipt.taxesIncluded ? "Totale" : "Totale imposte escluse"}</th><td>{euro(receipt.currentTotal)}</td><td>{euro(receipt.offerTotal)}</td><td className={difference(receipt.savings === null ? null : -receipt.savings)}>{signedEuro(receipt.savings === null ? null : -receipt.savings)}</td></tr></tfoot> : null}
     </table></div>
+    {receipt.excluded?.length ? <div className="quote-excluded"><strong>Partite escluse dal confronto</strong><ul>{receipt.excluded.map((item, index) => <li key={index}>{item.label}: {euro(item.amount)}</li>)}</ul></div> : null}
     {/* The same totals by ARERA quota (consumi, fissa, potenza), for the scontrino dell'energia of the revised Bolletta 2.0. */}
     <details className="quote-detail">
       <summary>Riepilogo per quote (quota energia, quota fissa, quota potenza)</summary>

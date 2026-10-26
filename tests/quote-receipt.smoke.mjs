@@ -133,3 +133,24 @@ assert.equal(Math.round(official.quotas.reduce((sum, row) => sum + row.offer, 0)
 assert.equal(scontrino.officialCheck.NETWORK.status, "NOT_AVAILABLE");
 assert.equal(scontrino.officialCheck.NETWORK.reason, "valori ufficiali ARERA del periodo non calcolati per questa fornitura");
 console.log("quote receipt official regulated check passed");
+
+// 12. Base di calcolo approvata da Tony (26/10).
+//  - A charge priced only from official values (dispatching, capacity) whose value is missing keeps its line with the reason.
+//  - Reactive energy is an ARERA charge of the customer's plant: the same in both columns, under transport.
+//  - Prior-period adjustments and the other "altre partite" are listed apart, out of the comparison.
+//  - The official check allows only cent rounding: 0,01 EUR per component.
+const other = (amount, description) => ({ ...line("ALTRE_PARTITE", amount, description), group: "OTHER_ITEMS", includedInReconciliation: true });
+const based = buildQuoteReceipt({ vector: "EE", offerSupplyCost: 88, analysis: { components: [...scontrinoLines, other("13,95", "Energia reattiva"), other("7,58", "Ricalcoli mesi precedenti")], totals: scontrinoTotals }, domestic: true, validUntil: null, offerComponents: officialComponents, warnings: ["OFFICIAL_VALUE_MISSING:DISPATCHING:OFFICIAL_VALUE_MISSING", "OFFICIAL_VALUE_MISSING:CAPACITY_MARKET:PEAK_HOUR_KWH_MISSING"] });
+const dispatchingLine = based.rows[0].details.find((item) => item.key === "DISPATCHING");
+assert.equal(dispatchingLine.offer, null); assert.equal(dispatchingLine.difference, null);
+assert.equal(dispatchingLine.missingReason, "valore ufficiale ARERA/Terna del periodo non in archivio");
+assert.equal(based.rows[0].details.find((item) => item.key === "CAPACITY").missingReason, "servono i kWh prelevati nelle ore di picco Terna");
+assert.deepEqual([based.rows[1].current, based.rows[1].offer], [43.95, 42.95], "reactive energy 13,95 on both sides; the rest is the official transport");
+assert.deepEqual(based.rows[1].details.find((item) => item.key === "REACTIVE"), { key: "REACTIVE", label: "Energia reattiva", current: 13.95, offer: 13.95, difference: 0 });
+assert.equal(based.officialCheck.NETWORK.difference, 1, "the check compares transport without the reactive energy");
+assert.deepEqual(based.excluded, [{ label: "Ricalcoli mesi precedenti", amount: 7.58 }]);
+const rounding = buildQuoteReceipt({ vector: "EE", offerSupplyCost: 88, analysis: { components: scontrinoLines, totals: { ...scontrinoTotals, systemChargesTotal: 10.02 } }, domestic: true, validUntil: null, offerComponents: officialComponents });
+assert.equal(rounding.officialCheck.SYSTEM.status, "VERIFIED", "2 components (ARIM, ASOS): up to 0,02 EUR of rounding");
+const beyond = buildQuoteReceipt({ vector: "EE", offerSupplyCost: 88, analysis: { components: scontrinoLines, totals: { ...scontrinoTotals, systemChargesTotal: 10.03 } }, domestic: true, validUntil: null, offerComponents: officialComponents });
+assert.equal(beyond.officialCheck.SYSTEM.status, "DIFFERENCE");
+console.log("quote receipt calculation base passed");

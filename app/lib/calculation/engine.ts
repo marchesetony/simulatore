@@ -175,7 +175,7 @@ function standardLoss(request: ElectricitySimulationRequest, runtime: CteRuntime
   if (request.supplyPeriod.periodStart < "2023-01-01") return null;
   return { ratio: fromNumber(TIS_TABLE_4_COLUMN_A[request.voltageLevel]), source: "TIS_TABELLA_4_COLONNA_A" };
 }
-function addCtePassThroughs(target: ComponentDraft[], request: ElectricitySimulationRequest, offer: CalculationReadyOffer, runtime: CteRuntimeResolution | null, totalQuantity: Rational): void {
+function addCtePassThroughs(target: ComponentDraft[], request: ElectricitySimulationRequest, offer: CalculationReadyOffer, runtime: CteRuntimeResolution | null, totalQuantity: Rational, context: ElectricitySupplyContext | undefined, missing: string[]): void {
   const priced = new Set(target.filter((draft) => draft.formulaId.startsWith("CONTRACTUAL_PASS_THROUGH")).map((draft) => String(draft.formulaInputs.kind ?? "")));
   const standard = standardLoss(request, runtime);
   const loss = standard?.ratio ?? null;
@@ -193,29 +193,44 @@ function addCtePassThroughs(target: ComponentDraft[], request: ElectricitySimula
     }, fromNumber(0));
     if (energy.length) target.push({ componentId: "cte-pass-through:losses", category: "VARIABLE_FEE", label: "Perdite di rete", sign: "CHARGE", value: multiply(base, loss), formulaId: "CTE_PASS_THROUGH_LOSSES_ON_ENERGY", formulaInputs: { kind: "LOSSES", lossFactor: toDecimal(loss, 6), base: toDecimal(base, 6), spreadIncluded: !indexOnly, source: standard.source } });
   }
+  // Base di calcolo approvata da Tony (26/10): dispacciamento (TIDE) e mercato della capacità si prendono solo dai valori
+  // ufficiali ARERA/Terna del periodo; il valore che la CTE scrive ("attualmente pari a") serve solo da controllo. Senza
+  // valore ufficiale la voce non si stima: il motivo va nei warnings e lo scontrino lo mostra.
   const dispatching = offer.dispatchingReference;
   if (dispatching && !priced.has("DISPATCHING")) {
     const official = runtime?.dispatching?.value;
-    const rate = official ?? dispatching.snapshotValue;
-    if (rate !== undefined && Number.isFinite(rate) && rate > 0) {
-      // Art. 24 TIS applies to the energy withdrawn plus losses: the official rate is grossed up, while the CTE's stated
-      // value is already "incrementato del fattore per tenere conto delle perdite" (0,0105 x 1,10 = 0,01155).
-      const unitRate = official !== undefined ? grossUp(fromNumber(rate)) : fromNumber(rate);
-      target.push({ componentId: "cte-pass-through:dispatching", category: "VARIABLE_FEE", label: "Dispacciamento (da CTE)", sign: "CHARGE", value: multiply(unitRate, totalQuantity), formulaId: "CTE_PASS_THROUGH_RATE_TIMES_KWH", formulaInputs: { kind: "DISPATCHING", feeUnit: "EUR_PER_KWH", feeRate: toDecimal(unitRate, 6), basisQuantity: toDecimal(totalQuantity, 3), source: official !== undefined ? "OFFICIAL" : "CTE_STATED_VALUE" } });
-    }
+    if (official !== undefined && Number.isFinite(official) && official > 0) {
+      // TIDE charges apply to the energy withdrawn plus losses (TIS Tabella 4).
+      const unitRate = grossUp(fromNumber(official));
+      target.push({ componentId: "cte-pass-through:dispatching", category: "VARIABLE_FEE", label: "Dispacciamento", sign: "CHARGE", value: multiply(unitRate, totalQuantity), formulaId: "CTE_PASS_THROUGH_RATE_TIMES_KWH", formulaInputs: { kind: "DISPATCHING", feeUnit: "EUR_PER_KWH", feeRate: toDecimal(unitRate, 6), officialRate: official, lossFactor: loss ? toDecimal(loss, 6) : 0, basisQuantity: toDecimal(totalQuantity, 3), source: runtime?.dispatching?.officialIdentifier ?? "OFFICIAL" } });
+    } else missing.push("DISPATCHING:OFFICIAL_VALUE_MISSING");
   }
   if (!priced.has("CAPACITY_MARKET")) {
     const period = request.supplyPeriod;
-    const entries = (offer.capacityMarketSchedule ?? []).filter((entry) => (entry.voltageScope === undefined || entry.voltageScope === request.voltageLevel) && entry.timeClass !== "PEAK" && entry.effectiveFrom < period.periodEnd && entry.effectiveTo > period.periodStart);
-    entries.forEach((entry, index) => {
-      const rate = entry.mode === "OFFICIAL_PASS_THROUGH" ? runtime?.capacityMarket?.value ?? entry.value : entry.value;
-      if (!Number.isFinite(rate) || rate <= 0) return;
-      // "Al lordo delle perdite di rete": the rate applies to the energy withdrawn plus losses.
-      const unitRate = entry.lossTreatment === "GROSS_OF_LOSSES" || entry.lossTreatment === "OFFICIAL_REFERENCE" ? grossUp(fromNumber(rate)) : fromNumber(rate);
-      const label = entry.timeClass === "CAPACITY_MARKET_LIBERO" ? "Capacity market libero (da CTE)" : "Mercato della capacità (da CTE)";
-      target.push({ componentId: `cte-pass-through:capacity:${index}`, category: "VARIABLE_FEE", label, sign: "CHARGE", value: multiply(unitRate, totalQuantity), formulaId: "CTE_PASS_THROUGH_RATE_TIMES_KWH", formulaInputs: { kind: "CAPACITY_MARKET", feeUnit: "EUR_PER_KWH", feeRate: toDecimal(unitRate, 6), basisQuantity: toDecimal(totalQuantity, 3), source: entry.mode === "OFFICIAL_PASS_THROUGH" && runtime?.capacityMarket ? "OFFICIAL" : "CTE_STATED_VALUE" } });
+    const entries = (offer.capacityMarketSchedule ?? []).filter((entry) => entry.effectiveFrom < period.periodEnd && entry.effectiveTo > period.periodStart);
+    // Charges the CTE fixes itself (Capacity Market libero): the CTE's value, grossed up when "al lordo delle perdite".
+    entries.filter((entry) => entry.mode === "FIXED_VALUE").forEach((entry, index) => {
+      if (!Number.isFinite(entry.value) || entry.value <= 0) return;
+      const unitRate = entry.lossTreatment === "GROSS_OF_LOSSES" ? grossUp(fromNumber(entry.value)) : fromNumber(entry.value);
+      target.push({ componentId: `cte-pass-through:capacity-cte:${index}`, category: "VARIABLE_FEE", label: "Capacity market libero (da CTE)", sign: "CHARGE", value: multiply(unitRate, totalQuantity), formulaId: "CTE_PASS_THROUGH_RATE_TIMES_KWH", formulaInputs: { kind: "CAPACITY_MARKET", feeUnit: "EUR_PER_KWH", feeRate: toDecimal(unitRate, 6), basisQuantity: toDecimal(totalQuantity, 3), source: "CTE_STATED_VALUE" } });
     });
+    // The regulated capacity charge (TIV comma 34.8 bis, Terna): published net of losses, so always grossed up. BT up to
+    // 55 kW: one monthly value on all kWh. BT above 55 kW, MT, AT: kWh in Terna's 500 peak hours x peak rate + the rest x
+    // off-peak rate, which needs the peak-hour kWh of the meter.
+    if (entries.some((entry) => entry.mode === "OFFICIAL_PASS_THROUGH")) {
+      const powerKw = context?.availablePowerKw ?? context?.contractedPowerKw;
+      const smallLv = request.voltageLevel === "LV" && powerKw !== undefined && powerKw <= 55;
+      const official = runtime?.capacityMarket?.value;
+      if (request.voltageLevel === "LV" && powerKw === undefined) missing.push("CAPACITY_MARKET:AVAILABLE_POWER_MISSING");
+      else if (!smallLv) missing.push("CAPACITY_MARKET:PEAK_HOUR_KWH_MISSING");
+      else if (official === undefined || !Number.isFinite(official) || official <= 0) missing.push("CAPACITY_MARKET:OFFICIAL_VALUE_MISSING");
+      else {
+        const unitRate = grossUp(fromNumber(official));
+        target.push({ componentId: "cte-pass-through:capacity", category: "VARIABLE_FEE", label: "Mercato della capacità", sign: "CHARGE", value: multiply(unitRate, totalQuantity), formulaId: "CTE_PASS_THROUGH_RATE_TIMES_KWH", formulaInputs: { kind: "CAPACITY_MARKET", feeUnit: "EUR_PER_KWH", feeRate: toDecimal(unitRate, 6), officialRate: official, lossFactor: loss ? toDecimal(loss, 6) : 0, basisQuantity: toDecimal(totalQuantity, 3), source: runtime?.capacityMarket?.officialIdentifier ?? "OFFICIAL" } });
+      }
+    }
   }
+  if (!loss) missing.push("LOSSES:OFFICIAL_VALUE_MISSING");
 }
 
 function isBta6CompleteCandidate(context: ElectricitySupplyContext | undefined, regulated: Awaited<ReturnType<typeof calculateRegulatedEeSubset>> | null, contractual: ContractualPassThroughEvaluation | null, request: SimulationRequest): boolean {
@@ -409,7 +424,8 @@ export async function calculatePreparedOffer(request: SimulationRequest, prepare
   const bta6 = request.vector === "EE" && dependencies.trustedElectricityContext?.regulatoryCustomerScope === "NON_DOMESTIC_BT_BTA6";
   const contractual = bta6 ? evaluateContractualPassThrough(prepared.offer, request.supplyPeriod) : null;
   if (bta6) addPassThroughComponents(drafts, prepared.offer, request, totalQuantity);
-  if (request.vector === "EE" && request.sourceBill) addCtePassThroughs(drafts, request, prepared.offer, cteRuntime, totalQuantity);
+  const missingOfficial: string[] = [];
+  if (request.vector === "EE" && request.sourceBill) addCtePassThroughs(drafts, request, prepared.offer, cteRuntime, totalQuantity, dependencies.trustedElectricityContext, missingOfficial);
   const commercialComponents = convertDrafts(drafts);
   const regulatedComponents = regulated?.components ?? [];
   const components = [...commercialComponents, ...regulatedComponents];
@@ -432,7 +448,7 @@ export async function calculatePreparedOffer(request: SimulationRequest, prepare
   const contractualMetadata = contractual === null ? {} : { contractualPassThroughCompleteness: contractual.completeness, contractualPassThroughStates: contractual.states, bta6NetOfTaxCompleteCandidate: bta6CompleteCandidate };
   const payload = { schemaVersion: 1 as const, engineVersion: "1" as const, normalizedInput, sourceCte: { archiveId: prepared.record.archiveId, cteId: prepared.record.cteId, versionId: prepared.version.versionId, version: prepared.version.contract.version, supplier: prepared.version.contract.supplier.name, offerCode: prepared.offer.offerCode }, marketData, components, totalCommercialCost: money(totalCommercial), totalRegulatedSubsetCost: totalRegulated === null ? null : money(totalRegulated), totalCommercialPlusRegulatedSubsetCost: totalPlusRegulated === null ? null : money(totalPlusRegulated), costScope, regulatedComponentsIncluded: regulated === null ? [] : [...regulated.includedComponents], regulatoryData: { references: regulated?.references ?? [] }, unitCost, roundingPolicy: "ROUND_HALF_UP_TO_CENT_PER_COMPONENT" as const, ...contractualMetadata };
   const resultFingerprint = fingerprint(payload);
-  return { ...payload, calculationId: `calc_${resultFingerprint.slice(0, 32)}`, fingerprint: resultFingerprint, calculatedAt: `${request.calculationDate}T00:00:00.000Z`, tenantId: request.tenantId, vector: request.vector, customerCategory: request.customerCategory, ...(request.vector === "EE" ? { voltageLevel: request.voltageLevel } : {}), calculationDate: request.calculationDate, supplyPeriod: request.supplyPeriod, currency: "EUR", taxTreatment: request.taxTreatment, savingsVsBaseline: comparableSavings, warnings: [...componentWarning(request), ...(regulated === null || netOfTaxComplete ? [] : [regulated.partialWarning]), ...(request.baseline !== undefined && baselineScope !== costScope ? ["BASELINE_COST_SCOPE_MISMATCH"] : [])] };
+  return { ...payload, calculationId: `calc_${resultFingerprint.slice(0, 32)}`, fingerprint: resultFingerprint, calculatedAt: `${request.calculationDate}T00:00:00.000Z`, tenantId: request.tenantId, vector: request.vector, customerCategory: request.customerCategory, ...(request.vector === "EE" ? { voltageLevel: request.voltageLevel } : {}), calculationDate: request.calculationDate, supplyPeriod: request.supplyPeriod, currency: "EUR", taxTreatment: request.taxTreatment, savingsVsBaseline: comparableSavings, warnings: [...componentWarning(request), ...(regulated === null || netOfTaxComplete ? [] : [regulated.partialWarning]), ...(request.baseline !== undefined && baselineScope !== costScope ? ["BASELINE_COST_SCOPE_MISMATCH"] : []), ...missingOfficial.map((item) => `OFFICIAL_VALUE_MISSING:${item}`)] };
 }
 
 export async function calculateApprovedOffer(cteRepository: CteArchiveRepository, marketRepository: MarketArchiveRepository, request: SimulationRequest, archiveId: string, dependencies: CalculationDependencies = {}): Promise<CalculationResult> { const prepared = await prepareApprovedOffer(cteRepository, marketRepository, request, archiveId); return calculatePreparedOffer(request, prepared, dependencies); }
