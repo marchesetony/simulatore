@@ -1,3 +1,5 @@
+// @ts-expect-error Node's strip-only test runner requires the explicit extension.
+import { extractDocumentPriceRows } from "../ingestion/document-numeric-evidence.ts";
 import type { PublicBillDocument } from "../foundation/real-bill";
 import type { StructuredBillExtraction } from "../ingestion/structured-bill";
 import type { MarketArchiveRecord, MarketArchiveRepository } from "./types";
@@ -127,6 +129,16 @@ export function officialPunInputFromPublicBill(document: Pick<PublicBillDocument
   const structuredPeriod = document.structuredBill?.billingPeriod.status === "FOUND" ? document.structuredBill.billingPeriod.value : null;
   const profilePeriod = document.normalized?.billingPeriod ?? null;
   return { tenantId: document.tenantId, vector: document.resolvedVector, billingPeriod: structuredPeriod ? { periodStart: structuredPeriod.from, periodEnd: structuredPeriod.to } : profilePeriod, structure: structureFromExtraction(document.structuredBill) };
+}
+
+/** Bills read before the formula table was taken from the PDF get it now, in memory, so they need no re-upload. */
+export async function withDocumentPriceRows<T extends Pick<PublicBillDocument, "resolvedVector" | "structuredBill" | "fileName">>(document: T, read: () => Promise<Uint8Array>): Promise<T> {
+  const bill = document.structuredBill;
+  if (!bill || document.resolvedVector !== "EE" || bill.documentPriceRows !== undefined || !/\.pdf$/i.test(document.fileName)) return document;
+  try {
+    const documentPriceRows = extractDocumentPriceRows(await read());
+    return documentPriceRows.length ? { ...document, structuredBill: { ...bill, documentPriceRows } } : document;
+  } catch { return document; }
 }
 
 /** Fetches the official PUN of the bill months when the archive lacks them (the cron only runs in production). */

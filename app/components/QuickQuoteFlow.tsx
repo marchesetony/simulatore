@@ -183,7 +183,8 @@ function referencePun(bill: BillDocumentModel): ReactNode {
   const months = spread.months.map((month) => MONTH_NAME.format(new Date(`${month}-01T00:00:00Z`))).join(", ");
   if (spread.referencePun === undefined || spread.referencePun === null) return `${months}: ${spread.status === "PUN_NOT_PUBLISHED" ? `pubblicato dal GME entro il ${date(spread.publishedBy ?? null)}` : spread.status === "PUN_EXPIRED" ? "non più in archivio" : "non ancora in archivio"}`;
   const basis = spread.structure === "HOURLY" ? " (PUN F1, F2, F3 pesato sui consumi della bolletta)" : spread.structure === "MONO" ? " (media mensile)" : " (fasce pesate sui consumi della bolletta)";
-  return <>{RATE.format(spread.referencePun)} €/kWh <small className="quote-spread-detail">{months}{basis}</small></>;
+  const bands = spread.referenceBands?.length ? ` · ${spread.referenceBands.map((item) => `${item.band} ${RATE.format(item.pun)}`).join(" · ")} €/kWh` : "";
+  return <>{RATE.format(spread.referencePun)} €/kWh <small className="quote-spread-detail">{months}{basis}{bands}</small></>;
 }
 const STRUCTURE_LABEL: Record<string, string> = { MONO: "Monorario", F1_F2_F3: "A fasce (F1, F2, F3)", F1_F23: "Biorario (F1 e F23)", HOURLY: "PUN orario (consumi letti in F1, F2, F3)" };
 // How the index is applied over time: one price, three bands, F1/F23, peak and off-peak, or hourly.

@@ -26,4 +26,6 @@ assert.ok(Math.abs(spread.spread - (0.241253 - pun)) < 1e-9);
 const noPrice = estimateBillSpread({ ...bill, documentPriceRows: [] }, ["2026-09"], [record], () => true, "2026-10-26");
 assert.equal(noPrice.status, "PRICE_MISSING");
 assert.ok(Math.abs(noPrice.referencePun - pun) < 1e-9);
+// The band PUN values are listed next to the reference PUN.
+assert.deepEqual(spread.referenceBands.map((item) => [item.band, Math.round(item.pun * 1000) / 1000]), [["F1", 0.12], ["F2", 0.11], ["F3", 0.1]]);
 console.log("BILL_FORMULA_TABLE=PASS");

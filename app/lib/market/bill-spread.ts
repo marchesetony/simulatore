@@ -27,6 +27,8 @@ export interface BillCurrentSpread {
   readonly spread: number | null;
   /** Official GME PUN of the billed months for the bill's structure (EUR/kWh), weighted on the bill's consumption. */
   readonly referencePun?: number | null;
+  /** The official PUN of each band (GME), as the bill's structure lists them. */
+  readonly referenceBands?: readonly { readonly band: BillSpreadBand; readonly pun: number }[];
   /** BILL: the sale-of-energy table prints the spread; CALCULATED: applied price minus official PUN. */
   readonly source?: "BILL" | "CALCULATED";
 }
@@ -188,6 +190,7 @@ export function estimateBillSpread(extraction: StructuredBillExtraction | null, 
   const profiled = average(rates.map((rate) => consumption.F1 + consumption.F2 + consumption.F3 > 0 ? weighted([[rate.f1, consumption.F1], [rate.f2, consumption.F2], [rate.f3, consumption.F3]]) : null));
   if (structure === "HOURLY" && profiled !== null) pun.F0 = profiled;
   const referencePun = structure === "MONO" || structure === "HOURLY" ? pun.F0 : weighted([[pun.F1, consumption.F1], [pun.F2, consumption.F2], [pun.F3, consumption.F3]]) ?? pun.F0;
+  const referenceBands = (structure === "F1_F23" ? (["F1", "F23"] as const) : (["F1", "F2", "F3"] as const)).flatMap((band) => pun[band] === null ? [] : [{ band, pun: pun[band] as number }]);
   const bands: readonly BillSpreadBand[] = structure === "F1_F23" ? ["F1", "F23"] : structure === "F1_F2_F3" ? (["F1", "F2", "F3"] as const).filter((band) => prices[band] !== undefined) : ["F0"];
   const lines: BillSpreadLine[] = [];
   for (const band of bands) {
@@ -197,8 +200,8 @@ export function estimateBillSpread(extraction: StructuredBillExtraction | null, 
     const parts = components[band];
     lines.push({ band, billPrice, officialPun, spread: billPrice - officialPun, ...(parts && parts.length > 1 ? { components: parts } : {}) });
   }
-  if (!lines.length) return { status: officialPunMissing(bands, pun) ? "PUN_MISSING" : "PRICE_MISSING", ...empty, referencePun };
+  if (!lines.length) return { status: officialPunMissing(bands, pun) ? "PUN_MISSING" : "PRICE_MISSING", ...empty, referencePun, referenceBands };
   const weightOf = (band: BillSpreadBand) => band === "F23" ? consumption.F2 + consumption.F3 : band === "F0" ? consumption.F1 + consumption.F2 + consumption.F3 : consumption[band];
-  return { status: "CALCULATED", source: "CALCULATED", structure, months, lines, referencePun, spread: weighted(lines.map((line) => [line.spread, weightOf(line.band)] as const)) };
+  return { status: "CALCULATED", source: "CALCULATED", structure, months, lines, referencePun, referenceBands, spread: weighted(lines.map((line) => [line.spread, weightOf(line.band)] as const)) };
 }
 function officialPunMissing(bands: readonly BillSpreadBand[], pun: Record<BillSpreadBand, number | null>): boolean { return bands.every((band) => pun[band] === null); }
