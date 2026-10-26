@@ -174,11 +174,20 @@ function BillContractFacts({ bill }: { readonly bill: BillDocumentModel }): Reac
   return <dl className="quote-bill-grid quote-contract-facts">{rows.map(([label, value]) => <div key={label}><dt>{label}</dt><dd>{value}</dd></div>)}</dl>;
 }
 
-function estimatedFromPeriod(context: Context, ee: boolean): string {
+// The year the savings are projected on: the annual consumption printed on the bill, or the billed period averaged over 365 days.
+type AnnualBasis = { readonly billed: number; readonly annual: number; readonly estimated: boolean };
+function annualBasis(context: Context): AnnualBasis | null {
   const period = context.consumption?.period;
-  const billed = ee ? (period?.f1 ?? 0) + (period?.f2 ?? 0) + (period?.f3 ?? 0) : period?.smc ?? 0;
+  const billed = context.vector === "EE" ? (period?.f1 ?? 0) + (period?.f2 ?? 0) + (period?.f3 ?? 0) : period?.smc ?? 0;
+  if (billed <= 0) return null;
+  const printed = context.consumption?.annual;
+  if (printed != null && printed > 0) return { billed, annual: printed, estimated: false };
   const days = (Date.parse(`${context.billingPeriod.periodEnd}T00:00:00Z`) - Date.parse(`${context.billingPeriod.periodStart}T00:00:00Z`)) / 86_400_000 + 1;
-  return billed > 0 && days >= 20 ? `${amount(Math.round(billed / days * 365), ee ? "kWh" : "Smc")} (stimato dal periodo)` : "—";
+  return days >= 20 ? { billed, annual: Math.round(billed / days * 365), estimated: true } : null;
+}
+function estimatedFromPeriod(context: Context, ee: boolean): string {
+  const basis = annualBasis(context);
+  return basis?.estimated ? `${amount(basis.annual, ee ? "kWh" : "Smc")} (stimato dal periodo)` : "—";
 }
 
 function BillSummary({ context }: { readonly context: Context }): ReactNode {
@@ -278,8 +287,14 @@ function CostDetail({ offer, open }: { readonly offer: Offer; readonly open: boo
   </details>;
 }
 
-function Receipt({ offer, today, business }: { readonly offer: Offer; readonly today: string; readonly business: boolean }): ReactNode {
+function Receipt({ offer, today, business, context }: { readonly offer: Offer; readonly today: string; readonly business: boolean; readonly context: Context }): ReactNode {
   const receipt = offer.receipt;
+  // Same saving per kWh (or Smc) as on the bill, simulated over 12 months of the annual consumption.
+  const basis = annualBasis(context);
+  const factor = basis ? basis.annual / basis.billed : null;
+  const annualSaving = receipt.status === "COMPLETE" && receipt.savings !== null && factor !== null ? receipt.savings * factor : null;
+  const annualCurrent = receipt.currentTotal !== null && factor !== null ? receipt.currentTotal * factor : null;
+  const unit = context.vector === "EE" ? "kWh" : "Smc";
   const left = daysUntil(receipt.validUntil, today);
   const saving = receipt.savings ?? 0;
   return <section className="ui-card quote-receipt" aria-label="Scontrino dell'energia">
@@ -288,7 +303,12 @@ function Receipt({ offer, today, business }: { readonly offer: Offer; readonly t
     {receipt.status === "COMPLETE" ? <div className={saving >= 0 ? "quote-saving" : "quote-saving negative"}>
       <span>{saving >= 0 ? "Risparmio sulla bolletta caricata" : "Costo in più sulla bolletta caricata"}</span>
       <strong>{euro(Math.abs(saving))}{receipt.savingsPercent !== null ? ` (${PERCENT.format(Math.abs(receipt.savingsPercent))}%)` : ""}</strong>
-    </div> : <p className="inline-warning" role="status">La bolletta non riporta la spesa per la materia energia: mostriamo solo il costo della nuova offerta.</p>}
+    </div> : null}
+    {annualSaving !== null && basis ? <div className={annualSaving >= 0 ? "quote-saving annual" : "quote-saving annual negative"}>
+      <span>{annualSaving >= 0 ? "Risparmio annuo previsto" : "Costo in più annuo previsto"}<small>Simulato su 12 mesi con {amount(basis.annual, unit)} di consumo annuo{basis.estimated ? " stimato dal periodo della bolletta" : " letto in bolletta"}</small></span>
+      <strong>{euro(Math.abs(annualSaving))}{annualCurrent ? ` (${PERCENT.format(Math.abs(annualSaving / annualCurrent * 100))}%)` : ""}</strong>
+    </div> : null}
+    {receipt.status === "COMPLETE" ? null : <p className="inline-warning" role="status">La bolletta non riporta la spesa per la materia energia: mostriamo solo il costo della nuova offerta.</p>}
     <div className="responsive-table"><table>
       <thead><tr><th scope="col">Voce</th><th scope="col">Bolletta attuale</th><th scope="col">Nuova offerta</th></tr></thead>
       <tbody>{receipt.rows.map((row) => <tr key={row.key}><th scope="row">{row.label}</th><td>{euro(row.current)}</td><td>{euro(row.offer)}</td></tr>)}</tbody>
@@ -432,10 +452,11 @@ export default function QuickQuoteFlow({ readonly }: { readonly readonly: boolea
           {termLines(offer.candidate).map((line) => <span key={line} className="quote-offer-term">{line}</span>)}
           <span className="quote-offer-total">{euro(offer.receipt.offerTotal ?? offer.receipt.rows[0].offer)}</span>
           {offer.receipt.savingsPercent !== null ? <small className={offer.receipt.savingsPercent >= 0 ? "positive" : "negative"}>{offer.receipt.savingsPercent >= 0 ? "Risparmio" : "Più cara"} {PERCENT.format(Math.abs(offer.receipt.savingsPercent))}%</small> : null}
+          {(() => { const basis = annualBasis(quote.context); const saving = offer.receipt.status === "COMPLETE" ? offer.receipt.savings : null; return basis && saving !== null ? <small className={saving >= 0 ? "positive" : "negative"}>{saving >= 0 ? "Risparmio annuo previsto" : "Costo in più annuo"} {euro(Math.abs(saving * basis.annual / basis.billed))}</small> : null; })()}
           <small>Valida fino al {date(offer.receipt.validUntil)}</small>
         </button>)}</div> : <EmptyState title="Nessuna offerta utilizzabile" detail="Nessuna CTE a te assegnata è adatta a questa bolletta. Chiedi all'amministratore di assegnartene una." />}
       </section>
-      {selected ? <><Receipt offer={selected} today={today} business={quote.context.customerType === "NON_RESIDENTIAL"} /><div className="button-row"><button className="button primary" type="button" onClick={() => void saveProposal()} disabled={readonly || Boolean(pending)}>{pending === "proposal" ? "Preparazione" : "Scarica la proposta in PDF"}</button>{proposal ? <span className="muted" role="status">Proposta salvata in Proposte.</span> : null}</div></> : null}
+      {selected ? <><Receipt offer={selected} today={today} business={quote.context.customerType === "NON_RESIDENTIAL"} context={quote.context} /><div className="button-row"><button className="button primary" type="button" onClick={() => void saveProposal()} disabled={readonly || Boolean(pending)}>{pending === "proposal" ? "Preparazione" : "Scarica la proposta in PDF"}</button>{proposal ? <span className="muted" role="status">Proposta salvata in Proposte.</span> : null}</div></> : null}
     </> : null : null}
     {error ? <ErrorState message={error} /> : null}
   </div>;

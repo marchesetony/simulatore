@@ -511,3 +511,4 @@ button:focus-visible,a:focus-visible,input:focus-visible,select:focus-visible,te
 .quote-detail summary { cursor:pointer; font-weight:700; padding:8px 0; }
 .quote-detail td { white-space:nowrap; }
 .quote-detail td:nth-child(3) { white-space:normal; }
+.quote-saving span small { display:block; margin-top:4px; font-size:13px; color:var(--muted, #52606d); }
