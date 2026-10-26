@@ -199,6 +199,7 @@ export interface BillDocumentModel {
   readonly structuredBill: import("../ingestion/structured-bill").StructuredBillExtraction | null;
   readonly resolvedVector: "EE" | "GAS" | "UNKNOWN";
   readonly invoicePunReferences: import("../market/pun-reference").OfficialPunModel;
+  readonly currentSpread?: import("../market/bill-spread").BillCurrentSpread | null;
   readonly regulatoryAudit: import("../foundation/bill-regulatory-audit").BillRegulatoryAuditDTO | null;
   readonly featurePermissions?: import("../foundation/bill-feature-permissions").BillFeatureAccessSnapshot;
   readonly verificationSummary?: import("../foundation/bill-feature-permissions").BillVerificationSummary | null;

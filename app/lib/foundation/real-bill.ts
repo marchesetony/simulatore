@@ -166,6 +166,8 @@ export type PublicBillDocument = {
   readonly structuredBill: StructuredBillExtraction | null;
   readonly resolvedVector: ResolvedBillVector;
   readonly invoicePunReferences: OfficialPunModel;
+  /** Spread of the current supplier: applied energy price minus the official PUN (never printed on the bill). */
+  readonly currentSpread?: import("../market/bill-spread").BillCurrentSpread | null;
   readonly regulatoryAudit: BillRegulatoryAuditDTO | null;
   readonly featurePermissions?: BillFeatureAccessSnapshot;
   readonly verificationSummary?: BillVerificationSummary | null;

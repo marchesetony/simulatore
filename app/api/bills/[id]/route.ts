@@ -9,7 +9,8 @@ import {
 import { requestPrincipal } from "../../../lib/auth/request";
 import { runtimeRepositories } from "../../../lib/persistence/adapter";
 import { recordRuntimeAudit } from "../../../lib/persistence/audit";
-import { attachOfficialPun } from "../../../lib/market/pun-reference";
+import { attachOfficialPun, ensureOfficialPunForBill } from "../../../lib/market/pun-reference";
+import { billPunRefresh } from "../../../lib/market-refresh/bill-pun";
 import { billVisibilityScope, getBillInScope } from "../../../lib/foundation/bill-visibility";
 import { isBillFeature, resolveBillFeaturePermissions, sanitizeBillForFeatureAccess, type BillFeature } from "../../../lib/foundation/bill-feature-permissions";
 import type { AuthenticatedPrincipal } from "../../../lib/auth/types";
@@ -40,6 +41,7 @@ export async function GET(request: Request, context: { params: Promise<{ id: str
     const requestedFeature = new URL(request.url).searchParams.get("feature");
     if (requestedFeature !== null && (!isBillFeature(requestedFeature) || !access.features[requestedFeature as BillFeature])) return deny("BILL_FEATURE_ACCESS_DENIED", "Funzione tecnica non autorizzata", 403);
     const publicDocument = document ? (approvedView ? toPublicApprovedDocument(document) : toPublicDocument(document)) : null;
+    if (publicDocument) await ensureOfficialPunForBill(publicDocument, repositories.marketArchiveRepository, billPunRefresh(repositories, publicDocument.tenantId));
     return publicDocument ? Response.json({ document: sanitizeBillForFeatureAccess(await attachOfficialPun(publicDocument, repositories.marketArchiveRepository), access) }, { headers: NO_STORE_HEADERS }) : deny("DOCUMENT_NOT_FOUND", "Bill document not found", 404);
   } catch (error) {
     const code = publicErrorCode(error);
@@ -200,3 +202,5 @@ function messageFor(code: string): string {
       return "Bill operation failed";
   }
 }
+
+export const maxDuration = 120;

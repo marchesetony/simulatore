@@ -161,18 +161,19 @@ function indexedBill(bill: BillDocumentModel): boolean {
   const text = [factValue(bill, "PRICE_MECHANISM_RAW"), factValue(bill, "PRICE_FORMULA_RAW"), factValue(bill, "INDEX_NAME")].filter(Boolean).join(" ");
   return /variabil|indicizz|pun|psv|index/i.test(text) || bill.analystReview.receipt.priceMechanism === "INDEXED_PUN_PLUS_SPREAD";
 }
-const SPREAD_CODES = new Set(["SPREAD", "ENERGY_SPREAD"]);
-// The spread the current supplier adds to the index: the stated value, or the unit price of the spread line on the bill.
-function billSpread(bill: BillDocumentModel): string {
-  const unitOfPrice = bill.resolvedVector === "GAS" ? "€/Smc" : "€/kWh";
-  const format = (raw: string | null | undefined): string | null => { const value = decimal(raw ?? null); return value === null ? null : `${RATE.format(value)} ${unitOfPrice}`; };
-  const fact = format(factValue(bill, "SPREAD", "ENERGY_SPREAD"));
-  if (fact) return fact;
-  const line = (bill.structuredBill?.economicChargeLines ?? []).find((item) => SPREAD_CODES.has(item.code) || /spread|maggiorazione sul pun|componente di vendita variabile/i.test(`${item.description} ${item.rawDescription ?? ""}`));
-  return format(line?.unitPrice) ?? "Non indicato in bolletta";
+// The spread is never printed on the bill: the server derives it as applied energy price minus the official GME PUN of the same months.
+const BAND_LABEL: Record<string, string> = { F0: "Monorario", F1: "F1", F2: "F2", F3: "F3", F23: "F23" };
+function billSpread(bill: BillDocumentModel): ReactNode {
+  const spread = bill.currentSpread;
+  if (!spread) return "Non calcolabile per questa bolletta";
+  if (spread.status === "PUN_MISSING") return "Non calcolabile: manca il PUN GME del mese";
+  if (spread.status === "PRICE_MISSING" || spread.spread === null) return "Non calcolabile: la bolletta non mostra il prezzo dell'energia";
+  return <>{RATE.format(spread.spread)} €/kWh <small className="quote-spread-detail">{spread.lines.map((line) => `${BAND_LABEL[line.band]}: ${RATE.format(line.billPrice)} − PUN ${RATE.format(line.officialPun)} = ${RATE.format(line.spread)}`).join(" · ")}</small></>;
 }
+const STRUCTURE_LABEL: Record<string, string> = { MONO: "Monorario", F1_F2_F3: "A fasce (F1, F2, F3)", F1_F23: "Biorario (F1 e F23)" };
 // How the index is applied over time: one price, three bands, F1/F23, peak and off-peak, or hourly.
 function punStructure(bill: BillDocumentModel): string {
+  if (bill.currentSpread?.status === "CALCULATED") return STRUCTURE_LABEL[bill.currentSpread.structure];
   const found = (code: string) => factValue(bill, code) !== null;
   const lines = bill.structuredBill?.economicChargeLines ?? [];
   const text = [factValue(bill, "PRICE_TIME_STRUCTURE_RAW"), factValue(bill, "PRICE_MECHANISM_RAW"), factValue(bill, "PRICE_FORMULA_RAW"), factValue(bill, "INDEX_NAME"), ...lines.map((line) => `${line.description} ${line.rawDescription ?? ""}`)].filter(Boolean).join(" ");
@@ -197,7 +198,7 @@ function BillContractFacts({ bill }: { readonly bill: BillDocumentModel }): Reac
     ["Attivo dal", start ?? "Non indicato"],
     ["Scadenza o rinnovo", expiry || "Non indicata"],
     ["Tipo di prezzo", priceType(bill)],
-    ...(indexedBill(bill) ? [[`Spread sul ${bill.resolvedVector === "GAS" ? "PSV" : "PUN"}`, billSpread(bill)] as const, [`Struttura del ${bill.resolvedVector === "GAS" ? "PSV" : "PUN"}`, bill.resolvedVector === "GAS" ? "Mensile" : punStructure(bill)] as const] : []),
+    ...(indexedBill(bill) ? [[`Spread sul ${bill.resolvedVector === "GAS" ? "PSV" : "PUN"} (calcolato)`, bill.resolvedVector === "GAS" ? "Non calcolato per il gas" : billSpread(bill)] as const, [`Struttura del ${bill.resolvedVector === "GAS" ? "PSV" : "PUN"}`, bill.resolvedVector === "GAS" ? "Mensile" : punStructure(bill)] as const] : []),
     ["PCV mensile (quota fissa vendita)", pcv === null ? "Non indicata" : `${EURO.format(pcv)} al mese`],
   ];
   return <dl className="quote-bill-grid quote-contract-facts">{rows.map(([label, value]) => <div key={label}><dt>{label}</dt><dd>{value}</dd></div>)}</dl>;

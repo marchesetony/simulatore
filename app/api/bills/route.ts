@@ -6,7 +6,8 @@ import { recordRuntimeAudit } from "../../lib/persistence/audit";
 import { AuthenticationError } from "../../lib/auth/errors";
 import { createAnthropicTwoStageBillSdkAdapter } from "../../lib/ingestion/anthropic-bill-sdk";
 // createAnthropicBillSdkAdapter remains the legacy compatibility adapter; Bill routes use two-stage.
-import { attachOfficialPun } from "../../lib/market/pun-reference";
+import { attachOfficialPun, ensureOfficialPunForBill } from "../../lib/market/pun-reference";
+import { billPunRefresh } from "../../lib/market-refresh/bill-pun";
 import { billInScope, billVisibilityScope } from "../../lib/foundation/bill-visibility";
 import { isBillFeature, resolveBillFeaturePermissions, sanitizeBillForFeatureAccess, type BillFeature } from "../../lib/foundation/bill-feature-permissions";
 
@@ -135,6 +136,7 @@ export async function POST(request: Request): Promise<Response> {
       const code = boundedPublicCode(result.errorCode, "BILL_OPERATION_FAILED");
       return Response.json({ error: { code, message: messageFor(code), correlationId: CORRELATION_ID }, document: sanitizeBillForFeatureAccess(await attachOfficialPun(toPublicDocument(result.document), repositories.marketArchiveRepository), await resolveBillFeaturePermissions(principal, repositories, await billVisibilityScope(principal, repositories))), status: result.status, errorCode: code }, { status: publicStatus(code), headers: noStoreHeaders });
     }
+    await ensureOfficialPunForBill(toPublicDocument(result.document), repositories.marketArchiveRepository, billPunRefresh(repositories, toPublicDocument(result.document).tenantId));
     return Response.json({ document: sanitizeBillForFeatureAccess(await attachOfficialPun(toPublicDocument(result.document), repositories.marketArchiveRepository), await resolveBillFeaturePermissions(principal, repositories, await billVisibilityScope(principal, repositories))), energyBill: result.contract }, { status: 201, headers: noStoreHeaders });
   } catch (error) {
     const code = publicCode(error, "INGESTION_FAILED");
