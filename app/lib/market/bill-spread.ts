@@ -15,7 +15,9 @@ export interface BillSpreadLine {
 
 /** The spread the current supplier applies, never printed on the bill: applied energy price minus the official PUN. */
 export interface BillCurrentSpread {
-  readonly status: "CALCULATED" | "PUN_MISSING" | "PRICE_MISSING";
+  readonly status: "CALCULATED" | "PUN_MISSING" | "PUN_NOT_PUBLISHED" | "PUN_EXPIRED" | "PRICE_MISSING";
+  /** For PUN_NOT_PUBLISHED: the date by which GME publishes the official value. */
+  readonly publishedBy?: string;
   readonly structure: BillPunStructure;
   readonly months: readonly string[];
   readonly lines: readonly BillSpreadLine[];
@@ -85,7 +87,18 @@ function weighted(pairs: readonly (readonly [number | null, number])[]): number 
   return weight > 0 ? pairs.reduce((sum, [value, w]) => sum + (value as number) * w, 0) / weight : average(pairs.map(([value]) => value));
 }
 
-export function estimateBillSpread(extraction: StructuredBillExtraction | null, months: readonly string[], records: readonly MarketArchiveRecord[], isOfficial: (record: MarketArchiveRecord) => boolean): BillCurrentSpread | null {
+/** GME publishes the official PUN of a month by the 10th of the next one; the archive keeps about five closed months. */
+export const PUN_PUBLICATION_DAY = 10;
+export const PUN_ARCHIVE_MONTHS = 5;
+function addMonths(month: string, count: number): string { const [year, number] = month.split("-").map(Number); return new Date(Date.UTC(year, number - 1 + count, 1)).toISOString().slice(0, 7); }
+function missingReason(month: string, asOf: string): Pick<BillCurrentSpread, "status" | "publishedBy"> {
+  const publishedBy = `${addMonths(month, 1)}-${String(PUN_PUBLICATION_DAY).padStart(2, "0")}`;
+  if (asOf < publishedBy) return { status: "PUN_NOT_PUBLISHED", publishedBy };
+  if (month < addMonths(asOf.slice(0, 7), -PUN_ARCHIVE_MONTHS)) return { status: "PUN_EXPIRED" };
+  return { status: "PUN_MISSING" };
+}
+
+export function estimateBillSpread(extraction: StructuredBillExtraction | null, months: readonly string[], records: readonly MarketArchiveRecord[], isOfficial: (record: MarketArchiveRecord) => boolean, asOf = new Date().toISOString().slice(0, 10)): BillCurrentSpread | null {
   if (!extraction || extraction.vector.value !== "EE" || months.length === 0) return null;
   const kwh = (field: StructuredBillExtraction["f1Consumption"]) => field.status === "FOUND" && typeof field.value === "number" ? field.value : 0;
   const consumption = { F1: kwh(extraction.f1Consumption), F2: kwh(extraction.f2Consumption), F3: kwh(extraction.f3Consumption) };
@@ -93,7 +106,8 @@ export function estimateBillSpread(extraction: StructuredBillExtraction | null, 
   const structure: BillPunStructure = prices.F23 !== undefined ? "F1_F23" : prices.F1 !== undefined && (prices.F2 !== undefined || prices.F3 !== undefined) ? "F1_F2_F3" : "MONO";
   const monthly = months.map((month) => ratesFor(records, month, isOfficial));
   const empty = { structure, months, lines: [], spread: null };
-  if (monthly.some((rates) => rates === null)) return { status: "PUN_MISSING", ...empty };
+  const absent = months.find((_, index) => monthly[index] === null);
+  if (absent) return { ...missingReason(absent, asOf), ...empty };
   const rates = monthly as MarketRates[];
   const pun = {
     F1: average(rates.map((rate) => rate.f1)), F2: average(rates.map((rate) => rate.f2)), F3: average(rates.map((rate) => rate.f3)),

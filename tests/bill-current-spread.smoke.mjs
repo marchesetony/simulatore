@@ -26,7 +26,13 @@ const mono = estimateBillSpread(bill([], [{ code: "MONORARIO_PRICE", value: "0,1
 assert.equal(mono.structure, "MONO");
 close(mono.spread, 0.015);
 
-assert.equal(estimateBillSpread(bill([line("Energia F1", "0,1350", 600)]), ["2026-10"], [record], official).status, "PUN_MISSING");
+assert.equal(estimateBillSpread(bill([line("Energia F1", "0,1350", 600)]), ["2026-10"], [record], official, "2026-11-20").status, "PUN_MISSING");
 assert.equal(estimateBillSpread(bill([line("Trasporto", "0,01", 1000)]), ["2026-09"], [record], official).status, "PRICE_MISSING");
 assert.equal(estimateBillSpread({ ...bill([]), vector: found("GAS"), f1Consumption: missing }, ["2026-09"], [record], official), null);
 console.log("BILL_CURRENT_SPREAD=PASS");
+// September's official PUN is published by 10 October; months older than five are no longer archived.
+const sept = bill([line("Energia F1", "0,1350", 600)]);
+assert.deepEqual([estimateBillSpread(sept, ["2026-09"], [], official, "2026-10-05").status, estimateBillSpread(sept, ["2026-09"], [], official, "2026-10-05").publishedBy], ["PUN_NOT_PUBLISHED", "2026-10-10"]);
+assert.equal(estimateBillSpread(sept, ["2026-09"], [], official, "2026-10-20").status, "PUN_MISSING");
+assert.equal(estimateBillSpread(sept, ["2026-03"], [], official, "2026-10-20").status, "PUN_EXPIRED");
+console.log("BILL_SPREAD_PUN_TIMING=PASS");

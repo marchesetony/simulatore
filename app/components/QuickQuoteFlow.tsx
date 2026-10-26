@@ -166,7 +166,9 @@ const BAND_LABEL: Record<string, string> = { F0: "Monorario", F1: "F1", F2: "F2"
 function billSpread(bill: BillDocumentModel): ReactNode {
   const spread = bill.currentSpread;
   if (!spread) return "Non calcolabile per questa bolletta";
-  if (spread.status === "PUN_MISSING") return "Non calcolabile: manca il PUN GME del mese";
+  if (spread.status === "PUN_NOT_PUBLISHED") return `Non ancora calcolabile: il GME pubblica il PUN ufficiale del mese entro il ${date(spread.publishedBy ?? null)}`;
+  if (spread.status === "PUN_EXPIRED") return "Non calcolabile: il PUN di quel mese non è più in archivio (lo conserviamo circa 5 mesi)";
+  if (spread.status === "PUN_MISSING") return "Non calcolabile: il PUN GME del mese non è ancora in archivio, verrà acquisito al prossimo aggiornamento (ogni 15 giorni)";
   if (spread.status === "PRICE_MISSING" || spread.spread === null) return "Non calcolabile: la bolletta non mostra il prezzo dell'energia";
   return <>{RATE.format(spread.spread)} €/kWh <small className="quote-spread-detail">{spread.lines.map((line) => `${BAND_LABEL[line.band]}: ${RATE.format(line.billPrice)} − PUN ${RATE.format(line.officialPun)} = ${RATE.format(line.spread)}`).join(" · ")}</small></>;
 }
