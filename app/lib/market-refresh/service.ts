@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import type { ElectricityMonthlyPunRecord } from "../energy/market-data.ts";
 // @ts-expect-error Node's strip-only test runner requires the explicit extension.
-import { approveMarketArchive, compareMarketVersions, createMarketArchive } from "../market/service.ts";
+import { approveMarketArchive, compareMarketVersions, createMarketArchive, retireMarketArchive } from "../market/service.ts";
 import type { MarketArchiveRecord, MarketArchiveRepository } from "../market/types.ts";
 // @ts-expect-error Node's strip-only test runner requires the explicit extension.
 import { assertMarketRecord, assertMarketTenantId } from "../market/validation.ts";
@@ -60,6 +60,8 @@ export interface MarketRefreshSummary {
   readonly monthsCreated: number;
   readonly monthsCorrected: number;
   readonly monthsFailed: number;
+  /** Approved PUN months older than the archive window, taken out of the active archive (recoverable). */
+  readonly monthsRetired?: number;
   readonly errors: readonly string[];
 }
 
@@ -168,7 +170,7 @@ export async function runPunMarketRefresh(input: { readonly tenantId: string } &
     lease = await acquireLease(input, input.tenantId, runId, now);
     if (!lease.acquired) return { runId, tenantId: input.tenantId, status: "ALREADY_RUNNING", dryRun: false, targetMonths, monthsChecked: 0, monthsComplete: 0, monthsUnchanged: 0, monthsCreated: 0, monthsCorrected: 0, monthsFailed: 0, errors: ["PUN_REFRESH_ALREADY_RUNNING"] };
   }
-  let monthsComplete = 0; let monthsUnchanged = 0; let monthsCreated = 0; let monthsCorrected = 0; let monthsFailed = 0; const errors: string[] = [];
+  let monthsComplete = 0; let monthsUnchanged = 0; let monthsCreated = 0; let monthsCorrected = 0; let monthsFailed = 0; let monthsRetired = 0; const errors: string[] = [];
   try {
     for (const referenceMonth of targetMonths) {
       try {
@@ -189,6 +191,15 @@ export async function runPunMarketRefresh(input: { readonly tenantId: string } &
         } else if (current) monthsCorrected += 1; else monthsCreated += 1;
       } catch (error) { monthsFailed += 1; errors.push(`${referenceMonth}:${errorText(error)}`); }
     }
+    // Retention rule (owner, 2026-10-26): about five closed months are kept; older PUN leaves the active archive.
+    const oldest = targetMonths[targetMonths.length - 1];
+    if (!dryRun && oldest) {
+      const expired = (await input.repositories.marketArchiveRepository.list(input.tenantId)).filter((record) => record.vector === "EE" && record.index === "PUN" && record.status === "APPROVED" && record.month < oldest);
+      for (const record of expired) {
+        try { await retireMarketArchive(input.repositories.marketArchiveRepository, input.tenantId, record.archiveId, actor, `PUN_RETENTION_${MINIMUM_PUN_HISTORY_MONTHS}_MONTHS`, now); monthsRetired += 1; }
+        catch (error) { errors.push(`${record.month}:RETENTION:${errorText(error)}`); }
+      }
+    }
   } finally {
     if (!dryRun) await releaseLease(input, input.tenantId, runId, now, lease.version);
   }
@@ -205,7 +216,7 @@ export async function runPunMarketRefresh(input: { readonly tenantId: string } &
     const run: MarketRefreshRun = { runId, tenantId: input.tenantId, startedAt: now, finishedAt: new Date().toISOString(), status, trigger, targetMonths, monthsChecked: targetMonths.length, monthsComplete, monthsUnchanged, monthsCreated, monthsCorrected, monthsFailed, lastSuccessfulAt, consecutiveFailures: currentState.consecutiveFailures, errors };
     await persistRun(input, run);
   }
-  return { runId, tenantId: input.tenantId, status, dryRun, targetMonths, monthsChecked: targetMonths.length, monthsComplete, monthsUnchanged, monthsCreated, monthsCorrected, monthsFailed, errors };
+  return { runId, tenantId: input.tenantId, status, dryRun, targetMonths, monthsChecked: targetMonths.length, monthsComplete, monthsUnchanged, monthsCreated, monthsCorrected, monthsFailed, monthsRetired, errors };
 }
 
 export function punRefreshStateIsStale(state: Pick<MarketRefreshState, "lastSuccessfulAt"> | null, now: string): boolean { return state === null || stale(state.lastSuccessfulAt, validDate(now)); }

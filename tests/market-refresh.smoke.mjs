@@ -141,3 +141,17 @@ console.log("REGULATORY_AUTO_REFRESH_REGRESSION=PASS");
 console.log("GAS_UNCHANGED=PASS");
 console.log("PSV_AUTO_REFRESH_ADDED=NO");
 console.log("market refresh smoke: ok");
+
+// Retention (owner, 2026-10-26): approved PUN older than five closed months leaves the active archive, recoverably.
+{
+  const retentionRepositories = makeRepositories();
+  await runPunMarketRefresh({ tenantId: tenant, repositories: retentionRepositories, sourceReader: sourceReader(), now: "2026-06-12T04:15:00.000Z", runId: "pun-retention-old", trigger: "TEST" });
+  const later = await runPunMarketRefresh({ tenantId: tenant, repositories: retentionRepositories, sourceReader: sourceReader(), now: now, runId: "pun-retention-new", trigger: "TEST" });
+  const all = await retentionRepositories.marketArchiveRepository.list(tenant);
+  const oldest = later.targetMonths.at(-1);
+  assert.ok(later.monthsRetired > 0);
+  assert.ok(all.filter((record) => record.status === "APPROVED").every((record) => record.month >= oldest));
+  const retired = all.filter((record) => record.month < oldest);
+  assert.ok(retired.length > 0 && retired.every((record) => record.status === "REJECTED" && record.history.at(-1).reason === "PUN_RETENTION_5_MONTHS"));
+  console.log("PUN_RETENTION_RECOVERABLE=PASS");
+}
