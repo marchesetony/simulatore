@@ -130,6 +130,21 @@ function factValue(bill: BillDocumentModel, ...codes: readonly string[]): string
   return null;
 }
 // Monthly PCV: the seller's fixed fee (PCV, quota fissa di vendita, commercializzazione) per month, never network or power charges.
+// Over 12 months the energy part scales with the annual consumption, while fixed fees (PCV, annual options such as Flex) count once per month.
+function annualProjection(offer: Offer, context: Context, bill: BillDocumentModel): { readonly saving: number; readonly current: number | null } | null {
+  const basis = annualBasis(context);
+  const receipt = offer.receipt;
+  if (!basis || receipt.status !== "COMPLETE" || receipt.savings === null) return null;
+  const days = (Date.parse(`${context.billingPeriod.periodEnd}T00:00:00Z`) - Date.parse(`${context.billingPeriod.periodStart}T00:00:00Z`)) / 86_400_000 + 1;
+  const months = Math.max(1, Math.round(days / 30.4375));
+  const offerFixed = offer.calculation.components.filter((component) => component.category === "FIXED_FEE").reduce((sum, component) => sum + (component.sign === "DISCOUNT" ? -1 : 1) * component.amount.amount, 0);
+  const billFixed = (monthlyPcv(bill) ?? 0) * months;
+  const factor = basis.annual / basis.billed;
+  const fixedSaving = billFixed - offerFixed;
+  const saving = (receipt.savings - fixedSaving) * factor + fixedSaving / months * 12;
+  const current = receipt.currentTotal === null ? null : (receipt.currentTotal - billFixed) * factor + billFixed / months * 12;
+  return { saving, current };
+}
 function monthlyPcv(bill: BillDocumentModel): number | null {
   const lines = (bill.structuredBill?.economicChargeLines ?? []).filter((line) => {
     const text = `${line.description} ${line.rawDescription ?? ""}`;
@@ -355,13 +370,14 @@ function CostDetail({ offer, open }: { readonly offer: Offer; readonly open: boo
   </details>;
 }
 
-function Receipt({ offer, today, business, context }: { readonly offer: Offer; readonly today: string; readonly business: boolean; readonly context: Context }): ReactNode {
+function Receipt({ offer, today, business, context, bill }: { readonly offer: Offer; readonly today: string; readonly business: boolean; readonly context: Context; readonly bill: BillDocumentModel }): ReactNode {
   const receipt = offer.receipt;
   // Same saving per kWh (or Smc) as on the bill, simulated over 12 months of the annual consumption.
   const basis = annualBasis(context);
   const factor = basis ? basis.annual / basis.billed : null;
-  const annualSaving = receipt.status === "COMPLETE" && receipt.savings !== null && factor !== null ? receipt.savings * factor : null;
-  const annualCurrent = receipt.currentTotal !== null && factor !== null ? receipt.currentTotal * factor : null;
+  const projection = annualProjection(offer, context, bill);
+  const annualSaving = projection?.saving ?? null;
+  const annualCurrent = projection?.current ?? (receipt.currentTotal !== null && factor !== null ? receipt.currentTotal * factor : null);
   const unit = context.vector === "EE" ? "kWh" : "Smc";
   const left = daysUntil(receipt.validUntil, today);
   const saving = receipt.savings ?? 0;
@@ -521,11 +537,11 @@ export default function QuickQuoteFlow({ readonly }: { readonly readonly: boolea
           {offer.candidate.scope ? <small className="quote-offer-scope">Per {offer.candidate.scope.customer}{offer.candidate.scope.voltage.length ? ` · ${offer.candidate.scope.voltage.map((level) => level === "LV" ? "BT" : level === "MV" ? "MT" : level === "HV" ? "AT" : level).join("/")}` : ""}{offer.candidate.scope.consumption ? ` · consumo ${offer.candidate.scope.consumption}` : ""}</small> : null}
           <span className="quote-offer-total">{euro(offer.receipt.offerTotal ?? offer.receipt.rows[0].offer)}</span>
           {offer.receipt.savingsPercent !== null ? <small className={offer.receipt.savingsPercent >= 0 ? "positive" : "negative"}>{offer.receipt.savingsPercent >= 0 ? "Risparmio" : "Più cara"} {PERCENT.format(Math.abs(offer.receipt.savingsPercent))}%</small> : null}
-          {(() => { const basis = annualBasis(quote.context); const saving = offer.receipt.status === "COMPLETE" ? offer.receipt.savings : null; return basis && saving !== null ? <small className={saving >= 0 ? "positive" : "negative"}>{saving >= 0 ? "Risparmio annuo previsto" : "Costo in più annuo"} {euro(Math.abs(saving * basis.annual / basis.billed))}</small> : null; })()}
+          {(() => { const projection = annualProjection(offer, quote.context, quote.bill); return projection ? <small className={projection.saving >= 0 ? "positive" : "negative"}>{projection.saving >= 0 ? "Risparmio annuo previsto" : "Costo in più annuo"} {euro(Math.abs(projection.saving))}</small> : null; })()}
           <small>Valida fino al {date(offer.receipt.validUntil)}</small>
         </button>)}</div> : <><EmptyState title="Nessuna offerta utilizzabile" detail="Nessuna CTE a te assegnata è adatta a questa bolletta. Chiedi all'amministratore di assegnartene una." /><NoOfferReasons quote={quote} /></>}
       </section>
-      {selected ? <><Receipt offer={selected} today={today} business={quote.context.customerType === "NON_RESIDENTIAL"} context={quote.context} /><div className="button-row"><button className="button primary" type="button" onClick={() => void saveProposal()} disabled={readonly || Boolean(pending)}>{pending === "proposal" ? "Preparazione" : "Scarica la proposta in PDF"}</button>{proposal ? <span className="muted" role="status">Proposta salvata in Proposte.</span> : null}</div></> : null}
+      {selected ? <><Receipt offer={selected} today={today} business={quote.context.customerType === "NON_RESIDENTIAL"} context={quote.context} bill={quote.bill} /><div className="button-row"><button className="button primary" type="button" onClick={() => void saveProposal()} disabled={readonly || Boolean(pending)}>{pending === "proposal" ? "Preparazione" : "Scarica la proposta in PDF"}</button>{proposal ? <span className="muted" role="status">Proposta salvata in Proposte.</span> : null}</div></> : null}
     </> : null : null}
     {error ? <ErrorState message={error} /> : null}
   </div>;

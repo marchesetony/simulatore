@@ -267,6 +267,53 @@ function feeComponent(field: CteReviewField | undefined, feeId: string, vector: 
   return { feeId, label: label ?? field?.label ?? feeId, amount, currency: "EUR", unit, taxTreatment: tax, ...(lossTreatment === undefined ? {} : { lossTreatment }) };
 }
 
+// A fee field can declare several lines ("PCV 15 €/mese; spesa aggiuntiva FLEX 36 €/anno"): each line with an amount and a period is its own fee.
+export function feeSegments(raw: string): readonly { readonly text: string; readonly amount: number; readonly unit: "EUR_PER_MONTH" | "EUR_PER_YEAR" | "EUR_PER_POD_YEAR" }[] {
+  return raw.split(/;|\n|\u2022/).flatMap((segment) => {
+    const match = segment.match(/([-+]?\d[\d.]*(?:,\d+)?)\s*(?:\u20AC|eur(?:o)?\b)|(?:\u20AC|eur(?:o)?)\s*([-+]?\d[\d.]*(?:,\d+)?)/i);
+    const amount = match ? numeric(match[1] ?? match[2]) : null;
+    if (amount === null || amount <= 0) return [];
+    const unit = /\/\s*pod\s*\/?\s*(?:anno|year)/i.test(segment) ? "EUR_PER_POD_YEAR" as const : /\/\s*(?:mese|month)|mensil|al mese/i.test(segment) ? "EUR_PER_MONTH" as const : /\/\s*(?:anno|year)\b|\bannu[oaie]\b|all'anno|per anno/i.test(segment) ? "EUR_PER_YEAR" as const : null;
+    return unit ? [{ text: segment.trim(), amount, unit }] : [];
+  });
+}
+export function extraFixedFees(primary: CteContract["commercialTerms"]["fixedFees"][number] | null, fields: ReadonlyMap<string, CteReviewField>, offerName: string, feeIdBase: string, tax: "INCLUDED" | "EXCLUDED" | "NOT_APPLICABLE"): CteContract["commercialTerms"]["fixedFees"] {
+  const fixedField = fields.get("commercialTerms.fixedFees");
+  const fixedRaw = [fixedField?.description, sourceComplete(fixedField), asString(fixedField)].find((value) => typeof value === "string" && value.trim()) ?? "";
+  // Paid options the offer is named after (e.g. "Flex" in "Be Relax FLEX") are part of its price, not optional extras.
+  const offerWords = new Set(offerName.toLocaleLowerCase("it-IT").split(/[^a-zà-ù0-9]+/).filter((word) => word.length >= 4));
+  const servicesField = fields.get("commercialTerms.additionalServices");
+  const servicesRaw = [sourceComplete(servicesField), asString(servicesField)].find((value) => typeof value === "string" && value.trim()) ?? "";
+  const services = feeSegments(servicesRaw).filter((segment) => segment.text.toLocaleLowerCase("it-IT").split(/[^a-zà-ù0-9]+/).some((word) => offerWords.has(word)));
+  const fixedLines = feeSegments(fixedRaw);
+  let primarySkipped = false;
+  const extra = [...fixedLines, ...services].filter((segment) => {
+    const samePrimary = primary !== null && !primarySkipped && Math.abs(segment.amount - primary.amount) < 0.000001 && (segment.unit === "EUR_PER_POD_YEAR" ? primary.unit === "EUR_PER_POD" : segment.unit === primary.unit);
+    if (samePrimary) primarySkipped = true;
+    return !samePrimary;
+  });
+  // "156 €/POD/anno; 13 €/mese" states one cost twice (yearly and its monthly instalment): the instalment is not a second fee.
+  const monthlyOf = (amount: number, unit: string) => unit === "EUR_PER_MONTH" ? amount : amount / 12;
+  const counted: number[] = primary && (primary.unit === "EUR_PER_MONTH" || primary.unit === "EUR_PER_YEAR" || primary.unit === "EUR_PER_POD") ? [monthlyOf(primary.amount, primary.unit)] : [];
+  const distinct = extra.filter((segment) => {
+    const monthly = monthlyOf(segment.amount, segment.unit);
+    if (counted.some((value) => Math.abs(value - monthly) < 0.005)) return false;
+    counted.push(monthly);
+    return true;
+  });
+  const seen = new Set<string>();
+  return distinct.flatMap((segment, index): CteContract["commercialTerms"]["fixedFees"][number][] => {
+    const key = `${segment.unit}:${segment.amount}:${segment.text.toLocaleLowerCase("it-IT")}`;
+    if (seen.has(key)) return [];
+    seen.add(key);
+    const label = segment.text.replace(/\s+/g, " ").slice(0, 120);
+    const feeId = `${feeIdBase}-extra-${index + 1}`;
+    return segment.unit === "EUR_PER_POD_YEAR"
+      ? [{ feeId, label, amount: segment.amount, currency: "EUR" as const, unit: "EUR_PER_POD" as const, period: "YEAR" as const, monthlyEquivalent: segment.amount / 12, taxTreatment: tax }]
+      : [{ feeId, label, amount: segment.amount, currency: "EUR" as const, unit: segment.unit, taxTreatment: tax }];
+  });
+}
+
 function passThroughComponents(field: CteExtractionField | CteReviewField | undefined): readonly CtePassThroughComponent[] | null {
   if (!field || field.status === "NOT_FOUND" || field.status === "UNCERTAIN") return null;
   const value = "normalizedValue" in field ? field.normalizedValue : field.value;
@@ -458,7 +505,7 @@ export function tryBuildAuthoritativeCteContract(record: Pick<CteIngestionRecord
     taxTreatment: tax,
     eligibility: record.vector === "EE" ? { customerTypes: customer, ...(structuredCustomerScope ? { customerScopes: structuredCustomerScope } : {}), ...canonicalScope, ...(annualRule ? { annualConsumptionRule: annualRule } : {}), voltageLevels: voltage } : { customerTypes: customer, ...canonicalScope, ...(annualRule ? { annualConsumptionRule: annualRule } : {}) },
     pricing,
-    commercialTerms: { fixedFees: fixed ? [fixed] : [], variableFees: variable ? [variable] : [], imbalance: imbalance ? { status: "DECLARED" as const, component: imbalance } : { status: "NOT_DECLARED" as const, reason: "NOT_PROVIDED" as const }, oneOffFees: exitFee ? [] : oneOff ? [oneOff] : [], commercialDiscounts: discounts ? [discounts] : [], ...(typedPassThroughComponents === null ? {} : { passThroughComponents: typedPassThroughComponents }), ...(economicDuration ? { economicDuration } : {}), ...(lossSemantics ? { lossSemantics } : {}), ...(exitFee ? { exitFee } : {}), ...(punResolutionRule ? { punRule: punResolutionRule } : {}), ...(structuredCapacitySchedule ? { capacityMarketSchedule: structuredCapacitySchedule } : {}), ...(dispatching ? { dispatchingReference: dispatching } : {}), ...(losses ? { lossReference: losses } : {}) },
+    commercialTerms: { fixedFees: [...(fixed ? [fixed] : []), ...extraFixedFees(fixed, fields, offerName, `${record.ingestionId}-fixed`, tax)], variableFees: variable ? [variable] : [], imbalance: imbalance ? { status: "DECLARED" as const, component: imbalance } : { status: "NOT_DECLARED" as const, reason: "NOT_PROVIDED" as const }, oneOffFees: exitFee ? [] : oneOff ? [oneOff] : [], commercialDiscounts: discounts ? [discounts] : [], ...(typedPassThroughComponents === null ? {} : { passThroughComponents: typedPassThroughComponents }), ...(economicDuration ? { economicDuration } : {}), ...(lossSemantics ? { lossSemantics } : {}), ...(exitFee ? { exitFee } : {}), ...(punResolutionRule ? { punRule: punResolutionRule } : {}), ...(structuredCapacitySchedule ? { capacityMarketSchedule: structuredCapacitySchedule } : {}), ...(dispatching ? { dispatchingReference: dispatching } : {}), ...(losses ? { lossReference: losses } : {}) },
   } as CteContract;
   try { validateCteContract(contract); } catch (error) { const code = (error as { code?: unknown })?.code; return authoritativeFailure("CTE_AUTHORITATIVE_SCHEMA_INVALID", [typeof code === "string" ? code : "contract"]); }
   return { contract, errorCode: null, validationPaths: [] };
@@ -483,7 +530,7 @@ function money(field: CteExtractionField | undefined, vector: CteIngestionRecord
   const perMwh = /\/\s*mwh/i.test(raw);
   const cents = /c\s*€|cent(?:esimi)?\s+di\s+euro|\bcent\b/i.test(raw) && /kwh|smc/i.test(raw);
   const value = stated === null ? null : perMwh ? Number((stated / 1000).toPrecision(12)) : cents ? Number((stated / 100).toPrecision(12)) : stated;
-  const unit = perMwh ? "\u20AC/kWh" : /\/\s*pod/i.test(raw) ? "\u20AC/POD" : /\/\s*(?:kwh|kWh)/.test(raw) ? "\u20AC/kWh" : /\/\s*(?:smc|Smc)/.test(raw) ? "\u20AC/Smc" : /\/\s*(?:mese|month|mensil)/i.test(raw) ? "\u20AC/mese" : defaultUnit;
+  const unit = perMwh ? "\u20AC/kWh" : /\/\s*pod/i.test(raw) ? "\u20AC/POD" : /\/\s*(?:kwh|kWh)/.test(raw) ? "\u20AC/kWh" : /\/\s*(?:smc|Smc)/.test(raw) ? "\u20AC/Smc" : /\/\s*(?:mese|month|mensil)/i.test(raw) ? "\u20AC/mese" : /\/\s*(?:anno|year)\b|\bannu[oaie]\b|all'anno|per anno/i.test(raw) ? "\u20AC/anno" : defaultUnit;
   const periodicity = /annuo|anno/i.test(raw) ? "anno" : /mese|mensil/i.test(raw) ? "mese" : undefined;
   const conditions = [...raw.matchAll(/(?:al netto|incluse?|escluse?|secondo)[^.;]*/gi)].map((match) => match[0].trim()).filter(Boolean);
   return base(field?.path ?? "", value, field, { unit, periodicity, conditions: conditions.length ? conditions : undefined });
