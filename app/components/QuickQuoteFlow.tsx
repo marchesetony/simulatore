@@ -162,7 +162,7 @@ function indexedBill(bill: BillDocumentModel): boolean {
   return /variabil|indicizz|pun|psv|index/i.test(text) || bill.analystReview.receipt.priceMechanism === "INDEXED_PUN_PLUS_SPREAD";
 }
 // The spread is never printed on the bill: the server derives it as applied energy price minus the official GME PUN of the same months.
-const BAND_LABEL: Record<string, string> = { F0: "Monorario", F1: "F1", F2: "F2", F3: "F3", F23: "F23" };
+const BAND_LABEL: Record<string, string> = { F0: "Prezzo energia", F1: "F1", F2: "F2", F3: "F3", F23: "F23" };
 function billSpread(bill: BillDocumentModel): ReactNode {
   const spread = bill.currentSpread;
   if (!spread) return "Non calcolabile per questa bolletta";
@@ -171,11 +171,11 @@ function billSpread(bill: BillDocumentModel): ReactNode {
   if (spread.status === "PUN_MISSING") return "Non calcolabile: il PUN GME del mese non è ancora in archivio, verrà acquisito al prossimo aggiornamento (ogni 15 giorni)";
   if (spread.status === "PRICE_MISSING" || spread.spread === null) return "Non calcolabile: la bolletta non mostra il prezzo dell'energia";
   const detail = spread.source === "BILL"
-    ? `Letto nella tabella della spesa per la vendita: ${spread.lines.map((line) => `${BAND_LABEL[line.band]} ${RATE.format(line.spread)}`).join(" · ")}`
-    : `Prezzo energia in bolletta meno PUN GME: ${spread.lines.map((line) => line.billPrice !== null && line.officialPun !== null ? `${BAND_LABEL[line.band]} ${RATE.format(line.billPrice)} − ${RATE.format(line.officialPun)} = ${RATE.format(line.spread)}` : `${BAND_LABEL[line.band]} ${RATE.format(line.spread)}`).join(" · ")}`;
+    ? `Letto nella tabella della spesa per la vendita: ${spread.lines.map((line) => `${line.band === "F0" ? "Monorario" : BAND_LABEL[line.band]} ${RATE.format(line.spread)}`).join(" · ")}`
+    : `Prezzo energia in bolletta meno PUN GME: ${spread.lines.map((line) => line.billPrice !== null && line.officialPun !== null ? `${BAND_LABEL[line.band]} ${line.components ? `(${line.components.map((part) => `${part.label} ${RATE.format(part.price)}`).join(" + ")}) ` : ""}${RATE.format(line.billPrice)} − ${spread.structure === "HOURLY" ? "PUN orario stimato sui consumi F1/F2/F3 della bolletta " : ""}${RATE.format(line.officialPun)} = ${RATE.format(line.spread)}` : `${BAND_LABEL[line.band]} ${RATE.format(line.spread)}`).join(" · ")}`;
   return <>{RATE.format(spread.spread)} €/kWh <small className="quote-spread-detail">{detail}</small></>;
 }
-const STRUCTURE_LABEL: Record<string, string> = { MONO: "Monorario", F1_F2_F3: "A fasce (F1, F2, F3)", F1_F23: "Biorario (F1 e F23)" };
+const STRUCTURE_LABEL: Record<string, string> = { MONO: "Monorario", F1_F2_F3: "A fasce (F1, F2, F3)", F1_F23: "Biorario (F1 e F23)", HOURLY: "PUN orario (consumi letti in F1, F2, F3)" };
 // How the index is applied over time: one price, three bands, F1/F23, peak and off-peak, or hourly.
 function punStructure(bill: BillDocumentModel): string {
   if (bill.currentSpread?.status === "CALCULATED") return STRUCTURE_LABEL[bill.currentSpread.structure];
@@ -183,8 +183,10 @@ function punStructure(bill: BillDocumentModel): string {
   const lines = bill.structuredBill?.economicChargeLines ?? [];
   const text = [factValue(bill, "PRICE_TIME_STRUCTURE_RAW"), factValue(bill, "PRICE_MECHANISM_RAW"), factValue(bill, "PRICE_FORMULA_RAW"), factValue(bill, "INDEX_NAME"), ...lines.map((line) => `${line.description} ${line.rawDescription ?? ""}`)].filter(Boolean).join(" ");
   if (/off[\s-]?peak|fuori picco|\bpeak\b|\bpicco\b/i.test(text)) return "Peak / off-peak";
-  if (/pun orario|orari[oa] gme|prezzo orario|su base oraria/i.test(text)) return "PUN orario";
-  if (/\bF23\b|F2\s*[-+/]\s*F3|biorari/i.test(text) || found("PRICE_F23")) return "Biorario (F1 e F23)";
+  if (/pun orario|orari[oa] gme|prezzo orario|su base oraria|(tipologia di prezzo|aggiornamento( dell')? indice|indice)\s*:?\s*orari/i.test(text) || /^\s*orari[oa]\s*$/i.test(factValue(bill, "PRICE_TIME_STRUCTURE_RAW") ?? "")) return STRUCTURE_LABEL.HOURLY;
+  // Consumption read in three separate bands rules out a biorario reading unless the bill names F23 itself.
+  const threeBands = ["f1Consumption", "f2Consumption", "f3Consumption"].every((key) => { const field = bill.structuredBill?.[key as "f1Consumption"]; return field?.status === "FOUND" && typeof field.value === "number" && field.value > 0; });
+  if (/\bF23\b|F2\s*[-+/]\s*F3|biorari/i.test(text) || (found("PRICE_F23") && !threeBands)) return "Biorario (F1 e F23)";
   if (/fasc|multiorari|triorari|\bF1\b.*\bF2\b.*\bF3\b/i.test(text) || ["PUN_F1", "PUN_F2", "PUN_F3", "PRICE_F1", "PRICE_F2"].some(found) || lines.some((line) => /^PUN_F[123]$/.test(line.code))) return "A fasce (F1, F2, F3)";
   if (/monorari|orario unico|prezzo unico|fascia unica/i.test(text) || found("PUN_SINGLE") || found("MONORARIO_PRICE") || lines.some((line) => line.code === "PUN_SINGLE")) return "Monorario";
   return "Non indicata in bolletta";

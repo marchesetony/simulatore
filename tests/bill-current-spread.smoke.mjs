@@ -40,3 +40,14 @@ console.log("BILL_SPREAD_PUN_TIMING=PASS");
 const printed = estimateBillSpread(bill([{ ...line("PUN Index GME F1", "0,1200", 600), code: "PUN_F1" }, { ...line("Spread F1", "0,0180", 600), code: "SPREAD" }, line("Dispacciamento", "0,0090", 1000)]), ["2026-09"], [], official, "2026-10-20");
 assert.equal(printed.status, "CALCULATED"); assert.equal(printed.source, "BILL"); close(printed.spread, 0.018);
 console.log("BILL_PRINTED_SPREAD=PASS");
+// HERA-style formula table: hourly PUN Index GME, consumption in F1/F2/F3, rows with the unit only in the header.
+const row = (description, unitPrice) => ({ code: "UNKNOWN", description, quantity: "", unit: "", unitPrice, amount: "", periodRaw: "09/2026", status: "FOUND" });
+const hera = { ...bill([row("Prezzo Netto", "+0,225353"), row("Contributo sui consumi", "+0,015900"), row("Dispacciamento fascia F1", "+0,011551"), row("Dispacciamento fascia F2", "+0,011551"), row("Dispacciamento fascia F3", "+0,011551"), row("Corrispettivo mercato capacità", "+0,003517"), row("Sbilanciamento", "+0,006000"), { ...row("Spesa per la vendita di energia", "0,265331"), quantity: "1658,683", amount: "440,10" }], [{ code: "PRICE_TIME_STRUCTURE_RAW", value: "Tipologia di prezzo: Orario", status: "FOUND" }, { code: "PRICE_F23", value: "0,2413", status: "FOUND" }]), f1Consumption: found(674.054), f2Consumption: found(399.716), f3Consumption: found(584.913) };
+const hourly = estimateBillSpread(hera, ["2026-09"], [record], official);
+assert.equal(hourly.status, "CALCULATED");
+assert.equal(hourly.structure, "HOURLY");
+const profile = (0.120 * 674.054 + 0.110 * 399.716 + 0.100 * 584.913) / 1658.683;
+close(hourly.lines[0].billPrice, 0.225353 + 0.0159);
+close(hourly.spread, 0.225353 + 0.0159 - profile);
+assert.deepEqual(hourly.lines[0].components.map((item) => item.label), ["Prezzo Netto", "Contributo sui consumi"]);
+console.log("BILL_HOURLY_FORMULA_TABLE=PASS");
