@@ -47,8 +47,8 @@ const hourly = estimateBillSpread(hera, ["2026-09"], [record], official);
 assert.equal(hourly.status, "CALCULATED");
 assert.equal(hourly.structure, "HOURLY");
 const profile = (0.120 * 674.054 + 0.110 * 399.716 + 0.100 * 584.913) / 1658.683;
-// Product rule (Tony, 26/10): the spread is the energy price alone, without "Contributo sui consumi" or other charges.
-close(hourly.lines[0].billPrice, 0.225353);
-close(hourly.spread, 0.225353 - profile);
-assert.equal(hourly.lines[0].components, undefined);
+// Product rule (Tony, 26/10): the "Contributo sui consumi" row is the spread the supplier applies on the PUN.
+assert.equal(hourly.source, "BILL");
+close(hourly.spread, 0.0159);
+close(hourly.referencePun, profile);
 console.log("BILL_HOURLY_FORMULA_TABLE=PASS");

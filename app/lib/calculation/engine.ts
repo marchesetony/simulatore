@@ -310,8 +310,15 @@ export async function calculatePreparedOffer(request: SimulationRequest, prepare
   assertEeNetTaxPolicy(request);
   let cteRuntime: CteRuntimeResolution | null = null;
   if (request.vector === "EE" && (prepared.offer.dispatchingReference !== undefined || prepared.offer.lossReference !== undefined || (prepared.offer.capacityMarketSchedule ?? []).some((entry) => entry.mode === "OFFICIAL_PASS_THROUGH"))) {
-    cteRuntime = await resolveCteRegulatoryRuntime(prepared.version.contract, { tenantId: request.tenantId, effectiveAt: request.calculationDate, customerScope: dependencies.trustedElectricityContext?.regulatoryCustomerScope ?? "ALL_ELECTRICITY", voltageLevel: request.voltageLevel }, dependencies.regulatoryRuntimeResolver);
-    if (!cteRuntime.ready) throw new CalculationEngineError(cteRuntime.blockers[0] ?? "REGULATORY_RUNTIME_VALUE_MISSING");
+    // The CTE's official pass-through values (capacity, dispatching, losses) are checked here but never priced:
+    // a quote on a competitor bill without them is still the offer's commercial cost, so a gap no longer drops the offer.
+    try {
+      cteRuntime = await resolveCteRegulatoryRuntime(prepared.version.contract, { tenantId: request.tenantId, effectiveAt: request.calculationDate, customerScope: dependencies.trustedElectricityContext?.regulatoryCustomerScope ?? "ALL_ELECTRICITY", voltageLevel: request.voltageLevel }, dependencies.regulatoryRuntimeResolver);
+    } catch (error) {
+      if (!request.sourceBill) throw error;
+      cteRuntime = null;
+    }
+    if (cteRuntime && !cteRuntime.ready && !request.sourceBill) throw new CalculationEngineError(cteRuntime.blockers[0] ?? "REGULATORY_RUNTIME_VALUE_MISSING");
   }
   let regulated: Awaited<ReturnType<typeof calculateRegulatedEeSubset>> | null = null;
   // A competitor bill without its technical readings (supply use, BTA6 power basis) is quoted on commercial costs only.
@@ -321,7 +328,13 @@ export async function calculatePreparedOffer(request: SimulationRequest, prepare
     if (!regulatoryBridge) throw new CalculationEngineError("REGULATORY_BRIDGE_REQUIRED");
     await assertNoKnownDomesticTierDivergence(dependencies.regulatoryRefreshState, request.tenantId);
     const execution: RegulatedEeExecutionContext = { trustedElectricityContext, regulatoryBridge };
-    regulated = await calculateRegulatedEeSubset(request, execution);
+    try {
+      regulated = await calculateRegulatedEeSubset(request, execution);
+    } catch (error) {
+      // Customer scopes without official regulated tariffs on file (e.g. business BT other than BTA6) are quoted on commercial costs only.
+      if (!(error instanceof Error) || !error.message.startsWith("REGULATORY_REFRESH_DOMAIN_UNREGISTERED")) throw error;
+      regulated = null;
+    }
   }
   const drafts: ComponentDraft[] = [];
   const totalQuantity = request.vector === "EE" ? add(add(fromNumber(request.consumption.f1), fromNumber(request.consumption.f2)), fromNumber(request.consumption.f3)) : multiply(fromNumber(request.consumption.smc), request.consumption.correctionCoefficient.value === undefined ? fromNumber(1) : fromNumber(request.consumption.correctionCoefficient.value));

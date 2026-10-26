@@ -21,8 +21,10 @@ const pun = (0.120 * 674.054 + 0.110 * 399.716 + 0.100 * 584.913) / 1658.683;
 assert.equal(spread.status, "CALCULATED");
 assert.equal(spread.structure, "HOURLY");
 assert.ok(Math.abs(spread.referencePun - pun) < 1e-9);
-// The spread is Prezzo Netto minus PUN: contributions, dispatching, capacity and imbalance stay out.
-assert.ok(Math.abs(spread.spread - (0.225353 - pun)) < 1e-9);
+// Product rule (Tony, 26/10): on HERA bills the spread is the "Contributo sui consumi" row of the formula table.
+assert.equal(spread.source, "BILL");
+assert.ok(Math.abs(spread.spread - 0.0159) < 1e-9);
+assert.equal(spread.lines[0].label, "Contributo sui consumi");
 // Without the energy price the reference PUN of the month is still returned.
 const noPrice = estimateBillSpread({ ...bill, documentPriceRows: [] }, ["2026-09"], [record], () => true, "2026-10-26");
 assert.equal(noPrice.status, "PRICE_MISSING");

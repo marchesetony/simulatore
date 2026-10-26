@@ -11,6 +11,8 @@ export interface BillSpreadLine {
   /** Official GME PUN of the same months and band, in EUR/kWh. */
   readonly officialPun: number | null;
   readonly spread: number;
+  /** The bill row the spread was read from (e.g. "Contributo sui consumi"). */
+  readonly label?: string;
   /** The sale-of-energy rows that add up to the applied price (e.g. Prezzo Netto + Contributo sui consumi). */
   readonly components?: readonly { readonly label: string; readonly price: number }[];
 }
@@ -57,7 +59,9 @@ function bandOf(text: string): BillSpreadBand | null {
   return null;
 }
 
-const SPREAD_LINE = /spread|maggiorazion|corrispettivo (di |per la )?(vendita|commerciale) variabile|componente commerciale variabile|\balfa\b|\bα\b/i;
+// The seller's markup on the index: HERA and others print it as "Contributo sui consumi" (Tony, 26/10).
+const CONTRIBUTION_LINE = /contributo (sui|ai) consumi/i;
+const SPREAD_LINE = /contributo (sui|ai) consumi|spread|maggiorazion|corrispettivo (di |per la )?(vendita|commerciale) variabile|componente commerciale variabile|\balfa\b|\bα\b/i;
 const PUN_LINE_CODES = new Set(["PUN_SINGLE", "PUN_F1", "PUN_F2", "PUN_F3", "ENERGY_INDEX"]);
 function lineText(line: StructuredBillExtraction["economicChargeLines"][number]): string { return `${line.description} ${line.rawDescription ?? ""}`; }
 // Formula tables print the unit once in the header ("prezzo unitario €/kWh"): a row with no unit and a price below 1 is per kWh.
@@ -165,13 +169,33 @@ export function estimateBillSpread(extraction: StructuredBillExtraction | null, 
   const consumption = { F1: kwh(extraction.f1Consumption), F2: kwh(extraction.f2Consumption), F3: kwh(extraction.f3Consumption) };
   // A printed markup row is the spread only when the index itself is billed on its own row; otherwise
   // (e.g. "Prezzo Netto" + "Contributo sui consumi") the spread is the applied price minus the official PUN.
-  const indexRow = extraction.economicChargeLines.some((line) => PUN_LINE_CODES.has(line.code) || /\bpun\b|indice|index/i.test(lineText(line)));
+  const indexRow = extraction.economicChargeLines.some((line) => PUN_LINE_CODES.has(line.code) || /\bpun\b|indice|index/i.test(lineText(line)) || CONTRIBUTION_LINE.test(lineText(line)));
+  const structureOf = (bands: readonly BillSpreadBand[]): BillPunStructure => bands.includes("F23") ? "F1_F23" : bands.some((band) => band === "F2" || band === "F3") ? "F1_F2_F3" : hourlyIndex(extraction) ? "HOURLY" : "MONO";
+  // The formula table read from the PDF prints the markup row itself: that row is the spread.
+  const markupRows = (extraction.documentPriceRows ?? []).filter((row) => SPREAD_LINE.test(row.label) && !/dispacciament|perdit|capacit|sbilanc|\bpun\b/i.test(row.label));
+  if (markupRows.length) {
+    const byBand = new Map<BillSpreadBand, { spread: number; label: string }>();
+    for (const row of markupRows) {
+      const value = decimal(row.unitPrice);
+      if (value === null) continue;
+      const band = bandOf(row.label) ?? "F0";
+      const current = byBand.get(band);
+      byBand.set(band, { spread: (current?.spread ?? 0) + perKwh(value)!, label: current ? `${current.label} + ${row.label}` : row.label });
+    }
+    const bands = [...byBand.keys()];
+    if (bands.length) {
+      const structure = structureOf(bands);
+      const reference = punReference(months, records, isOfficial, consumption, structure);
+      const lines = bands.map((band) => ({ band, billPrice: null, officialPun: null, spread: byBand.get(band)!.spread, label: byBand.get(band)!.label }));
+      return { status: "CALCULATED", source: "BILL", structure, months, lines, ...reference, spread: weighted(lines.map((line) => [line.spread, line.band === "F0" ? 1 : line.band === "F23" ? consumption.F2 + consumption.F3 : consumption[line.band as "F1" | "F2" | "F3"]] as const)) };
+    }
+  }
   const printed = indexRow ? printedSpread(extraction) : {};
   const printedBands = Object.keys(printed) as BillSpreadBand[];
   if (printedBands.length) {
     const lines = printedBands.map((band) => ({ band, billPrice: null, officialPun: null, spread: printed[band]!.spread }));
-    const structure: BillPunStructure = printedBands.includes("F23") ? "F1_F23" : printedBands.some((band) => band === "F2" || band === "F3") ? "F1_F2_F3" : "MONO";
-    return { status: "CALCULATED", source: "BILL", structure, months, lines, spread: weighted(printedBands.map((band) => [printed[band]!.spread, printed[band]!.quantity] as const)) };
+    const structure = structureOf(printedBands);
+    return { status: "CALCULATED", source: "BILL", structure, months, lines, ...punReference(months, records, isOfficial, consumption, structure), spread: weighted(printedBands.map((band) => [printed[band]!.spread, printed[band]!.quantity] as const)) };
   }
   const { prices, components } = billEnergyPriceDetail(extraction);
   const structure: BillPunStructure = prices.F23 !== undefined ? "F1_F23" : prices.F1 !== undefined && (prices.F2 !== undefined || prices.F3 !== undefined) ? "F1_F2_F3" : hourlyIndex(extraction) ? "HOURLY" : "MONO";
@@ -203,5 +227,17 @@ export function estimateBillSpread(extraction: StructuredBillExtraction | null, 
   if (!lines.length) return { status: officialPunMissing(bands, pun) ? "PUN_MISSING" : "PRICE_MISSING", ...empty, referencePun, referenceBands };
   const weightOf = (band: BillSpreadBand) => band === "F23" ? consumption.F2 + consumption.F3 : band === "F0" ? consumption.F1 + consumption.F2 + consumption.F3 : consumption[band];
   return { status: "CALCULATED", source: "CALCULATED", structure, months, lines, referencePun, referenceBands, spread: weighted(lines.map((line) => [line.spread, weightOf(line.band)] as const)) };
+}
+/** The official PUN of the billed months for the bill's structure, when the archive has every month. */
+function punReference(months: readonly string[], records: readonly MarketArchiveRecord[], isOfficial: (record: MarketArchiveRecord) => boolean, consumption: { readonly F1: number; readonly F2: number; readonly F3: number }, structure: BillPunStructure): Pick<BillCurrentSpread, "referencePun" | "referenceBands"> {
+  const monthly = months.map((month) => ratesFor(records, month, isOfficial));
+  if (monthly.some((rate) => rate === null)) return {};
+  const rates = monthly as MarketRates[];
+  const band = (pick: (rate: MarketRates) => number | null) => average(rates.map(pick));
+  const pun = { F1: band((rate) => rate.f1), F2: band((rate) => rate.f2), F3: band((rate) => rate.f3), F23: band((rate) => weighted([[rate.f2, consumption.F2], [rate.f3, consumption.F3]])) };
+  const profiled = band((rate) => weighted([[rate.f1, consumption.F1], [rate.f2, consumption.F2], [rate.f3, consumption.F3]]));
+  const referencePun = structure === "MONO" ? band((rate) => rate.monthly) ?? profiled : profiled;
+  const referenceBands = (structure === "F1_F23" ? (["F1", "F23"] as const) : (["F1", "F2", "F3"] as const)).flatMap((item) => pun[item] === null ? [] : [{ band: item as BillSpreadBand, pun: pun[item] as number }]);
+  return { referencePun, referenceBands };
 }
 function officialPunMissing(bands: readonly BillSpreadBand[], pun: Record<BillSpreadBand, number | null>): boolean { return bands.every((band) => pun[band] === null); }

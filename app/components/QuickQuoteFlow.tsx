@@ -19,7 +19,7 @@ type Context = {
   readonly missingRequiredData: readonly string[];
   readonly economicReconciled?: boolean;
 };
-type Candidate = { readonly archiveId: string; readonly cteVersionId: string | null; readonly supplier: string; readonly offer: { readonly name: string; readonly code: string }; readonly validity: { readonly periodStart: string; readonly periodEnd: string }; readonly finalStatus?: string; readonly calculationReadiness: string; readonly compatibilityReason?: string; readonly reasonCodes?: readonly string[]; readonly pricingType?: "INDEXED" | "FIXED" | null; readonly pricingReference?: string | null; readonly terms?: Terms };
+type Candidate = { readonly archiveId: string; readonly cteVersionId: string | null; readonly supplier: string; readonly offer: { readonly name: string; readonly code: string }; readonly validity: { readonly periodStart: string; readonly periodEnd: string }; readonly finalStatus?: string; readonly calculationReadiness: string; readonly compatibilityReason?: string; readonly reasonCodes?: readonly string[]; readonly scope?: { readonly customer: string; readonly voltage: readonly string[]; readonly consumption: string | null; readonly uses: readonly string[] }; readonly pricingType?: "INDEXED" | "FIXED" | null; readonly pricingReference?: string | null; readonly terms?: Terms };
 type Terms = { readonly fixedPrice: number | null; readonly spread: number | null; readonly priceUnit: "EUR_PER_KWH" | "EUR_PER_SMC"; readonly monthlyFixedFee: number | null };
 type Offer = { readonly rank: number; readonly calculation: CalculationModel; readonly supplier: string; readonly offerName: string; readonly receipt: QuoteReceipt; readonly candidate: Candidate };
 type Quote = { readonly bill: BillDocumentModel; readonly context: Context; readonly comparison: ComparisonModel; readonly offers: readonly Offer[]; readonly candidates?: readonly Candidate[] };
@@ -172,7 +172,7 @@ function billSpread(bill: BillDocumentModel): ReactNode {
   if (spread.status === "PUN_MISSING") return "Non calcolabile: il PUN GME del mese non è ancora in archivio, verrà acquisito al prossimo aggiornamento (ogni 15 giorni)";
   if (spread.status === "PRICE_MISSING" || spread.spread === null) return "Non calcolabile: la bolletta non mostra il prezzo dell'energia";
   const detail = spread.source === "BILL"
-    ? `Letto nella tabella della spesa per la vendita: ${spread.lines.map((line) => `${line.band === "F0" ? "Monorario" : BAND_LABEL[line.band]} ${RATE.format(line.spread)}`).join(" · ")}`
+    ? `Letto nella tabella della spesa per la vendita: ${spread.lines.map((line) => `${line.label ?? (line.band === "F0" ? "Monorario" : BAND_LABEL[line.band])} ${RATE.format(line.spread)} €/kWh`).join(" · ")}`
     : `Prezzo energia in bolletta meno PUN GME: ${spread.lines.map((line) => line.billPrice !== null && line.officialPun !== null ? `${BAND_LABEL[line.band]} ${line.components ? `(${line.components.map((part) => `${part.label} ${RATE.format(part.price)}`).join(" + ")}) ` : ""}${RATE.format(line.billPrice)} − ${spread.structure === "HOURLY" ? "PUN delle fasce pesato sui consumi della bolletta " : "PUN "}${PUN.format(line.officialPun)} = ${RATE.format(line.spread)}` : `${BAND_LABEL[line.band]} ${RATE.format(line.spread)}`).join(" · ")}`;
   return <>{RATE.format(spread.spread)} €/kWh <small className="quote-spread-detail">{detail}</small></>;
 }
@@ -518,6 +518,7 @@ export default function QuickQuoteFlow({ readonly }: { readonly readonly: boolea
           {index === 0 ? <span className="status-badge positive">La più conveniente</span> : null}
           <strong>{offer.supplier}</strong><span>{offer.offerName}</span>
           {termLines(offer.candidate).map((line) => <span key={line} className="quote-offer-term">{line}</span>)}
+          {offer.candidate.scope ? <small className="quote-offer-scope">Per {offer.candidate.scope.customer}{offer.candidate.scope.voltage.length ? ` · ${offer.candidate.scope.voltage.map((level) => level === "LV" ? "BT" : level === "MV" ? "MT" : level === "HV" ? "AT" : level).join("/")}` : ""}{offer.candidate.scope.consumption ? ` · consumo ${offer.candidate.scope.consumption}` : ""}</small> : null}
           <span className="quote-offer-total">{euro(offer.receipt.offerTotal ?? offer.receipt.rows[0].offer)}</span>
           {offer.receipt.savingsPercent !== null ? <small className={offer.receipt.savingsPercent >= 0 ? "positive" : "negative"}>{offer.receipt.savingsPercent >= 0 ? "Risparmio" : "Più cara"} {PERCENT.format(Math.abs(offer.receipt.savingsPercent))}%</small> : null}
           {(() => { const basis = annualBasis(quote.context); const saving = offer.receipt.status === "COMPLETE" ? offer.receipt.savings : null; return basis && saving !== null ? <small className={saving >= 0 ? "positive" : "negative"}>{saving >= 0 ? "Risparmio annuo previsto" : "Costo in più annuo"} {euro(Math.abs(saving * basis.annual / basis.billed))}</small> : null; })()}

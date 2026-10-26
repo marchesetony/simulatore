@@ -138,6 +138,8 @@ export interface CteEligibilityCandidate {
   readonly pricingType: "INDEXED" | "FIXED" | null;
   readonly pricingReference: "PUN" | "PSV" | "NONE" | null;
   /** What the agent quotes to the customer: energy price or spread on the index, and the monthly fixed fee (PCV). */
+  /** Who the CTE is for, as read from it: shown on the offer so a wrong reading of the CTE is visible. */
+  readonly scope?: { readonly customer: string; readonly voltage: readonly string[]; readonly consumption: string | null; readonly uses: readonly string[] };
   readonly terms?: { readonly fixedPrice: number | null; readonly spread: number | null; readonly priceUnit: "EUR_PER_KWH" | "EUR_PER_SMC"; readonly monthlyFixedFee: number | null };
   readonly eligibilityStatus: "COMPATIBLE" | "NOT_COMPATIBLE";
   readonly compatibilityReason: string;
@@ -354,6 +356,14 @@ function monthlyFixedFeeOf(fees: readonly { readonly amount: number; readonly un
   const monthly = fees.map((fee) => fee.monthlyEquivalent ?? (fee.unit === "EUR_PER_MONTH" || fee.unit === "EUR_PER_POD" ? fee.amount : fee.unit === "EUR_PER_YEAR" ? fee.amount / 12 : null));
   return monthly.length && monthly.every((value) => value !== null) ? Math.round((monthly as number[]).reduce((sum, value) => sum + value, 0) * 100) / 100 : null;
 }
+function scopeOf(contract: CteArchiveVersion["contract"]): CteEligibilityCandidate["scope"] {
+  const eligibility = contract.eligibility;
+  const allowed = eligibility.allowedCustomerTypes ?? [];
+  const customer = allowed.includes("BOTH") || (allowed.includes("CONSUMER") && allowed.includes("BUSINESS")) ? "Consumer e Business" : allowed.includes("BUSINESS") ? "Business" : allowed.includes("CONSUMER") ? "Consumer" : eligibility.customerTypes.length === 2 ? "Consumer e Business" : eligibility.customerTypes.includes("NON_RESIDENTIAL") ? "Business" : eligibility.customerTypes.includes("RESIDENTIAL") ? "Consumer" : "Non indicato";
+  const rule = eligibility.annualConsumptionRule;
+  const unit = rule?.unit === "SMC_PER_YEAR" ? "Smc/anno" : "kWh/anno";
+  return { customer, voltage: "voltageLevels" in eligibility ? [...(eligibility as { voltageLevels: readonly string[] }).voltageLevels] : [], consumption: rule ? `${rule.operator} ${new Intl.NumberFormat("it-IT").format(rule.value)} ${unit}` : null, uses: [...(eligibility.allowedSupplyUses ?? [])] };
+}
 function termsOf(contract: CteArchiveVersion["contract"]): CteEligibilityCandidate["terms"] {
   const pricing = contract.pricing;
   const spread = pricing.mode === "INDEXED" ? pricing.spread.amount : pricing.spread.status === "DECLARED" ? pricing.spread.component.amount : null;
@@ -379,7 +389,7 @@ export function simulationPeriodOf(period: { readonly periodStart: string; reado
 function offerMetadata(record: CteArchiveRecord, version: CteArchiveVersion, offer: CalculationReadyOffer | null, status: CteEligibilityCandidate["eligibilityStatus"], reason: string, calculationReadiness: CteEligibilityCandidate["calculationReadiness"] = "READY", reasonCodes: readonly EligibilityReasonCode[] = []): CteEligibilityCandidate {
   const contract = version.contract;
   const finalStatus = calculationReadiness === "NOT_READY" || reason === "REVIEW_REQUIRED" ? "BLOCKED" : status === "COMPATIBLE" ? "ELIGIBLE" : "NOT_ELIGIBLE";
-  return { cteId: record.cteId, archiveId: record.archiveId, cteVersionId: version.versionId, cteVersion: contract.version, supplier: contract.supplier.name, offer: { name: contract.offer.name, code: contract.offer.code }, validity: contract.validity, pricingType: offer?.pricing.mode ?? null, pricingReference: offer?.pricing.reference ?? null, ...(() => { try { return { terms: termsOf(contract) }; } catch { return {}; } })(), eligibilityStatus: status, compatibilityReason: reason, calculationReadiness, ...(reasonCodes.length ? { reasonCodes } : {}), finalStatus, overrideRequestable: finalStatus === "NOT_ELIGIBLE" && reasonCodes.length > 0 && reasonCodes.every(isEligibilityOverrideable) };
+  return { cteId: record.cteId, archiveId: record.archiveId, cteVersionId: version.versionId, cteVersion: contract.version, supplier: contract.supplier.name, offer: { name: contract.offer.name, code: contract.offer.code }, validity: contract.validity, pricingType: offer?.pricing.mode ?? null, pricingReference: offer?.pricing.reference ?? null, ...(() => { try { return { terms: termsOf(contract) }; } catch { return {}; } })(), ...(() => { try { return { scope: scopeOf(contract) }; } catch { return {}; } })(), eligibilityStatus: status, compatibilityReason: reason, calculationReadiness, ...(reasonCodes.length ? { reasonCodes } : {}), finalStatus, overrideRequestable: finalStatus === "NOT_ELIGIBLE" && reasonCodes.length > 0 && reasonCodes.every(isEligibilityOverrideable) };
 }
 
 async function applyAuthorizedOverride(principal: AuthenticatedPrincipal, repositories: BillDrivenRepositories, context: BillDrivenSimulationContext, candidate: CteEligibilityCandidate): Promise<CteEligibilityCandidate> {
