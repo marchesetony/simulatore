@@ -377,8 +377,8 @@ function billOfferName(bill: BillDocumentModel | null, context: Context): string
   return name ? name.replace(/\s*\((?=[A-Z0-9]*\d)[A-Z0-9]{10,}\)\s*$/, "").replace(/\s+/g, " ").trim() || null : null;
 }
 // Official check of the regulated charges, shown under each section and charge it covers.
-const SOURCE_OF: Readonly<Record<RegulatedDomain, string>> = { NETWORK: "ARERA", SYSTEM_CHARGES: "ARERA", DISPATCHING: "Terna/ARERA", CAPACITY_MARKET: "Terna", TAX: "fonte fiscale" };
-const DOMAIN_OF_ROW: Readonly<Record<string, RegulatedDomain>> = { NETWORK: "NETWORK", SYSTEM: "SYSTEM_CHARGES", TAXES: "TAX", DISPATCHING: "DISPATCHING", CAPACITY: "CAPACITY_MARKET" };
+const SOURCE_OF: Readonly<Record<RegulatedDomain, string>> = { NETWORK: "ARERA", SYSTEM_CHARGES: "ARERA", DISPATCHING: "Terna/ARERA", CAPACITY_MARKET: "Terna" };
+const DOMAIN_OF_ROW: Readonly<Record<string, RegulatedDomain>> = { NETWORK: "NETWORK", SYSTEM: "SYSTEM_CHARGES", DISPATCHING: "DISPATCHING", CAPACITY: "CAPACITY_MARKET" };
 function VerificationNote({ bill, rowKey }: { readonly bill: BillDocumentModel; readonly rowKey: string }): ReactNode {
   const domain = DOMAIN_OF_ROW[rowKey];
   if (!domain) return null;
@@ -425,8 +425,12 @@ function OfferBox({ offer, bill, context }: { readonly offer: Offer; readonly bi
   </div>;
 }
 
-function Receipt({ offer, today, business, context, bill }: { readonly offer: Offer; readonly today: string; readonly business: boolean; readonly context: Context; readonly bill: BillDocumentModel }): ReactNode {
-  const receipt = offer.receipt;
+// VAT rates the agent can apply to the new offer when the company qualifies for a reduced rate (e.g. 10% for some business uses).
+const VAT_CHOICES = [0.22, 0.1, 0.05, 0.04] as const;
+function Receipt({ offer: quoted, today, business, context, bill }: { readonly offer: Offer; readonly today: string; readonly business: boolean; readonly context: Context; readonly bill: BillDocumentModel }): ReactNode {
+  const [offerVatRate, setOfferVatRate] = useState<number | null>(null);
+  const receipt = offerVatRate === null ? quoted.receipt : buildQuoteReceipt({ vector: quoted.calculation.vector, offerSupplyCost: quoted.calculation.totalCommercialCost.amount, analysis: bill.analystReview.economics.economicAnalysis, domestic: context.classification.domestic, validUntil: quoted.candidate.validity.periodEnd, offerComponents: quoted.calculation.components, offerVatRate });
+  const offer: Offer = { ...quoted, receipt };
   // Same saving per kWh (or Smc) as on the bill, simulated over 12 months of the annual consumption.
   const basis = annualBasis(context);
   const factor = basis ? basis.annual / basis.billed : null;
@@ -470,13 +474,21 @@ function Receipt({ offer, today, business, context, bill }: { readonly offer: Of
         <tbody>{receipt.quotas.map((row) => <tr key={row.key}><th scope="row">{row.label}<small>{row.basis}</small></th><td>{euro(row.current)}</td><td>{euro(row.offer)}</td><td className={difference(row.difference)}>{signedEuro(row.difference)}</td></tr>)}</tbody>
       </table></div>
     </details>
+    {receipt.taxesIncluded ? <label className="quote-vat">
+      <span>Aliquota IVA della nuova offerta</span>
+      <select value={offerVatRate ?? ""} onChange={(event) => setOfferVatRate(event.target.value === "" ? null : Number(event.target.value))}>
+        <option value="">Come in bolletta ({PERCENT.format((receipt.billVatRate ?? quoted.receipt.vatRate ?? 0.22) * 100)}%)</option>
+        {VAT_CHOICES.map((rate) => <option key={rate} value={rate}>{PERCENT.format(rate * 100)}%{rate < 0.22 ? " (aliquota agevolata)" : ""}</option>)}
+      </select>
+      <small>Accise uguali alla bolletta: non dipendono dal fornitore. Cambia l&apos;IVA solo se l&apos;azienda ha diritto all&apos;aliquota agevolata.</small>
+    </label> : null}
     <OfferBox offer={offer} bill={bill} context={context} />
     <div className="quote-validity">
       <span>Offerta valida fino al</span><strong>{date(receipt.validUntil)}</strong>
       <small>{left === null ? "Verifica la scadenza sulla CTE prima di firmare." : left < 0 ? "Offerta scaduta: non può più essere firmata." : `Il cliente deve firmare il contratto entro questa data${left <= 7 ? ` (mancano ${left} giorni)` : ""}.`}</small>
     </div>
     <CostDetail offer={offer} open={business} />
-    <p className="muted quote-note">Calcolo sugli stessi consumi e sullo stesso periodo della bolletta. Trasporto, oneri di sistema e accise non dipendono dal fornitore e restano quelli della bolletta{receipt.vatRate !== null ? `; IVA al ${PERCENT.format(receipt.vatRate * 100)}%${receipt.vatRateEstimated ? " stimata" : ""}` : ""}.</p>
+    <p className="muted quote-note">Calcolo sugli stessi consumi e sullo stesso periodo della bolletta. Trasporto, oneri di sistema e accise non dipendono dal fornitore e restano quelli della bolletta{receipt.vatRate !== null ? `; IVA della nuova offerta al ${PERCENT.format(receipt.vatRate * 100)}%${receipt.vatRateEstimated ? " stimata" : ""}${offerVatRate !== null && receipt.billVatRate != null && Math.abs(offerVatRate - receipt.billVatRate) > 0.0001 ? ` (in bolletta ${PERCENT.format(receipt.billVatRate * 100)}%)` : ""}` : ""}.</p>
   </section>;
 }
 

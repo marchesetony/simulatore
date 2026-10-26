@@ -528,3 +528,6 @@ button:focus-visible,a:focus-visible,input:focus-visible,select:focus-visible,te
 .quote-receipt small.quote-check.ok { color:#12664f; }
 .quote-receipt small.quote-check.bad { color:#8c2d2d; font-weight:700; }
 .quote-receipt small.quote-check.open { color:var(--amber, #8a5a00); }
+.quote-vat { display:grid; gap:4px; margin:12px 0 0; }
+.quote-vat select { max-width:320px; padding:8px; border-radius:10px; border:1px solid var(--line); }
+.quote-vat small { color:var(--muted, #667); font-size:12px; }

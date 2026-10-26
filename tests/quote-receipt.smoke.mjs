@@ -96,5 +96,16 @@ assert.equal(regulatedVerification(audit, "SYSTEM_CHARGES").difference, 1.2);
 assert.deepEqual(regulatedVerification(audit, "DISPATCHING"), { status: "NOT_VERIFIABLE", checked: 0, difference: 0, reason: "manca il valore ufficiale del periodo in archivio" });
 assert.equal(regulatedVerification(audit, "CAPACITY_MARKET").status, "NOT_AVAILABLE");
 assert.equal(regulatedVerification(null, "NETWORK").reason, "verifica non eseguita per questa bolletta");
-assert.equal(regulatedVerification(audit, "TAX").status, "NOT_AVAILABLE", "excise has no official source connected");
+// Product rule (Tony, 26/10): excise and VAT are not verified, the same excise and VAT apply to the new offer.
 console.log("quote receipt regulated verification passed");
+
+// 10. A company with a reduced VAT rate (Tony, 26/10): the agent can apply another rate to the new offer; excise stays the bill's.
+const reduced = buildQuoteReceipt({ vector: "EE", offerSupplyCost: 88, analysis: { components: scontrinoLines, totals: scontrinoTotals }, domestic: false, validUntil: null, offerComponents, offerVatRate: 0.1 });
+assert.equal(reduced.vatRate, 0.1); assert.equal(reduced.billVatRate, 0.1);
+assert.equal(reduced.offerTotal, scontrino.offerTotal, "choosing the bill's own rate changes nothing");
+const higher = buildQuoteReceipt({ vector: "EE", offerSupplyCost: 88, analysis: { components: scontrinoLines, totals: scontrinoTotals }, domestic: false, validUntil: null, offerComponents, offerVatRate: 0.22 });
+// Taxable base 88 + 30 + 10 + 5 excise = 133: VAT 22% = 29,26, taxes = 5 + 29,26.
+assert.equal(higher.rows[3].offer, 34.26);
+assert.deepEqual(higher.rows[3].details.map((item) => [item.label, item.current, item.offer]), [["Accise", 5, 5], ["IVA", 15, 29.26]]);
+assert.equal(higher.vatRate, 0.22); assert.equal(higher.billVatRate, 0.1); assert.equal(higher.vatRateEstimated, false);
+console.log("quote receipt vat choice passed");

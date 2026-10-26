@@ -21,6 +21,8 @@ export interface QuoteReceipt {
   readonly taxesIncluded: boolean;
   readonly vatRate: number | null;
   readonly vatRateEstimated: boolean;
+  /** The VAT rate of the bill; vatRate is the one applied to the new offer. */
+  readonly billVatRate?: number | null;
   readonly validUntil: string | null;
   /** The same totals split the way the ARERA "scontrino dell'energia" asks: by consumption, fixed and power quota, then taxes. */
   readonly quotas: readonly QuoteReceiptQuota[];
@@ -38,6 +40,8 @@ export interface QuoteReceiptInput {
   readonly domestic: boolean;
   readonly validUntil: string | null;
   readonly offerComponents?: readonly QuoteReceiptOfferComponent[];
+  /** VAT rate chosen for the new offer when the company qualifies for a reduced rate; excise stays the bill's (Tony, 26/10). */
+  readonly offerVatRate?: number | null;
 }
 
 const VAT_RATES = [0.04, 0.05, 0.1, 0.22] as const;
@@ -226,7 +230,14 @@ export function buildQuoteReceipt(input: QuoteReceiptInput): QuoteReceipt {
   const printedRate = input.analysis ? billVatRate(input.analysis) : null;
   const vatRate = printedRate ?? (input.domestic && input.vector === "EE" ? 0.1 : 0.22);
   const taxesIncluded = currentTaxes !== null && currentEnergy !== null;
-  const offerTaxes = taxesIncluded ? cents(currentTaxes + (offerEnergy - currentEnergy) * vatRate) : null;
+  const chosenRate = input.offerVatRate ?? null;
+  const exciseLines = sumKnown((input.analysis?.components ?? []).filter((line) => line.classification === "ACCISE" && !line.aggregate).map((line) => amountOf(line.amount)));
+  // Without excise lines on the bill, excise is what is left of the taxes once VAT at the bill's rate is taken out.
+  const excise = !taxesIncluded ? null : exciseLines ?? Math.max(0, cents((currentTaxes - (currentEnergy + (network ?? 0) + (system ?? 0)) * vatRate) / (1 + vatRate)));
+  // The bill's own rate keeps the bill's VAT and moves it only with the supply cost, as before.
+  const offerTaxes = !taxesIncluded ? null : chosenRate === null || excise === null || Math.abs(chosenRate - vatRate) < 0.0001
+    ? cents(currentTaxes + (offerEnergy - currentEnergy) * vatRate)
+    : cents(excise + (offerEnergy + (network ?? 0) + (system ?? 0) + excise) * chosenRate);
   const rows: QuoteReceiptRow[] = [
     { key: "ENERGY", label: input.vector === "EE" ? "Spesa per la materia energia" : "Spesa per la materia gas naturale", current: currentEnergy, offer: offerEnergy },
     { key: "NETWORK", label: "Trasporto e gestione del contatore", current: network, offer: network },
@@ -241,11 +252,12 @@ export function buildQuoteReceipt(input: QuoteReceiptInput): QuoteReceipt {
   const offerTotal = cents(offerEnergy + shared + (offerTaxes ?? 0));
   const savings = cents(currentTotal - offerTotal);
   const savingsPercent = currentTotal > 0 ? Math.round((savings / currentTotal) * 1000) / 10 : null;
-  return { status: "COMPLETE", rows: withDetails(input, rows, true), currentTotal, offerTotal, savings, savingsPercent, taxesIncluded, vatRate: taxesIncluded ? vatRate : null, vatRateEstimated: taxesIncluded && printedRate === null, validUntil: input.validUntil, quotas: quotasOf(input, currentEnergy, offerEnergy, network, system, taxesIncluded ? currentTaxes : null, offerTaxes) };
+  return { status: "COMPLETE", rows: withDetails(input, rows, true), currentTotal, offerTotal, savings, savingsPercent, taxesIncluded, vatRate: taxesIncluded ? chosenRate ?? vatRate : null, vatRateEstimated: taxesIncluded && chosenRate === null && printedRate === null, billVatRate: taxesIncluded ? vatRate : null, validUntil: input.validUntil, quotas: quotasOf(input, currentEnergy, offerEnergy, network, system, taxesIncluded ? currentTaxes : null, offerTaxes) };
 }
 
 /** Whether the bill's regulated charges match the official ARERA (network, system charges) and Terna (dispatching, capacity) values of the period. */
-export type RegulatedDomain = "NETWORK" | "SYSTEM_CHARGES" | "DISPATCHING" | "CAPACITY_MARKET" | "TAX";
+// Excise and VAT are not checked: the same excise applies to every supplier and the VAT rate is the customer's (Tony, 26/10).
+export type RegulatedDomain = "NETWORK" | "SYSTEM_CHARGES" | "DISPATCHING" | "CAPACITY_MARKET";
 export interface RegulatedVerification { readonly status: "VERIFIED" | "DIFFERENCE" | "NOT_VERIFIABLE" | "NOT_AVAILABLE"; readonly checked: number; readonly difference: number; readonly reason: string | null }
 const VERIFIED = new Set(["MATCH", "ROUNDING_DIFFERENCE"]);
 const DIFFERENT = new Set(["MISMATCH", "OVERCHARGE", "UNDERCHARGE"]);
@@ -256,14 +268,12 @@ const REASON: Readonly<Record<string, string>> = {
 };
 function domainOf(line: BillRegulatoryAuditDTO["lines"][number]): RegulatedDomain | null {
   const mapped = referenceDomainForComponent(line.code);
-  if (mapped === "NETWORK" || mapped === "SYSTEM_CHARGES" || mapped === "DISPATCHING" || mapped === "CAPACITY_MARKET" || mapped === "TAX") return mapped;
-  if (line.category === "DISPATCHING" || line.category === "CAPACITY_MARKET" || line.category === "TAX") return line.category;
+  if (mapped === "NETWORK" || mapped === "SYSTEM_CHARGES" || mapped === "DISPATCHING" || mapped === "CAPACITY_MARKET") return mapped;
+  if (line.category === "DISPATCHING" || line.category === "CAPACITY_MARKET") return line.category;
   if (line.category === "REGULATED_ARERA") return /asos|arim|uc3|uc6|oneri/i.test(`${line.code} ${line.description}`) ? "SYSTEM_CHARGES" : "NETWORK";
   return null;
 }
 export function regulatedVerification(audit: BillRegulatoryAuditDTO | null | undefined, domain: RegulatedDomain): RegulatedVerification {
-  // Excise and VAT have no official source connected yet: say so rather than imply a check (Tony, 26/10).
-  if (domain === "TAX") return { status: "NOT_AVAILABLE", checked: 0, difference: 0, reason: "aliquote fiscali non ancora collegate a una fonte ufficiale" };
   const lines = (audit?.lines ?? []).filter((line) => domainOf(line) === domain);
   if (!lines.length) return { status: "NOT_AVAILABLE", checked: 0, difference: 0, reason: audit ? "nessuna voce confrontabile in bolletta" : "verifica non eseguita per questa bolletta" };
   const different = lines.filter((line) => DIFFERENT.has(line.auditStatus));
