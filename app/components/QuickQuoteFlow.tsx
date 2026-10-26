@@ -170,7 +170,10 @@ function billSpread(bill: BillDocumentModel): ReactNode {
   if (spread.status === "PUN_EXPIRED") return "Non calcolabile: il PUN di quel mese non è più in archivio (lo conserviamo circa 5 mesi)";
   if (spread.status === "PUN_MISSING") return "Non calcolabile: il PUN GME del mese non è ancora in archivio, verrà acquisito al prossimo aggiornamento (ogni 15 giorni)";
   if (spread.status === "PRICE_MISSING" || spread.spread === null) return "Non calcolabile: la bolletta non mostra il prezzo dell'energia";
-  return <>{RATE.format(spread.spread)} €/kWh <small className="quote-spread-detail">{spread.lines.map((line) => `${BAND_LABEL[line.band]}: ${RATE.format(line.billPrice)} − PUN ${RATE.format(line.officialPun)} = ${RATE.format(line.spread)}`).join(" · ")}</small></>;
+  const detail = spread.source === "BILL"
+    ? `Letto nella tabella della spesa per la vendita: ${spread.lines.map((line) => `${BAND_LABEL[line.band]} ${RATE.format(line.spread)}`).join(" · ")}`
+    : `Prezzo energia in bolletta meno PUN GME: ${spread.lines.map((line) => line.billPrice !== null && line.officialPun !== null ? `${BAND_LABEL[line.band]} ${RATE.format(line.billPrice)} − ${RATE.format(line.officialPun)} = ${RATE.format(line.spread)}` : `${BAND_LABEL[line.band]} ${RATE.format(line.spread)}`).join(" · ")}`;
+  return <>{RATE.format(spread.spread)} €/kWh <small className="quote-spread-detail">{detail}</small></>;
 }
 const STRUCTURE_LABEL: Record<string, string> = { MONO: "Monorario", F1_F2_F3: "A fasce (F1, F2, F3)", F1_F23: "Biorario (F1 e F23)" };
 // How the index is applied over time: one price, three bands, F1/F23, peak and off-peak, or hourly.

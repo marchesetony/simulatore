@@ -36,3 +36,7 @@ assert.deepEqual([estimateBillSpread(sept, ["2026-09"], [], official, "2026-10-0
 assert.equal(estimateBillSpread(sept, ["2026-09"], [], official, "2026-10-20").status, "PUN_MISSING");
 assert.equal(estimateBillSpread(sept, ["2026-03"], [], official, "2026-10-20").status, "PUN_EXPIRED");
 console.log("BILL_SPREAD_PUN_TIMING=PASS");
+// When the sale-of-energy table prints index and markup as separate rows, the spread is read from the bill.
+const printed = estimateBillSpread(bill([{ ...line("PUN Index GME F1", "0,1200", 600), code: "PUN_F1" }, { ...line("Spread F1", "0,0180", 600), code: "SPREAD" }, line("Dispacciamento", "0,0090", 1000)]), ["2026-09"], [], official, "2026-10-20");
+assert.equal(printed.status, "CALCULATED"); assert.equal(printed.source, "BILL"); close(printed.spread, 0.018);
+console.log("BILL_PRINTED_SPREAD=PASS");

@@ -6,10 +6,10 @@ export type BillSpreadBand = "F0" | "F1" | "F2" | "F3" | "F23";
 
 export interface BillSpreadLine {
   readonly band: BillSpreadBand;
-  /** Energy price applied on the bill, in EUR/kWh. */
-  readonly billPrice: number;
+  /** Energy price applied on the bill, in EUR/kWh (null when the bill prints the spread itself). */
+  readonly billPrice: number | null;
   /** Official GME PUN of the same months and band, in EUR/kWh. */
-  readonly officialPun: number;
+  readonly officialPun: number | null;
   readonly spread: number;
 }
 
@@ -23,6 +23,8 @@ export interface BillCurrentSpread {
   readonly lines: readonly BillSpreadLine[];
   /** Consumption-weighted spread over the bands, EUR/kWh. */
   readonly spread: number | null;
+  /** BILL: the sale-of-energy table prints the spread; CALCULATED: applied price minus official PUN. */
+  readonly source?: "BILL" | "CALCULATED";
 }
 
 type MarketRates = { readonly f1: number | null; readonly f2: number | null; readonly f3: number | null; readonly monthly: number | null };
@@ -49,6 +51,26 @@ function bandOf(text: string): BillSpreadBand | null {
   return null;
 }
 
+const SPREAD_LINE = /spread|maggiorazion|corrispettivo (di |per la )?(vendita|commerciale) variabile|componente commerciale variabile|\balfa\b|\bα\b/i;
+const PUN_LINE_CODES = new Set(["PUN_SINGLE", "PUN_F1", "PUN_F2", "PUN_F3", "ENERGY_INDEX"]);
+function lineText(line: StructuredBillExtraction["economicChargeLines"][number]): string { return `${line.description} ${line.rawDescription ?? ""}`; }
+function perKwhLine(line: StructuredBillExtraction["economicChargeLines"][number]): boolean { return PER_KWH.test(`${line.unit} ${line.rawUnit ?? ""} ${line.unitPrice}`); }
+function isSpreadLine(line: StructuredBillExtraction["economicChargeLines"][number]): boolean { return (line.code === "SPREAD" || line.code === "ENERGY_SPREAD" || SPREAD_LINE.test(lineText(line))) && perKwhLine(line) && !/dispacciament|perdit|capacit/i.test(lineText(line)); }
+
+/** The spread when the sale-of-energy table prints it as its own row (index and markup billed apart). */
+export function printedSpread(extraction: StructuredBillExtraction): Partial<Record<BillSpreadBand, { readonly spread: number; readonly quantity: number }>> {
+  const result: Partial<Record<BillSpreadBand, { spread: number; quantity: number }>> = {};
+  for (const line of extraction.economicChargeLines.filter(isSpreadLine)) {
+    const spread = perKwh(decimal(line.unitPrice));
+    if (spread === null) continue;
+    const band = bandOf(lineText(line)) ?? "F0";
+    const quantity = decimal(line.quantity) ?? 0;
+    const current = result[band];
+    result[band] = current ? { spread: current.quantity + quantity > 0 ? (current.spread * current.quantity + spread * quantity) / (current.quantity + quantity) : spread, quantity: current.quantity + quantity } : { spread, quantity };
+  }
+  return result;
+}
+
 /** The energy price per band the bill applies: stated prices first, then the unit price of the energy lines. */
 export function billEnergyPrices(extraction: StructuredBillExtraction): Partial<Record<BillSpreadBand, number>> {
   const prices: Partial<Record<BillSpreadBand, number>> = {};
@@ -57,16 +79,19 @@ export function billEnergyPrices(extraction: StructuredBillExtraction): Partial<
   if (Object.keys(prices).length) return prices;
   const lines = extraction.economicChargeLines.filter((line) => {
     const text = `${line.description} ${line.rawDescription ?? ""}`;
-    return PER_KWH.test(`${line.unit} ${line.rawUnit ?? ""} ${line.unitPrice}`) && !NOT_ENERGY.test(text) && /energia|materia|prezzo|pun|componente|quota (variabile|energia)|F[0-3]/i.test(text);
+    return perKwhLine(line) && !NOT_ENERGY.test(text) && (PUN_LINE_CODES.has(line.code) || isSpreadLine(line) || /energia|materia|prezzo|pun|componente|quota (variabile|energia)|F[0-3]/i.test(text));
   });
-  const sums = new Map<BillSpreadBand, { amount: number; quantity: number; price: number | null }>();
+  const sums = new Map<BillSpreadBand, { amount: number; quantity: number; price: number | null; quantities: Set<number> }>();
   for (const line of lines) {
     const band = bandOf(`${line.description} ${line.rawDescription ?? ""}`) ?? "F0";
     const price = perKwh(decimal(line.unitPrice));
     const quantity = decimal(line.quantity) ?? 0;
     const amount = decimal(line.amount) ?? (price !== null ? price * quantity : 0);
-    const current = sums.get(band) ?? { amount: 0, quantity: 0, price: null };
-    sums.set(band, { amount: current.amount + amount, quantity: current.quantity + quantity, price: current.price ?? price });
+    const current = sums.get(band) ?? { amount: 0, quantity: 0, price: null, quantities: new Set<number>() };
+    // Index and markup rows bill the same kWh: those kWh count once.
+    const repeated = current.quantities.has(quantity);
+    current.quantities.add(quantity);
+    sums.set(band, { amount: current.amount + amount, quantity: current.quantity + (repeated ? 0 : quantity), price: current.price ?? price, quantities: current.quantities });
   }
   // Several lines of one band (PUN and its markup printed apart) add up to the price applied to each kWh.
   sums.forEach((value, band) => { const price = value.quantity > 0 && value.amount > 0 ? value.amount / value.quantity : value.price; if (price !== null && price > 0) prices[band] = price; });
@@ -102,6 +127,13 @@ export function estimateBillSpread(extraction: StructuredBillExtraction | null, 
   if (!extraction || extraction.vector.value !== "EE" || months.length === 0) return null;
   const kwh = (field: StructuredBillExtraction["f1Consumption"]) => field.status === "FOUND" && typeof field.value === "number" ? field.value : 0;
   const consumption = { F1: kwh(extraction.f1Consumption), F2: kwh(extraction.f2Consumption), F3: kwh(extraction.f3Consumption) };
+  const printed = printedSpread(extraction);
+  const printedBands = Object.keys(printed) as BillSpreadBand[];
+  if (printedBands.length) {
+    const lines = printedBands.map((band) => ({ band, billPrice: null, officialPun: null, spread: printed[band]!.spread }));
+    const structure: BillPunStructure = printedBands.includes("F23") ? "F1_F23" : printedBands.some((band) => band === "F2" || band === "F3") ? "F1_F2_F3" : "MONO";
+    return { status: "CALCULATED", source: "BILL", structure, months, lines, spread: weighted(printedBands.map((band) => [printed[band]!.spread, printed[band]!.quantity] as const)) };
+  }
   const prices = billEnergyPrices(extraction);
   const structure: BillPunStructure = prices.F23 !== undefined ? "F1_F23" : prices.F1 !== undefined && (prices.F2 !== undefined || prices.F3 !== undefined) ? "F1_F2_F3" : "MONO";
   const monthly = months.map((month) => ratesFor(records, month, isOfficial));
@@ -125,6 +157,6 @@ export function estimateBillSpread(extraction: StructuredBillExtraction | null, 
   }
   if (!lines.length) return { status: officialPunMissing(bands, pun) ? "PUN_MISSING" : "PRICE_MISSING", ...empty };
   const weightOf = (band: BillSpreadBand) => band === "F23" ? consumption.F2 + consumption.F3 : band === "F0" ? consumption.F1 + consumption.F2 + consumption.F3 : consumption[band];
-  return { status: "CALCULATED", structure, months, lines, spread: weighted(lines.map((line) => [line.spread, weightOf(line.band)] as const)) };
+  return { status: "CALCULATED", source: "CALCULATED", structure, months, lines, spread: weighted(lines.map((line) => [line.spread, weightOf(line.band)] as const)) };
 }
 function officialPunMissing(bands: readonly BillSpreadBand[], pun: Record<BillSpreadBand, number | null>): boolean { return bands.every((band) => pun[band] === null); }
