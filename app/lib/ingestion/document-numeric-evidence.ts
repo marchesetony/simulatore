@@ -439,3 +439,21 @@ export function extractDocumentPriceRows(bytes: Uint8Array): readonly DocumentPr
   }
   return rows.slice(0, 40);
 }
+
+const OFFER_NAME_LABEL = /^\s*(?:offerta commerciale in vigore|denominazione dell['\u2019]?\s*offerta(?:\s+commerciale)?|nome (?:dell['\u2019]?\s*)?offerta|offerta sottoscritta|offerta attiva|offerta)\s*:\s*(.*)$/i;
+/** The current offer's name as the bill prints it next to its label ("Offerta commerciale in vigore: PiuContr Actv Lav Luce - V16"). */
+export function extractDocumentOfferName(bytes: Uint8Array): string | null {
+  const { status, items } = documentTextItems(bytes);
+  if (status !== "AVAILABLE") return null;
+  const usable = (text: string) => { const value = text.replace(/\s+/g, " ").trim(); return value.length >= 3 && value.length <= 80 && /[a-z]/i.test(value) && !/^[.\s_-]+$/.test(value) && !/:\s*$/.test(value) ? value : null; };
+  for (let index = 0; index < items.length; index += 1) {
+    const match = OFFER_NAME_LABEL.exec(items[index].text);
+    if (!match) continue;
+    const inline = usable(match[1] ?? "");
+    if (inline) return boundedText(inline, 80);
+    // The value is the next text item of the same page, in reading order.
+    const next = items.slice(index + 1, index + 4).find((item) => item.page === items[index].page && usable(item.text));
+    if (next) return boundedText(usable(next.text) ?? "", 80);
+  }
+  return null;
+}

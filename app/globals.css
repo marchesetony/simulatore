@@ -523,3 +523,4 @@ button:focus-visible,a:focus-visible,input:focus-visible,select:focus-visible,te
 .quote-receipt tr.quote-detail-row th { padding-left:24px; font-weight:400; font-size:14px; }
 .quote-receipt tr.quote-detail-row td { font-size:14px; color:var(--muted, #556); }
 .quote-receipt tr.quote-section-row th,.quote-receipt tr.quote-section-row td { font-weight:700; border-top:1px solid var(--line); }
+.quote-receipt thead th small { display:block; font-weight:400; font-size:12px; color:var(--muted, #667); }

@@ -255,7 +255,7 @@ function estimatedFromPeriod(context: Context, ee: boolean): string {
   return basis?.estimated ? `${amount(basis.annual, ee ? "kWh" : "Smc")} (stimato dal periodo)` : "—";
 }
 
-function BillSummary({ context }: { readonly context: Context }): ReactNode {
+function BillSummary({ context, bill }: { readonly context: Context; readonly bill: BillDocumentModel }): ReactNode {
   const ee = context.vector === "EE";
   const period = context.consumption?.period;
   const rows: readonly (readonly [string, string])[] = [
@@ -263,7 +263,7 @@ function BillSummary({ context }: { readonly context: Context }): ReactNode {
     ["Cliente", context.customerType === "RESIDENTIAL" ? "Consumer" : "Business"],
     [ee ? "POD" : "PDR", (ee ? context.supply.pod : context.supply.pdr) ?? "—"],
     ...(ee ? [["Tensione", context.supply.voltageLevel ? VOLTAGE[context.supply.voltageLevel] : "—"] as const, ["Potenza impegnata", amount(context.supply.contractedPowerKw, "kW")] as const] : []),
-    ["Fornitore attuale", [context.currentSupplier, context.currentOffer?.name].filter(Boolean).join(" · ") || "—"],
+    ["Fornitore attuale", context.currentSupplier || "—"], ["Offerta attuale", billOfferName(bill, context) ?? "Non indicata in bolletta"],
     ["Periodo fatturato", `${date(context.billingPeriod.periodStart)} – ${date(context.billingPeriod.periodEnd)}`],
     ["Consumo del periodo", ee ? `F1 ${amount(period?.f1, "kWh")} · F2 ${amount(period?.f2, "kWh")} · F3 ${amount(period?.f3, "kWh")}` : amount(period?.smc, "Smc")],
     ["Consumo annuo", context.consumption?.annual != null ? amount(context.consumption.annual, ee ? "kWh" : "Smc") : estimatedFromPeriod(context, ee)],
@@ -370,6 +370,14 @@ function CostDetail({ offer, open }: { readonly offer: Offer; readonly open: boo
   </details>;
 }
 
+// The current offer's name (and code) as read on the uploaded bill, shown next to the bill column when the bill states it (Tony, 26/10).
+function billOfferName(bill: BillDocumentModel | null, context: Context): string | null {
+  const receipt = bill?.analystReview.receipt ?? null;
+  const name = context.currentOffer?.name?.trim() || receipt?.offerName.value?.trim() || bill?.structuredBill?.documentOfferName?.trim() || null;
+  const code = context.currentOffer?.code?.trim() || receipt?.offerCode.value?.trim() || null;
+  if (!name) return code ? `codice ${code}` : null;
+  return code && !name.includes(code) ? `${name} (${code})` : name;
+}
 // A lower cost is green, a higher one red: the difference reads CTE minus bill.
 function difference(value: number | null): string | undefined { return value === null || Math.abs(value) < 0.01 ? undefined : value < 0 ? "positive" : "negative"; }
 function signedEuro(value: number | null): string { return value === null ? "—" : Math.abs(value) < 0.01 ? "=" : `${value > 0 ? "+" : "−"}${EURO.format(Math.abs(value))}`; }
@@ -388,6 +396,7 @@ function OfferBox({ offer, bill, context }: { readonly offer: Offer; readonly bi
   const index = offer.candidate.pricingReference === "PSV" || !ee ? "PSV" : "PUN";
   const offerType = offer.candidate.pricingType === "FIXED" ? "Prezzo fisso" : offer.candidate.pricingType === "INDEXED" ? `Indicizzato ${index}` : "Non indicato";
   const rows: readonly (readonly [string, ReactNode, ReactNode, string | undefined])[] = [
+    ["Offerta", billOfferName(bill, context) ?? "non indicata in bolletta", `${offer.offerName}${offer.candidate.offer.code ? ` (${offer.candidate.offer.code})` : ""}`, undefined],
     ["Tipo di prezzo", priceType(bill), offerType, undefined],
     ...(ee && indexedBill(bill) ? [["Indice nel periodo (GME)", referencePun(bill), "stesso indice e stesso periodo", undefined] as const] : []),
     ["Spread sull'indice", billSpread === null ? "—" : `${RATE.format(billSpread)} ${unit}`, terms?.spread == null ? "—" : `${RATE.format(terms.spread)} ${unit}`, billSpread !== null && terms?.spread != null ? difference(terms.spread - billSpread) : undefined],
@@ -400,7 +409,7 @@ function OfferBox({ offer, bill, context }: { readonly offer: Offer; readonly bi
   return <div className="quote-offer-box">
     <p className="eyebrow">BOX OFFERTA · CONFRONTO BOLLETTA / CTE</p>
     <div className="responsive-table"><table>
-      <thead><tr><th scope="col">Caratteristica</th><th scope="col">Bolletta ({context.currentSupplier})</th><th scope="col">{offer.offerName}</th></tr></thead>
+      <thead><tr><th scope="col">Caratteristica</th><th scope="col">Bolletta: {[context.currentSupplier, billOfferName(bill, context)].filter(Boolean).join(" · ")}</th><th scope="col">{offer.offerName}</th></tr></thead>
       <tbody>{rows.map(([label, current, simulated, tone]) => <tr key={label} className={tone ? "changed" : undefined}><th scope="row">{label}</th><td>{current}</td><td className={tone}>{simulated}</td></tr>)}</tbody>
     </table></div>
   </div>;
@@ -417,6 +426,7 @@ function Receipt({ offer, today, business, context, bill }: { readonly offer: Of
   const unit = context.vector === "EE" ? "kWh" : "Smc";
   const left = daysUntil(receipt.validUntil, today);
   const saving = receipt.savings ?? 0;
+  const currentOffer = billOfferName(bill, context);
   return <section className="ui-card quote-receipt" aria-label="Scontrino dell'energia">
     <p className="eyebrow">SCONTRINO DELL&apos;ENERGIA</p>
     <h3>{offer.supplier} · {offer.offerName}</h3>
@@ -433,7 +443,7 @@ function Receipt({ offer, today, business, context, bill }: { readonly offer: Of
         then every charge they contain (energia, dispacciamento, capacity, sbilanciamento, PCV, Flex, accise, IVA…) on its own line. */}
     <div className="responsive-table"><table className="quote-scontrino">
       <caption>Periodo della bolletta: {date(context.billingPeriod.periodStart)} – {date(context.billingPeriod.periodEnd)} · stessi consumi per entrambe le colonne</caption>
-      <thead><tr><th scope="col">Voce</th><th scope="col">Bolletta attuale</th><th scope="col">CTE simulata</th><th scope="col">Differenza</th></tr></thead>
+      <thead><tr><th scope="col">Voce</th><th scope="col">Bolletta attuale{currentOffer ? <small>{context.currentSupplier} · {currentOffer}</small> : null}</th><th scope="col">CTE simulata<small>{offer.supplier} · {offer.offerName}</small></th><th scope="col">Differenza</th></tr></thead>
       <tbody>{receipt.rows.flatMap((row) => [<tr key={row.key} className={`quote-section-row${row.difference != null && Math.abs(row.difference) >= 0.01 ? " changed" : ""}`}>
         <th scope="row">{row.label}</th><td>{euro(row.current)}</td><td>{euro(row.offer)}</td><td className={difference(row.difference ?? null)}>{signedEuro(row.difference ?? null)}</td>
       </tr>, ...(row.details ?? []).map((item) => <tr key={`${row.key}-${item.key}`} className={`quote-detail-row${item.difference !== null && Math.abs(item.difference) >= 0.01 ? " changed" : ""}`}>
@@ -581,7 +591,7 @@ export default function QuickQuoteFlow({ readonly }: { readonly readonly: boolea
       <div className="button-row"><button className="button primary" type="button" onClick={() => void confirm()} disabled={readonly || Boolean(pending)}>{pending === "confirm" ? "Ricerca in corso" : "Cerca le CTE utilizzabili"}</button></div>
     </section> : null}
     {step === "offers" ? pending === "offers" ? <LoadingState label="Calcolo delle offerte per questa bolletta" /> : quote ? <>
-      <BillSummary context={quote.context} />
+      <BillSummary context={quote.context} bill={quote.bill} />
       <section className="ui-card"><h3>Offerte utilizzabili per {quote.context.vector === "EE" ? "questa fornitura di luce" : "questa fornitura di gas"}</h3>
         {quote.offers.length ? <div className="quote-offers">{quote.offers.map((offer, index) => <button key={offer.calculation.calculationId} type="button" className={`quote-offer${offer.calculation.calculationId === selectedId ? " selected" : ""}${index === 0 ? " best" : ""}`} onClick={() => { setSelectedId(offer.calculation.calculationId); setProposal(null); }} aria-pressed={offer.calculation.calculationId === selectedId}>
           {index === 0 ? <span className="status-badge positive">La più conveniente</span> : null}

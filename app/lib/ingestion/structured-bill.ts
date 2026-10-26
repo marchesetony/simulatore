@@ -117,6 +117,8 @@ export interface StructuredBillExtraction {
   readonly monthlyBandPrecisionMismatch?: boolean;
   /** Rows of the sale-of-energy formula table read from the PDF text layer (EUR/kWh). */
   readonly documentPriceRows?: readonly import("./document-numeric-evidence").DocumentPriceRow[];
+  /** The current offer's name read straight from the PDF text layer, when the bill labels it. */
+  readonly documentOfferName?: string | null;
   readonly supplyProfile?: BillSupplyProfile;
   /** Two-stage metadata; absent on legacy/CORE-only fixtures. */
   readonly analystExtractionStatus?: "NOT_RUN" | "EXTRACTED" | "FAILED";
