@@ -35,7 +35,7 @@ export interface BillCurrentSpread {
 
 type MarketRates = { readonly f1: number | null; readonly f2: number | null; readonly f3: number | null; readonly monthly: number | null };
 
-const NOT_ENERGY = /rete|trasport|distribu|oneri|arim|asos|\buc\d|dispacciament|perdit|sbilanc|capacit|accis|impost|\biva\b|misura|potenza|\bkw\b(?!h)|quota fissa|pcv|commercializ|spesa per|totale|quota per consumi|quadro sintetico/i;
+const NOT_ENERGY = /rete|trasport|distribu|oneri|arim|asos|\buc\d|dispacciament|perdit|sbilanc|capacit|accis|impost|\biva\b|misura|potenza|\bkw\b(?!h)|quota fissa|pcv|commercializ|contribut|spesa per|totale|quota per consumi|quadro sintetico/i;
 const PER_KWH = /(€|eur[o]?)\s*\/\s*kwh|\/\s*kwh/i;
 
 function decimal(value: string | null | undefined): number | null {
@@ -66,8 +66,8 @@ function perKwhLine(line: StructuredBillExtraction["economicChargeLines"][number
   const price = decimal(line.unitPrice);
   return !`${line.unit ?? ""}${line.rawUnit ?? ""}`.trim() && price !== null && price > 0 && price < 1;
 }
-// Per-kWh seller components billed on top of the index price, part of what the supplier earns on each kWh.
-const SELLER_KWH = /contributo (sui|ai) consumi|corrispettivo (di |per la )?vendita|componente (di )?vendita|prezzo nett|prezzo (dell')?energia/i;
+// The energy price rows: the spread is measured on them alone, without contributions or other seller charges.
+const SELLER_KWH = /prezzo nett|prezzo (dell')?energia/i;
 const HOURLY = /orari[oa]\b(?!.*(unico|fasc))|pun orario|prezzo orario|su base oraria|per ogni ora/i;
 /** The index is applied hour by hour (PUN Index GME orario): consumption is still read in F1, F2, F3. */
 export function hourlyIndex(extraction: StructuredBillExtraction): boolean {

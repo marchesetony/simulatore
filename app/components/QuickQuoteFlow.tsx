@@ -90,6 +90,7 @@ function amount(value: number | null | undefined, unit: string): string { return
 const VOLTAGE: Record<string, string> = { LV: "Bassa tensione (BT)", MV: "Media tensione (MT)", HV: "Alta tensione (AT)", EHV: "Altissima tensione (AAT)" };
 const MISSING: Record<string, string> = { customerType: "tipo cliente", billingPeriod: "periodo fatturato", POD: "POD", PDR: "PDR", voltageLevel: "livello di tensione", F1: "consumo F1", F2: "consumo F2", F3: "consumo F3", SMC: "consumo in Smc", technicalClassification: "uso della fornitura" };
 const RATE = new Intl.NumberFormat("it-IT", { minimumFractionDigits: 4, maximumFractionDigits: 6 });
+const PUN = new Intl.NumberFormat("it-IT", { minimumFractionDigits: 5, maximumFractionDigits: 5 });
 // Price lines the agent quotes from the CTE: fixed price or spread on the index, and the monthly PCV.
 function termLines(candidate: Candidate): readonly string[] {
   const terms = candidate.terms;
@@ -172,7 +173,7 @@ function billSpread(bill: BillDocumentModel): ReactNode {
   if (spread.status === "PRICE_MISSING" || spread.spread === null) return "Non calcolabile: la bolletta non mostra il prezzo dell'energia";
   const detail = spread.source === "BILL"
     ? `Letto nella tabella della spesa per la vendita: ${spread.lines.map((line) => `${line.band === "F0" ? "Monorario" : BAND_LABEL[line.band]} ${RATE.format(line.spread)}`).join(" · ")}`
-    : `Prezzo energia in bolletta meno PUN GME: ${spread.lines.map((line) => line.billPrice !== null && line.officialPun !== null ? `${BAND_LABEL[line.band]} ${line.components ? `(${line.components.map((part) => `${part.label} ${RATE.format(part.price)}`).join(" + ")}) ` : ""}${RATE.format(line.billPrice)} − ${spread.structure === "HOURLY" ? "PUN orario stimato sui consumi F1/F2/F3 della bolletta " : ""}${RATE.format(line.officialPun)} = ${RATE.format(line.spread)}` : `${BAND_LABEL[line.band]} ${RATE.format(line.spread)}`).join(" · ")}`;
+    : `Prezzo energia in bolletta meno PUN GME: ${spread.lines.map((line) => line.billPrice !== null && line.officialPun !== null ? `${BAND_LABEL[line.band]} ${line.components ? `(${line.components.map((part) => `${part.label} ${RATE.format(part.price)}`).join(" + ")}) ` : ""}${RATE.format(line.billPrice)} − ${spread.structure === "HOURLY" ? "PUN delle fasce pesato sui consumi della bolletta " : "PUN "}${PUN.format(line.officialPun)} = ${RATE.format(line.spread)}` : `${BAND_LABEL[line.band]} ${RATE.format(line.spread)}`).join(" · ")}`;
   return <>{RATE.format(spread.spread)} €/kWh <small className="quote-spread-detail">{detail}</small></>;
 }
 const MONTH_NAME = new Intl.DateTimeFormat("it-IT", { month: "long", year: "numeric", timeZone: "UTC" });
@@ -182,9 +183,9 @@ function referencePun(bill: BillDocumentModel): ReactNode {
   if (!spread || !spread.months.length) return "Periodo della bolletta non letto";
   const months = spread.months.map((month) => MONTH_NAME.format(new Date(`${month}-01T00:00:00Z`))).join(", ");
   if (spread.referencePun === undefined || spread.referencePun === null) return `${months}: ${spread.status === "PUN_NOT_PUBLISHED" ? `pubblicato dal GME entro il ${date(spread.publishedBy ?? null)}` : spread.status === "PUN_EXPIRED" ? "non più in archivio" : "non ancora in archivio"}`;
-  const basis = spread.structure === "HOURLY" ? " (PUN F1, F2, F3 pesato sui consumi della bolletta)" : spread.structure === "MONO" ? " (media mensile)" : " (fasce pesate sui consumi della bolletta)";
-  const bands = spread.referenceBands?.length ? ` · ${spread.referenceBands.map((item) => `${item.band} ${RATE.format(item.pun)}`).join(" · ")} €/kWh` : "";
-  return <>{RATE.format(spread.referencePun)} €/kWh <small className="quote-spread-detail">{months}{basis}{bands}</small></>;
+  // Monorario: the monthly PUN only; bands (and hourly offers, whose consumption is read in bands): the band values only.
+  if (spread.structure === "MONO" || !spread.referenceBands?.length) return <>{PUN.format(spread.referencePun)} €/kWh <small className="quote-spread-detail">{months} (PUN mensile)</small></>;
+  return <>{spread.referenceBands.map((item) => `${item.band} ${PUN.format(item.pun)}`).join(" · ")} €/kWh <small className="quote-spread-detail">{months}</small></>;
 }
 const STRUCTURE_LABEL: Record<string, string> = { MONO: "Monorario", F1_F2_F3: "A fasce (F1, F2, F3)", F1_F23: "Biorario (F1 e F23)", HOURLY: "PUN orario (consumi letti in F1, F2, F3)" };
 // How the index is applied over time: one price, three bands, F1/F23, peak and off-peak, or hourly.
