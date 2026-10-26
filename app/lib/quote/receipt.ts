@@ -24,8 +24,10 @@ export interface QuoteReceipt {
 }
 export type QuoteReceiptQuotaKey = "CONSUMPTION" | "FIXED" | "POWER" | "OTHER" | "EXCISE" | "VAT" | "TAXES";
 /** One line of the scontrino: what the bill paid, what the simulated CTE pays, and how much of it is the seller's. */
-export interface QuoteReceiptQuota { readonly key: QuoteReceiptQuotaKey; readonly label: string; readonly basis: string; readonly current: number | null; readonly offer: number | null; readonly difference: number | null; readonly currentSeller: number | null; readonly offerSeller: number | null }
-export interface QuoteReceiptOfferComponent { readonly category: string; readonly sign: string; readonly amount: { readonly amount: number }; readonly formulaInputs?: Readonly<Record<string, string | number | boolean>> }
+export interface QuoteReceiptQuota { readonly key: QuoteReceiptQuotaKey; readonly label: string; readonly basis: string; readonly current: number | null; readonly offer: number | null; readonly difference: number | null; readonly currentSeller: number | null; readonly offerSeller: number | null; readonly details: readonly QuoteReceiptDetail[] }
+/** One named charge inside a quota (energia, dispacciamento, capacity, sbilanciamento, PCV, trasporto, oneri), bill against CTE. */
+export interface QuoteReceiptDetail { readonly key: string; readonly label: string; readonly current: number | null; readonly offer: number | null; readonly difference: number | null }
+export interface QuoteReceiptOfferComponent { readonly category: string; readonly sign: string; readonly label?: string; readonly formulaId?: string; readonly amount: { readonly amount: number }; readonly formulaInputs?: Readonly<Record<string, string | number | boolean>> }
 export interface QuoteReceiptInput {
   readonly vector: "EE" | "GAS";
   readonly offerSupplyCost: number;
@@ -85,27 +87,75 @@ function offerQuota(component: QuoteReceiptOfferComponent): Quota | "ONE_OFF" {
   if (unit === "EUR_PER_KW" || unit === "EUR_PER_KW_MONTH") return "POWER";
   return component.category === "FIXED_FEE" ? "FIXED" : "CONSUMPTION";
 }
+// Charges the bill and the CTE both name, so each one is compared on its own line and never hidden in an aggregate (Tony, 26/10).
+const DETAIL_LABEL: Readonly<Record<string, string>> = {
+  ENERGY: "Prezzo energia (indice + spread o prezzo fisso)", LOSSES: "Perdite di rete", COMMERCIALIZATION: "Commercializzazione", DISPATCHING: "Dispacciamento",
+  CAPACITY: "Mercato della capacità (capacity market)", IMBALANCE: "Sbilanciamento", SELLER_OTHER: "Altri corrispettivi di vendita", PCV: "Quota fissa di vendita (PCV)",
+  OPTIONS: "Opzioni e servizi a pagamento (es. Flex)", NETWORK: "Trasporto e gestione del contatore", SYSTEM: "Oneri di sistema",
+};
+const DETAIL_ORDER = Object.keys(DETAIL_LABEL);
+function billDetail(line: { readonly classification: string; readonly group?: string; readonly description: string }): string {
+  switch (line.classification) {
+    case "NETWORK_LOSS_CHARGE": return "LOSSES";
+    case "COMMERCIALIZATION_VARIABLE_FEE": return "COMMERCIALIZATION";
+    case "DISPATCHING_SELLER_CHARGE": return /capacit/i.test(line.description) ? "CAPACITY" : "DISPATCHING";
+    case "CAPACITY_MARKET_SELLER_CHARGE": return "CAPACITY";
+    case "BALANCING_CHARGE": return "IMBALANCE";
+    case "PCV": case "COMMERCIALIZATION_FIXED_FEE": case "SELLER_FIXED_FEE": return /flex|opzion/i.test(line.description) ? "OPTIONS" : "PCV";
+    case "ARERA_NETWORK": return "NETWORK";
+    case "ARERA_SYSTEM_CHARGES": return "SYSTEM";
+    case "OTHER_SELLER_ENERGY_CHARGE": case "OTHER_SELLER_FIXED_CHARGE": return /capacit/i.test(line.description) ? "CAPACITY" : /dispacciament/i.test(line.description) ? "DISPATCHING" : /sbilanciament/i.test(line.description) ? "IMBALANCE" : /commercializzazion/i.test(line.description) ? "COMMERCIALIZATION" : "SELLER_OTHER";
+    default: return "ENERGY";
+  }
+}
+function offerDetail(component: QuoteReceiptOfferComponent): string {
+  const text = `${component.label ?? ""} ${component.formulaInputs?.kind ?? ""} ${component.formulaInputs?.feeId ?? ""}`;
+  if (component.category === "ENERGY") return "ENERGY";
+  if (component.category === "IMBALANCE" || /sbilanciament|imbalance/i.test(text)) return "IMBALANCE";
+  if (/capacit/i.test(text)) return "CAPACITY";
+  if (/dispacciament|dispatching/i.test(text)) return "DISPATCHING";
+  if (/perdit|loss/i.test(text)) return "LOSSES";
+  if (/flex|opzion|servizi/i.test(text)) return "OPTIONS";
+  if (component.category === "FIXED_FEE") return "PCV";
+  if (/commercializzazion/i.test(text)) return "COMMERCIALIZATION";
+  return component.category === "ONE_OFF_FEE" ? "SELLER_OTHER" : "COMMERCIALIZATION";
+}
+
 function quotasOf(input: QuoteReceiptInput, currentEnergy: number | null, offerEnergy: number, network: number | null, system: number | null, currentTaxes: number | null, offerTaxes: number | null): readonly QuoteReceiptQuota[] {
   const lines = (input.analysis?.components ?? []).filter((line) => line.includedInReconciliation !== false && !line.aggregate && SUPPLY_GROUPS.has(line.group ?? ""));
   const bill = { CONSUMPTION: { all: 0, seller: 0 }, FIXED: { all: 0, seller: 0 }, POWER: { all: 0, seller: 0 } };
+  const detail = { CONSUMPTION: new Map<string, { current: number | null; offer: number | null }>(), FIXED: new Map<string, { current: number | null; offer: number | null }>(), POWER: new Map<string, { current: number | null; offer: number | null }>(), ONE_OFF: new Map<string, { current: number | null; offer: number | null }>() };
+  const addDetail = (quota: keyof typeof detail, key: string, side: "current" | "offer", value: number) => { const entry = detail[quota].get(key) ?? { current: null, offer: null }; entry[side] = (entry[side] ?? 0) + value; detail[quota].set(key, entry); };
   for (const line of lines) {
     const value = amountOf(line.amount); const quota = billQuota(line);
     if (value === null || quota === null) continue;
     bill[quota].all += value;
+    const key = billDetail(line);
+    addDetail(quota, key, "current", value);
+    // Transport and system charges are the same on both sides.
+    if (key === "NETWORK" || key === "SYSTEM") addDetail(quota, key, "offer", value);
     if (SELLER_GROUPS.has(line.group ?? "")) bill[quota].seller += value;
   }
   const offer = { CONSUMPTION: 0, FIXED: 0, POWER: 0, ONE_OFF: 0 };
-  for (const component of input.offerComponents ?? []) offer[offerQuota(component)] += (component.sign === "DISCOUNT" ? -1 : 1) * component.amount.amount;
+  for (const component of input.offerComponents ?? []) {
+    const value = (component.sign === "DISCOUNT" ? -1 : 1) * component.amount.amount; const quota = offerQuota(component);
+    offer[quota] += value;
+    addDetail(quota, offerDetail(component), "offer", value);
+  }
+  const detailsOf = (quota: keyof typeof detail, withBill: boolean): readonly QuoteReceiptDetail[] => [...detail[quota].entries()]
+    .sort(([a], [b]) => DETAIL_ORDER.indexOf(a) - DETAIL_ORDER.indexOf(b))
+    .map(([key, value]) => ({ key, label: DETAIL_LABEL[key] ?? key, current: !withBill || value.current === null ? null : cents(value.current), offer: value.offer === null ? null : cents(value.offer), difference: !withBill ? null : cents((value.offer ?? 0) - (value.current ?? 0)) }));
   // Transport and system charges stay those of the bill: the offer side swaps only the seller's part of each quota.
   const regulated = (quota: Quota) => cents(bill[quota].all - bill[quota].seller);
-  const row = (key: QuoteReceiptQuotaKey, label: string, basis: string, current: number | null, offerValue: number | null, currentSeller: number | null = null, offerSeller: number | null = null): QuoteReceiptQuota =>
-    ({ key, label, basis, current: current === null ? null : cents(current), offer: offerValue === null ? null : cents(offerValue), difference: current === null || offerValue === null ? null : cents(offerValue - current), currentSeller: currentSeller === null ? null : cents(currentSeller), offerSeller: offerSeller === null ? null : cents(offerSeller) });
+  const row = (key: QuoteReceiptQuotaKey, label: string, basis: string, current: number | null, offerValue: number | null, currentSeller: number | null = null, offerSeller: number | null = null, details: readonly QuoteReceiptDetail[] = []): QuoteReceiptQuota =>
+    ({ key, label, basis, current: current === null ? null : cents(current), offer: offerValue === null ? null : cents(offerValue), difference: current === null || offerValue === null ? null : cents(offerValue - current), currentSeller: currentSeller === null ? null : cents(currentSeller), offerSeller: offerSeller === null ? null : cents(offerSeller), details });
+  const withBill = currentEnergy !== null;
   const consumptionUnit = input.vector === "EE" ? "kWh" : "Smc";
   const rows: QuoteReceiptQuota[] = [
-    row("CONSUMPTION", "Quota per consumi", `${consumptionUnit} consumati \u00d7 prezzi unitari`, currentEnergy === null ? null : bill.CONSUMPTION.all, regulated("CONSUMPTION") + offer.CONSUMPTION, currentEnergy === null ? null : bill.CONSUMPTION.seller, offer.CONSUMPTION),
-    row("FIXED", "Quota fissa", "mesi \u00d7 corrispettivi in \u20ac/mese", currentEnergy === null ? null : bill.FIXED.all, regulated("FIXED") + offer.FIXED, currentEnergy === null ? null : bill.FIXED.seller, offer.FIXED),
+    row("CONSUMPTION", "Quota per consumi", `${consumptionUnit} consumati \u00d7 prezzi unitari`, currentEnergy === null ? null : bill.CONSUMPTION.all, regulated("CONSUMPTION") + offer.CONSUMPTION, currentEnergy === null ? null : bill.CONSUMPTION.seller, offer.CONSUMPTION, detailsOf("CONSUMPTION", withBill)),
+    row("FIXED", "Quota fissa", "mesi \u00d7 corrispettivi in \u20ac/mese", currentEnergy === null ? null : bill.FIXED.all, regulated("FIXED") + offer.FIXED, currentEnergy === null ? null : bill.FIXED.seller, offer.FIXED, detailsOf("FIXED", withBill)),
   ];
-  if (input.vector === "EE") rows.push(row("POWER", "Quota potenza", "kW \u00d7 corrispettivi in \u20ac/kW", currentEnergy === null ? null : bill.POWER.all, regulated("POWER") + offer.POWER, currentEnergy === null ? null : bill.POWER.seller, offer.POWER));
+  if (input.vector === "EE") rows.push(row("POWER", "Quota potenza", "kW \u00d7 corrispettivi in \u20ac/kW", currentEnergy === null ? null : bill.POWER.all, regulated("POWER") + offer.POWER, currentEnergy === null ? null : bill.POWER.seller, offer.POWER, detailsOf("POWER", withBill)));
   // Whatever the bill does not tie to a quota (a line without unit) and the CTE's one-off fees, so the quotas add up to the same totals.
   const supplyCurrent = currentEnergy === null ? null : currentEnergy + (network ?? 0) + (system ?? 0);
   const supplyOffer = offerEnergy + (network ?? 0) + (system ?? 0);
@@ -113,7 +163,7 @@ function quotasOf(input: QuoteReceiptInput, currentEnergy: number | null, offerE
   const placedOffer = rows.reduce((total, item) => total + (item.offer ?? 0), 0);
   const otherCurrent = supplyCurrent === null ? null : cents(supplyCurrent - placedCurrent);
   const otherOffer = cents(supplyOffer - placedOffer);
-  if (Math.abs(otherCurrent ?? 0) >= 0.01 || Math.abs(otherOffer) >= 0.01) rows.push(row("OTHER", "Altre voci della fornitura", "corrispettivi senza unit\u00e0 in bolletta e una tantum della CTE", otherCurrent, otherOffer));
+  if (Math.abs(otherCurrent ?? 0) >= 0.01 || Math.abs(otherOffer) >= 0.01) rows.push(row("OTHER", "Altre voci della fornitura", "corrispettivi senza unit\u00e0 in bolletta e una tantum della CTE", otherCurrent, otherOffer, null, null, detailsOf("ONE_OFF", false)));
   if (currentTaxes !== null && offerTaxes !== null) {
     const excise = sumKnown((input.analysis?.components ?? []).filter((line) => line.classification === "ACCISE" && !line.aggregate).map((line) => amountOf(line.amount)));
     if (excise !== null) {

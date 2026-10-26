@@ -433,10 +433,13 @@ function Receipt({ offer, today, business, context, bill }: { readonly offer: Of
     <div className="responsive-table"><table className="quote-scontrino">
       <caption>Periodo della bolletta: {date(context.billingPeriod.periodStart)} – {date(context.billingPeriod.periodEnd)} · stessi consumi per entrambe le colonne</caption>
       <thead><tr><th scope="col">Voce</th><th scope="col">Bolletta attuale</th><th scope="col">CTE simulata</th><th scope="col">Differenza</th></tr></thead>
-      <tbody>{receipt.quotas.map((row) => <tr key={row.key} className={row.difference !== null && Math.abs(row.difference) >= 0.01 ? "changed" : undefined}>
+      <tbody>{receipt.quotas.flatMap((row) => [<tr key={row.key} className={row.difference !== null && Math.abs(row.difference) >= 0.01 ? "changed" : undefined}>
         <th scope="row">{row.label}<small>{row.basis}{row.currentSeller !== null || row.offerSeller !== null ? ` · di cui vendita ${euro(row.currentSeller)} → ${euro(row.offerSeller)}` : ""}</small></th>
         <td>{euro(row.current)}</td><td>{euro(row.offer)}</td><td className={difference(row.difference)}>{signedEuro(row.difference)}</td>
-      </tr>)}</tbody>
+      </tr>, ...row.details.map((item) => <tr key={`${row.key}-${item.key}`} className={`quote-detail-row${item.difference !== null && Math.abs(item.difference) >= 0.01 ? " changed" : ""}`}>
+        <th scope="row">{item.label}</th>
+        <td>{item.current === null ? (receipt.status === "COMPLETE" ? "non in bolletta" : "—") : euro(item.current)}</td><td>{item.offer === null ? "non nella CTE" : euro(item.offer)}</td><td className={difference(item.difference)}>{signedEuro(item.difference)}</td>
+      </tr>)])}</tbody>
       {receipt.status === "COMPLETE" ? <tfoot><tr><th scope="row">{receipt.taxesIncluded ? "Totale" : "Totale imposte escluse"}</th><td>{euro(receipt.currentTotal)}</td><td>{euro(receipt.offerTotal)}</td><td className={difference(receipt.savings === null ? null : -receipt.savings)}>{signedEuro(receipt.savings === null ? null : -receipt.savings)}</td></tr></tfoot> : null}
     </table></div>
     <OfferBox offer={offer} bill={bill} context={context} />

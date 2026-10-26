@@ -520,3 +520,5 @@ button:focus-visible,a:focus-visible,input:focus-visible,select:focus-visible,te
 .quote-receipt td.positive { color:#12664f; font-weight:700; }
 .quote-receipt td.negative { color:#8c2d2d; font-weight:700; }
 .quote-offer-box { margin-top:16px; padding:14px 0 0; border-top:1px solid var(--line); }
+.quote-receipt tr.quote-detail-row th { padding-left:24px; font-weight:400; font-size:14px; }
+.quote-receipt tr.quote-detail-row td { font-size:14px; color:var(--muted, #556); }

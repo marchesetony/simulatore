@@ -61,5 +61,19 @@ assert.equal(Math.round(scontrino.quotas.reduce((sum, row) => sum + row.offer, 0
 // A bill line without a unit is not dropped: it shows as "Altre voci" so the totals still match.
 const unplaced = buildQuoteReceipt({ vector: "EE", offerSupplyCost: 88, analysis: { components: scontrinoLines.filter((item) => item.description !== "Quota potenza"), totals: scontrinoTotals }, domestic: true, validUntil: null, offerComponents });
 assert.deepEqual(unplaced.quotas.find((row) => row.key === "OTHER")?.current, 10);
+// 7. Charges aggregated in a quota are still listed one by one (Tony, 26/10): dispatching, capacity and imbalance each get
+//    their own bill/CTE line, and a charge only one side has reads as missing on the other instead of disappearing.
+const detailed = buildQuoteReceipt({ vector: "EE", offerSupplyCost: 95, domestic: false, validUntil: null, analysis: { totals: { ...scontrinoTotals, sellerEnergyTotal: 70, sellerOtherTotal: 10 }, components: [
+  supply("ENERGY_PRICE", "ENERGY_INDEX", "70,00", "€/kWh", "Prezzo energia"), supply("DISPATCHING_OR_PASS_THROUGH", "DISPATCHING_SELLER_CHARGE", "6,00", "€/kWh", "Dispacciamento"),
+  supply("CAPACITY_MARKET", "CAPACITY_MARKET_SELLER_CHARGE", "4,00", "€/kWh", "Corrispettivo capacity market"), supply("COMMERCIALIZATION", "PCV", "15,00", "€/mese", "Quota fissa vendita"),
+] }, offerComponents: [
+  { category: "ENERGY", sign: "CHARGE", amount: { amount: 66 } },
+  { category: "VARIABLE_FEE", sign: "CHARGE", label: "Pass-through contrattuale DISPATCHING", formulaInputs: { kind: "DISPATCHING", feeUnit: "EUR_PER_KWH" }, amount: { amount: 6 } },
+  { category: "IMBALANCE", sign: "CHARGE", label: "Sbilanciamento", formulaInputs: { feeUnit: "EUR_PER_KWH" }, amount: { amount: 5 } },
+  { category: "FIXED_FEE", sign: "CHARGE", label: "Quota fissa business", formulaInputs: { feeUnit: "EUR_PER_MONTH" }, amount: { amount: 15 } },
+  { category: "FIXED_FEE", sign: "CHARGE", label: "Opzione Flex pari a 36 €/anno", formulaInputs: { feeUnit: "EUR_PER_YEAR" }, amount: { amount: 3 } },
+] });
+assert.deepEqual(detailed.quotas[0].details.map((item) => [item.key, item.current, item.offer, item.difference]), [["ENERGY", 70, 66, -4], ["DISPATCHING", 6, 6, 0], ["CAPACITY", 4, null, -4], ["IMBALANCE", null, 5, 5]]);
+assert.deepEqual(detailed.quotas[1].details.map((item) => [item.key, item.current, item.offer]), [["PCV", 15, 15], ["OPTIONS", null, 3]]);
 
 console.log("quote receipt smoke passed");
