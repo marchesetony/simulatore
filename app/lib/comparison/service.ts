@@ -127,7 +127,10 @@ export async function compareApprovedOffers(cteRepository: CteArchiveRepository,
       } else results.push(result);
     } catch (error) {
       const code = codeOf(error);
-      excludedOffers.push(exclusionFor(record, code, exclusionMessages[code]));
+      // An unmapped failure keeps its own reason next to the generic code, so the agent sees what blocked the offer.
+      const raw = error instanceof Error && error.message !== code ? error.message.slice(0, 160) : "";
+      if (raw) console.error(`[COMPARISON_EXCLUSION] archive=${record.archiveId} code=${code} cause=${raw}`);
+      excludedOffers.push(exclusionFor(record, code, raw ? `${exclusionMessages[code]} (${raw})` : exclusionMessages[code]));
     }
   }
   return buildComparisonResult(request, results, excludedOffers);
