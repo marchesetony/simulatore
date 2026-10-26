@@ -524,15 +524,20 @@ function normalizeExclusion(value: string): string {
   return clean ? clean[0].toUpperCase() + clean.slice(1) : clean;
 }
 function money(field: CteExtractionField | undefined, vector: CteIngestionRecord["vector"], defaultUnit: string): CteReviewField {
-  const raw = text(field);
+  const whole = text(field);
   const stated = numeric(field?.value) ?? numeric(field?.sourceText);
+  // Unit and period belong to the line that states the amount: in "Quota fissa 15 €/mese • Commercializzazione 0,003 €/kWh • Opzione Flex 36 €/anno"
+  // the 15 is €/mese, not €/kWh and not yearly (Be Smile FLEX 25, Tony 26/10).
+  const lines = String(typeof field?.value === "string" ? field.value : field?.sourceText ?? "").split(/;|\n|\u2022/).map((line) => line.replace(/\s+/g, " ").trim()).filter((line) => /\d/.test(line));
+  const head = lines.length > 1 && /\/\s*(?:mwh|kwh|smc|pod|mese|month|anno|year)|mensil|annu[oaie]|all'anno|per anno|al mese/i.test(lines[0]) ? lines[0] : whole;
+  const raw = head;
   // Bring €/MWh and c€/kWh (or c€/Smc) to the €/kWh and €/Smc used everywhere else.
   const perMwh = /\/\s*mwh/i.test(raw);
   const cents = /c\s*€|cent(?:esimi)?\s+di\s+euro|\bcent\b/i.test(raw) && /kwh|smc/i.test(raw);
   const value = stated === null ? null : perMwh ? Number((stated / 1000).toPrecision(12)) : cents ? Number((stated / 100).toPrecision(12)) : stated;
   const unit = perMwh ? "\u20AC/kWh" : /\/\s*pod/i.test(raw) ? "\u20AC/POD" : /\/\s*(?:kwh|kWh)/.test(raw) ? "\u20AC/kWh" : /\/\s*(?:smc|Smc)/.test(raw) ? "\u20AC/Smc" : /\/\s*(?:mese|month|mensil)/i.test(raw) ? "\u20AC/mese" : /\/\s*(?:anno|year)\b|\bannu[oaie]\b|all'anno|per anno/i.test(raw) ? "\u20AC/anno" : defaultUnit;
   const periodicity = /annuo|anno/i.test(raw) ? "anno" : /mese|mensil/i.test(raw) ? "mese" : undefined;
-  const conditions = [...raw.matchAll(/(?:al netto|incluse?|escluse?|secondo)[^.;]*/gi)].map((match) => match[0].trim()).filter(Boolean);
+  const conditions = [...whole.matchAll(/(?:al netto|incluse?|escluse?|secondo)[^.;]*/gi)].map((match) => match[0].trim()).filter(Boolean);
   return base(field?.path ?? "", value, field, { unit, periodicity, conditions: conditions.length ? conditions : undefined });
 }
 function customerFields(field: CteExtractionField | undefined): readonly CteReviewField[] {

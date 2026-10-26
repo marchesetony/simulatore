@@ -15,3 +15,17 @@ assert.deepEqual(extraFixedFees(primary, withService, "Be Relax 06.25", "x-fixed
 console.log("CTE_FIXED_FEE_LINES=PASS");
 assert.deepEqual(feeSegments("Opzione Flex: 36 euro annui").map((item) => [item.amount, item.unit]), [[36, "EUR_PER_YEAR"]]);
 console.log("CTE_FIXED_FEE_ANNUAL_WORDING=PASS");
+// Be Smile FLEX 25 (CTE 003888ESVFL03…SMILFLEX26) lists every corrispettivo as a bullet: the 15 of the first line is €/mese,
+// not €/kWh taken from the commercializzazione line, and the "Opzione Flex pari a 36 €/anno" bullet adds 3 €/mese (Tony, 26/10).
+const { normalizeCteReview } = await import("../app/lib/cte/review.ts");
+const cteField = (path, value) => ({ path, value, sourceText: value, status: "CONFIRMED", confidence: 0.9 });
+const smileFlex = normalizeCteReview({ vector: "ELECTRICITY", fields: [
+  cteField("offer.name", "Be Smile FLEX 25"),
+  cteField("commercialTerms.fixedFees", "• Quota fissa business pari a 15 €/mese;\n• Commercializzazione pari a 0,003 €/kWh al netto delle perdite di rete;\n• Sbilanciamento pari a 0,008 €/kWh al netto delle perdite di rete.\n• Opzione Flex pari a 36 €/anno"),
+] });
+const smileFields = new Map([...smileFlex.commercialFields, ...smileFlex.notFoundFields].map((field) => [field.fieldKey, field]));
+const smileFixed = smileFields.get("commercialTerms.fixedFees");
+assert.equal(smileFixed.normalizedValue, 15);
+assert.equal(smileFixed.unit, "€/mese");
+assert.deepEqual(extraFixedFees({ ...primary }, smileFields, "Be Smile FLEX 25", "x-fixed", "EXCLUDED").map((fee) => [fee.amount, fee.unit]), [[36, "EUR_PER_YEAR"]]);
+console.log("CTE_FIXED_FEE_BULLET_LIST=PASS");
