@@ -338,7 +338,7 @@ function buildContext(document: BillDocument, version: BillVersion): BillDrivenS
 }
 
 function requestFromContext(context: BillDrivenSimulationContext, taxTreatment: TaxInclusionState, calculationDate: string): unknown {
-  const common = { schemaVersion: 1, tenantId: context.tenantId, calculationDate, supplyPeriod: context.billingPeriod, customerCategory: context.customerType, ...(context.residency ? { residency: context.residency } : {}), currency: "EUR", taxTreatment, sourceBill: { billId: context.billId, version: context.billVersionId } };
+  const common = { schemaVersion: 1, tenantId: context.tenantId, calculationDate, supplyPeriod: simulationPeriodOf(context.billingPeriod), customerCategory: context.customerType, ...(context.residency ? { residency: context.residency } : {}), currency: "EUR", taxTreatment, sourceBill: { billId: context.billId, version: context.billVersionId } };
   if (context.vector === "EE") {
     const { f1, f2, f3 } = context.consumption.period;
     if (f1 === null || f2 === null || f3 === null || !context.supply.voltageLevel) fail("SOURCE_BILL_DATA_INSUFFICIENT");
@@ -358,6 +358,22 @@ function termsOf(contract: CteArchiveVersion["contract"]): CteEligibilityCandida
   const pricing = contract.pricing;
   const spread = pricing.mode === "INDEXED" ? pricing.spread.amount : pricing.spread.status === "DECLARED" ? pricing.spread.component.amount : null;
   return { fixedPrice: pricing.mode === "FIXED" ? pricing.fixedPrice.amount : null, spread, priceUnit: contract.vector === "GAS" ? "EUR_PER_SMC" : "EUR_PER_KWH", monthlyFixedFee: monthlyFixedFeeOf(contract.commercialTerms.fixedFees) };
+}
+
+function firstOfMonth(date: Date, offset = 0): string { return new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth() + offset, 1)).toISOString().slice(0, 10); }
+/**
+ * The calculation runs on whole months: a bill dated 1-30 September is September, one dated 1 August - 1 September is August.
+ * The end date is read as the last billed day unless it already falls on the 1st; partial months round to the nearer boundary.
+ */
+export function simulationPeriodOf(period: { readonly periodStart: string; readonly periodEnd: string }): { readonly periodStart: string; readonly periodEnd: string } {
+  const start = new Date(`${period.periodStart}T00:00:00Z`);
+  const end = new Date(`${period.periodEnd}T00:00:00Z`);
+  if (!Number.isFinite(start.getTime()) || !Number.isFinite(end.getTime())) return period;
+  const periodStart = start.getUTCDate() <= 15 ? firstOfMonth(start) : firstOfMonth(start, 1);
+  const exclusive = end.getUTCDate() === 1 ? end : new Date(end.getTime() + 86_400_000);
+  const periodEnd = exclusive.getUTCDate() <= 15 ? firstOfMonth(exclusive) : firstOfMonth(exclusive, 1);
+  // A bill shorter than a month counts as the month it started in.
+  return periodEnd > periodStart ? { periodStart, periodEnd } : { periodStart: firstOfMonth(start), periodEnd: firstOfMonth(start, 1) };
 }
 
 function offerMetadata(record: CteArchiveRecord, version: CteArchiveVersion, offer: CalculationReadyOffer | null, status: CteEligibilityCandidate["eligibilityStatus"], reason: string, calculationReadiness: CteEligibilityCandidate["calculationReadiness"] = "READY", reasonCodes: readonly EligibilityReasonCode[] = []): CteEligibilityCandidate {
@@ -433,10 +449,10 @@ async function evaluateCte(repository: BillDrivenRepositories["marketArchiveRepo
   if (feeUnits.some((unit) => context.vector === "EE" ? unit === "EUR_PER_SMC" : unit === "EUR_PER_KWH")) return offerMetadata(record, version, offer, "NOT_COMPATIBLE", "FEE_UNIT_MISMATCH");
   if (context.missingRequiredData.length > 0) return offerMetadata(record, version, offer, "NOT_COMPATIBLE", "BILL_DATA_INSUFFICIENT", "NOT_READY", ["CALCULATION_NOT_READY"]);
   const indexed = offer.pricing.mode === "INDEXED";
-  if (indexed && monthsInSimulationPeriod(context.billingPeriod).length > 1 && !context.consumption.monthlyProfile) return offerMetadata(record, version, offer, "NOT_COMPATIBLE", "MONTHLY_PROFILE_REQUIRED");
+  if (indexed && monthsInSimulationPeriod(simulationPeriodOf(context.billingPeriod)).length > 1 && !context.consumption.monthlyProfile) return offerMetadata(record, version, offer, "NOT_COMPATIBLE", "MONTHLY_PROFILE_REQUIRED");
   if (indexed) {
     const index = offer.pricing.reference;
-    for (const month of monthsInSimulationPeriod(context.billingPeriod)) {
+    for (const month of monthsInSimulationPeriod(simulationPeriodOf(context.billingPeriod))) {
       const market = await queryApprovedHistoricalMarketData(repository, context.tenantId, `${month}-15`, context.vector);
       if (!market.some((candidate) => candidate.month === month && candidate.index === index)) return offerMetadata(record, version, offer, "COMPATIBLE", "COMPATIBLE_MARKET_DATA_UNAVAILABLE", "MARKET_DATA_MISSING");
     }
@@ -449,7 +465,7 @@ async function evaluateCte(repository: BillDrivenRepositories["marketArchiveRepo
  * When a bill month is not in the archive yet, it is fetched and approved now instead of waiting for the nightly refresh.
  */
 async function ensureOfficialIndexes(repositories: BillDrivenRepositories, context: BillDrivenSimulationContext): Promise<void> {
-  const months = monthsInSimulationPeriod(context.billingPeriod);
+  const months = monthsInSimulationPeriod(simulationPeriodOf(context.billingPeriod));
   const index = context.vector === "EE" ? "PUN" : "PSV";
   const stored = await repositories.marketArchiveRepository.list(context.tenantId);
   if (months.every((month) => stored.some((record) => record.status === "APPROVED" && record.vector === context.vector && record.index === index && record.month === month))) return;
