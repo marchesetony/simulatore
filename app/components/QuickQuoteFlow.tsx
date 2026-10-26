@@ -87,24 +87,6 @@ const NUMBER = new Intl.NumberFormat("it-IT", { maximumFractionDigits: 0, useGro
 function amount(value: number | null | undefined, unit: string): string { return value === null || value === undefined ? "—" : `${NUMBER.format(value)} ${unit}`; }
 const VOLTAGE: Record<string, string> = { LV: "Bassa tensione (BT)", MV: "Media tensione (MT)", HV: "Alta tensione (AT)", EHV: "Altissima tensione (AAT)" };
 const MISSING: Record<string, string> = { customerType: "tipo cliente", billingPeriod: "periodo fatturato", POD: "POD", PDR: "PDR", voltageLevel: "livello di tensione", F1: "consumo F1", F2: "consumo F2", F3: "consumo F3", SMC: "consumo in Smc", technicalClassification: "uso della fornitura" };
-// Why a CTE is not proposed for this bill, in the words the agent reads.
-const EXCLUSION: Record<string, string> = {
-  CTE_NOT_ACTIVE: "CTE bloccata", REVIEW_REQUIRED: "CTE da riapprovare", CTE_EXPIRED: "CTE scaduta", VECTOR_MISMATCH: "Tipo fornitura diverso",
-  CTE_VALIDITY_MISMATCH: "Non ancora sottoscrivibile", CUSTOMER_NOT_ELIGIBLE: "Tipo cliente non ammesso (Consumer/Business)", VOLTAGE_NOT_ELIGIBLE: "Livello di tensione non previsto",
-  TAX_TREATMENT_INCOMPATIBLE: "Trattamento fiscale diverso", IMBALANCE_UNAVAILABLE: "Sbilanciamento non indicato nella CTE", FEE_UNIT_MISMATCH: "Unità dei costi non coerente",
-  BILL_DATA_INSUFFICIENT: "Dati della bolletta incompleti", MONTHLY_PROFILE_REQUIRED: "Servono i consumi mese per mese", COMPATIBLE_MARKET_DATA_UNAVAILABLE: "Manca l'indice PUN/PSV del periodo", CALCULATION_READY_INVALID: "CTE non calcolabile", CONSUMPTION_NOT_ELIGIBLE: "Consumo annuo fuori dalla fascia della CTE", CONDOMINIUM_ONLY: "Offerta riservata ai condomini", COMPATIBLE: "Calcolo non riuscito per questa bolletta",
-};
-// Why the calculation of an eligible CTE was set aside, in the words the agent reads.
-const CALCULATION_EXCLUSION: Record<string, string> = {
-  MARKET_DATA_MISSING: "Manca l'indice PUN/PSV del periodo", MARKET_DATA_INVALID: "Indice PUN/PSV non valido", MONTHLY_PROFILE_REQUIRED: "Servono i consumi mese per mese", FEE_UNIT_MISMATCH: "Unità dei costi della CTE non coerente",
-  IMBALANCE_UNAVAILABLE: "Sbilanciamento non indicato nella CTE", CALCULATION_READY_INVALID: "CTE incompleta: ricontrolla prezzi e costi in archivio", CALCULATION_INPUT_INVALID: "Consumi della bolletta non utilizzabili per questa CTE",
-  COMPARISON_INCOMPATIBLE: "Costi della CTE non confrontabili con le altre", CTE_VALIDITY_MISMATCH: "Non ancora sottoscrivibile", CTE_EXPIRED: "CTE scaduta", VOLTAGE_NOT_ELIGIBLE: "Livello di tensione non previsto", CUSTOMER_NOT_ELIGIBLE: "Tipo cliente non ammesso (Consumer/Business)", ONE_OFF_FEE_UNIT_INVALID: "Costo una tantum con unità non valida",
-};
-function exclusion(candidate: Candidate, comparison?: ComparisonModel): string {
-  const failed = candidate.compatibilityReason === "COMPATIBLE" ? comparison?.excludedOffers.find((item) => item.archiveId === candidate.archiveId) : undefined;
-  if (failed) return CALCULATION_EXCLUSION[failed.code] ?? `Calcolo non riuscito (${failed.code})`;
-  return EXCLUSION[candidate.compatibilityReason ?? ""] ?? "Non adatta a questa bolletta";
-}
 const RATE = new Intl.NumberFormat("it-IT", { minimumFractionDigits: 4, maximumFractionDigits: 6 });
 // Price lines the agent quotes from the CTE: fixed price or spread on the index, and the monthly PCV.
 function termLines(candidate: Candidate): readonly string[] {
@@ -343,9 +325,6 @@ export default function QuickQuoteFlow({ readonly }: { readonly readonly: boolea
     } catch (cause) { setError(message(cause)); setPending(undefined); }
   };
 
-  // CTEs of the same supply type that were not proposed, with the reason.
-  const proposed = new Set(quote?.offers.map((offer) => offer.calculation.sourceCte.archiveId) ?? []);
-  const excluded = (quote?.candidates ?? []).filter((candidate) => !proposed.has(candidate.archiveId) && candidate.compatibilityReason !== "VECTOR_MISMATCH");
   const selected = quote?.offers.find((offer) => offer.calculation.calculationId === selectedId) ?? null;
 
   const saveProposal = async () => {
@@ -396,9 +375,6 @@ export default function QuickQuoteFlow({ readonly }: { readonly readonly: boolea
           {offer.receipt.savingsPercent !== null ? <small className={offer.receipt.savingsPercent >= 0 ? "positive" : "negative"}>{offer.receipt.savingsPercent >= 0 ? "Risparmio" : "Più cara"} {PERCENT.format(Math.abs(offer.receipt.savingsPercent))}%</small> : null}
           <small>Valida fino al {date(offer.receipt.validUntil)}</small>
         </button>)}</div> : <EmptyState title="Nessuna offerta utilizzabile" detail="Nessuna CTE a te assegnata è adatta a questa bolletta. Chiedi all'amministratore di assegnartene una." />}
-        {excluded.length ? <details className="quote-excluded"><summary>{excluded.length} {excluded.length === 1 ? "CTE non adatta" : "CTE non adatte"} a questa bolletta</summary>
-          <ul>{excluded.map((candidate) => <li key={candidate.archiveId}><strong>{candidate.offer.name || candidate.offer.code}</strong> <span className="muted">{candidate.supplier}</span> <em>{exclusion(candidate, quote.comparison)}</em></li>)}</ul>
-        </details> : null}
       </section>
       {selected ? <><Receipt offer={selected} today={today} /><div className="button-row"><button className="button primary" type="button" onClick={() => void saveProposal()} disabled={readonly || Boolean(pending)}>{pending === "proposal" ? "Preparazione" : "Scarica la proposta in PDF"}</button>{proposal ? <span className="muted" role="status">Proposta salvata in Proposte.</span> : null}</div></> : null}
     </> : null : null}
