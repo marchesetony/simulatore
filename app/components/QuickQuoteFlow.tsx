@@ -379,14 +379,18 @@ function billOfferName(bill: BillDocumentModel | null, context: Context): string
 // Official check of the regulated charges, shown under each section and charge it covers.
 const SOURCE_OF: Readonly<Record<RegulatedDomain, string>> = { NETWORK: "ARERA", SYSTEM_CHARGES: "ARERA", DISPATCHING: "Terna/ARERA", CAPACITY_MARKET: "Terna" };
 const DOMAIN_OF_ROW: Readonly<Record<string, RegulatedDomain>> = { NETWORK: "NETWORK", SYSTEM: "SYSTEM_CHARGES", DISPATCHING: "DISPATCHING", CAPACITY: "CAPACITY_MARKET" };
-function VerificationNote({ bill, rowKey }: { readonly bill: BillDocumentModel; readonly rowKey: string }): ReactNode {
+function VerificationNote({ bill, rowKey, receipt }: { readonly bill: BillDocumentModel; readonly rowKey: string; readonly receipt?: QuoteReceipt }): ReactNode {
   const domain = DOMAIN_OF_ROW[rowKey];
   if (!domain) return null;
+  // Transport and system charges: the bill's aggregates against the official ARERA amounts on the same consumption.
+  const official = rowKey === "NETWORK" || rowKey === "SYSTEM" ? receipt?.officialCheck?.[rowKey] : undefined;
+  if (official?.status === "VERIFIED") return <small className="quote-check ok">✓ Verificato sui valori ARERA del periodo ({EURO.format(official.official ?? 0)})</small>;
+  if (official?.status === "DIFFERENCE" && official.difference !== null) return <small className="quote-check bad">⚠ La bolletta non corrisponde ai valori ARERA ({EURO.format(official.official ?? 0)}): {EURO.format(Math.abs(official.difference))} addebitati {official.difference > 0 ? "in più" : "in meno"}</small>;
   const check = regulatedVerification(bill.regulatoryAudit, domain);
   const source = SOURCE_OF[domain];
   if (check.status === "VERIFIED") return <small className="quote-check ok">✓ Verificato sui valori {source} del periodo ({check.checked} {check.checked === 1 ? "voce" : "voci"})</small>;
   if (check.status === "DIFFERENCE") return <small className="quote-check bad">⚠ La bolletta non corrisponde ai valori {source}: {EURO.format(Math.abs(check.difference))} addebitati {check.difference > 0 ? "in più" : "in meno"}</small>;
-  return <small className="quote-check open">Non verificato su {source}: {check.reason}</small>;
+  return <small className="quote-check open">Non verificato su {source}: {official?.reason ?? check.reason}</small>;
 }
 // A lower cost is green, a higher one red: the difference reads CTE minus bill.
 function difference(value: number | null): string | undefined { return value === null || Math.abs(value) < 0.01 ? undefined : value < 0 ? "positive" : "negative"; }
@@ -459,7 +463,7 @@ function Receipt({ offer: quoted, today, business, context, bill }: { readonly o
       <caption>Periodo della bolletta: {date(context.billingPeriod.periodStart)} – {date(context.billingPeriod.periodEnd)} · stessi consumi per entrambe le colonne</caption>
       <thead><tr><th scope="col">Voce</th><th scope="col">Bolletta attuale{currentOffer ? <small>{context.currentSupplier} · {currentOffer}</small> : null}</th><th scope="col">CTE simulata<small>{offer.supplier} · {offer.offerName}</small></th><th scope="col">Differenza</th></tr></thead>
       <tbody>{receipt.rows.flatMap((row) => [<tr key={row.key} className={`quote-section-row${row.difference != null && Math.abs(row.difference) >= 0.01 ? " changed" : ""}`}>
-        <th scope="row">{row.label}<VerificationNote bill={bill} rowKey={row.key} /></th><td>{euro(row.current)}</td><td>{euro(row.offer)}</td><td className={difference(row.difference ?? null)}>{signedEuro(row.difference ?? null)}</td>
+        <th scope="row">{row.label}<VerificationNote bill={bill} rowKey={row.key} receipt={receipt} /></th><td>{euro(row.current)}</td><td>{euro(row.offer)}</td><td className={difference(row.difference ?? null)}>{signedEuro(row.difference ?? null)}</td>
       </tr>, ...(row.details ?? []).map((item) => <tr key={`${row.key}-${item.key}`} className={`quote-detail-row${item.difference !== null && Math.abs(item.difference) >= 0.01 ? " changed" : ""}`}>
         <th scope="row">{item.label}{row.key === "ENERGY" && item.current !== null ? <VerificationNote bill={bill} rowKey={item.key} /> : null}</th>
         <td>{item.current === null ? (receipt.status === "COMPLETE" ? "non in bolletta" : "—") : euro(item.current)}</td><td>{item.offer === null ? "non nella CTE" : euro(item.offer)}</td><td className={difference(item.difference)}>{signedEuro(item.difference)}</td>

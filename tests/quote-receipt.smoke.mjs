@@ -109,3 +109,27 @@ assert.equal(higher.rows[3].offer, 34.26);
 assert.deepEqual(higher.rows[3].details.map((item) => [item.label, item.current, item.offer]), [["Accise", 5, 5], ["IVA", 15, 29.26]]);
 assert.equal(higher.vatRate, 0.22); assert.equal(higher.billVatRate, 0.1); assert.equal(higher.vatRateEstimated, false);
 console.log("quote receipt vat choice passed");
+
+// 11. Tony (26/10): "non possono esistere voci non verificate, anche se aggregate ... non è detto che la bolletta e la
+//     simulazione debbano essere uguali". The simulated column's transport and system charges are the official ARERA
+//     amounts the engine computed on the same consumption, and the bill's aggregates (quota energia, fissa, potenza)
+//     are checked against them, never just copied across.
+const regulatedComponent = (category, componentCode, amount) => ({ category, sign: "CHARGE", label: componentCode, amount: { amount }, formulaInputs: { componentCode } });
+const officialComponents = [
+  ...offerComponents,
+  regulatedComponent("REGULATED_ENERGY", "NETWORK_ENERGY", 6), regulatedComponent("REGULATED_ENERGY", "TRANSMISSION_ENERGY", 5),
+  regulatedComponent("REGULATED_FIXED", "NETWORK_FIXED", 8), regulatedComponent("REGULATED_POWER", "NETWORK_POWER", 10),
+  regulatedComponent("REGULATED_ENERGY", "ARIM", 2), regulatedComponent("REGULATED_ENERGY", "ASOS", 8),
+];
+const official = buildQuoteReceipt({ vector: "EE", offerSupplyCost: 88, analysis: { components: scontrinoLines, totals: scontrinoTotals }, domestic: true, validUntil: null, offerComponents: officialComponents });
+assert.deepEqual(official.rows.map((row) => [row.key, row.current, row.offer]), [["ENERGY", 95, 88], ["NETWORK", 30, 29], ["SYSTEM", 10, 10], ["TAXES", 20, 19.2]]);
+assert.deepEqual(official.officialCheck.NETWORK, { status: "DIFFERENCE", official: 29, difference: 1, reason: null }, "the bill charges 1 EUR more than ARERA");
+assert.equal(official.officialCheck.SYSTEM.status, "VERIFIED");
+assert.deepEqual(official.rows[1].details.map((item) => [item.key, item.current, item.offer]), [["CONSUMPTION", 12, 11], ["FIXED", 8, 8], ["POWER", 10, 10]]);
+assert.deepEqual(official.rows[0].details.map((item) => item.key), ["ENERGY", "PCV"], "regulated components never land in the materia energia");
+assert.equal(official.offerTotal, 146.2);
+assert.equal(Math.round(official.quotas.reduce((sum, row) => sum + row.offer, 0) * 100) / 100, official.offerTotal, "the quotas add up to the simulated total");
+// Without official values the bill's amounts are carried over and the receipt says why they are not verified.
+assert.equal(scontrino.officialCheck.NETWORK.status, "NOT_AVAILABLE");
+assert.equal(scontrino.officialCheck.NETWORK.reason, "valori ufficiali ARERA del periodo non calcolati per questa fornitura");
+console.log("quote receipt official regulated check passed");

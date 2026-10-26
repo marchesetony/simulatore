@@ -10,7 +10,9 @@ export interface RegulatoryRefreshDomain {
 
 export const REGULATORY_REFRESH_FREQUENCY = "DAILY" as const;
 export const REGULATORY_REFRESH_CRON = "15 3 * * *" as const;
-export const REGULATORY_REFRESH_STALE_DAYS = 35 as const;
+// ARERA and Terna values must be refreshed at least every 15 days (Tony, 26/10: "devono aggiornarsi ogni 15 giorni
+// tassativamente"): the check runs daily and a source not confirmed for more than 15 days is stale.
+export const REGULATORY_REFRESH_STALE_DAYS = 15 as const;
 
 const residentScope = "DOMESTIC_RESIDENT_BT" as const;
 const bta6Scope = "NON_DOMESTIC_BT_BTA6" as const;

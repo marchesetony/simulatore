@@ -6,8 +6,11 @@ import { referenceDomainForComponent } from "../foundation/regulatory-domains.ts
 /**
  * Bolletta 2.0 style "scontrino dell'energia" for one offer, side by side with the bill it was simulated on.
  *
- * Only the supply cost changes with the supplier: transport, system charges and excise depend on the same
- * consumption and period, so they are carried over from the bill. VAT follows the new taxable amount.
+ * The seller's part comes from the CTE. Transport and system charges of the simulated column are the official ARERA values
+ * of the period computed by the engine on the same consumption, and the bill is checked against them quota by quota: the
+ * two columns need not match (Tony, 26/10: "non è detto che la bolletta e la simulazione debbano essere uguali, verifica
+ * sempre la CTE e i dati ufficiali ARERA o Terna"). Only when no official value was computed are the bill's carried over.
+ * Excise is the bill's; VAT follows the new taxable amount.
  */
 export type QuoteReceiptRowKey = "ENERGY" | "NETWORK" | "SYSTEM" | "TAXES";
 export interface QuoteReceiptRow { readonly key: QuoteReceiptRowKey; readonly label: string; readonly current: number | null; readonly offer: number | null; readonly difference?: number | null; readonly details?: readonly QuoteReceiptDetail[] }
@@ -26,7 +29,10 @@ export interface QuoteReceipt {
   readonly validUntil: string | null;
   /** The same totals split the way the ARERA "scontrino dell'energia" asks: by consumption, fixed and power quota, then taxes. */
   readonly quotas: readonly QuoteReceiptQuota[];
+  /** The bill's transport and system charges checked against the official ARERA values computed on the same consumption. */
+  readonly officialCheck?: Readonly<Record<"NETWORK" | "SYSTEM", OfficialCheck>>;
 }
+export interface OfficialCheck { readonly status: "VERIFIED" | "DIFFERENCE" | "NOT_AVAILABLE"; readonly official: number | null; readonly difference: number | null; readonly reason: string | null }
 export type QuoteReceiptQuotaKey = "CONSUMPTION" | "FIXED" | "POWER" | "OTHER" | "EXCISE" | "VAT" | "TAXES";
 /** One line of the scontrino: what the bill paid, what the simulated CTE pays, and how much of it is the seller's. */
 export interface QuoteReceiptQuota { readonly key: QuoteReceiptQuotaKey; readonly label: string; readonly basis: string; readonly current: number | null; readonly offer: number | null; readonly difference: number | null; readonly currentSeller: number | null; readonly offerSeller: number | null; readonly details: readonly QuoteReceiptDetail[] }
@@ -94,6 +100,33 @@ function offerQuota(component: QuoteReceiptOfferComponent): Quota | "ONE_OFF" {
   if (unit === "EUR_PER_KW" || unit === "EUR_PER_KW_MONTH") return "POWER";
   return component.category === "FIXED_FEE" ? "FIXED" : "CONSUMPTION";
 }
+// Official regulated components computed by the engine (ARERA tariffs of the period). Bolletta 2.0 (delibera 501/2014/R/com)
+// groups distribution, metering, transmission and UC3/UC6 under "trasporto e gestione del contatore" and ARIM/ASOS under
+// "oneri di sistema", each split into quota fissa, quota potenza and quota energia: the bill may print only those
+// aggregates, so the check is made on the same aggregates.
+type RegulatedSide = "NETWORK" | "SYSTEM" | "DISPATCHING";
+function regulatedSide(component: QuoteReceiptOfferComponent): RegulatedSide | null {
+  if (!component.category.startsWith("REGULATED_")) return null;
+  const code = String(component.formulaInputs?.componentCode ?? "");
+  if (code === "ARIM" || code === "ASOS") return "SYSTEM";
+  if (code === "DISPATCHING_TOTAL") return "DISPATCHING";
+  return "NETWORK";
+}
+function regulatedQuota(component: QuoteReceiptOfferComponent): Quota {
+  return component.category === "REGULATED_POWER" ? "POWER" : component.category === "REGULATED_FIXED" ? "FIXED" : "CONSUMPTION";
+}
+const signed = (component: QuoteReceiptOfferComponent): number => (component.sign === "DISCOUNT" ? -1 : 1) * component.amount.amount;
+const sellerComponents = (input: QuoteReceiptInput) => (input.offerComponents ?? []).filter((component) => regulatedSide(component) === null || regulatedSide(component) === "DISPATCHING");
+const officialOf = (input: QuoteReceiptInput, side: "NETWORK" | "SYSTEM") => (input.offerComponents ?? []).filter((component) => regulatedSide(component) === side);
+// A bill is checked against the official amount within rounding: half a euro or 0,5% of the official amount.
+function officialCheck(bill: number | null, components: readonly QuoteReceiptOfferComponent[], hasOfficial: boolean): OfficialCheck {
+  if (!hasOfficial) return { status: "NOT_AVAILABLE", official: null, difference: null, reason: "valori ufficiali ARERA del periodo non calcolati per questa fornitura" };
+  const official = cents(components.reduce((total, component) => total + signed(component), 0));
+  if (bill === null) return { status: "NOT_AVAILABLE", official, difference: null, reason: "importo non letto in bolletta" };
+  const difference = cents(bill - official);
+  return Math.abs(difference) <= Math.max(0.5, Math.abs(official) * 0.005) ? { status: "VERIFIED", official, difference, reason: null } : { status: "DIFFERENCE", official, difference, reason: null };
+}
+
 // Charges the bill and the CTE both name, so each one is compared on its own line and never hidden in an aggregate (Tony, 26/10).
 const DETAIL_LABEL: Readonly<Record<string, string>> = {
   ENERGY: "Prezzo energia (indice + spread o prezzo fisso)", LOSSES: "Perdite di rete", COMMERCIALIZATION: "Commercializzazione", DISPATCHING: "Dispacciamento",
@@ -130,7 +163,8 @@ function offerDetail(component: QuoteReceiptOfferComponent): string {
   return "COMMERCIALIZATION";
 }
 
-function quotasOf(input: QuoteReceiptInput, currentEnergy: number | null, offerEnergy: number, network: number | null, system: number | null, currentTaxes: number | null, offerTaxes: number | null): readonly QuoteReceiptQuota[] {
+function quotasOf(input: QuoteReceiptInput, currentEnergy: number | null, offerEnergy: number, network: number | null, system: number | null, currentTaxes: number | null, offerTaxes: number | null, offerNetwork: number | null = network, offerSystem: number | null = system): readonly QuoteReceiptQuota[] {
+  const hasOfficial = officialOf(input, "NETWORK").length + officialOf(input, "SYSTEM").length > 0;
   const lines = (input.analysis?.components ?? []).filter((line) => line.includedInReconciliation !== false && !line.aggregate && SUPPLY_GROUPS.has(line.group ?? ""));
   const bill = { CONSUMPTION: { all: 0, seller: 0 }, FIXED: { all: 0, seller: 0 }, POWER: { all: 0, seller: 0 } };
   const detail = { CONSUMPTION: new Map<string, { current: number | null; offer: number | null }>(), FIXED: new Map<string, { current: number | null; offer: number | null }>(), POWER: new Map<string, { current: number | null; offer: number | null }>(), ONE_OFF: new Map<string, { current: number | null; offer: number | null }>() };
@@ -141,21 +175,27 @@ function quotasOf(input: QuoteReceiptInput, currentEnergy: number | null, offerE
     bill[quota].all += value;
     const key = billDetail(line);
     addDetail(quota, key, "current", value);
-    // Transport and system charges are the same on both sides.
-    if (key === "NETWORK" || key === "SYSTEM") addDetail(quota, key, "offer", value);
+    // Without official values the bill's transport and system charges are carried over to the simulated column.
+    if ((key === "NETWORK" || key === "SYSTEM") && !hasOfficial) addDetail(quota, key, "offer", value);
     if (SELLER_GROUPS.has(line.group ?? "")) bill[quota].seller += value;
   }
   const offer = { CONSUMPTION: 0, FIXED: 0, POWER: 0, ONE_OFF: 0 };
-  for (const component of input.offerComponents ?? []) {
-    const value = (component.sign === "DISCOUNT" ? -1 : 1) * component.amount.amount; const quota = offerQuota(component);
+  for (const component of sellerComponents(input)) {
+    const value = signed(component); const quota = offerQuota(component);
     offer[quota] += value;
     addDetail(quota, offerDetail(component), "offer", value);
+  }
+  const official = { CONSUMPTION: 0, FIXED: 0, POWER: 0 };
+  for (const side of ["NETWORK", "SYSTEM"] as const) for (const component of officialOf(input, side)) {
+    const quota = regulatedQuota(component);
+    official[quota] += signed(component);
+    addDetail(quota, side, "offer", signed(component));
   }
   const detailsOf = (quota: keyof typeof detail, withBill: boolean): readonly QuoteReceiptDetail[] => [...detail[quota].entries()]
     .sort(([a], [b]) => DETAIL_ORDER.indexOf(a) - DETAIL_ORDER.indexOf(b))
     .map(([key, value]) => ({ key, label: DETAIL_LABEL[key] ?? key, current: !withBill || value.current === null ? null : cents(value.current), offer: value.offer === null ? null : cents(value.offer), difference: !withBill ? null : cents((value.offer ?? 0) - (value.current ?? 0)) }));
-  // Transport and system charges stay those of the bill: the offer side swaps only the seller's part of each quota.
-  const regulated = (quota: Quota) => cents(bill[quota].all - bill[quota].seller);
+  // The simulated column's transport and system charges: the official values when computed, else the bill's.
+  const regulated = (quota: Quota) => hasOfficial ? cents(official[quota]) : cents(bill[quota].all - bill[quota].seller);
   const row = (key: QuoteReceiptQuotaKey, label: string, basis: string, current: number | null, offerValue: number | null, currentSeller: number | null = null, offerSeller: number | null = null, details: readonly QuoteReceiptDetail[] = []): QuoteReceiptQuota =>
     ({ key, label, basis, current: current === null ? null : cents(current), offer: offerValue === null ? null : cents(offerValue), difference: current === null || offerValue === null ? null : cents(offerValue - current), currentSeller: currentSeller === null ? null : cents(currentSeller), offerSeller: offerSeller === null ? null : cents(offerSeller), details });
   const withBill = currentEnergy !== null;
@@ -167,7 +207,7 @@ function quotasOf(input: QuoteReceiptInput, currentEnergy: number | null, offerE
   if (input.vector === "EE") rows.push(row("POWER", "Quota potenza", "kW \u00d7 corrispettivi in \u20ac/kW", currentEnergy === null ? null : bill.POWER.all, regulated("POWER") + offer.POWER, currentEnergy === null ? null : bill.POWER.seller, offer.POWER, detailsOf("POWER", withBill)));
   // Whatever the bill does not tie to a quota (a line without unit) and the CTE's one-off fees, so the quotas add up to the same totals.
   const supplyCurrent = currentEnergy === null ? null : currentEnergy + (network ?? 0) + (system ?? 0);
-  const supplyOffer = offerEnergy + (network ?? 0) + (system ?? 0);
+  const supplyOffer = offerEnergy + (offerNetwork ?? 0) + (offerSystem ?? 0);
   const placedCurrent = rows.reduce((total, item) => total + (item.current ?? 0), 0);
   const placedOffer = rows.reduce((total, item) => total + (item.offer ?? 0), 0);
   const otherCurrent = supplyCurrent === null ? null : cents(supplyCurrent - placedCurrent);
@@ -200,19 +240,26 @@ function withDetails(input: QuoteReceiptInput, rows: readonly QuoteReceiptRow[],
   };
   const seller = entries([
     ...components.filter((line) => SELLER_GROUPS.has(line.group ?? "")).flatMap((line) => { const value = amountOf(line.amount); const key = billDetail(line); return value === null ? [] : [[key, DETAIL_LABEL[key] ?? key, value, null] as const]; }),
-    ...(input.offerComponents ?? []).map((component) => { const key = offerDetail(component); return [key, DETAIL_LABEL[key] ?? key, null, (component.sign === "DISCOUNT" ? -1 : 1) * component.amount.amount] as const; }),
+    ...sellerComponents(input).map((component) => { const key = regulatedSide(component) === "DISPATCHING" ? "DISPATCHING" : offerDetail(component); return [key, DETAIL_LABEL[key] ?? key, null, signed(component)] as const; }),
   ]);
-  const regulated = (group: string) => entries(components.filter((line) => line.group === group).flatMap((line) => {
-    const value = amountOf(line.amount); if (value === null) return [];
-    const quota = billQuota(line); const key = quota ?? "OTHER";
-    return [[key, quota ? QUOTA_LABEL[quota].replace("\u20ac/kWh", consumptionUnit) : "altre voci", value, value] as const];
-  }));
+  const label = (quota: Quota | null) => quota ? QUOTA_LABEL[quota].replace("\u20ac/kWh", consumptionUnit) : "altre voci";
+  const regulated = (group: string, side: "NETWORK" | "SYSTEM") => {
+    const official = officialOf(input, side);
+    return entries([
+      ...components.filter((line) => line.group === group).flatMap((line) => {
+        const value = amountOf(line.amount); if (value === null) return [];
+        const quota = billQuota(line);
+        return [[quota ?? "OTHER", label(quota), value, official.length ? null : value] as const];
+      }),
+      ...official.map((component) => { const quota = regulatedQuota(component); return [quota, label(quota), null, signed(component)] as const; }),
+    ]);
+  };
   const excise = sumKnown(components.filter((line) => line.classification === "ACCISE").map((line) => amountOf(line.amount)));
   return rows.map((row) => {
     const difference = row.current === null || row.offer === null ? null : cents(row.offer - row.current);
     if (row.key === "ENERGY") return { ...row, difference, details: seller };
-    if (row.key === "NETWORK") return { ...row, difference, details: regulated("REGULATED_NETWORK") };
-    if (row.key === "SYSTEM") return { ...row, difference, details: regulated("SYSTEM_CHARGES") };
+    if (row.key === "NETWORK") return { ...row, difference, details: regulated("REGULATED_NETWORK", "NETWORK") };
+    if (row.key === "SYSTEM") return { ...row, difference, details: regulated("SYSTEM_CHARGES", "SYSTEM") };
     if (row.current === null || row.offer === null || excise === null) return { ...row, difference, details: [] };
     // Excise follows the kWh and is the same for every supplier; VAT follows the new taxable amount.
     return { ...row, difference, details: [
@@ -223,11 +270,19 @@ function withDetails(input: QuoteReceiptInput, rows: readonly QuoteReceiptRow[],
 }
 
 export function buildQuoteReceipt(input: QuoteReceiptInput): QuoteReceipt {
-  const offerEnergy = cents(input.offerSupplyCost);
+  // Regulated dispatching (domestic TIDE) belongs to the materia energia even though the engine prices it as regulated.
+  const regulatedDispatching = (input.offerComponents ?? []).filter((component) => regulatedSide(component) === "DISPATCHING").reduce((total, component) => total + signed(component), 0);
+  const offerEnergy = cents(input.offerSupplyCost + regulatedDispatching);
   const totals = input.analysis?.totals ?? null;
   const currentEnergy = totals ? sumKnown([totals.sellerEnergyTotal, totals.sellerCommercializationTotal, totals.sellerOtherTotal]) : null;
   const network = totals?.regulatedNetworkTotal ?? null;
   const system = totals?.systemChargesTotal ?? null;
+  const officialNetwork = officialOf(input, "NETWORK");
+  const officialSystem = officialOf(input, "SYSTEM");
+  const hasOfficial = officialNetwork.length + officialSystem.length > 0;
+  const check = { NETWORK: officialCheck(network, officialNetwork, hasOfficial), SYSTEM: officialCheck(system, officialSystem, hasOfficial) };
+  const offerNetwork = hasOfficial ? check.NETWORK.official ?? 0 : network;
+  const offerSystem = hasOfficial ? check.SYSTEM.official ?? 0 : system;
   const currentTaxes = totals?.taxTotal ?? null;
   const printedRate = input.analysis ? billVatRate(input.analysis) : null;
   const vatRate = printedRate ?? (input.domestic && input.vector === "EE" ? 0.1 : 0.22);
@@ -237,24 +292,24 @@ export function buildQuoteReceipt(input: QuoteReceiptInput): QuoteReceipt {
   // Without excise lines on the bill, excise is what is left of the taxes once VAT at the bill's rate is taken out.
   const excise = !taxesIncluded ? null : exciseLines ?? Math.max(0, cents((currentTaxes - (currentEnergy + (network ?? 0) + (system ?? 0)) * vatRate) / (1 + vatRate)));
   // The bill's own rate keeps the bill's VAT and moves it only with the supply cost, as before.
+  const supplyDelta = taxesIncluded ? offerEnergy + (offerNetwork ?? 0) + (offerSystem ?? 0) - (currentEnergy + (network ?? 0) + (system ?? 0)) : 0;
   const offerTaxes = !taxesIncluded ? null : chosenRate === null || excise === null || Math.abs(chosenRate - vatRate) < 0.0001
-    ? cents(currentTaxes + (offerEnergy - currentEnergy) * vatRate)
-    : cents(excise + (offerEnergy + (network ?? 0) + (system ?? 0) + excise) * chosenRate);
+    ? cents(currentTaxes + supplyDelta * vatRate)
+    : cents(excise + (offerEnergy + (offerNetwork ?? 0) + (offerSystem ?? 0) + excise) * chosenRate);
   const rows: QuoteReceiptRow[] = [
     { key: "ENERGY", label: input.vector === "EE" ? "Spesa per la materia energia" : "Spesa per la materia gas naturale", current: currentEnergy, offer: offerEnergy },
-    { key: "NETWORK", label: "Trasporto e gestione del contatore", current: network, offer: network },
-    { key: "SYSTEM", label: "Oneri di sistema", current: system, offer: system },
+    { key: "NETWORK", label: "Trasporto e gestione del contatore", current: network, offer: offerNetwork },
+    { key: "SYSTEM", label: "Oneri di sistema", current: system, offer: offerSystem },
     { key: "TAXES", label: "Imposte (accise e IVA)", current: taxesIncluded ? currentTaxes : null, offer: offerTaxes },
   ];
   if (currentEnergy === null) {
-    return { status: "OFFER_ONLY", rows: withDetails(input, rows, false), currentTotal: null, offerTotal: null, savings: null, savingsPercent: null, taxesIncluded: false, vatRate: null, vatRateEstimated: false, validUntil: input.validUntil, quotas: quotasOf(input, null, offerEnergy, network, system, null, null) };
+    return { status: "OFFER_ONLY", rows: withDetails(input, rows, false), currentTotal: null, offerTotal: null, savings: null, savingsPercent: null, taxesIncluded: false, vatRate: null, vatRateEstimated: false, validUntil: input.validUntil, quotas: quotasOf(input, null, offerEnergy, network, system, null, null, offerNetwork, offerSystem), officialCheck: check };
   }
-  const shared = (network ?? 0) + (system ?? 0);
-  const currentTotal = cents(currentEnergy + shared + (taxesIncluded ? currentTaxes : 0));
-  const offerTotal = cents(offerEnergy + shared + (offerTaxes ?? 0));
+  const currentTotal = cents(currentEnergy + (network ?? 0) + (system ?? 0) + (taxesIncluded ? currentTaxes : 0));
+  const offerTotal = cents(offerEnergy + (offerNetwork ?? 0) + (offerSystem ?? 0) + (offerTaxes ?? 0));
   const savings = cents(currentTotal - offerTotal);
   const savingsPercent = currentTotal > 0 ? Math.round((savings / currentTotal) * 1000) / 10 : null;
-  return { status: "COMPLETE", rows: withDetails(input, rows, true), currentTotal, offerTotal, savings, savingsPercent, taxesIncluded, vatRate: taxesIncluded ? chosenRate ?? vatRate : null, vatRateEstimated: taxesIncluded && chosenRate === null && printedRate === null, billVatRate: taxesIncluded ? vatRate : null, validUntil: input.validUntil, quotas: quotasOf(input, currentEnergy, offerEnergy, network, system, taxesIncluded ? currentTaxes : null, offerTaxes) };
+  return { status: "COMPLETE", rows: withDetails(input, rows, true), currentTotal, offerTotal, savings, savingsPercent, taxesIncluded, vatRate: taxesIncluded ? chosenRate ?? vatRate : null, vatRateEstimated: taxesIncluded && chosenRate === null && printedRate === null, billVatRate: taxesIncluded ? vatRate : null, validUntil: input.validUntil, quotas: quotasOf(input, currentEnergy, offerEnergy, network, system, taxesIncluded ? currentTaxes : null, offerTaxes, offerNetwork, offerSystem), officialCheck: check };
 }
 
 /** Whether the bill's regulated charges match the official ARERA (network, system charges) and Terna (dispatching, capacity) values of the period. */
