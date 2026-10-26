@@ -98,7 +98,7 @@ function offerQuota(component: QuoteReceiptOfferComponent): Quota | "ONE_OFF" {
 const DETAIL_LABEL: Readonly<Record<string, string>> = {
   ENERGY: "Prezzo energia (indice + spread o prezzo fisso)", LOSSES: "Perdite di rete", COMMERCIALIZATION: "Commercializzazione", DISPATCHING: "Dispacciamento",
   CAPACITY: "Mercato della capacità (capacity market)", IMBALANCE: "Sbilanciamento", SELLER_OTHER: "Altri corrispettivi di vendita", PCV: "Quota fissa di vendita (PCV)",
-  OPTIONS: "Opzioni e servizi a pagamento (es. Flex)", NETWORK: "Trasporto e gestione del contatore", SYSTEM: "Oneri di sistema",
+  OPTIONS: "Opzioni e servizi a pagamento (es. Flex)", ONE_OFF: "Corrispettivi una tantum", NETWORK: "Trasporto e gestione del contatore", SYSTEM: "Oneri di sistema",
 };
 const DETAIL_ORDER = Object.keys(DETAIL_LABEL);
 function billDetail(line: { readonly classification: string; readonly group?: string; readonly description: string }): string {
@@ -118,6 +118,8 @@ function billDetail(line: { readonly classification: string; readonly group?: st
 function offerDetail(component: QuoteReceiptOfferComponent): string {
   const text = `${component.label ?? ""} ${component.formulaInputs?.kind ?? ""} ${component.formulaInputs?.feeId ?? ""}`;
   if (component.category === "ENERGY") return "ENERGY";
+  // A one-off fee ("gestione APP e servizi 1,50 €") is not a recurring option.
+  if (component.category === "ONE_OFF_FEE") return "ONE_OFF";
   if (component.category === "IMBALANCE" || /sbilanciament|imbalance/i.test(text)) return "IMBALANCE";
   if (/capacit/i.test(text)) return "CAPACITY";
   if (/dispacciament|dispatching/i.test(text)) return "DISPATCHING";
@@ -125,7 +127,7 @@ function offerDetail(component: QuoteReceiptOfferComponent): string {
   if (/flex|opzion|servizi/i.test(text)) return "OPTIONS";
   if (component.category === "FIXED_FEE") return "PCV";
   if (/commercializzazion/i.test(text)) return "COMMERCIALIZATION";
-  return component.category === "ONE_OFF_FEE" ? "SELLER_OTHER" : "COMMERCIALIZATION";
+  return "COMMERCIALIZATION";
 }
 
 function quotasOf(input: QuoteReceiptInput, currentEnergy: number | null, offerEnergy: number, network: number | null, system: number | null, currentTaxes: number | null, offerTaxes: number | null): readonly QuoteReceiptQuota[] {

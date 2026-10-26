@@ -15,7 +15,7 @@ import type { CteArchiveRepository } from "../cte/archive/types";
 import type { CalculationComponent, CalculationExclusion, CalculationExclusionCode, CalculationMarketReference, CalculationMoney, CalculationResult, ContractualPassThroughState, ContractualPassThroughStatus, ElectricitySimulationRequest, GasSimulationRequest, SimulationRequest, SimulationPeriod } from "./types";
 import type { ElectricitySupplyContext } from "./trusted-ee-supply-context.ts";
 // @ts-expect-error Node's strip-only test runner requires the explicit extension.
-import { resolveCteRegulatoryRuntime, type CteRegulatoryRuntimeResolver, type CteRuntimeResolution } from "./regulatory-runtime-resolvers.ts";
+import { resolveCteRegulatoryRuntime, type CteRegulatoryRuntimeResolver, type CteRuntimeResolution, type ResolvedOfficialRuntimeValue } from "./regulatory-runtime-resolvers.ts";
 import type { ProductionRegulatoryPersistenceBridge } from "../regulatory-bridge.ts";
 import type { TenantRecordRepository } from "../persistence/types.ts";
 // @ts-expect-error Node's strip-only test runner requires the explicit extension.
@@ -154,6 +154,51 @@ function addPassThroughComponents(target: ComponentDraft[], offer: CalculationRe
       const applicableMonths = monthsInSimulationPeriod({ periodStart: effectiveFrom, periodEnd: effectiveTo });
       target.push({ componentId: contractualComponentId(offer, component, effectiveFrom, effectiveTo), category: "VARIABLE_FEE", label: `Pass-through contrattuale ${component.kind}`, sign: "CHARGE", value: multiply(fromNumber(fee.amount), fromNumber(applicableMonths.length)), formulaId: "CONTRACTUAL_PASS_THROUGH_MONTHLY_RATE_TIMES_MONTHS", formulaInputs: { sourceCteId: offer.sourceCteId, sourceCteVersion: offer.sourceCteVersion, passThroughComponentId: component.componentId, kind: component.kind, declarationState: component.declarationState, effectiveFrom, effectiveTo, feeUnit: fee.unit, feeRate: fee.amount, basisMonths: applicableMonths.length, taxTreatment: fee.taxTreatment } });
     }
+  }
+}
+
+// Quote on a competitor bill (Tony, 26/10: "sulla CTE mancano tutti i costi"): the CTE's dispatching, capacity market and
+// network losses are part of what the customer would pay, so they are priced with the official value of the period when
+// resolved, else with the value the CTE states ("attualmente pari a ..."). A charge the CTE does not state stays out.
+function lossRatio(value: ResolvedOfficialRuntimeValue | null | undefined): Rational | null {
+  if (!value || !Number.isFinite(value.value) || value.value <= 0) return null;
+  const ratio = /percent|%/i.test(value.unit) || value.value > 1 ? value.value / 100 : value.value;
+  return ratio > 0 && ratio < 0.5 ? fromNumber(ratio) : null;
+}
+function addCtePassThroughs(target: ComponentDraft[], request: ElectricitySimulationRequest, offer: CalculationReadyOffer, runtime: CteRuntimeResolution | null, totalQuantity: Rational): void {
+  const priced = new Set(target.filter((draft) => draft.formulaId.startsWith("CONTRACTUAL_PASS_THROUGH")).map((draft) => String(draft.formulaInputs.kind ?? "")));
+  const loss = offer.lossReference ? lossRatio(runtime?.loss) : null;
+  const targets = new Set(offer.lossReference?.applicationTargets ?? []);
+  const grossed = (kind: "DISPATCHING" | "CAPACITY_MARKET", rate: Rational) => loss && targets.has(kind) ? multiply(rate, add(fromNumber(1), loss)) : rate;
+  // Losses on energy: the index (and the spread, when the CTE says so) applied to the share of energy lost on the networks.
+  if (loss && (targets.has("ENERGY_INDEX") || targets.has("SPREAD"))) {
+    const indexEnergy = target.filter((draft) => draft.category === "ENERGY" && (draft.formulaId === "EE_PUN_MWH_TO_KWH_PLUS_SPREAD" || draft.formulaId === "EE_FIXED_PRICE_TIMES_KWH"));
+    // Index only: the PUN share of each band; index and spread: the whole energy line.
+    const base = indexEnergy.reduce((total, draft) => {
+      if (targets.has("SPREAD") || draft.formulaId !== "EE_PUN_MWH_TO_KWH_PLUS_SPREAD") return add(total, draft.value);
+      return add(total, multiply(divide(fromNumber(Number(draft.formulaInputs.punEurPerMwh ?? 0)), fromNumber(1000)), fromNumber(Number(draft.formulaInputs.quantityKwh ?? 0))));
+    }, fromNumber(0));
+    if (indexEnergy.length) target.push({ componentId: "cte-pass-through:losses", category: "VARIABLE_FEE", label: "Perdite di rete (da CTE)", sign: "CHARGE", value: multiply(base, loss), formulaId: "CTE_PASS_THROUGH_LOSSES_ON_ENERGY", formulaInputs: { kind: "LOSSES", lossFactor: toDecimal(loss, 6), source: runtime?.loss?.officialIdentifier ?? "OFFICIAL" } });
+  }
+  const dispatching = offer.dispatchingReference;
+  if (dispatching && !priced.has("DISPATCHING")) {
+    const official = runtime?.dispatching?.value;
+    const rate = official ?? dispatching.snapshotValue;
+    if (rate !== undefined && Number.isFinite(rate) && rate > 0) {
+      const unitRate = grossed("DISPATCHING", fromNumber(rate));
+      target.push({ componentId: "cte-pass-through:dispatching", category: "VARIABLE_FEE", label: "Dispacciamento (da CTE)", sign: "CHARGE", value: multiply(unitRate, totalQuantity), formulaId: "CTE_PASS_THROUGH_RATE_TIMES_KWH", formulaInputs: { kind: "DISPATCHING", feeUnit: "EUR_PER_KWH", feeRate: toDecimal(unitRate, 6), basisQuantity: toDecimal(totalQuantity, 3), source: official !== undefined ? "OFFICIAL" : "CTE_STATED_VALUE" } });
+    }
+  }
+  if (!priced.has("CAPACITY_MARKET")) {
+    const period = request.supplyPeriod;
+    const entries = (offer.capacityMarketSchedule ?? []).filter((entry) => (entry.voltageScope === undefined || entry.voltageScope === request.voltageLevel) && entry.timeClass !== "PEAK" && entry.effectiveFrom < period.periodEnd && entry.effectiveTo > period.periodStart);
+    entries.forEach((entry, index) => {
+      const rate = entry.mode === "OFFICIAL_PASS_THROUGH" ? runtime?.capacityMarket?.value ?? entry.value : entry.value;
+      if (!Number.isFinite(rate) || rate <= 0) return;
+      const unitRate = entry.lossTreatment === "GROSS_OF_LOSSES" || entry.lossTreatment === "OFFICIAL_REFERENCE" ? grossed("CAPACITY_MARKET", fromNumber(rate)) : fromNumber(rate);
+      const label = entry.timeClass === "CAPACITY_MARKET_LIBERO" ? "Capacity market libero (da CTE)" : "Mercato della capacità (da CTE)";
+      target.push({ componentId: `cte-pass-through:capacity:${index}`, category: "VARIABLE_FEE", label, sign: "CHARGE", value: multiply(unitRate, totalQuantity), formulaId: "CTE_PASS_THROUGH_RATE_TIMES_KWH", formulaInputs: { kind: "CAPACITY_MARKET", feeUnit: "EUR_PER_KWH", feeRate: toDecimal(unitRate, 6), basisQuantity: toDecimal(totalQuantity, 3), source: entry.mode === "OFFICIAL_PASS_THROUGH" && runtime?.capacityMarket ? "OFFICIAL" : "CTE_STATED_VALUE" } });
+    });
   }
 }
 
@@ -310,8 +355,8 @@ export async function calculatePreparedOffer(request: SimulationRequest, prepare
   assertEeNetTaxPolicy(request);
   let cteRuntime: CteRuntimeResolution | null = null;
   if (request.vector === "EE" && (prepared.offer.dispatchingReference !== undefined || prepared.offer.lossReference !== undefined || (prepared.offer.capacityMarketSchedule ?? []).some((entry) => entry.mode === "OFFICIAL_PASS_THROUGH"))) {
-    // The CTE's official pass-through values (capacity, dispatching, losses) are checked here but never priced:
-    // a quote on a competitor bill without them is still the offer's commercial cost, so a gap no longer drops the offer.
+    // The CTE's official pass-through values (capacity, dispatching, losses): on a competitor bill they are priced below
+    // (official value when resolved, else the value the CTE states), and a missing official value no longer drops the offer.
     try {
       cteRuntime = await resolveCteRegulatoryRuntime(prepared.version.contract, { tenantId: request.tenantId, effectiveAt: request.calculationDate, customerScope: dependencies.trustedElectricityContext?.regulatoryCustomerScope ?? "ALL_ELECTRICITY", voltageLevel: request.voltageLevel }, dependencies.regulatoryRuntimeResolver);
     } catch (error) {
@@ -348,6 +393,7 @@ export async function calculatePreparedOffer(request: SimulationRequest, prepare
   const bta6 = request.vector === "EE" && dependencies.trustedElectricityContext?.regulatoryCustomerScope === "NON_DOMESTIC_BT_BTA6";
   const contractual = bta6 ? evaluateContractualPassThrough(prepared.offer, request.supplyPeriod) : null;
   if (bta6) addPassThroughComponents(drafts, prepared.offer, request, totalQuantity);
+  if (request.vector === "EE" && request.sourceBill) addCtePassThroughs(drafts, request, prepared.offer, cteRuntime, totalQuantity);
   const commercialComponents = convertDrafts(drafts);
   const regulatedComponents = regulated?.components ?? [];
   const components = [...commercialComponents, ...regulatedComponents];
