@@ -283,7 +283,7 @@ function offersFrom(bill: BillDocumentModel, context: Context, candidates: reado
     // Only the CTEs the eligibility check allows for this bill are offered.
     const candidate = candidates.find((item) => item.archiveId === calculation.sourceCte.archiveId && (item.finalStatus === "ELIGIBLE" || item.finalStatus === "ELIGIBLE_BY_OVERRIDE"));
     if (!candidate) return [];
-    const receipt = buildQuoteReceipt({ vector: calculation.vector, offerSupplyCost: calculation.totalCommercialCost.amount, analysis: bill.analystReview.economics.economicAnalysis, domestic: context.classification.domestic, validUntil: candidate.validity.periodEnd });
+    const receipt = buildQuoteReceipt({ vector: calculation.vector, offerSupplyCost: calculation.totalCommercialCost.amount, analysis: bill.analystReview.economics.economicAnalysis, domestic: context.classification.domestic, validUntil: candidate.validity.periodEnd, offerComponents: calculation.components });
     return [{ rank: entry.rank, calculation, supplier: entry.supplier, offerName: candidate.offer.name || entry.offerCode, receipt, candidate }];
   });
 }
@@ -370,6 +370,42 @@ function CostDetail({ offer, open }: { readonly offer: Offer; readonly open: boo
   </details>;
 }
 
+// A lower cost is green, a higher one red: the difference reads CTE minus bill.
+function difference(value: number | null): string | undefined { return value === null || Math.abs(value) < 0.01 ? undefined : value < 0 ? "positive" : "negative"; }
+function signedEuro(value: number | null): string { return value === null ? "—" : Math.abs(value) < 0.01 ? "=" : `${value > 0 ? "+" : "−"}${EURO.format(Math.abs(value))}`; }
+// Box offerta of the scontrino, side by side: how the bill prices energy and how the simulated CTE would, line by line.
+function OfferBox({ offer, bill, context }: { readonly offer: Offer; readonly bill: BillDocumentModel; readonly context: Context }): ReactNode {
+  const ee = context.vector === "EE";
+  const unit = ee ? "€/kWh" : "€/Smc";
+  const basis = annualBasis(context);
+  const terms = offer.candidate.terms;
+  const energyRow = offer.receipt.rows.find((row) => row.key === "ENERGY");
+  const fees = offer.calculation.components.filter((component) => component.category === "FIXED_FEE");
+  const extras = fees.filter((component) => /flex|opzion|servizi/i.test(component.label));
+  const billSpread = bill.currentSpread?.status === "CALCULATED" ? bill.currentSpread.spread : null;
+  const billPcv = monthlyPcv(bill);
+  const billUnit = energyRow?.current != null && basis ? energyRow.current / basis.billed : null;
+  const index = offer.candidate.pricingReference === "PSV" || !ee ? "PSV" : "PUN";
+  const offerType = offer.candidate.pricingType === "FIXED" ? "Prezzo fisso" : offer.candidate.pricingType === "INDEXED" ? `Indicizzato ${index}` : "Non indicato";
+  const rows: readonly (readonly [string, ReactNode, ReactNode, string | undefined])[] = [
+    ["Tipo di prezzo", priceType(bill), offerType, undefined],
+    ...(ee && indexedBill(bill) ? [["Indice nel periodo (GME)", referencePun(bill), "stesso indice e stesso periodo", undefined] as const] : []),
+    ["Spread sull'indice", billSpread === null ? "—" : `${RATE.format(billSpread)} ${unit}`, terms?.spread == null ? "—" : `${RATE.format(terms.spread)} ${unit}`, billSpread !== null && terms?.spread != null ? difference(terms.spread - billSpread) : undefined],
+    ...(terms?.fixedPrice != null ? [["Prezzo fisso energia", "—", `${RATE.format(terms.fixedPrice)} ${unit}`, undefined] as const] : []),
+    ["Quota fissa di vendita", billPcv === null ? "—" : `${EURO.format(billPcv)} al mese`, terms?.monthlyFixedFee == null ? "—" : `${EURO.format(terms.monthlyFixedFee)} al mese`, billPcv !== null && terms?.monthlyFixedFee != null ? difference(terms.monthlyFixedFee - billPcv) : undefined],
+    ["Opzioni e servizi a pagamento", "—", extras.length ? extras.map((component) => `${component.label} ${EURO.format(component.amount.amount)}`).join(" · ") : "nessuno", extras.length ? "negative" : undefined],
+    ["Costo medio della materia", billUnit === null ? "—" : `${RATE.format(billUnit)} ${unit}`, `${RATE.format(offer.calculation.unitCost.amount)} ${unit}`, billUnit === null ? undefined : difference(offer.calculation.unitCost.amount - billUnit)],
+    ["Spesa per l'offerta (vendita)", euro(energyRow?.current ?? null), euro(energyRow?.offer ?? null), energyRow?.current == null || energyRow.offer === null ? undefined : difference(energyRow.offer - energyRow.current)],
+  ];
+  return <div className="quote-offer-box">
+    <p className="eyebrow">BOX OFFERTA · CONFRONTO BOLLETTA / CTE</p>
+    <div className="responsive-table"><table>
+      <thead><tr><th scope="col">Caratteristica</th><th scope="col">Bolletta ({context.currentSupplier})</th><th scope="col">{offer.offerName}</th></tr></thead>
+      <tbody>{rows.map(([label, current, simulated, tone]) => <tr key={label} className={tone ? "changed" : undefined}><th scope="row">{label}</th><td>{current}</td><td className={tone}>{simulated}</td></tr>)}</tbody>
+    </table></div>
+  </div>;
+}
+
 function Receipt({ offer, today, business, context, bill }: { readonly offer: Offer; readonly today: string; readonly business: boolean; readonly context: Context; readonly bill: BillDocumentModel }): ReactNode {
   const receipt = offer.receipt;
   // Same saving per kWh (or Smc) as on the bill, simulated over 12 months of the annual consumption.
@@ -393,11 +429,17 @@ function Receipt({ offer, today, business, context, bill }: { readonly offer: Of
       <strong>{euro(Math.abs(annualSaving))}{annualCurrent ? ` (${PERCENT.format(Math.abs(annualSaving / annualCurrent * 100))}%)` : ""}</strong>
     </div> : null}
     {receipt.status === "COMPLETE" ? null : <p className="inline-warning" role="status">La bolletta non riporta la spesa per la materia energia: mostriamo solo il costo della nuova offerta.</p>}
-    <div className="responsive-table"><table>
-      <thead><tr><th scope="col">Voce</th><th scope="col">Bolletta attuale</th><th scope="col">Nuova offerta</th></tr></thead>
-      <tbody>{receipt.rows.map((row) => <tr key={row.key}><th scope="row">{row.label}</th><td>{euro(row.current)}</td><td>{euro(row.offer)}</td></tr>)}</tbody>
-      {receipt.status === "COMPLETE" ? <tfoot><tr><th scope="row">{receipt.taxesIncluded ? "Totale" : "Totale imposte escluse"}</th><td>{euro(receipt.currentTotal)}</td><td>{euro(receipt.offerTotal)}</td></tr></tfoot> : null}
+    {/* ARERA scontrino dell'energia: quota per consumi, quota fissa, quota potenza, then excise and VAT, with the difference per line (Tony, 26/10). */}
+    <div className="responsive-table"><table className="quote-scontrino">
+      <caption>Periodo della bolletta: {date(context.billingPeriod.periodStart)} – {date(context.billingPeriod.periodEnd)} · stessi consumi per entrambe le colonne</caption>
+      <thead><tr><th scope="col">Voce</th><th scope="col">Bolletta attuale</th><th scope="col">CTE simulata</th><th scope="col">Differenza</th></tr></thead>
+      <tbody>{receipt.quotas.map((row) => <tr key={row.key} className={row.difference !== null && Math.abs(row.difference) >= 0.01 ? "changed" : undefined}>
+        <th scope="row">{row.label}<small>{row.basis}{row.currentSeller !== null || row.offerSeller !== null ? ` · di cui vendita ${euro(row.currentSeller)} → ${euro(row.offerSeller)}` : ""}</small></th>
+        <td>{euro(row.current)}</td><td>{euro(row.offer)}</td><td className={difference(row.difference)}>{signedEuro(row.difference)}</td>
+      </tr>)}</tbody>
+      {receipt.status === "COMPLETE" ? <tfoot><tr><th scope="row">{receipt.taxesIncluded ? "Totale" : "Totale imposte escluse"}</th><td>{euro(receipt.currentTotal)}</td><td>{euro(receipt.offerTotal)}</td><td className={difference(receipt.savings === null ? null : -receipt.savings)}>{signedEuro(receipt.savings === null ? null : -receipt.savings)}</td></tr></tfoot> : null}
     </table></div>
+    <OfferBox offer={offer} bill={bill} context={context} />
     <div className="quote-validity">
       <span>Offerta valida fino al</span><strong>{date(receipt.validUntil)}</strong>
       <small>{left === null ? "Verifica la scadenza sulla CTE prima di firmare." : left < 0 ? "Offerta scaduta: non può più essere firmata." : `Il cliente deve firmare il contratto entro questa data${left <= 7 ? ` (mancano ${left} giorni)` : ""}.`}</small>

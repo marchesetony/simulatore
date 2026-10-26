@@ -35,4 +35,31 @@ assert.equal(offerOnly.status, "OFFER_ONLY"); assert.equal(offerOnly.savings, nu
 const netOfTax = buildQuoteReceipt({ vector: "EE", offerSupplyCost: 90, analysis: { components: [], totals: { ...totals, taxTotal: null } }, domestic: true, validUntil: null });
 assert.equal(netOfTax.taxesIncluded, false); assert.equal(netOfTax.currentTotal, 140); assert.equal(netOfTax.offerTotal, 130);
 
+// 6. ARERA scontrino dell'energia (Tony, 26/10): the same totals split into quota per consumi, quota fissa, quota potenza,
+//    excise and VAT, each with the CTE-minus-bill difference; regulated lines stay the bill's, only the seller's part changes.
+const supply = (group, classification, amount, unit, description = "") => ({ ...line(classification, amount, description, { unit, rawUnit: unit }), group, includedInReconciliation: true });
+const scontrinoTotals = { sellerEnergyTotal: 80, sellerCommercializationTotal: 15, sellerOtherTotal: null, regulatedNetworkTotal: 30, systemChargesTotal: 10, taxTotal: 20 };
+const scontrinoLines = [
+  supply("ENERGY_PRICE", "ENERGY_INDEX", "80,00", "€/kWh", "Prezzo energia"), supply("COMMERCIALIZATION", "PCV", "15,00", "€/mese", "Quota fissa vendita"),
+  supply("REGULATED_NETWORK", "ARERA_NETWORK", "12,00", "€/kWh", "Quota energia trasporto"), supply("REGULATED_NETWORK", "ARERA_NETWORK", "8,00", "€/mese", "Quota fissa trasporto"), supply("REGULATED_NETWORK", "ARERA_NETWORK", "10,00", "€/kW/mese", "Quota potenza"),
+  supply("SYSTEM_CHARGES", "ARERA_SYSTEM_CHARGES", "10,00", "€/kWh", "ASOS e ARIM"),
+  { ...line("ACCISE", "5,00", "Accisa"), group: "TAX" }, { ...line("IVA", "15,00", "IVA 10%"), group: "TAX" },
+];
+const offerComponents = [
+  { category: "ENERGY", sign: "CHARGE", amount: { amount: 70 } },
+  { category: "FIXED_FEE", sign: "CHARGE", amount: { amount: 15 }, formulaInputs: { feeUnit: "EUR_PER_MONTH" } },
+  { category: "FIXED_FEE", sign: "CHARGE", amount: { amount: 3 }, formulaInputs: { feeUnit: "EUR_PER_YEAR" } },
+];
+const scontrino = buildQuoteReceipt({ vector: "EE", offerSupplyCost: 88, analysis: { components: scontrinoLines, totals: scontrinoTotals }, domestic: true, validUntil: null, offerComponents });
+assert.deepEqual(scontrino.quotas.map((row) => [row.key, row.current, row.offer, row.difference]), [
+  ["CONSUMPTION", 102, 92, -10], ["FIXED", 23, 26, 3], ["POWER", 10, 10, 0], ["EXCISE", 5, 5, 0], ["VAT", 15, 14.3, -0.7],
+]);
+assert.equal(scontrino.quotas[1].currentSeller, 15); assert.equal(scontrino.quotas[1].offerSeller, 18, "the yearly Flex fee sits in the quota fissa");
+const quotaTotal = scontrino.quotas.reduce((sum, row) => sum + row.current, 0);
+assert.equal(Math.round(quotaTotal * 100) / 100, scontrino.currentTotal, "the quotas add up to the bill total");
+assert.equal(Math.round(scontrino.quotas.reduce((sum, row) => sum + row.offer, 0) * 100) / 100, scontrino.offerTotal);
+// A bill line without a unit is not dropped: it shows as "Altre voci" so the totals still match.
+const unplaced = buildQuoteReceipt({ vector: "EE", offerSupplyCost: 88, analysis: { components: scontrinoLines.filter((item) => item.description !== "Quota potenza"), totals: scontrinoTotals }, domestic: true, validUntil: null, offerComponents });
+assert.deepEqual(unplaced.quotas.find((row) => row.key === "OTHER")?.current, 10);
+
 console.log("quote receipt smoke passed");

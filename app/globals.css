@@ -513,3 +513,10 @@ button:focus-visible,a:focus-visible,input:focus-visible,select:focus-visible,te
 .quote-detail td:nth-child(3) { white-space:normal; }
 .quote-saving span small { display:block; margin-top:4px; font-size:13px; color:var(--muted, #52606d); }
 .quote-spread-detail { display:block; margin-top:4px; font-size:13px; font-weight:500; color:var(--muted, #52606d); }
+
+.quote-scontrino caption { caption-side:top; text-align:left; padding:0 0 8px; color:var(--muted, #667); font-size:13px; }
+.quote-scontrino th small,.quote-offer-box th small { display:block; font-weight:400; font-size:12px; color:var(--muted, #667); }
+.quote-receipt tr.changed td { background:rgba(255, 196, 0, .08); }
+.quote-receipt td.positive { color:#12664f; font-weight:700; }
+.quote-receipt td.negative { color:#8c2d2d; font-weight:700; }
+.quote-offer-box { margin-top:16px; padding:14px 0 0; border-top:1px solid var(--line); }
