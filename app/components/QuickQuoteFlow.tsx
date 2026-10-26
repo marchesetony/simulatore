@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useState, type ChangeEvent, type ReactNode } from "react";
 import { EmptyState, ErrorState, LoadingState } from "./UiStates";
 import { downloadExport, requestForm, requestJson, toUiError } from "../lib/ui/client";
-import { buildQuoteReceipt, type QuoteReceipt } from "../lib/quote/receipt";
+import { buildQuoteReceipt, regulatedVerification, type QuoteReceipt, type RegulatedDomain } from "../lib/quote/receipt";
 import type { ApprovedBillSummaryModel, BillDocumentModel, CalculationModel, ComparisonModel, ProposalModel } from "../lib/ui/models";
 
 type Step = "bill" | "review" | "offers";
@@ -370,13 +370,23 @@ function CostDetail({ offer, open }: { readonly offer: Offer; readonly open: boo
   </details>;
 }
 
-// The current offer's name (and code) as read on the uploaded bill, shown next to the bill column when the bill states it (Tony, 26/10).
+// The current offer's name as read on the uploaded bill, without the long offer code (Tony, 26/10: "rendilo leggibile").
 function billOfferName(bill: BillDocumentModel | null, context: Context): string | null {
   const receipt = bill?.analystReview.receipt ?? null;
   const name = context.currentOffer?.name?.trim() || receipt?.offerName.value?.trim() || bill?.structuredBill?.documentOfferName?.trim() || null;
-  const code = context.currentOffer?.code?.trim() || receipt?.offerCode.value?.trim() || null;
-  if (!name) return code ? `codice ${code}` : null;
-  return code && !name.includes(code) ? `${name} (${code})` : name;
+  return name ? name.replace(/\s*\((?=[A-Z0-9]*\d)[A-Z0-9]{10,}\)\s*$/, "").replace(/\s+/g, " ").trim() || null : null;
+}
+// Official check of the regulated charges, shown under each section and charge it covers.
+const SOURCE_OF: Readonly<Record<RegulatedDomain, string>> = { NETWORK: "ARERA", SYSTEM_CHARGES: "ARERA", DISPATCHING: "Terna/ARERA", CAPACITY_MARKET: "Terna", TAX: "fonte fiscale" };
+const DOMAIN_OF_ROW: Readonly<Record<string, RegulatedDomain>> = { NETWORK: "NETWORK", SYSTEM: "SYSTEM_CHARGES", TAXES: "TAX", DISPATCHING: "DISPATCHING", CAPACITY: "CAPACITY_MARKET" };
+function VerificationNote({ bill, rowKey }: { readonly bill: BillDocumentModel; readonly rowKey: string }): ReactNode {
+  const domain = DOMAIN_OF_ROW[rowKey];
+  if (!domain) return null;
+  const check = regulatedVerification(bill.regulatoryAudit, domain);
+  const source = SOURCE_OF[domain];
+  if (check.status === "VERIFIED") return <small className="quote-check ok">✓ Verificato sui valori {source} del periodo ({check.checked} {check.checked === 1 ? "voce" : "voci"})</small>;
+  if (check.status === "DIFFERENCE") return <small className="quote-check bad">⚠ La bolletta non corrisponde ai valori {source}: {EURO.format(Math.abs(check.difference))} addebitati {check.difference > 0 ? "in più" : "in meno"}</small>;
+  return <small className="quote-check open">Non verificato su {source}: {check.reason}</small>;
 }
 // A lower cost is green, a higher one red: the difference reads CTE minus bill.
 function difference(value: number | null): string | undefined { return value === null || Math.abs(value) < 0.01 ? undefined : value < 0 ? "positive" : "negative"; }
@@ -396,7 +406,7 @@ function OfferBox({ offer, bill, context }: { readonly offer: Offer; readonly bi
   const index = offer.candidate.pricingReference === "PSV" || !ee ? "PSV" : "PUN";
   const offerType = offer.candidate.pricingType === "FIXED" ? "Prezzo fisso" : offer.candidate.pricingType === "INDEXED" ? `Indicizzato ${index}` : "Non indicato";
   const rows: readonly (readonly [string, ReactNode, ReactNode, string | undefined])[] = [
-    ["Offerta", billOfferName(bill, context) ?? "non indicata in bolletta", `${offer.offerName}${offer.candidate.offer.code ? ` (${offer.candidate.offer.code})` : ""}`, undefined],
+    ["Offerta", billOfferName(bill, context) ?? "non indicata in bolletta", offer.offerName, undefined],
     ["Tipo di prezzo", priceType(bill), offerType, undefined],
     ...(ee && indexedBill(bill) ? [["Indice nel periodo (GME)", referencePun(bill), "stesso indice e stesso periodo", undefined] as const] : []),
     ["Spread sull'indice", billSpread === null ? "—" : `${RATE.format(billSpread)} ${unit}`, terms?.spread == null ? "—" : `${RATE.format(terms.spread)} ${unit}`, billSpread !== null && terms?.spread != null ? difference(terms.spread - billSpread) : undefined],
@@ -445,9 +455,9 @@ function Receipt({ offer, today, business, context, bill }: { readonly offer: Of
       <caption>Periodo della bolletta: {date(context.billingPeriod.periodStart)} – {date(context.billingPeriod.periodEnd)} · stessi consumi per entrambe le colonne</caption>
       <thead><tr><th scope="col">Voce</th><th scope="col">Bolletta attuale{currentOffer ? <small>{context.currentSupplier} · {currentOffer}</small> : null}</th><th scope="col">CTE simulata<small>{offer.supplier} · {offer.offerName}</small></th><th scope="col">Differenza</th></tr></thead>
       <tbody>{receipt.rows.flatMap((row) => [<tr key={row.key} className={`quote-section-row${row.difference != null && Math.abs(row.difference) >= 0.01 ? " changed" : ""}`}>
-        <th scope="row">{row.label}</th><td>{euro(row.current)}</td><td>{euro(row.offer)}</td><td className={difference(row.difference ?? null)}>{signedEuro(row.difference ?? null)}</td>
+        <th scope="row">{row.label}<VerificationNote bill={bill} rowKey={row.key} /></th><td>{euro(row.current)}</td><td>{euro(row.offer)}</td><td className={difference(row.difference ?? null)}>{signedEuro(row.difference ?? null)}</td>
       </tr>, ...(row.details ?? []).map((item) => <tr key={`${row.key}-${item.key}`} className={`quote-detail-row${item.difference !== null && Math.abs(item.difference) >= 0.01 ? " changed" : ""}`}>
-        <th scope="row">{item.label}</th>
+        <th scope="row">{item.label}{row.key === "ENERGY" && item.current !== null ? <VerificationNote bill={bill} rowKey={item.key} /> : null}</th>
         <td>{item.current === null ? (receipt.status === "COMPLETE" ? "non in bolletta" : "—") : euro(item.current)}</td><td>{item.offer === null ? "non nella CTE" : euro(item.offer)}</td><td className={difference(item.difference)}>{signedEuro(item.difference)}</td>
       </tr>)])}</tbody>
       {receipt.status === "COMPLETE" ? <tfoot><tr><th scope="row">{receipt.taxesIncluded ? "Totale" : "Totale imposte escluse"}</th><td>{euro(receipt.currentTotal)}</td><td>{euro(receipt.offerTotal)}</td><td className={difference(receipt.savings === null ? null : -receipt.savings)}>{signedEuro(receipt.savings === null ? null : -receipt.savings)}</td></tr></tfoot> : null}

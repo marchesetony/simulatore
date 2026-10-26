@@ -1,4 +1,7 @@
 import type { BillEconomicAnalysis } from "../foundation/bill-economic-analysis";
+import type { BillRegulatoryAuditDTO } from "../foundation/bill-regulatory-audit";
+// @ts-expect-error Node's strip-only test runner requires the explicit extension.
+import { referenceDomainForComponent } from "../foundation/regulatory-domains.ts";
 
 /**
  * Bolletta 2.0 style "scontrino dell'energia" for one offer, side by side with the bill it was simulated on.
@@ -239,4 +242,35 @@ export function buildQuoteReceipt(input: QuoteReceiptInput): QuoteReceipt {
   const savings = cents(currentTotal - offerTotal);
   const savingsPercent = currentTotal > 0 ? Math.round((savings / currentTotal) * 1000) / 10 : null;
   return { status: "COMPLETE", rows: withDetails(input, rows, true), currentTotal, offerTotal, savings, savingsPercent, taxesIncluded, vatRate: taxesIncluded ? vatRate : null, vatRateEstimated: taxesIncluded && printedRate === null, validUntil: input.validUntil, quotas: quotasOf(input, currentEnergy, offerEnergy, network, system, taxesIncluded ? currentTaxes : null, offerTaxes) };
+}
+
+/** Whether the bill's regulated charges match the official ARERA (network, system charges) and Terna (dispatching, capacity) values of the period. */
+export type RegulatedDomain = "NETWORK" | "SYSTEM_CHARGES" | "DISPATCHING" | "CAPACITY_MARKET" | "TAX";
+export interface RegulatedVerification { readonly status: "VERIFIED" | "DIFFERENCE" | "NOT_VERIFIABLE" | "NOT_AVAILABLE"; readonly checked: number; readonly difference: number; readonly reason: string | null }
+const VERIFIED = new Set(["MATCH", "ROUNDING_DIFFERENCE"]);
+const DIFFERENT = new Set(["MISMATCH", "OVERCHARGE", "UNDERCHARGE"]);
+const REASON: Readonly<Record<string, string>> = {
+  REGULATORY_SOURCE_MISSING: "manca il valore ufficiale del periodo in archivio", SCOPE_UNDETERMINED: "tipologia cliente non determinata", CUSTOMER_SCOPE_UNDETERMINED: "tipologia cliente non determinata",
+  QUANTITY_MISSING: "quantit\u00e0 non letta in bolletta", UNIT_PRICE_MISSING: "prezzo unitario non letto in bolletta", AGGREGATED_BILL_LINE: "voce aggregata in bolletta", UNIT_SEMANTICS_INCONSISTENT: "unit\u00e0 di misura incoerente",
+  INSUFFICIENT_DOCUMENT_DATA: "dati della bolletta insufficienti", SOURCE_AUTHORITY_NOT_IMPLEMENTED: "fonte ufficiale non ancora collegata", FORMULA_MISSING: "formula non disponibile",
+};
+function domainOf(line: BillRegulatoryAuditDTO["lines"][number]): RegulatedDomain | null {
+  const mapped = referenceDomainForComponent(line.code);
+  if (mapped === "NETWORK" || mapped === "SYSTEM_CHARGES" || mapped === "DISPATCHING" || mapped === "CAPACITY_MARKET" || mapped === "TAX") return mapped;
+  if (line.category === "DISPATCHING" || line.category === "CAPACITY_MARKET" || line.category === "TAX") return line.category;
+  if (line.category === "REGULATED_ARERA") return /asos|arim|uc3|uc6|oneri/i.test(`${line.code} ${line.description}`) ? "SYSTEM_CHARGES" : "NETWORK";
+  return null;
+}
+export function regulatedVerification(audit: BillRegulatoryAuditDTO | null | undefined, domain: RegulatedDomain): RegulatedVerification {
+  // Excise and VAT have no official source connected yet: say so rather than imply a check (Tony, 26/10).
+  if (domain === "TAX") return { status: "NOT_AVAILABLE", checked: 0, difference: 0, reason: "aliquote fiscali non ancora collegate a una fonte ufficiale" };
+  const lines = (audit?.lines ?? []).filter((line) => domainOf(line) === domain);
+  if (!lines.length) return { status: "NOT_AVAILABLE", checked: 0, difference: 0, reason: audit ? "nessuna voce confrontabile in bolletta" : "verifica non eseguita per questa bolletta" };
+  const different = lines.filter((line) => DIFFERENT.has(line.auditStatus));
+  const verified = lines.filter((line) => VERIFIED.has(line.auditStatus));
+  if (different.length) return { status: "DIFFERENCE", checked: verified.length + different.length, difference: cents(different.reduce((total, line) => total + (line.differenceAmount ?? 0), 0)), reason: null };
+  if (verified.length === lines.length) return { status: "VERIFIED", checked: verified.length, difference: 0, reason: null };
+  const open = lines.find((line) => !VERIFIED.has(line.auditStatus));
+  const reason = open ? REASON[open.notComparableReason] ?? REASON[open.auditStatus] ?? "non confrontabile" : null;
+  return { status: "NOT_VERIFIABLE", checked: verified.length, difference: 0, reason: verified.length ? `${verified.length} di ${lines.length} voci verificate; le altre: ${reason}` : reason };
 }

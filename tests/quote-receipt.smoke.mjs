@@ -85,3 +85,16 @@ assert.deepEqual(scontrino.rows[3].details.map((item) => [item.label, item.curre
 assert.equal(scontrino.rows[3].label, "Imposte (accise e IVA)");
 
 console.log("quote receipt smoke passed");
+// 9. "Sono verificati sui valori ARERA e Terna?" (Tony, 26/10): each regulated section says whether the bill's charges were
+//    checked against the official values of the period, and never claims a check that did not happen.
+const { regulatedVerification } = await import("../app/lib/quote/receipt.ts");
+const auditLine = (code, category, auditStatus, differenceAmount = 0, notComparableReason = "NONE") => ({ code, category, auditStatus, differenceAmount, notComparableReason, description: code });
+const audit = { lines: [auditLine("NETWORK_ENERGY", "REGULATED_ARERA", "MATCH"), auditLine("NETWORK_POWER", "REGULATED_ARERA", "ROUNDING_DIFFERENCE"), auditLine("ASOS", "REGULATED_ARERA", "OVERCHARGE", 1.2), auditLine("ARIM", "REGULATED_ARERA", "MATCH"), auditLine("DISPATCHING", "DISPATCHING", "REGULATORY_SOURCE_MISSING", 0, "REGULATORY_SOURCE_MISSING")] };
+assert.deepEqual(regulatedVerification(audit, "NETWORK"), { status: "VERIFIED", checked: 2, difference: 0, reason: null });
+assert.equal(regulatedVerification(audit, "SYSTEM_CHARGES").status, "DIFFERENCE");
+assert.equal(regulatedVerification(audit, "SYSTEM_CHARGES").difference, 1.2);
+assert.deepEqual(regulatedVerification(audit, "DISPATCHING"), { status: "NOT_VERIFIABLE", checked: 0, difference: 0, reason: "manca il valore ufficiale del periodo in archivio" });
+assert.equal(regulatedVerification(audit, "CAPACITY_MARKET").status, "NOT_AVAILABLE");
+assert.equal(regulatedVerification(null, "NETWORK").reason, "verifica non eseguita per questa bolletta");
+assert.equal(regulatedVerification(audit, "TAX").status, "NOT_AVAILABLE", "excise has no official source connected");
+console.log("quote receipt regulated verification passed");
