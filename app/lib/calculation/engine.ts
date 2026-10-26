@@ -160,32 +160,47 @@ function addPassThroughComponents(target: ComponentDraft[], offer: CalculationRe
 // Quote on a competitor bill (Tony, 26/10: "sulla CTE mancano tutti i costi"): the CTE's dispatching, capacity market and
 // network losses are part of what the customer would pay, so they are priced with the official value of the period when
 // resolved, else with the value the CTE states ("attualmente pari a ..."). A charge the CTE does not state stays out.
+// Network losses are always billed (Tony, 26/10: "le perdite di rete sono sempre presenti"): under the TIS the energy
+// withdrawn at a point grow by the standard factor of TIS Tabella 4 colonna A, so when no official record is resolved the
+// table value for the supply's voltage applies (delibera 117/2022/R/eel from 1/1/2023, confirmed by 584/2023/R/eel).
+const TIS_TABLE_4_COLUMN_A: Readonly<Record<ElectricitySimulationRequest["voltageLevel"], number>> = { LV: 0.1, MV: 0.038, HV: 0.018, EHV: 0.007 };
 function lossRatio(value: ResolvedOfficialRuntimeValue | null | undefined): Rational | null {
   if (!value || !Number.isFinite(value.value) || value.value <= 0) return null;
   const ratio = /percent|%/i.test(value.unit) || value.value > 1 ? value.value / 100 : value.value;
   return ratio > 0 && ratio < 0.5 ? fromNumber(ratio) : null;
 }
+function standardLoss(request: ElectricitySimulationRequest, runtime: CteRuntimeResolution | null): { readonly ratio: Rational; readonly source: string } | null {
+  const official = lossRatio(runtime?.loss);
+  if (official) return { ratio: official, source: runtime?.loss?.officialIdentifier ?? "OFFICIAL" };
+  if (request.supplyPeriod.periodStart < "2023-01-01") return null;
+  return { ratio: fromNumber(TIS_TABLE_4_COLUMN_A[request.voltageLevel]), source: "TIS_TABELLA_4_COLONNA_A" };
+}
 function addCtePassThroughs(target: ComponentDraft[], request: ElectricitySimulationRequest, offer: CalculationReadyOffer, runtime: CteRuntimeResolution | null, totalQuantity: Rational): void {
   const priced = new Set(target.filter((draft) => draft.formulaId.startsWith("CONTRACTUAL_PASS_THROUGH")).map((draft) => String(draft.formulaInputs.kind ?? "")));
-  const loss = offer.lossReference ? lossRatio(runtime?.loss) : null;
+  const standard = standardLoss(request, runtime);
+  const loss = standard?.ratio ?? null;
   const targets = new Set(offer.lossReference?.applicationTargets ?? []);
-  const grossed = (kind: "DISPATCHING" | "CAPACITY_MARKET", rate: Rational) => loss && targets.has(kind) ? multiply(rate, add(fromNumber(1), loss)) : rate;
-  // Losses on energy: the index (and the spread, when the CTE says so) applied to the share of energy lost on the networks.
-  if (loss && (targets.has("ENERGY_INDEX") || targets.has("SPREAD"))) {
-    const indexEnergy = target.filter((draft) => draft.category === "ENERGY" && (draft.formulaId === "EE_PUN_MWH_TO_KWH_PLUS_SPREAD" || draft.formulaId === "EE_FIXED_PRICE_TIMES_KWH"));
-    // Index only: the PUN share of each band; index and spread: the whole energy line.
-    const base = indexEnergy.reduce((total, draft) => {
-      if (targets.has("SPREAD") || draft.formulaId !== "EE_PUN_MWH_TO_KWH_PLUS_SPREAD") return add(total, draft.value);
+  const grossUp = (rate: Rational) => loss ? multiply(rate, add(fromNumber(1), loss)) : rate;
+  // Losses on energy: the energy price (index and spread, or the fixed price) applied to the energy lost on the networks.
+  // Only a CTE that names the index alone as grossed up keeps the spread out of the base.
+  if (loss && standard && !priced.has("LOSSES")) {
+    const indexOnly = targets.has("ENERGY_INDEX") && !targets.has("SPREAD");
+    const energy = target.filter((draft) => draft.category === "ENERGY" && ["EE_PUN_MWH_TO_KWH_PLUS_SPREAD", "EE_FIXED_PRICE_TIMES_KWH", "EE_SPREAD_TIMES_KWH"].includes(draft.formulaId));
+    const base = energy.reduce((total, draft) => {
+      if (!indexOnly) return add(total, draft.value);
+      if (draft.formulaId !== "EE_PUN_MWH_TO_KWH_PLUS_SPREAD") return draft.formulaId === "EE_SPREAD_TIMES_KWH" ? total : add(total, draft.value);
       return add(total, multiply(divide(fromNumber(Number(draft.formulaInputs.punEurPerMwh ?? 0)), fromNumber(1000)), fromNumber(Number(draft.formulaInputs.quantityKwh ?? 0))));
     }, fromNumber(0));
-    if (indexEnergy.length) target.push({ componentId: "cte-pass-through:losses", category: "VARIABLE_FEE", label: "Perdite di rete (da CTE)", sign: "CHARGE", value: multiply(base, loss), formulaId: "CTE_PASS_THROUGH_LOSSES_ON_ENERGY", formulaInputs: { kind: "LOSSES", lossFactor: toDecimal(loss, 6), source: runtime?.loss?.officialIdentifier ?? "OFFICIAL" } });
+    if (energy.length) target.push({ componentId: "cte-pass-through:losses", category: "VARIABLE_FEE", label: "Perdite di rete", sign: "CHARGE", value: multiply(base, loss), formulaId: "CTE_PASS_THROUGH_LOSSES_ON_ENERGY", formulaInputs: { kind: "LOSSES", lossFactor: toDecimal(loss, 6), base: toDecimal(base, 6), spreadIncluded: !indexOnly, source: standard.source } });
   }
   const dispatching = offer.dispatchingReference;
   if (dispatching && !priced.has("DISPATCHING")) {
     const official = runtime?.dispatching?.value;
     const rate = official ?? dispatching.snapshotValue;
     if (rate !== undefined && Number.isFinite(rate) && rate > 0) {
-      const unitRate = grossed("DISPATCHING", fromNumber(rate));
+      // Art. 24 TIS applies to the energy withdrawn plus losses: the official rate is grossed up, while the CTE's stated
+      // value is already "incrementato del fattore per tenere conto delle perdite" (0,0105 x 1,10 = 0,01155).
+      const unitRate = official !== undefined ? grossUp(fromNumber(rate)) : fromNumber(rate);
       target.push({ componentId: "cte-pass-through:dispatching", category: "VARIABLE_FEE", label: "Dispacciamento (da CTE)", sign: "CHARGE", value: multiply(unitRate, totalQuantity), formulaId: "CTE_PASS_THROUGH_RATE_TIMES_KWH", formulaInputs: { kind: "DISPATCHING", feeUnit: "EUR_PER_KWH", feeRate: toDecimal(unitRate, 6), basisQuantity: toDecimal(totalQuantity, 3), source: official !== undefined ? "OFFICIAL" : "CTE_STATED_VALUE" } });
     }
   }
@@ -195,7 +210,8 @@ function addCtePassThroughs(target: ComponentDraft[], request: ElectricitySimula
     entries.forEach((entry, index) => {
       const rate = entry.mode === "OFFICIAL_PASS_THROUGH" ? runtime?.capacityMarket?.value ?? entry.value : entry.value;
       if (!Number.isFinite(rate) || rate <= 0) return;
-      const unitRate = entry.lossTreatment === "GROSS_OF_LOSSES" || entry.lossTreatment === "OFFICIAL_REFERENCE" ? grossed("CAPACITY_MARKET", fromNumber(rate)) : fromNumber(rate);
+      // "Al lordo delle perdite di rete": the rate applies to the energy withdrawn plus losses.
+      const unitRate = entry.lossTreatment === "GROSS_OF_LOSSES" || entry.lossTreatment === "OFFICIAL_REFERENCE" ? grossUp(fromNumber(rate)) : fromNumber(rate);
       const label = entry.timeClass === "CAPACITY_MARKET_LIBERO" ? "Capacity market libero (da CTE)" : "Mercato della capacità (da CTE)";
       target.push({ componentId: `cte-pass-through:capacity:${index}`, category: "VARIABLE_FEE", label, sign: "CHARGE", value: multiply(unitRate, totalQuantity), formulaId: "CTE_PASS_THROUGH_RATE_TIMES_KWH", formulaInputs: { kind: "CAPACITY_MARKET", feeUnit: "EUR_PER_KWH", feeRate: toDecimal(unitRate, 6), basisQuantity: toDecimal(totalQuantity, 3), source: entry.mode === "OFFICIAL_PASS_THROUGH" && runtime?.capacityMarket ? "OFFICIAL" : "CTE_STATED_VALUE" } });
     });

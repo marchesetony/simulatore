@@ -33,7 +33,20 @@ const quote = await calculatePreparedOffer(request(true), prepared);
 const byKind = (kind) => quote.components.filter((component) => component.formulaInputs?.kind === kind).map((component) => component.amount.amount);
 assert.deepEqual(byKind("DISPATCHING"), [11.55], "1.000 kWh x 0,01155 from the CTE");
 assert.deepEqual(byKind("CAPACITY_MARKET"), [13.49, 5], "BT capacity 0,01349 and capacity libero 0,005; the MV value is not applied to a BT supply");
-assert.equal(quote.totalCommercialCost.amount, 100 + 11.55 + 13.49 + 5);
+// Tony (26/10): "le perdite di rete sono sempre presenti". With no official record the TIS Tabella 4 colonna A factor for the
+// voltage applies (BT 10%) to the energy price: 1.000 kWh x 0,1 EUR x 10% = 10 EUR.
+assert.deepEqual(byKind("LOSSES"), [10], "BT standard losses 10% of the energy cost");
+assert.equal(quote.totalCommercialCost.amount, 100 + 10 + 11.55 + 13.49 + 5);
+// Capacity Market libero "al lordo delle perdite di rete" is applied to the energy plus losses: 0,005 x 1,10.
+const gross = structuredClone(prepared);
+gross.offer.capacityMarketSchedule[2].lossTreatment = "GROSS_OF_LOSSES";
+const grossQuote = await calculatePreparedOffer(request(true), gross);
+assert.deepEqual(grossQuote.components.filter((component) => component.formulaInputs?.kind === "CAPACITY_MARKET").map((component) => component.amount.amount), [13.49, 5.5]);
+// MT supply: TIS Tabella 4 colonna A gives 3,8%.
+const mvRequest = parseSimulationRequest({ ...JSON.parse(JSON.stringify(request(true))), voltageLevel: "MV" }, tenant);
+const mvPrepared = structuredClone(prepared);
+const mv = await calculatePreparedOffer(mvRequest, mvPrepared).catch((error) => error);
+assert.ok(!(mv instanceof Error), String(mv?.message)); assert.deepEqual(mv.components.filter((component) => component.formulaInputs?.kind === "LOSSES").map((component) => component.amount.amount), [3.8]);
 // Outside a bill quote the engine behaves as before: no CTE pass-through is added.
 const plain = await calculatePreparedOffer(request(false), prepared);
 assert.equal(plain.totalCommercialCost.amount, 100);
