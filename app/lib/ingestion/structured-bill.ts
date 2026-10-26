@@ -115,6 +115,8 @@ export interface StructuredBillExtraction {
   /** Set only when a deterministic document reconciler replaced provider values. */
   readonly monthlyBandDocumentEvidenceStatus?: "DOCUMENT_GROUNDED" | "NOT_AVAILABLE" | "FAIL_CLOSED";
   readonly monthlyBandPrecisionMismatch?: boolean;
+  /** Rows of the sale-of-energy formula table read from the PDF text layer (EUR/kWh). */
+  readonly documentPriceRows?: readonly import("./document-numeric-evidence").DocumentPriceRow[];
   readonly supplyProfile?: BillSupplyProfile;
   /** Two-stage metadata; absent on legacy/CORE-only fixtures. */
   readonly analystExtractionStatus?: "NOT_RUN" | "EXTRACTED" | "FAILED";

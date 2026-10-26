@@ -46,7 +46,7 @@ export interface DocumentMonthlyEvidenceResult {
   readonly reason?: string;
 }
 
-interface PdfTextItem {
+export interface PdfTextItem {
   readonly text: string;
   readonly page: number;
   readonly x: number;
@@ -327,33 +327,40 @@ function extractMonthlyRows(items: readonly PdfTextItem[], hash: string): { read
  * Reads only bounded PDF text streams in memory. It never extracts files to disk
  * and never returns document text; callers receive only table-shaped numeric evidence.
  */
-export function extractDocumentMonthlyBandEvidence(bytes: Uint8Array): DocumentMonthlyEvidenceResult {
+/** The positioned text items of a PDF's embedded text layer, within the same parse budget as the monthly table. */
+export function documentTextItems(bytes: Uint8Array): { readonly status: DocumentEvidenceStatus; readonly items: readonly PdfTextItem[]; readonly sourceSha256: string; readonly reason?: string } {
   const hash = sourceHash(bytes);
-  if (bytes.length === 0 || bytes.length > MAX_DOCUMENT_PDF_BYTES || !bytesToLatin1(bytes.slice(0, 8)).startsWith("%PDF-")) return { status: "NOT_AVAILABLE", bands: [], sourceSha256: hash, reason: "TEXT_LAYER_UNAVAILABLE" };
+  if (bytes.length === 0 || bytes.length > MAX_DOCUMENT_PDF_BYTES || !bytesToLatin1(bytes.slice(0, 8)).startsWith("%PDF-")) return { status: "NOT_AVAILABLE", items: [], sourceSha256: hash, reason: "TEXT_LAYER_UNAVAILABLE" };
   const pdf = bytesToLatin1(bytes);
   const objects = parsePdfObjects(pdf);
-  if (!objects) return { status: "FAIL_CLOSED", bands: [], sourceSha256: hash, reason: "PDF_OBJECTS_INVALID" };
+  if (!objects) return { status: "FAIL_CLOSED", items: [], sourceSha256: hash, reason: "PDF_OBJECTS_INVALID" };
   const byId = new Map(objects.map((object) => [object.id, object]));
   const pages = objects.filter((object) => /\/Type\s*\/Page(?:\s|\/|$)/.test(object.body) && !/\/Type\s*\/Pages(?:\s|\/|$)/.test(object.body));
-  if (pages.length === 0 || pages.length > 200) return { status: "NOT_AVAILABLE", bands: [], sourceSha256: hash, reason: "TEXT_LAYER_UNAVAILABLE" };
+  if (pages.length === 0 || pages.length > 200) return { status: "NOT_AVAILABLE", items: [], sourceSha256: hash, reason: "TEXT_LAYER_UNAVAILABLE" };
   const items: PdfTextItem[] = [];
   const budget: ParseBudget = { decompressedBytes: 0, streamCount: 0 };
   for (const [pageIndex, page] of pages.entries()) {
     for (const contentId of pageStreamIds(page.body, byId)) {
       const contentObject = byId.get(contentId);
-      if (!contentObject) return { status: "FAIL_CLOSED", bands: [], sourceSha256: hash, reason: "CONTENTS_REFERENCE_INVALID" };
+      if (!contentObject) return { status: "FAIL_CLOSED", items: [], sourceSha256: hash, reason: "CONTENTS_REFERENCE_INVALID" };
       if (/\/Subtype\s*\/Image\b/.test(contentObject.body)) continue;
       const stream = extractStream(contentObject.body, budget);
-      if (stream === null) return { status: "FAIL_CLOSED", bands: [], sourceSha256: hash, reason: "STREAM_INVALID" };
+      if (stream === null) return { status: "FAIL_CLOSED", items: [], sourceSha256: hash, reason: "STREAM_INVALID" };
       if (stream.length === 0) continue;
       const fonts = pageFonts(byId, page.body, budget);
       for (const [name, map] of pageFonts(byId, contentObject.body, budget)) fonts.set(name, map);
       const parsed = parseTextItems(stream, pageIndex + 1, fonts);
-      if (parsed === null) return { status: "FAIL_CLOSED", bands: [], sourceSha256: hash, reason: "TEXT_ITEM_LIMIT" };
+      if (parsed === null) return { status: "FAIL_CLOSED", items: [], sourceSha256: hash, reason: "TEXT_ITEM_LIMIT" };
       items.push(...parsed);
-      if (items.length > MAX_DOCUMENT_TEXT_ITEMS) return { status: "FAIL_CLOSED", bands: [], sourceSha256: hash, reason: "TEXT_ITEM_LIMIT" };
+      if (items.length > MAX_DOCUMENT_TEXT_ITEMS) return { status: "FAIL_CLOSED", items: [], sourceSha256: hash, reason: "TEXT_ITEM_LIMIT" };
     }
   }
+  return { status: items.length ? "AVAILABLE" : "NOT_AVAILABLE", items, sourceSha256: hash, ...(items.length ? {} : { reason: "TEXT_LAYER_UNAVAILABLE" }) };
+}
+
+export function extractDocumentMonthlyBandEvidence(bytes: Uint8Array): DocumentMonthlyEvidenceResult {
+  const { status, items, sourceSha256: hash, reason } = documentTextItems(bytes);
+  if (status !== "AVAILABLE") return { status, bands: [], sourceSha256: hash, ...(reason ? { reason } : {}) };
   if (items.length === 0) return { status: "NOT_AVAILABLE", bands: [], sourceSha256: hash, reason: "TEXT_LAYER_UNAVAILABLE" };
   const extracted = extractMonthlyRows(items, hash);
   if (extracted.reason) return { status: "FAIL_CLOSED", bands: [], sourceSha256: hash, reason: extracted.reason };
@@ -396,4 +403,39 @@ export function reconcileMonthlyBandsWithDocumentEvidence(providerBands: readonl
     monthlyBands.push({ month: document.month, f1: values[0] as number, f2: values[1] as number, f3: values[2] as number });
   }
   return { status: "DOCUMENT_GROUNDED", monthlyBands, evidence: providerBands.map((provider) => documents.get(provider.month) as DocumentMonthlyBandEvidence), precisionMismatch };
+}
+
+/** One row of the sale-of-energy formula table ("Calcolata tramite la seguente formula"), read from the PDF text layer. */
+export interface DocumentPriceRow {
+  readonly label: string;
+  /** EUR/kWh as printed, sign included (e.g. "+0,225353"). */
+  readonly unitPrice: string;
+  readonly period: string | null;
+  readonly page: number;
+}
+
+const FORMULA_HEADING = /calcolat[ao] tramite (la seguente )?formula|composizione del prezzo|dettaglio (del )?prezzo (dell'|di )?energia/i;
+const PRICE_ROW_LABEL = /prezzo nett|prezzo (dell'|di )?energia|contributo|dispacciament|capacit|sbilanc|spread|perdit|\bpun\b|corrispettiv|corrisp\./i;
+const UNIT_PRICE = /^[+-]?\s*\d+[,.]\d{3,6}$/;
+
+/** The per-kWh rows of the formula table that explains the sale-of-energy cost (ARERA detail elements). */
+export function extractDocumentPriceRows(bytes: Uint8Array): readonly DocumentPriceRow[] {
+  const { status, items } = documentTextItems(bytes);
+  if (status !== "AVAILABLE") return [];
+  const rows: DocumentPriceRow[] = [];
+  for (const heading of items.filter((item) => FORMULA_HEADING.test(item.text))) {
+    const page = items.filter((item) => item.page === heading.page);
+    const period = page.filter((item) => /^\s*(0[1-9]|1[0-2])\/\d{4}\s*$/.test(item.text)).sort((a, b) => Math.hypot(a.x - heading.x, a.y - heading.y) - Math.hypot(b.x - heading.x, b.y - heading.y))[0]?.text.trim() ?? null;
+    // Rotated pages share x along a row, upright ones share y: the value is the nearest number after the label on its row.
+    for (const label of page.filter((item) => PRICE_ROW_LABEL.test(item.text) && !UNIT_PRICE.test(item.text.trim()))) {
+      const value = page
+        .filter((item) => UNIT_PRICE.test(item.text.trim()))
+        .map((item) => Math.abs(item.x - label.x) < 1.5 && item.y > label.y ? { item, distance: item.y - label.y } : Math.abs(item.y - label.y) < 1.5 && item.x > label.x ? { item, distance: item.x - label.x } : null)
+        .filter((entry): entry is { item: PdfTextItem; distance: number } => entry !== null)
+        .sort((a, b) => a.distance - b.distance)[0]?.item;
+      if (!value || Math.abs(normalizeDocumentNumericLexeme(value.text.trim().replace(/^[+-]\s*/, "")) ?? 1) >= 1) continue;
+      if (!rows.some((row) => row.page === label.page && row.label === label.text.trim() && row.unitPrice === value.text.trim())) rows.push({ label: boundedText(label.text.trim(), 120), unitPrice: value.text.trim(), period, page: label.page });
+    }
+  }
+  return rows.slice(0, 40);
 }

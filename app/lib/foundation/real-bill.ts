@@ -22,7 +22,7 @@ import { mergeBillCoreAndAnalyst, stripBillAnalystData, type BillAnalystWireExtr
 // @ts-expect-error Node's strip-only test runner requires the explicit extension.
 import { buildBillAnalystReview, type BillAnalystReviewDTO } from "./bill-analyst-review.ts";
 // @ts-expect-error Node's strip-only test runner requires the explicit extension.
-import { extractDocumentMonthlyBandEvidence, reconcileMonthlyBandsWithDocumentEvidence } from "../ingestion/document-numeric-evidence.ts";
+import { extractDocumentMonthlyBandEvidence, extractDocumentPriceRows, reconcileMonthlyBandsWithDocumentEvidence } from "../ingestion/document-numeric-evidence.ts";
 // @ts-expect-error Node's strip-only test runner requires the explicit extension.
 import { selectMonthlyBandsForBillingPeriod, type StructuredBillMonthlyBand } from "../ingestion/monthly-bands.ts";
 
@@ -853,7 +853,10 @@ export function extractBillFields(text: string): BillFields {
   return result;
 }
 
-function applyDocumentGroundedMonthlyEvidence(bytes: Uint8Array, extraction: StructuredBillExtraction): StructuredBillExtraction {
+function applyDocumentGroundedMonthlyEvidence(bytes: Uint8Array, provided: StructuredBillExtraction): StructuredBillExtraction {
+  // The formula table of the sale-of-energy cost, read straight from the PDF: the spread does not depend on the AI finding it.
+  const documentPriceRows = (() => { try { return extractDocumentPriceRows(bytes); } catch { return []; } })();
+  const extraction: StructuredBillExtraction = documentPriceRows.length ? { ...provided, documentPriceRows } : provided;
   const documentEvidence = extractDocumentMonthlyBandEvidence(bytes);
   const hasProviderMonthlyBands = Array.isArray(extraction.monthlyBands) && extraction.monthlyBands.length > 0;
   if (documentEvidence.status !== "AVAILABLE") return hasProviderMonthlyBands ? { ...extraction, monthlyBandDocumentEvidenceStatus: documentEvidence.status } : extraction;

@@ -175,6 +175,16 @@ function billSpread(bill: BillDocumentModel): ReactNode {
     : `Prezzo energia in bolletta meno PUN GME: ${spread.lines.map((line) => line.billPrice !== null && line.officialPun !== null ? `${BAND_LABEL[line.band]} ${line.components ? `(${line.components.map((part) => `${part.label} ${RATE.format(part.price)}`).join(" + ")}) ` : ""}${RATE.format(line.billPrice)} − ${spread.structure === "HOURLY" ? "PUN orario stimato sui consumi F1/F2/F3 della bolletta " : ""}${RATE.format(line.officialPun)} = ${RATE.format(line.spread)}` : `${BAND_LABEL[line.band]} ${RATE.format(line.spread)}`).join(" · ")}`;
   return <>{RATE.format(spread.spread)} €/kWh <small className="quote-spread-detail">{detail}</small></>;
 }
+const MONTH_NAME = new Intl.DateTimeFormat("it-IT", { month: "long", year: "numeric", timeZone: "UTC" });
+// The official PUN the spread is measured against, shown even when the bill's energy price cannot be read.
+function referencePun(bill: BillDocumentModel): ReactNode {
+  const spread = bill.currentSpread;
+  if (!spread || !spread.months.length) return "Periodo della bolletta non letto";
+  const months = spread.months.map((month) => MONTH_NAME.format(new Date(`${month}-01T00:00:00Z`))).join(", ");
+  if (spread.referencePun === undefined || spread.referencePun === null) return `${months}: ${spread.status === "PUN_NOT_PUBLISHED" ? `pubblicato dal GME entro il ${date(spread.publishedBy ?? null)}` : spread.status === "PUN_EXPIRED" ? "non più in archivio" : "non ancora in archivio"}`;
+  const basis = spread.structure === "HOURLY" ? " (PUN F1, F2, F3 pesato sui consumi della bolletta)" : spread.structure === "MONO" ? " (media mensile)" : " (fasce pesate sui consumi della bolletta)";
+  return <>{RATE.format(spread.referencePun)} €/kWh <small className="quote-spread-detail">{months}{basis}</small></>;
+}
 const STRUCTURE_LABEL: Record<string, string> = { MONO: "Monorario", F1_F2_F3: "A fasce (F1, F2, F3)", F1_F23: "Biorario (F1 e F23)", HOURLY: "PUN orario (consumi letti in F1, F2, F3)" };
 // How the index is applied over time: one price, three bands, F1/F23, peak and off-peak, or hourly.
 function punStructure(bill: BillDocumentModel): string {
@@ -205,6 +215,7 @@ function BillContractFacts({ bill }: { readonly bill: BillDocumentModel }): Reac
     ["Attivo dal", start ?? "Non indicato"],
     ["Scadenza o rinnovo", expiry || "Non indicata"],
     ["Tipo di prezzo", priceType(bill)],
+    ...(indexedBill(bill) && bill.resolvedVector !== "GAS" ? [["PUN GME del mese di riferimento", referencePun(bill)] as const] : []),
     ...(indexedBill(bill) ? [[`Spread sul ${bill.resolvedVector === "GAS" ? "PSV" : "PUN"} (calcolato)`, bill.resolvedVector === "GAS" ? "Non calcolato per il gas" : billSpread(bill)] as const, [`Struttura del ${bill.resolvedVector === "GAS" ? "PSV" : "PUN"}`, bill.resolvedVector === "GAS" ? "Mensile" : punStructure(bill)] as const] : []),
     ["PCV mensile (quota fissa vendita)", pcv === null ? "Non indicata" : `${EURO.format(pcv)} al mese`],
   ];
