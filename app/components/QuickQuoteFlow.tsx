@@ -19,7 +19,7 @@ type Context = {
   readonly missingRequiredData: readonly string[];
   readonly economicReconciled?: boolean;
 };
-type Candidate = { readonly archiveId: string; readonly cteVersionId: string | null; readonly supplier: string; readonly offer: { readonly name: string; readonly code: string }; readonly validity: { readonly periodStart: string; readonly periodEnd: string }; readonly finalStatus?: string; readonly calculationReadiness: string; readonly compatibilityReason?: string; readonly pricingType?: "INDEXED" | "FIXED" | null; readonly pricingReference?: string | null; readonly terms?: Terms };
+type Candidate = { readonly archiveId: string; readonly cteVersionId: string | null; readonly supplier: string; readonly offer: { readonly name: string; readonly code: string }; readonly validity: { readonly periodStart: string; readonly periodEnd: string }; readonly finalStatus?: string; readonly calculationReadiness: string; readonly compatibilityReason?: string; readonly reasonCodes?: readonly string[]; readonly pricingType?: "INDEXED" | "FIXED" | null; readonly pricingReference?: string | null; readonly terms?: Terms };
 type Terms = { readonly fixedPrice: number | null; readonly spread: number | null; readonly priceUnit: "EUR_PER_KWH" | "EUR_PER_SMC"; readonly monthlyFixedFee: number | null };
 type Offer = { readonly rank: number; readonly calculation: CalculationModel; readonly supplier: string; readonly offerName: string; readonly receipt: QuoteReceipt; readonly candidate: Candidate };
 type Quote = { readonly bill: BillDocumentModel; readonly context: Context; readonly comparison: ComparisonModel; readonly offers: readonly Offer[]; readonly candidates?: readonly Candidate[] };
@@ -273,6 +273,22 @@ function offersFrom(bill: BillDocumentModel, context: Context, candidates: reado
   });
 }
 
+const REASON_LABEL: Readonly<Record<string, string>> = { CUSTOMER_LEGAL_TYPE_MISMATCH: "tipo di cliente non ammesso (Consumer/Business)", SUPPLY_USE_MISMATCH: "uso della fornitura non ammesso", IDENTIFIER_TYPE_MISMATCH: "tipo di identificativo non ammesso", VOLTAGE_MISMATCH: "tensione non ammessa (BT/MT)", CONSUMPTION_THRESHOLD_MISMATCH: "consumo annuo fuori dalle soglie della CTE", POWER_THRESHOLD_MISMATCH: "potenza fuori dalle soglie della CTE", VALIDITY_MISMATCH: "CTE non valida per il periodo della bolletta", CALCULATION_NOT_READY: "calcolo non pronto", REVIEW_REQUIRED: "CTE da revisionare", EXPIRED_CTE: "CTE scaduta", MISSING_REGULATORY_DATA: "mancano dati regolatori (PUN o oneri ARERA)", INVALID_CTE: "CTE non valida", MISSING_SOURCE_DOCUMENT: "documento CTE mancante", MARKET_DATA_MISSING: "manca il PUN/PSV del periodo", NOT_READY: "CTE non pronta al calcolo" };
+// With no offer to show, each assigned CTE says why it was left out: the agent knows what to fix or ask for.
+function NoOfferReasons({ quote }: { readonly quote: Quote }): ReactNode {
+  const candidates = quote.candidates ?? [];
+  if (!candidates.length) return null;
+  const rows = candidates.map((candidate) => {
+    const excluded = quote.comparison.excludedOffers.find((item) => item.archiveId === candidate.archiveId);
+    const eligible = candidate.finalStatus === "ELIGIBLE" || candidate.finalStatus === "ELIGIBLE_BY_OVERRIDE";
+    const reasons = eligible
+      ? excluded ? [`calcolo non riuscito: ${excluded.message || excluded.code}`] : candidate.calculationReadiness !== "READY" ? [REASON_LABEL[candidate.calculationReadiness] ?? candidate.calculationReadiness] : ["calcolo non eseguito"]
+      : [...new Set([...(candidate.reasonCodes ?? []), candidate.compatibilityReason].filter((code): code is string => Boolean(code)).map((code) => REASON_LABEL[code] ?? code))];
+    return { key: candidate.archiveId, name: `${candidate.supplier} · ${candidate.offer.name || candidate.offer.code}`, reasons };
+  });
+  return <details className="quote-cost-detail"><summary>Perché nessuna CTE è utilizzabile ({rows.length})</summary><ul>{rows.map((row) => <li key={row.key}><strong>{row.name}</strong>: {row.reasons.join("; ")}</li>)}</ul></details>;
+}
+
 function Steps({ step }: { readonly step: Step }): ReactNode {
   const items: readonly { readonly id: Step; readonly label: string }[] = [{ id: "bill", label: "Carica la bolletta" }, { id: "review", label: "Dati letti" }, { id: "offers", label: "Scegli l'offerta" }];
   const current = items.findIndex((item) => item.id === step);
@@ -504,7 +520,7 @@ export default function QuickQuoteFlow({ readonly }: { readonly readonly: boolea
           {offer.receipt.savingsPercent !== null ? <small className={offer.receipt.savingsPercent >= 0 ? "positive" : "negative"}>{offer.receipt.savingsPercent >= 0 ? "Risparmio" : "Più cara"} {PERCENT.format(Math.abs(offer.receipt.savingsPercent))}%</small> : null}
           {(() => { const basis = annualBasis(quote.context); const saving = offer.receipt.status === "COMPLETE" ? offer.receipt.savings : null; return basis && saving !== null ? <small className={saving >= 0 ? "positive" : "negative"}>{saving >= 0 ? "Risparmio annuo previsto" : "Costo in più annuo"} {euro(Math.abs(saving * basis.annual / basis.billed))}</small> : null; })()}
           <small>Valida fino al {date(offer.receipt.validUntil)}</small>
-        </button>)}</div> : <EmptyState title="Nessuna offerta utilizzabile" detail="Nessuna CTE a te assegnata è adatta a questa bolletta. Chiedi all'amministratore di assegnartene una." />}
+        </button>)}</div> : <><EmptyState title="Nessuna offerta utilizzabile" detail="Nessuna CTE a te assegnata è adatta a questa bolletta. Chiedi all'amministratore di assegnartene una." /><NoOfferReasons quote={quote} /></>}
       </section>
       {selected ? <><Receipt offer={selected} today={today} business={quote.context.customerType === "NON_RESIDENTIAL"} context={quote.context} /><div className="button-row"><button className="button primary" type="button" onClick={() => void saveProposal()} disabled={readonly || Boolean(pending)}>{pending === "proposal" ? "Preparazione" : "Scarica la proposta in PDF"}</button>{proposal ? <span className="muted" role="status">Proposta salvata in Proposte.</span> : null}</div></> : null}
     </> : null : null}
