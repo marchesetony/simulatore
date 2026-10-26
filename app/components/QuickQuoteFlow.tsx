@@ -220,7 +220,65 @@ function Steps({ step }: { readonly step: Step }): ReactNode {
   return <ol className="quote-steps">{items.map((item, index) => <li key={item.id} className={index === current ? "active" : index < current ? "done" : ""}><span>{index + 1}</span>{item.label}</li>)}</ol>;
 }
 
-function Receipt({ offer, today }: { readonly offer: Offer; readonly today: string }): ReactNode {
+type CostLine = { readonly key: string; readonly label: string; readonly quantity: string; readonly rate: string; readonly amount: number };
+const MONTH = new Intl.DateTimeFormat("it-IT", { month: "long", year: "numeric", timeZone: "UTC" });
+const CENTS = new Intl.NumberFormat("it-IT", { minimumFractionDigits: 2, maximumFractionDigits: 4 });
+const QUANTITY = new Intl.NumberFormat("it-IT", { maximumFractionDigits: 2, useGrouping: "always" });
+const FEE_UNIT: Record<string, string> = { EUR_PER_KWH: "€/kWh", EUR_PER_SMC: "€/Smc", EUR_PER_POD: "€/POD al mese", EUR_PER_MONTH: "€/mese", EUR_PER_YEAR: "€/anno", EUR_PER_CONTRACT: "€ una tantum" };
+const BASIS_UNIT: Record<string, string> = { EUR_PER_KWH: "kWh", EUR_PER_SMC: "Smc", EUR_PER_POD: "mesi", EUR_PER_MONTH: "mesi", EUR_PER_YEAR: "anni" };
+function num(value: unknown): number | null { const parsed = typeof value === "number" ? value : typeof value === "string" ? Number(value) : NaN; return Number.isFinite(parsed) ? parsed : null; }
+function monthLabel(value: unknown): string { return typeof value === "string" && /^\d{4}-\d{2}$/.test(value) ? MONTH.format(new Date(`${value}-01T00:00:00Z`)) : String(value ?? ""); }
+// Each cost of the new offer as quantity x unit price, the way a business customer checks it against the CTE.
+function costLines(calculation: CalculationModel): readonly CostLine[] {
+  return calculation.components.map((component, index) => {
+    const inputs = component.formulaInputs ?? {};
+    const sign = component.sign === "DISCOUNT" ? -1 : 1;
+    const base = { key: `${index}:${component.label}`, amount: sign * component.amount.amount };
+    const kwh = (value: unknown) => { const n = num(value); return n === null ? "—" : `${QUANTITY.format(n)} kWh`; };
+    switch (component.formulaId) {
+      case "EE_PUN_MWH_TO_KWH_PLUS_SPREAD": {
+        const pun = num(inputs.punEurPerMwh); const spread = num(inputs.spreadPerKwh);
+        return { ...base, label: `Energia ${inputs.band} · ${monthLabel(inputs.month)}`, quantity: kwh(inputs.quantityKwh), rate: pun === null || spread === null ? "—" : `PUN ${RATE.format(pun / 1000)} + spread ${RATE.format(spread)} = ${RATE.format(pun / 1000 + spread)} €/kWh` };
+      }
+      case "EE_FIXED_PRICE_TIMES_KWH": {
+        const total = [inputs.f1Kwh, inputs.f2Kwh, inputs.f3Kwh].map(num).reduce<number>((sum, value) => sum + (value ?? 0), 0);
+        return { ...base, label: "Energia a prezzo fisso (F1+F2+F3)", quantity: kwh(total), rate: `${RATE.format(num(inputs.pricePerKwh) ?? 0)} €/kWh` };
+      }
+      case "EE_SPREAD_TIMES_KWH": return { ...base, label: "Spread", quantity: kwh(inputs.totalKwh), rate: `${RATE.format(num(inputs.spreadPerKwh) ?? 0)} €/kWh` };
+      case "GAS_PSV_PLUS_SPREAD_TIMES_SMC": {
+        const psv = num(inputs.psvEurPerSmc); const spread = num(inputs.spreadPerSmc);
+        return { ...base, label: `Gas · ${monthLabel(inputs.month)}`, quantity: `${QUANTITY.format(num(inputs.effectiveSmc) ?? 0)} Smc`, rate: psv === null || spread === null ? "—" : `PSV ${RATE.format(psv)} + spread ${RATE.format(spread)} = ${RATE.format(psv + spread)} €/Smc` };
+      }
+      case "GAS_FIXED_PRICE_TIMES_SMC": return { ...base, label: "Gas a prezzo fisso", quantity: `${QUANTITY.format(num(inputs.effectiveSmc) ?? 0)} Smc`, rate: `${RATE.format(num(inputs.pricePerSmc) ?? 0)} €/Smc` };
+      case "GAS_SPREAD_TIMES_SMC": return { ...base, label: "Spread", quantity: `${QUANTITY.format(num(inputs.effectiveSmc) ?? 0)} Smc`, rate: `${RATE.format(num(inputs.spreadPerSmc) ?? 0)} €/Smc` };
+      case "ONE_OFF_CONTRACT_FEE": return { ...base, label: component.label, quantity: "1", rate: `${EURO.format(num(inputs.feeRate) ?? 0)} una tantum` };
+      default: {
+        const unit = String(inputs.feeUnit ?? "");
+        const quantity = num(inputs.basisQuantity) ?? num(inputs.basisMonths);
+        const rate = num(inputs.feeRate);
+        const label = component.formulaId.startsWith("CONTRACTUAL_PASS_THROUGH") ? `${inputs.kind === "DISPATCHING" ? "Dispacciamento" : inputs.kind === "CAPACITY_MARKET" ? "Mercato della capacità" : "Altri corrispettivi"} (da CTE)` : component.formulaId.startsWith("IMBALANCE") ? `Sbilanciamento · ${component.label}` : component.label;
+        return { ...base, label, quantity: quantity === null ? "—" : `${QUANTITY.format(quantity)} ${BASIS_UNIT[unit] ?? (component.formulaId.endsWith("MONTHS") ? "mesi" : "")}`.trim(), rate: rate === null ? "—" : `${unit === "EUR_PER_KWH" || unit === "EUR_PER_SMC" ? RATE.format(rate) : CENTS.format(rate)} ${FEE_UNIT[unit] ?? "€"}` };
+      }
+    }
+  });
+}
+
+function CostDetail({ offer, open }: { readonly offer: Offer; readonly open: boolean }): ReactNode {
+  const lines = costLines(offer.calculation);
+  if (!lines.length) return null;
+  return <details className="quote-detail" open={open}>
+    <summary>Dettaglio dei costi della nuova offerta</summary>
+    <p className="muted">Ogni voce è calcolata sugli stessi consumi e sullo stesso periodo della bolletta, con i prezzi della CTE {offer.offerName}.</p>
+    <div className="responsive-table"><table>
+      <thead><tr><th scope="col">Voce</th><th scope="col">Quantità</th><th scope="col">Prezzo unitario</th><th scope="col">Importo</th></tr></thead>
+      <tbody>{lines.map((line) => <tr key={line.key}><th scope="row">{line.label}</th><td>{line.quantity}</td><td>{line.rate}</td><td>{euro(line.amount)}</td></tr>)}</tbody>
+      <tfoot><tr><th scope="row" colSpan={3}>Totale spesa per la materia energia (nuova offerta)</th><td>{euro(offer.calculation.totalCommercialCost.amount)}</td></tr></tfoot>
+    </table></div>
+    <p className="muted quote-note">Costo medio della materia energia: {RATE.format(offer.calculation.unitCost.amount)} {offer.calculation.unitCost.unit === "EUR_PER_SMC" ? "€/Smc" : "€/kWh"}. Imposte escluse.</p>
+  </details>;
+}
+
+function Receipt({ offer, today, business }: { readonly offer: Offer; readonly today: string; readonly business: boolean }): ReactNode {
   const receipt = offer.receipt;
   const left = daysUntil(receipt.validUntil, today);
   const saving = receipt.savings ?? 0;
@@ -240,6 +298,7 @@ function Receipt({ offer, today }: { readonly offer: Offer; readonly today: stri
       <span>Offerta valida fino al</span><strong>{date(receipt.validUntil)}</strong>
       <small>{left === null ? "Verifica la scadenza sulla CTE prima di firmare." : left < 0 ? "Offerta scaduta: non può più essere firmata." : `Il cliente deve firmare il contratto entro questa data${left <= 7 ? ` (mancano ${left} giorni)` : ""}.`}</small>
     </div>
+    <CostDetail offer={offer} open={business} />
     <p className="muted quote-note">Calcolo sugli stessi consumi e sullo stesso periodo della bolletta. Trasporto, oneri di sistema e accise non dipendono dal fornitore e restano quelli della bolletta{receipt.vatRate !== null ? `; IVA al ${PERCENT.format(receipt.vatRate * 100)}%${receipt.vatRateEstimated ? " stimata" : ""}` : ""}.</p>
   </section>;
 }
@@ -376,7 +435,7 @@ export default function QuickQuoteFlow({ readonly }: { readonly readonly: boolea
           <small>Valida fino al {date(offer.receipt.validUntil)}</small>
         </button>)}</div> : <EmptyState title="Nessuna offerta utilizzabile" detail="Nessuna CTE a te assegnata è adatta a questa bolletta. Chiedi all'amministratore di assegnartene una." />}
       </section>
-      {selected ? <><Receipt offer={selected} today={today} /><div className="button-row"><button className="button primary" type="button" onClick={() => void saveProposal()} disabled={readonly || Boolean(pending)}>{pending === "proposal" ? "Preparazione" : "Scarica la proposta in PDF"}</button>{proposal ? <span className="muted" role="status">Proposta salvata in Proposte.</span> : null}</div></> : null}
+      {selected ? <><Receipt offer={selected} today={today} business={quote.context.customerType === "NON_RESIDENTIAL"} /><div className="button-row"><button className="button primary" type="button" onClick={() => void saveProposal()} disabled={readonly || Boolean(pending)}>{pending === "proposal" ? "Preparazione" : "Scarica la proposta in PDF"}</button>{proposal ? <span className="muted" role="status">Proposta salvata in Proposte.</span> : null}</div></> : null}
     </> : null : null}
     {error ? <ErrorState message={error} /> : null}
   </div>;

@@ -232,7 +232,7 @@ export interface CalculationModel {
   readonly voltageLevel?: "LV" | "MV" | "HV" | "EHV";
   readonly sourceCte: { readonly archiveId: string; readonly cteId: string; readonly versionId: string; readonly version: string; readonly supplier: string; readonly offerCode: string };
   readonly marketData: readonly { readonly recordId: string; readonly version: string; readonly vector: UiVector; readonly index: "PUN" | "PSV"; readonly month: string }[];
-  readonly components: readonly { readonly category: string; readonly label: string; readonly sign: string; readonly amount: CalculationMoneyModel; readonly formulaId: string }[];
+  readonly components: readonly { readonly category: string; readonly label: string; readonly sign: string; readonly amount: CalculationMoneyModel; readonly formulaId: string; readonly formulaInputs?: Readonly<Record<string, string | number | boolean>> }[];
   readonly totalCommercialCost: CalculationMoneyModel;
   readonly unitCost: { readonly amount: number; readonly unit: string; readonly currency: "EUR" };
   readonly savingsVsBaseline: CalculationMoneyModel | null;
