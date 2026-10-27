@@ -77,3 +77,6 @@ export function assertAutoRefreshCoverage(domains: readonly RegulatoryRefreshDom
   const registered = new Set(AUTO_REFRESH_REGISTERED_DOMAINS.map(regulatoryDomainKey));
   for (const domain of domains) if (!registered.has(regulatoryDomainKey(domain))) throw new Error(`REGULATORY_REFRESH_DOMAIN_UNREGISTERED:${regulatoryDomainKey(domain)}`);
 }
+
+/** The monthly ARERA capacity charge for BT up to 55 kW (TIV quarterly updates, art. 4.1), read from each resolution. */
+export const ARERA_CAPACITY_DOMAIN: RegulatoryRefreshDomain = Object.freeze({ componentCode: "CAPACITY_MARKET", customerScope: "ALL_ELECTRICITY", normalizedUnit: "EUR/KWH", sourceAdapter: "ARERA_ELECTRICITY" });

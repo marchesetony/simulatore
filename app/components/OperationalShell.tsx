@@ -357,7 +357,7 @@ function MarketPanel({ admin, platform }: { readonly admin: boolean; readonly pl
 }
 
 type RefreshPart = { readonly status: string; readonly errors: readonly string[] };
-type RefreshResult = { readonly results: readonly { readonly tenantId: string; readonly pun: RefreshPart; readonly psv: RefreshPart; readonly arera: RefreshPart; readonly terna: RefreshPart }[] };
+type RefreshResult = { readonly results: readonly { readonly tenantId: string; readonly pun: RefreshPart; readonly psv: RefreshPart; readonly arera: RefreshPart; readonly terna: RefreshPart; readonly capacity?: RefreshPart }[] };
 
 /** Tony (27/10): "come aggiorno, manca il tasto". An administrator refreshes PUN, PSV, ARERA and Terna now from Dati di
  *  mercato: a company administrator for their company, the platform owner for every company. */
@@ -367,7 +367,7 @@ function OfficialRefresh({ platform, admin = true, onDone }: { readonly platform
   const [error, setError] = useState<string>();
   async function refreshNow() { if (refreshing) return; setRefreshing(true); setError(undefined); try { setRefresh(await requestJson<RefreshResult>("/api/system/official-refresh", { method: "POST", body: "{}" })); onDone?.(); } catch (cause) { setError(uiError(cause)); } finally { setRefreshing(false); } }
   const part = (label: string, value: RefreshPart) => label + (value.status === "SUCCESS" ? " aggiornato" : value.status === "ALREADY_RUNNING" ? " già in corso" : " con errori: " + value.errors.join(", "));
-  return <Card><div className="card-heading"><h3>Aggiornamento dati ufficiali</h3><button className="button primary" type="button" disabled={refreshing || !admin} onClick={() => void refreshNow()}>{refreshing ? "Aggiornamento in corso, può richiedere qualche minuto" : platform ? "Aggiorna ora per tutte le aziende" : "Aggiorna ora"}</button></div><p className="muted">Scarica adesso PUN (GME), PSV, tariffe ARERA e capacità Terna e li salva in archivio. Lo stesso aggiornamento parte da solo ogni notte.{admin ? null : " Può avviarlo solo un amministratore dell'azienda."}</p>{error ? <ErrorState message={error} /> : null}{refresh ? <div className="data-list">{refresh.results.length === 0 ? <p>Nessuna azienda da aggiornare.</p> : refresh.results.map((item) => <DataLine key={item.tenantId} label={item.tenantId} value={[part("PUN", item.pun), part("PSV", item.psv), part("ARERA", item.arera), part("Terna", item.terna)].join(" · ")} />)}</div> : null}</Card>;
+  return <Card><div className="card-heading"><h3>Aggiornamento dati ufficiali</h3><button className="button primary" type="button" disabled={refreshing || !admin} onClick={() => void refreshNow()}>{refreshing ? "Aggiornamento in corso, può richiedere qualche minuto" : platform ? "Aggiorna ora per tutte le aziende" : "Aggiorna ora"}</button></div><p className="muted">Scarica adesso PUN (GME), PSV, tariffe ARERA, mercato capacità mensile ARERA (delibere TIV) e capacità Terna e li salva in archivio. Lo stesso aggiornamento parte da solo ogni notte.{admin ? null : " Può avviarlo solo un amministratore dell'azienda."}</p>{error ? <ErrorState message={error} /> : null}{refresh ? <div className="data-list">{refresh.results.length === 0 ? <p>Nessuna azienda da aggiornare.</p> : refresh.results.map((item) => <DataLine key={item.tenantId} label={item.tenantId} value={[part("PUN", item.pun), part("PSV", item.psv), part("ARERA", item.arera), part("Terna", item.terna), ...(item.capacity ? [part("Capacità ARERA", item.capacity)] : [])].join(" · ")} />)}</div> : null}</Card>;
 }
 
 

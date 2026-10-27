@@ -5,7 +5,7 @@ import type { RuntimeRepositories } from "../persistence/adapter.ts";
 // @ts-expect-error Node's strip-only test runner requires the explicit extension.
 import { deterministicRecordId } from "../persistence/types.ts";
 // @ts-expect-error Node's strip-only test runner requires the explicit extension.
-import { ARERA_TIV_CAPACITY_MONTHS } from "../foundation/arera-capacity-tiv.ts";
+import { mergeAreraCapacityMonths, type AreraCapacityMonth } from "../foundation/arera-capacity-tiv.ts";
 // @ts-expect-error Node's strip-only test runner requires the explicit extension.
 import { CALCULATED_REGULATORY_DOMAINS, REGULATORY_REFRESH_STALE_DAYS, TERNA_CAPACITY_DOMAINS, regulatoryDomainKey, type RegulatoryRefreshDomain } from "./registry.ts";
 
@@ -62,16 +62,18 @@ export async function officialArchiveReport(repositories: Pick<RuntimeRepositori
   return {
     tenantId, checkedAt: now, lastSuccessfulAt, lastErrors: state?.errors ?? [],
     stale: lastSuccessfulAt === null || Date.parse(now) - Date.parse(lastSuccessfulAt) > REGULATORY_REFRESH_STALE_DAYS * 86_400_000,
-    domains: [...[...CALCULATED_REGULATORY_DOMAINS, ...TERNA_CAPACITY_DOMAINS].map(view), areraCapacityView(months)],
+    domains: [...[...CALCULATED_REGULATORY_DOMAINS, ...TERNA_CAPACITY_DOMAINS].map(view), areraCapacityView(months, mergeAreraCapacityMonths(approved), approved)],
   };
 }
 
 /** The monthly ARERA capacity charge for BT up to 55 kW (TIV quarterly updates, art. 4.1), most recent first. */
-function areraCapacityView(months: readonly { readonly label: string }[]): ArchiveDomainView {
+function areraCapacityView(months: readonly { readonly label: string }[], capacity: readonly AreraCapacityMonth[], approved: readonly RegulatoryValueRecord[]): ArchiveDomainView {
   const next = (month: string) => { const [year, value] = month.split("-").map(Number); return new Date(Date.UTC(year, value, 1)).toISOString(); };
+  // A month read by the refresh shows when it was downloaded; a month still from the hand-checked table shows the table date.
+  const retrieved = (item: AreraCapacityMonth) => approved.find((record) => record.componentCode === "CAPACITY_MARKET" && record.customerScope === "ALL_ELECTRICITY" && record.effectiveFrom.slice(0, 7) === item.month && record.sourceReference === item.url)?.retrievedAt ?? "2026-10-27T00:00:00.000Z";
   return {
     key: "CAPACITY_MARKET|LV_UP_TO_55KW|EUR/KWH|TIV_MONTHLY", componentCode: "CAPACITY_MARKET", customerScope: "LV_UP_TO_55KW", unit: "EUR/KWH", variant: null, source: "ARERA",
-    records: [...ARERA_TIV_CAPACITY_MONTHS].reverse().map((item) => ({ value: Math.round(item.centsPerKwh * 1e6) / 1e8, unit: "EUR/KWH", effectiveFrom: `${item.month}-01T00:00:00.000Z`, effectiveTo: next(item.month), retrievedAt: "2026-10-27T00:00:00.000Z", sourceReference: item.url })),
-    missingMonths: months.filter((month) => !ARERA_TIV_CAPACITY_MONTHS.some((item) => item.month === month.label)).map((month) => month.label),
+    records: [...capacity].reverse().map((item) => ({ value: Math.round(item.centsPerKwh * 1e6) / 1e8, unit: "EUR/KWH", effectiveFrom: `${item.month}-01T00:00:00.000Z`, effectiveTo: next(item.month), retrievedAt: retrieved(item), sourceReference: item.url })),
+    missingMonths: months.filter((month) => !capacity.some((item) => item.month === month.label)).map((month) => month.label),
   };
 }

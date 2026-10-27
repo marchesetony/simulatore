@@ -25,7 +25,7 @@ import { add, divide, fromNumber, multiply, rational, roundCents, toDecimal, typ
 // @ts-expect-error Node's strip-only test runner requires the explicit extension.
 import { monthsInSimulationPeriod } from "./input.ts";
 // @ts-expect-error Node's strip-only test runner requires the explicit extension.
-import { areraCapacityForPeriod } from "../foundation/arera-capacity-tiv.ts";
+import { ARERA_TIV_CAPACITY_MONTHS, areraCapacityForPeriod, mergeAreraCapacityMonths, type AreraCapacityMonth } from "../foundation/arera-capacity-tiv.ts";
 // @ts-expect-error Node's strip-only test runner requires the explicit extension.
 import { BTA6_REGULATED_COMPONENTS_INCLUDED, calculateRegulatedEeSubset, isDomesticNetOfTaxCompleteComponents, type RegulatedEeExecutionContext } from "./regulated-ee.ts";
 
@@ -177,7 +177,7 @@ function standardLoss(request: ElectricitySimulationRequest, runtime: CteRuntime
   if (request.supplyPeriod.periodStart < "2023-01-01") return null;
   return { ratio: fromNumber(TIS_TABLE_4_COLUMN_A[request.voltageLevel]), source: "TIS_TABELLA_4_COLONNA_A" };
 }
-function addCtePassThroughs(target: ComponentDraft[], request: ElectricitySimulationRequest, offer: CalculationReadyOffer, runtime: CteRuntimeResolution | null, totalQuantity: Rational, context: ElectricitySupplyContext | undefined, missing: string[]): void {
+function addCtePassThroughs(target: ComponentDraft[], request: ElectricitySimulationRequest, offer: CalculationReadyOffer, runtime: CteRuntimeResolution | null, totalQuantity: Rational, context: ElectricitySupplyContext | undefined, missing: string[], capacityMonths: readonly AreraCapacityMonth[] = ARERA_TIV_CAPACITY_MONTHS): void {
   const priced = new Set(target.filter((draft) => draft.formulaId.startsWith("CONTRACTUAL_PASS_THROUGH")).map((draft) => String(draft.formulaInputs.kind ?? "")));
   const standard = standardLoss(request, runtime);
   const loss = standard?.ratio ?? null;
@@ -224,7 +224,7 @@ function addCtePassThroughs(target: ComponentDraft[], request: ElectricitySimula
       const powerKw = context?.availablePowerKw ?? context?.contractedPowerKw;
       const smallLv = request.voltageLevel === "LV" && powerKw !== undefined && powerKw <= 55;
       // BT up to 55 kW: the monthly value ARERA fixes in the quarterly TIV update (art. 4.1), when the archive has none.
-      const arera = smallLv && runtime?.capacityMarket?.value === undefined ? areraCapacityForPeriod(period.periodStart, period.periodEnd) : null;
+      const arera = smallLv && runtime?.capacityMarket?.value === undefined ? areraCapacityForPeriod(period.periodStart, period.periodEnd, capacityMonths) : null;
       const official = runtime?.capacityMarket?.value ?? arera?.eurPerKwh;
       const officialSource = runtime?.capacityMarket?.officialIdentifier ?? (arera ? `ARERA ${arera.months.map((month) => month.resolution).join(", ")}` : "OFFICIAL");
       if (request.voltageLevel === "LV" && powerKw === undefined) missing.push("CAPACITY_MARKET:AVAILABLE_POWER_MISSING");
@@ -437,7 +437,11 @@ export async function calculatePreparedOffer(request: SimulationRequest, prepare
   const contractual = bta6 ? evaluateContractualPassThrough(prepared.offer, request.supplyPeriod) : null;
   if (bta6) addPassThroughComponents(drafts, prepared.offer, request, totalQuantity);
   const missingOfficial: string[] = [];
-  if (request.vector === "EE" && request.sourceBill) addCtePassThroughs(drafts, request, prepared.offer, cteRuntime, totalQuantity, dependencies.trustedElectricityContext, missingOfficial);
+  if (request.vector === "EE" && request.sourceBill) {
+    // The monthly ARERA capacity charges the refresh stored, over the hand-checked table.
+    const stored = dependencies.regulatoryBridge ? await dependencies.regulatoryBridge.list(request.tenantId, { componentCode: "CAPACITY_MARKET", customerScope: "ALL_ELECTRICITY", normalizedUnit: "EUR/KWH" }).catch(() => []) : [];
+    addCtePassThroughs(drafts, request, prepared.offer, cteRuntime, totalQuantity, dependencies.trustedElectricityContext, missingOfficial, mergeAreraCapacityMonths(stored));
+  }
   // Tony: transport and system charges always come from the ARERA tables; when they can't, the receipt says why.
   if (request.vector === "EE" && request.sourceBill && regulated === null) missingOfficial.push(`REGULATED:${regulatedMissingReason}`);
   const commercialComponents = convertDrafts(drafts);

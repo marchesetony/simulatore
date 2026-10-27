@@ -5,6 +5,7 @@ import { configuredMarketRefreshTenants } from "../../../lib/market-refresh/conf
 import { runPsvMarketRefresh } from "../../../lib/market-refresh/psv";
 import { runPunMarketRefresh } from "../../../lib/market-refresh/service";
 import { runtimeRepositories } from "../../../lib/persistence/adapter";
+import { runAreraCapacityRefresh } from "../../../lib/regulatory-refresh/arera-capacity";
 import { runRegulatoryRefresh } from "../../../lib/regulatory-refresh/service";
 import { runTernaCapacityRefresh } from "../../../lib/regulatory-refresh/terna";
 
@@ -28,7 +29,8 @@ export async function POST(request: Request): Promise<Response> {
     const psv = await runPsvMarketRefresh({ tenantId, repositories }).catch(failure);
     const arera = await runRegulatoryRefresh({ tenantId, repositories, trigger: "MANUAL" }).catch(failure);
     const terna = await runTernaCapacityRefresh({ tenantId, repositories, trigger: "MANUAL" }).catch(failure);
-    results.push({ tenantId, pun: { status: pun.status, errors: pun.errors }, psv: { status: psv.status, errors: psv.errors }, arera: { status: arera.status, errors: arera.errors }, terna: { status: terna.status, errors: terna.errors } });
+    const capacity = await runAreraCapacityRefresh({ tenantId, repositories, trigger: "MANUAL" }).catch(failure);
+    results.push({ tenantId, pun: { status: pun.status, errors: pun.errors }, psv: { status: psv.status, errors: psv.errors }, arera: { status: arera.status, errors: arera.errors }, terna: { status: terna.status, errors: terna.errors }, capacity: { status: capacity.status, errors: capacity.errors, months: "months" in capacity ? capacity.months : [] } });
   }
   return Response.json({ refreshedAt: new Date().toISOString(), results }, { headers: { "cache-control": "no-store, private" } });
 }
