@@ -15,7 +15,12 @@ assert.equal(contractual.regulatoryPowerBasisKw, 20);
 const maxDrawn = buildTrustedElectricitySupplyContext(profile({ basis: "Massimo valore della potenza prelevata nel mese" }));
 assert.equal(maxDrawn.regulatoryPowerBasisKind, "MONTHLY_MAX_DRAWN");
 assert.equal(maxDrawn.regulatoryPowerBasisKw, 24);
-assert.throws(() => buildTrustedElectricitySupplyContext(profile({ basis: "Potenza rilevata" })), /BTA6_POWER_BILLING_BASIS_REQUIRED/);
+// Tony (27/10, bolletta Repower): the bill printed the maximum drawn power (151,80 kW) without naming the basis. TIT bills
+// BT altri usi above 16,5 kW on the monthly maximum drawn, so that reading is used; without it the context still fails closed.
+const inferred = buildTrustedElectricitySupplyContext(profile({ basis: "Potenza rilevata" }));
+assert.equal(inferred.regulatoryPowerBasisKind, "MONTHLY_MAX_DRAWN");
+assert.equal(inferred.regulatoryPowerBasisKw, 24);
+assert.throws(() => buildTrustedElectricitySupplyContext(profile({ basis: "Potenza rilevata", maximum: null })), /BTA6_POWER_BILLING_BASIS_REQUIRED/);
 assert.throws(() => buildTrustedElectricitySupplyContext(profile({ basis: "Massimo valore della potenza prelevata nel mese", maximum: null })), /BTA6_MAXIMUM_DRAWN_POWER_REQUIRED/);
 const baseRequest = { schemaVersion: 1, tenantId: "tenant_bta6-power", vector: "EE", calculationDate: "2026-09-04", supplyPeriod: { periodStart: "2026-08-01", periodEnd: "2026-09-01" }, customerCategory: "NON_RESIDENTIAL", currency: "EUR", taxTreatment: "EXCLUDED", voltageLevel: "LV", consumption: { basis: "PERIOD", unit: "KWH", f1: 100, f2: 0, f3: 0 } };
 for (const [key, value] of [["powerMaximumDrawn", 24], ["powerBillingBasis", "MONTHLY_MAX_DRAWN"], ["regulatoryPowerBasisKw", 24], ["regulatoryPowerBasisKind", "MONTHLY_MAX_DRAWN"]]) assert.throws(() => parseSimulationRequest({ ...baseRequest, [key]: value }, baseRequest.tenantId), /TRUSTED_OUTCOME_FORBIDDEN/);

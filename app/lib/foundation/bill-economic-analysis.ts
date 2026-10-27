@@ -60,6 +60,8 @@ const canonicalUnit = (value: string): string => text(value).toUpperCase().repla
 
 export function classifyBillEconomicComponent(code: string | null | undefined, description = ""): BillEconomicClassification {
   const c = keyOf(code); const d = keyOf(description);
+  // A prior-period adjustment ("Conguaglio dei mesi precedenti") is a recalculation whatever charge it repeats.
+  if (["RICALCOLI", "RECALCULATION"].includes(c) || d.includes("RICALCOL") || d.includes("CONGUAGLIO")) return "RICALCOLI";
   if (["PUN", "PUN_SINGLE", "PUN_F1", "PUN_F2", "PUN_F3", "ENERGY_INDEX", "PUN_APPLICATO"].includes(c) || d.includes("PUN")) return "ENERGY_INDEX";
   if (["SPREAD", "SELLER_SPREAD", "ENERGY_SPREAD"].includes(c) || d.includes("SPREAD")) return "ENERGY_SPREAD";
   if (["ENERGY_FIXED_PRICE", "FIXED_PRICE", "PREZZO_FISSO"].includes(c) || d.includes("PREZZO_FISSO")) return "ENERGY_FIXED_PRICE";
@@ -91,11 +93,19 @@ export function classifyBillEconomicComponent(code: string | null | undefined, d
   if (["DELIVERY_DISCOUNT", "DISCOUNT"].includes(c) || d.includes("SCONTO")) return "DELIVERY_DISCOUNT";
   if (["BONUS"].includes(c) || d.includes("BONUS")) return "BONUS";
   if (["SERVIZI_AGGIUNTIVI", "ADDITIONAL_SERVICES"].includes(c) || d.includes("SERVIZI_AGGIUNTIVI")) return "SERVIZI_AGGIUNTIVI";
-  if (["RICALCOLI", "RECALCULATION"].includes(c) || d.includes("RICALCOL") || d.includes("CONGUAGLIO")) return "RICALCOLI";
   if (["RESTITUZIONI", "REFUNDS"].includes(c)) return "RESTITUZIONI";
   if (["ADDEBITI", "DEBITS"].includes(c)) return "ADDEBITI";
   if (["ACCREDITI", "CREDITS"].includes(c)) return "ACCREDITI";
   if (["ALTRE_PARTITE", "OTHER_ITEMS", "OTHER_CHARGE"].includes(c)) return "ALTRE_PARTITE";
+  // Bolletta 2.0 wording when the reader gave a descriptive code (e.g. Repower: "F0 - energia (monoraria)",
+  // "Corrispettivo capacità fuori picco", "Corrispettivo distribuzione, misura e trasporto", "Imposta Erariale").
+  if (d.includes("REATTIV")) return "UNCLASSIFIED_BILL_CHARGE";
+  if (d.includes("CAPACIT_") || d.includes("CAPACITA")) return "CAPACITY_MARKET_SELLER_CHARGE";
+  if (d.includes("SERVIZIO_DI_VENDITA") || d.includes("CORRISPETTIVO_DI_VENDITA")) return "SELLER_ENERGY_FEE";
+  if (d.includes("ENERGIA") && (/(^|_)F[0-3](_|$)/.test(d) || d.includes("MONORARI") || d.includes("FASCIA"))) return "SELLER_ENERGY_FEE";
+  if (/(^|_)(ASOS|ARIM)(_|$)/.test(d)) return "ARERA_SYSTEM_CHARGES";
+  if (d.includes("DISTRIBUZIONE") || d.includes("TRASMISSIONE") || /(^|_)MISURA(_|$)/.test(d) || d.includes("TRASPORTO")) return "ARERA_NETWORK";
+  if (d.includes("IMPOSTA_ERARIALE")) return "ACCISE";
   return "UNCLASSIFIED_BILL_CHARGE";
 }
 
@@ -157,7 +167,54 @@ function priceType(items: readonly BillEconomicComponent[]): BillEconomicAnalysi
   if (hasPun && hasSpread && !hasFixed) return "INDEXED_PUN_SPREAD"; if (hasFixed && !hasPun) return "FIXED_PRICE"; if (hasPun || hasSpread || hasFixed) return "MIXED_FORMULA"; return "NOT_DETERMINABLE";
 }
 
-export interface BillEconomicAnalysisOptions { readonly sourceBillTotal?: string | number | null; readonly sourceAmountDue?: string | number | null; readonly priorBalance?: string | number | null; }
+export interface BillEconomicAnalysisOptions { readonly sourceBillTotal?: string | number | null; readonly sourceAmountDue?: string | number | null; readonly priorBalance?: string | number | null; /** ISO start of the billed period: lines that end before it are prior-period adjustments. */ readonly billingPeriodStart?: string | null; }
+
+const isoDates = (value: string | null): readonly string[] => [...(value ?? "").matchAll(/(\d{1,2})[/.-](\d{1,2})[/.-](\d{4})/g)].map((match) => `${match[3]}-${match[2].padStart(2, "0")}-${match[1].padStart(2, "0")}`);
+const asRecalculation = (item: BillEconomicComponent): BillEconomicComponent => ({ ...item, classification: "RICALCOLI", group: "OTHER_ITEMS" });
+
+// A bill prints the same money more than once: the quadro sintetico ("Quota energia", "di cui spesa per la vendita"),
+// section totals ("TOTALE"), summary tables (IMPOSTE, ONERI GENERALI) and the elementi di dettaglio. Only the bill's
+// own total tells which copy is the atomic one, so each family of summary-looking lines is dropped only when that makes
+// the lines add up to the total (or brings them closest to it).
+const SUMMARY_KEYS = new Set(["QUOTA_ENERGIA", "QUOTA_FISSA", "QUOTA_POTENZA", "QUOTA_PER_CONSUMI", "QUOTA_FISSA_E_QUOTA_POTENZA", "ACCISE_E_IVA", "RICALCOLI", "ULTERIORI_VOCI"]);
+function summaryFamilies(items: readonly BillEconomicComponent[]): readonly (readonly string[])[] {
+  const atomic = items.filter((item) => item.includedInReconciliation && item.classification !== "BILL_TOTAL" && item.classification !== "AMOUNT_DUE");
+  const key = (item: BillEconomicComponent) => keyOf(item.description);
+  const priced = (item: BillEconomicComponent) => numberFrom(item.quantity) !== null && numberFrom(item.unitPrice) !== null;
+  const ids = (matcher: (item: BillEconomicComponent) => boolean) => atomic.filter(matcher).map((item) => item.lineId);
+  const seen = new Map<string, string>();
+  const duplicates = atomic.filter((item) => {
+    const signature = `${item.classification}|${numberFrom(item.amount)}|${numberFrom(item.quantity) ?? ""}`;
+    if (numberFrom(item.amount) === null) return false;
+    if (seen.has(signature)) return true;
+    seen.set(signature, item.lineId);
+    return false;
+  }).map((item) => item.lineId);
+  return [
+    ids((item) => key(item) === "TOTALE" || key(item).startsWith("TOTALE_")),
+    ids((item) => key(item).startsWith("DI_CUI")),
+    ids((item) => SUMMARY_KEYS.has(key(item)) || key(item).startsWith("SPESA_PER_") || key(item).startsWith("RICALCOLI_") || (key(item).startsWith("ENERGIA_REATTIVA") && !/(^|_)F[1-3](_|$)/.test(key(item)))),
+    duplicates,
+    ids((item) => !priced(item) && atomic.some((other) => other.lineId !== item.lineId && other.classification === item.classification && priced(other)) && item.classification !== "NETWORK_LOSS_CHARGE" && item.classification !== "RICALCOLI"),
+  ].filter((family) => family.length > 0);
+}
+function withoutSummaries(items: readonly BillEconomicComponent[], total: number | null): readonly BillEconomicComponent[] {
+  if (total === null) return items;
+  const families = summaryFamilies(items);
+  const current = (excluded: ReadonlySet<string>) => sum(items.filter((item) => !excluded.has(item.lineId) && reconcilable(item)));
+  let best: { readonly excluded: ReadonlySet<string>; readonly difference: number } | null = null;
+  for (let mask = 0; mask < 1 << families.length; mask += 1) {
+    const excluded = new Set(families.filter((_, index) => mask & (1 << index)).flat());
+    const value = current(excluded);
+    if (value === null) continue;
+    const difference = Math.abs(round(value - total));
+    if (!best || difference < best.difference - 0.005 || (Math.abs(difference - best.difference) <= 0.005 && excluded.size < best.excluded.size)) best = { excluded, difference };
+  }
+  if (!best || best.excluded.size === 0) return items;
+  const excluded = best.excluded;
+  return items.map((item) => excluded.has(item.lineId) ? { ...item, accountingRole: "DETAIL_INCLUDED_IN_SUBTOTAL" as const, includedInReconciliation: false, atomic: false } : item);
+}
+const reconcilable = (i: BillEconomicComponent): boolean => i.classification !== "CANONE_RAI" && i.classification !== "BILL_TOTAL" && i.classification !== "AMOUNT_DUE" && i.classification !== "PRIOR_BALANCE" && i.classification !== "TAX_SUBTOTAL";
 
 function ownership(components: readonly BillEconomicComponent[]): readonly BillEconomicComponent[] {
   const result = components.map((component, index) => ({ ...component, lineId: `LINE_${String(index + 1).padStart(3, "0")}` }));
@@ -195,6 +252,9 @@ export function buildCurrentBillEconomicAnalysis(inputs: readonly BillEconomicCo
   const hasExpandedAtomicBreakdown = components.some((item) => /UC3|UC6|DISTRIBUZIONE_ELETTRICA|TARIFFA_DI_TRASMISSIONE/.test(keyOf(item.description)))
     && components.some((item) => keyOf(item.description) === "TOTALE_TARIFFA_PER_L_USO_DELLA_RETE_ELETTRICA");
   if (hasExpandedAtomicBreakdown) components = components.map((item) => isDuplicatedSectionSummary(item) ? { ...item, accountingRole: "DETAIL_INCLUDED_IN_SUBTOTAL", includedInReconciliation: false } : item);
+  const periodStart = options.billingPeriodStart ? isoDates(options.billingPeriodStart)[0] ?? options.billingPeriodStart.slice(0, 10) : null;
+  if (periodStart) components = components.map((item) => { const end = isoDates(item.period ?? item.rawPeriod).at(-1); return end !== undefined && end < periodStart && item.group !== "TAX" ? asRecalculation(item) : item; });
+  components = withoutSummaries(components, numberFrom(options.sourceBillTotal ?? billTotal) ?? numberFrom(components.find((i) => i.classification === "BILL_TOTAL")?.amount));
   const seller = { ENERGY_PRICE: components.filter((i) => i.group === "ENERGY_PRICE"), COMMERCIALIZATION: components.filter((i) => i.group === "COMMERCIALIZATION"), DISPATCHING_OR_PASS_THROUGH: components.filter((i) => i.group === "DISPATCHING_OR_PASS_THROUGH"), CAPACITY_MARKET: components.filter((i) => i.group === "CAPACITY_MARKET"), OTHER_SELLER_CHARGES: components.filter((i) => i.group === "OTHER_SELLER_CHARGES") } as const;
   const regulatedAndSystemCosts = { ARERA_NETWORK: components.filter((i) => i.group === "REGULATED_NETWORK"), ARERA_SYSTEM_CHARGES: components.filter((i) => i.group === "SYSTEM_CHARGES"), TERNA_DISPATCHING_REFERENCES: components.filter((i) => i.classification === "TERNA_DISPATCHING_REFERENCES"), GME_MARKET_REFERENCE: components.filter((i) => i.classification === "GME_MARKET_REFERENCE") } as const;
   const taxesAndOtherItems = { TAXES: components.filter((i) => i.group === "TAX"), OTHER_ITEMS: components.filter((i) => i.group === "OTHER_ITEMS") } as const;

@@ -155,8 +155,10 @@ function selectAsosClass(profile: BillSupplyProfile, options: TrustedElectricity
 
 function regulatoryPowerBasis(profile: BillSupplyProfile, scope: RegulatoryCustomerScope, contractedPowerKw: number): { readonly regulatoryPowerBasisKind: Exclude<PowerBillingBasis, "UNKNOWN">; readonly regulatoryPowerBasisKw: number } | undefined {
   if (scope !== "NON_DOMESTIC_BT_BTA6") return undefined;
-  if (profile.powerBillingBasis.status !== "FOUND") fail("BTA6_POWER_BILLING_BASIS_REQUIRED");
-  const basis = profile.powerBillingBasis.normalizedValue;
+  // TIT: in BT altri usi above 16,5 kW the power charge applies to the maximum power drawn in the month, so a bill
+  // that prints that reading but not the wording of the basis is still priced on it (e.g. Repower: 151,80 kW drawn, 85 kW committed).
+  const stated = profile.powerBillingBasis.status === "FOUND" ? profile.powerBillingBasis.normalizedValue : "UNKNOWN";
+  const basis = stated === "UNKNOWN" && profile.powerMaximumDrawn.status === "FOUND" ? "MONTHLY_MAX_DRAWN" : stated;
   if (basis === "UNKNOWN") fail("BTA6_POWER_BILLING_BASIS_REQUIRED");
   if (basis === "CONTRACTUAL_COMMITTED") return { regulatoryPowerBasisKind: basis, regulatoryPowerBasisKw: contractedPowerKw };
   if (basis === "MONTHLY_MAX_DRAWN") return { regulatoryPowerBasisKind: basis, regulatoryPowerBasisKw: parseMaximumDrawnPowerKw(profile.powerMaximumDrawn) };

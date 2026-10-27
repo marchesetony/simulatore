@@ -228,7 +228,7 @@ function economicallyReconciled(version: BillVersion): boolean {
   if (!extraction || extraction.economicChargeLines.length === 0) return true;
   const priorBalance = extraction.extendedFacts.find((fact) => fact.code === "OUTSTANDING_AMOUNT")?.value ?? null;
   const inputs: BillEconomicComponentInput[] = extraction.economicChargeLines.map((line) => ({ code: line.code, description: line.description, quantity: line.quantity, unit: line.unit, unitPrice: line.unitPrice, amount: line.amount, period: line.periodRaw, rawDescription: line.rawDescription, rawValue: line.rawValue, rawUnit: line.rawUnit, rawQuantity: line.rawQuantity, rawUnitPrice: line.rawUnitPrice, rawAmount: line.rawAmount, rawPeriod: line.rawPeriod, documentEvidence: line.documentEvidence, status: line.status }));
-  const analysis = buildCurrentBillEconomicAnalysis(inputs, extraction.totalAmount.value, { priorBalance });
+  const analysis = buildCurrentBillEconomicAnalysis(inputs, extraction.totalAmount.value, { priorBalance, billingPeriodStart: extraction.billingPeriod.status === "FOUND" ? extraction.billingPeriod.value?.from ?? null : null });
   // A competitor bill whose read lines do not add up to its total is still quotable: the agent is told the saving is indicative.
   return analysis.totals.reconciliationStatus === "RECONCILED";
 }

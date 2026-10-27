@@ -380,13 +380,15 @@ function capacitySchedule(source: string, validityStart: string, validityEnd: st
 }
 
 function dispatchingReference(source: string, validityStart: string, validityEnd: string): CteDispatchingReference | null {
-  if (!/dispacciamento/i.test(source) || !/Art\.\s*24\s+del\s*TIS/i.test(source)) return null;
+  // "Art. 24 del TIS", "art. 24 TIS", "articolo 24 del TIS" (BPower Be Smart writes "di cui all'Art. 24 del TIS").
+  if (!/dispacciamento/i.test(source) || !/Art(?:icolo|\.)?\s*24\s+(?:del(?:l[a'’]\s*)?\s*)?TIS/i.test(source)) return null;
   const snapshotValue = feeAmountFromText(source, /dispacciamento[\s\S]{0,500}?pari\s+a\s+([\d.,]+)\s+(?:Eur|EUR|€)\s*\/\s*kWh/i);
   return { mode: "OFFICIAL_PASS_THROUGH", reference: officialReference("ARERA_TERNA", "TIS", source, { article: "Art. 24" }), formula: "Corrispettivo Art. 24 TIS risolto dal riferimento ufficiale applicabile al periodo, con fattore perdite Tabella 4 colonna A TIS", lossTreatment: "OFFICIAL_REFERENCE", ...(snapshotValue === null ? {} : { snapshotValue, snapshotUnit: "EUR_PER_KWH" as const }), effectiveFrom: validityStart, effectiveTo: validityEnd, sourceEvidence: source };
 }
 
 function lossReference(source: string): CteLossReference | null {
-  if (!/Tabella\s+4\s+colonna\s+A\s+TIS/i.test(source)) return null;
+  // "Tabella 4 colonna A TIS" or "Tabella 4, colonna A allegata al TIS".
+  if (!/Tabella\s+4\s*,?\s+colonna\s+A\b[\s\S]{0,40}?\bTIS\b/i.test(source)) return null;
   return { lossMode: "OFFICIAL_REFERENCE", reference: officialReference("ARERA_TERNA", "TIS", source, { table: "Tabella 4", column: "A" }), applicationTargets: ["DISPATCHING"], sourceEvidence: source };
 }
 

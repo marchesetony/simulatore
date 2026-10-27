@@ -164,7 +164,7 @@ function missingOfficial(input: QuoteReceiptInput): ReadonlyMap<string, string> 
 // Every other "altre partite" line (prior periods, interest, deposits, indemnities, TV licence) stays out of the comparison.
 type BillLine = NonNullable<QuoteReceiptInput["analysis"]>["components"][number];
 const otherItems = (input: QuoteReceiptInput): readonly BillLine[] => (input.analysis?.components ?? []).filter((line) => line.group === "OTHER_ITEMS" && !line.aggregate && line.includedInReconciliation !== false && amountOf(line.amount) !== null);
-const isReactive = (line: BillLine): boolean => /reattiv/i.test(`${line.description} ${line.rawDescription ?? ""}`);
+const isReactive = (line: BillLine): boolean => line.classification !== "RICALCOLI" && /reattiv/i.test(`${line.description} ${line.rawDescription ?? ""}`);
 
 // Charges the bill and the CTE both name, so each one is compared on its own line and never hidden in an aggregate (Tony, 26/10).
 const DETAIL_LABEL: Readonly<Record<string, string>> = {
@@ -327,7 +327,12 @@ export function buildQuoteReceipt(input: QuoteReceiptInput): QuoteReceipt {
   const reactive = sumKnown(otherItems(input).filter(isReactive).map((line) => amountOf(line.amount)));
   const network = billNetwork === null && reactive === null ? null : cents((billNetwork ?? 0) + (reactive ?? 0));
   const system = totals?.systemChargesTotal ?? null;
-  const excluded = otherItems(input).filter((line) => !isReactive(line)).map((line) => ({ label: line.description, amount: amountOf(line.amount) ?? 0 }));
+  // Prior-period adjustments are one item, as in the bill's own summary ("Ricalcoli").
+  const recalculations = otherItems(input).filter((line) => line.classification === "RICALCOLI");
+  const excluded = [
+    ...(recalculations.length ? [{ label: "Ricalcoli e conguagli dei mesi precedenti", amount: cents(recalculations.reduce((total, line) => total + (amountOf(line.amount) ?? 0), 0)) }] : []),
+    ...otherItems(input).filter((line) => !isReactive(line) && line.classification !== "RICALCOLI").map((line) => ({ label: line.description, amount: amountOf(line.amount) ?? 0 })),
+  ];
   const officialNetwork = officialOf(input, "NETWORK");
   const officialSystem = officialOf(input, "SYSTEM");
   const hasOfficial = officialNetwork.length + officialSystem.length > 0;
