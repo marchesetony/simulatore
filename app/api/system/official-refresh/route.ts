@@ -13,15 +13,15 @@ export const maxDuration = 300;
 
 const failure = (error: unknown) => ({ status: "FAILED", errors: [error instanceof Error ? error.message : "REFRESH_FAILED"] });
 
-/** The platform owner runs the nightly official-data refresh now, for every company. */
+/** Runs the nightly official-data refresh now: the platform owner for every company, a company administrator for their
+ *  own company (Tony, 27/10: "come aggiorno, manca il tasto" on Dati di mercato). */
 export async function POST(request: Request): Promise<Response> {
-  try {
-    if (!isPlatformOwner(await requestPrincipal(request, "ADMIN"))) throw new Error("AUTHORIZATION_DENIED");
-  } catch {
-    return Response.json({ error: { code: "AUTHORIZATION_DENIED", message: "Solo il proprietario della piattaforma" } }, { status: 403, headers: { "cache-control": "no-store" } });
+  let principal;
+  try { principal = await requestPrincipal(request, "ADMIN"); } catch {
+    return Response.json({ error: { code: "AUTHORIZATION_DENIED", message: "Solo gli amministratori" } }, { status: 403, headers: { "cache-control": "no-store" } });
   }
   const repositories = runtimeRepositories();
-  const tenants = await officialDataTenants(() => configuredMarketRefreshTenants(), repositories.companies);
+  const tenants = isPlatformOwner(principal) ? await officialDataTenants(() => configuredMarketRefreshTenants(), repositories.companies) : [principal.tenantId];
   const results = [];
   for (const tenantId of tenants) {
     const pun = await runPunMarketRefresh({ tenantId, repositories, trigger: "MANUAL" }).catch(failure);
