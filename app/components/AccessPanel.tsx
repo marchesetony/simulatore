@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useState, type FormEvent } from "react";
 import { ErrorState, LoadingState } from "./UiStates";
 import { requestJson, toUiError } from "../lib/ui/client";
+import { PasswordInput } from "./PasswordInput";
 
 type Level = "AMMINISTRATORE" | "DIRETTORE" | "AREA_MANAGER" | "AGENTE" | "SUB_AGENTE";
 type ChainLevel = "AZIENDA" | "DIRETTORE" | "AREA_MANAGER" | "AGENTE" | "SUB_AGENTE";
@@ -134,9 +135,9 @@ function ChangePassword() {
   return <section className="ui-card"><form onSubmit={(event) => void submit(event)}>
     <div className="card-heading"><h3>Cambia la tua password</h3><button className="button primary" type="submit" disabled={pending}>{pending ? "Salvataggio" : "Cambia password"}</button></div>
     <div className="form-grid">
-      <div className="form-field"><label className="form-label" htmlFor="password-current">Password attuale</label><input id="password-current" type="password" autoComplete="current-password" value={current} onChange={(event) => setCurrent(event.target.value)} required /></div>
-      <div className="form-field"><label className="form-label" htmlFor="password-new">Nuova password</label><input id="password-new" type="password" autoComplete="new-password" value={next} onChange={(event) => setNext(event.target.value)} required minLength={10} /></div>
-      <div className="form-field"><label className="form-label" htmlFor="password-repeat">Ripeti la nuova password</label><input id="password-repeat" type="password" autoComplete="new-password" value={repeat} onChange={(event) => setRepeat(event.target.value)} required minLength={10} /></div>
+      <div className="form-field"><label className="form-label" htmlFor="password-current">Password attuale</label><PasswordInput id="password-current" autoComplete="current-password" value={current} onChange={(event) => setCurrent(event.target.value)} required /></div>
+      <div className="form-field"><label className="form-label" htmlFor="password-new">Nuova password</label><PasswordInput id="password-new" autoComplete="new-password" value={next} onChange={(event) => setNext(event.target.value)} required minLength={10} /></div>
+      <div className="form-field"><label className="form-label" htmlFor="password-repeat">Ripeti la nuova password</label><PasswordInput id="password-repeat" autoComplete="new-password" value={repeat} onChange={(event) => setRepeat(event.target.value)} required minLength={10} /></div>
     </div>
     {error ? <ErrorState message={error} /> : null}{message ? <p className="inline-success" role="status">{message}</p> : null}
   </form></section>;
