@@ -55,6 +55,8 @@ const numberFrom = (value: string | number | null | undefined): number | null =>
   const valueNumber = Number(normalized);
   return Number.isFinite(valueNumber) ? valueNumber : null;
 };
+// Italian bills group thousands with a dot: "37.493 kWh" is 37493 kWh.
+const quantityFrom = (value: string | number | null | undefined): number | null => { const token = typeof value === "string" ? value.match(/\d[\d.,]*/)?.[0] ?? "" : ""; return /^[1-9]\d{0,2}(?:\.\d{3})+$/.test(token) ? Number(token.replace(/\./g, "")) : numberFrom(value); };
 const round = (value: number): number => Math.round((value + Number.EPSILON) * 100) / 100;
 const canonicalUnit = (value: string): string => text(value).toUpperCase().replace(/[€â‚¬Ã¢â€šÂ¬]/g, "EUR").replace(/\s+/g, "").replace(/PER/g, "/").replace(/YEAR/g, "ANNO").replace(/MONTH/g, "MESE");
 
@@ -123,7 +125,7 @@ function groupOf(c: BillEconomicClassification): BillEconomicGroup {
 }
 
 function calculationCheck(input: { quantity: string; unitPrice: string; unit: string; amount: string }): BillCalculationCheck {
-  const q = numberFrom(input.quantity); const p = numberFrom(input.unitPrice); const a = numberFrom(input.amount); if (q === null || p === null || a === null) return "NOT_CHECKABLE";
+  const q = quantityFrom(input.quantity); const p = numberFrom(input.unitPrice); const a = numberFrom(input.amount); if (q === null || p === null || a === null) return "NOT_CHECKABLE";
   const unit = canonicalUnit(input.unit); const expected = unit.includes("CENT") && unit.includes("KWH") ? q * p / 100 : unit.includes("/MWH") && keyOf(input.quantity).includes("KWH") ? q * p / 1000 : unit.includes("/KWH") || unit === "EUR" || unit.includes("/MESE") || unit.includes("/ANNO") || unit.includes("/KW/") ? q * p : null;
   return expected === null ? "NOT_CHECKABLE" : Math.abs(round(expected) - round(a)) <= 0.02 ? "MATCH" : "MISMATCH";
 }

@@ -398,7 +398,34 @@ function OfficialSourcesCheck() {
   </div> : null}</Card>;
 }
 
-function SystemPanel({ context, readiness, onReload }: { readonly context: VerifiedContextModel | null; readonly readiness: ReadinessModel | null; readonly onReload: () => void }) { return <div className="content-stack"><SectionHeader eyebrow="OPERATIONS" title="Stato sistema" detail="Readiness e contesto verificato, senza segreti o internals." action={<button className="button secondary" type="button" onClick={onReload}>Aggiorna stato</button>} /><Card><div className="data-list"><DataLine label="Autenticazione" value={context?.authenticated ? "Autenticata" : "Non autenticata"} /><DataLine label="Ruolo" value={context?.role ?? "Non disponibile"} /><DataLine label="Tenant" value={context?.tenantId ?? "Non disponibile"} /><DataLine label="Runtime" value={readiness?.runtimeMode ?? "Non disponibile"} /><DataLine label="Readiness" value={readiness?.readiness ? "Pronta" : "Bloccata"} /></div></Card>{context?.role === "ADMIN" && context.tenantId === "tenant_piattaforma" ? <OfficialSourcesCheck /> : null}</div>; }
+type ArchiveDomain = { readonly key: string; readonly componentCode: string; readonly customerScope: string; readonly unit: string; readonly variant: string | null; readonly source: "ARERA" | "TERNA"; readonly records: readonly { readonly value: number; readonly unit: string; readonly effectiveFrom: string; readonly effectiveTo: string | null; readonly retrievedAt: string; readonly sourceReference: string }[]; readonly missingMonths: readonly string[] };
+type ArchiveTenant = { readonly tenantId: string; readonly checkedAt: string; readonly lastSuccessfulAt: string | null; readonly stale: boolean; readonly lastErrors: readonly string[]; readonly domains: readonly ArchiveDomain[] };
+const ARCHIVE_COMPONENT: Readonly<Record<string, string>> = { NETWORK_FIXED: "Trasporto quota fissa", NETWORK_POWER: "Trasporto quota potenza", NETWORK_ENERGY: "Trasporto quota energia", METERING_FIXED: "Misura", TRANSMISSION_ENERGY: "Trasmissione", UC3: "UC3", UC6: "UC6", ARIM: "ARIM", ASOS: "ASOS", DISPATCHING_TOTAL: "Dispacciamento", CAPACITY_MARKET_PEAK: "Capacità ore di picco", CAPACITY_MARKET_OFF_PEAK: "Capacità fuori picco" };
+const ARCHIVE_SCOPE: Readonly<Record<string, string>> = { DOMESTIC_RESIDENT_BT: "Domestico residente", NON_DOMESTIC_BT_BTA6: "BT altri usi oltre 16,5 kW (BTA6)" };
+const archiveDate = (value: string | null): string => value ? value.slice(0, 10).split("-").reverse().join("/") : "in corso";
+
+/** Tony (27/10): "bisogna verificare i dati terna e arera e metterli in archivio con aggiornamenti mensili". Shows, per
+ *  company, every official value the calculator uses, its validity and source, and the recent months it does not cover. */
+function OfficialArchive() {
+  const [reports, setReports] = useState<readonly ArchiveTenant[] | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string>();
+  async function load() { if (busy) return; setBusy(true); setError(undefined); try { setReports((await requestJson<{ readonly reports: readonly ArchiveTenant[] }>("/api/system/official-archive")).reports); } catch (cause) { setError(uiError(cause)); } finally { setBusy(false); } }
+  return <Card><div className="card-heading"><h3>Archivio ARERA e Terna</h3><button className="button secondary" type="button" disabled={busy} onClick={() => void load()}>{busy ? "Lettura archivio" : "Mostra archivio"}</button></div>
+    <p className="muted">Valori ufficiali salvati e usati nei calcoli, con validità e fonte. In rosso i mesi degli ultimi 12 senza valore: si riempiono con &quot;Aggiorna ora&quot;.</p>
+    {error ? <ErrorState message={error} /> : null}
+    {reports?.map((report) => <div className="data-list" key={report.tenantId}>
+      <DataLine label={report.tenantId} value={(report.lastSuccessfulAt ? "Ultimo aggiornamento riuscito " + archiveDate(report.lastSuccessfulAt) : "Mai aggiornato") + (report.stale ? " · DA AGGIORNARE (oltre 15 giorni)" : "")} />
+      {report.lastErrors.length ? <p className="quote-check open">Errori dell&apos;ultimo aggiornamento: {report.lastErrors.join("; ")}</p> : null}
+      {report.domains.map((domain) => { const latest = domain.records[0]; return <div className="data-line" key={domain.key}>
+        <span>{domain.source} · {ARCHIVE_COMPONENT[domain.componentCode] ?? domain.componentCode}{domain.variant ? " " + domain.variant : ""} · {ARCHIVE_SCOPE[domain.customerScope] ?? domain.customerScope} ({domain.unit})</span>
+        <span>{latest ? latest.value.toLocaleString("it-IT", { maximumFractionDigits: 8 }) + " dal " + archiveDate(latest.effectiveFrom) + " al " + archiveDate(latest.effectiveTo) : "nessun valore"}{latest ? <> · <a href={latest.sourceReference} target="_blank" rel="noreferrer">fonte</a></> : null}{domain.missingMonths.length ? <small className="quote-check open"> Mancano: {domain.missingMonths.join(", ")}</small> : <small className="quote-check"> ✓ ultimi 12 mesi coperti</small>}</span>
+      </div>; })}
+    </div>)}
+  </Card>;
+}
+
+function SystemPanel({ context, readiness, onReload }: { readonly context: VerifiedContextModel | null; readonly readiness: ReadinessModel | null; readonly onReload: () => void }) { return <div className="content-stack"><SectionHeader eyebrow="OPERATIONS" title="Stato sistema" detail="Readiness e contesto verificato, senza segreti o internals." action={<button className="button secondary" type="button" onClick={onReload}>Aggiorna stato</button>} /><Card><div className="data-list"><DataLine label="Autenticazione" value={context?.authenticated ? "Autenticata" : "Non autenticata"} /><DataLine label="Ruolo" value={context?.role ?? "Non disponibile"} /><DataLine label="Tenant" value={context?.tenantId ?? "Non disponibile"} /><DataLine label="Runtime" value={readiness?.runtimeMode ?? "Non disponibile"} /><DataLine label="Readiness" value={readiness?.readiness ? "Pronta" : "Bloccata"} /></div></Card>{context?.role === "ADMIN" && context.tenantId === "tenant_piattaforma" ? <><OfficialSourcesCheck /><OfficialArchive /></> : null}</div>; }
 
 void CtePanel;
 
