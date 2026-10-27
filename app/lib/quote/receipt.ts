@@ -135,6 +135,12 @@ function officialCheck(bill: number | null, components: readonly QuoteReceiptOff
 // Why the ARERA transport/system tables could not be applied (engine warning OFFICIAL_VALUE_MISSING:REGULATED:<code>).
 function regulatedUnavailable(input: QuoteReceiptInput): string {
   const code = (input.warnings ?? []).find((warning) => warning.startsWith("OFFICIAL_VALUE_MISSING:REGULATED:"))?.slice("OFFICIAL_VALUE_MISSING:REGULATED:".length) ?? "";
+  const name = (component: string) => ({ UC3: "UC3", UC6: "UC6", ARIM: "ARIM", ASOS: "ASOS", DISPATCHING_TOTAL: "dispacciamento", NETWORK_FIXED: "trasporto quota fissa", NETWORK_POWER: "trasporto quota potenza", NETWORK_ENERGY: "trasporto quota energia", METERING_FIXED: "misura", TRANSMISSION_ENERGY: "trasmissione" } as Record<string, string>)[component] ?? component;
+  const gap = code.match(/^TIMELINE_GAP_(.+?)_((?:DOMESTIC|NON_DOMESTIC)_.+)$/);
+  if (gap) return `valori ARERA di ${name(gap[1])} non in archivio per tutto il periodo fatturato (${gap[2]}): va eseguito l'aggiornamento ARERA`;
+  const overlap = code.match(/^TIMELINE_OVERLAP_(.+?)_((?:DOMESTIC|NON_DOMESTIC)_.+)$/);
+  if (overlap) return `valori ARERA di ${name(overlap[1])} sovrapposti nel periodo (${overlap[2]}): l'archivio ARERA va corretto`;
+  if (code.startsWith("ASOS_CLASS_UNKNOWN_")) return "classe di agevolazione ASOS non indicata in bolletta";
   if (code.startsWith("SCOPE_UNREGISTERED_")) return `tabelle ARERA non ancora caricate per questa tipologia di fornitura (${code.slice("SCOPE_UNREGISTERED_".length)})`;
   if (/^(POWER_|AVAILABLE_POWER|CONTRACTED_POWER|BTA6_)/.test(code)) return `potenza impegnata/disponibile non letta in bolletta (${code})`;
   if (/^SUPPLY_USE/.test(code)) return `uso della fornitura (domestico/altri usi) non letto in bolletta (${code})`;

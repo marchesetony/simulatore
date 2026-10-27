@@ -412,9 +412,11 @@ export async function calculatePreparedOffer(request: SimulationRequest, prepare
       regulated = await calculateRegulatedEeSubset(request, execution);
     } catch (error) {
       // Customer scopes without official regulated tariffs on file (e.g. business BT other than BTA6) are quoted on commercial costs only.
-      if (!(error instanceof Error) || !error.message.startsWith("REGULATORY_REFRESH_DOMAIN_UNREGISTERED")) throw error;
+      // Tony (27/10): a missing ARERA value never blocks the quote; the receipt says which table is missing.
+      if (!(error instanceof Error) || !/^REGULATORY_(REFRESH_DOMAIN_UNREGISTERED|TIMELINE_GAP|TIMELINE_OVERLAP|TIMELINE_VARIANT_REQUIRED)/.test(error.message)) throw error;
       regulated = null;
-      regulatedMissingReason = `SCOPE_UNREGISTERED_${dependencies.trustedElectricityContext.regulatoryCustomerScope}`;
+      const scope = dependencies.trustedElectricityContext.regulatoryCustomerScope;
+      regulatedMissingReason = error.message.startsWith("REGULATORY_REFRESH_DOMAIN_UNREGISTERED") ? `SCOPE_UNREGISTERED_${scope}` : error.message.startsWith("REGULATORY_TIMELINE_VARIANT_REQUIRED") ? `ASOS_CLASS_UNKNOWN_${scope}` : `${error.message.startsWith("REGULATORY_TIMELINE_OVERLAP") ? "TIMELINE_OVERLAP" : "TIMELINE_GAP"}_${error.message.split(":")[1] ?? "ARERA"}_${scope}`;
     }
   }
   const drafts: ComponentDraft[] = [];

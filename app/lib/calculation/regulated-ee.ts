@@ -181,6 +181,7 @@ function timelineFor(
   regulatoryVariant?: RegulatoryVariant,
 ): Promise<RegulatoryTimeline> {
   assertCalculatedRegulatoryDomain({ componentCode, customerScope: context.regulatoryCustomerScope, normalizedUnit, ...(regulatoryVariant === undefined ? {} : { regulatoryVariant }) });
+  // Name the component whose official values are missing, so the quote can say which ARERA table to load.
   return resolveRegulatoryTimeline(bridge, {
     tenantId: request.tenantId,
     componentCode,
@@ -189,6 +190,9 @@ function timelineFor(
     ...(regulatoryVariant === undefined ? {} : { regulatoryVariant }),
     periodStart: request.supplyPeriod.periodStart,
     periodEnd: request.supplyPeriod.periodEnd,
+  }).catch((error: unknown) => {
+    if (error instanceof Error && error.message.startsWith("REGULATORY_TIMELINE_")) error.message = `${error.message.split(":")[0]}:${componentCode}`;
+    throw error;
   });
 }
 

@@ -71,4 +71,10 @@ assert.ok(!(mv instanceof Error), String(mv?.message)); assert.deepEqual(byKind(
 const plainPrepared = structuredClone(prepared); plainPrepared.version.contract.commercialTerms = {};
 const plain = await calculatePreparedOffer(request(false), plainPrepared);
 assert.equal(plain.totalCommercialCost.amount, 100);
+// Tony (27/10, screenshot): every CTE failed with REGULATORY_TIMELINE_GAP once the BTA6 context was read. A missing ARERA
+// value never blocks the quote: it is priced without the ARERA tables and the warning names the missing table.
+const bta6Context = { ...context(85), contractedPowerKw: 85, regulatoryCustomerScope: "NON_DOMESTIC_BT_BTA6", regulatoryPowerBasisKind: "MONTHLY_MAX_DRAWN", regulatoryPowerBasisKw: 151.8, asosClass: "ASOS_CLASS_0", asosClassTemporalStatus: "VALID" };
+const gap = await calculatePreparedOffer(request(true), prepared, { ...deps(0.0105, 0.004275, undefined), trustedElectricityContext: bta6Context });
+assert.equal(gap.totalRegulatedSubsetCost, null);
+assert.ok(gap.warnings.some((warning) => /^OFFICIAL_VALUE_MISSING:REGULATED:TIMELINE_(GAP|OVERLAP)_.+_NON_DOMESTIC_BT_BTA6$|^OFFICIAL_VALUE_MISSING:REGULATED:ASOS_CLASS_UNKNOWN_/.test(warning)), gap.warnings.join(","));
 console.log("CTE_PASS_THROUGH_BILL_QUOTE=PASS");

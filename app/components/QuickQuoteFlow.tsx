@@ -255,6 +255,13 @@ function estimatedFromPeriod(context: Context, ee: boolean): string {
   return basis?.estimated ? `${amount(basis.annual, ee ? "kWh" : "Smc")} (stimato dal periodo)` : "—";
 }
 
+// How far the read lines are from the bill total, so a wrong reading is visible at once.
+function readGap(bill: BillDocumentModel): string {
+  const totals = bill.analystReview?.economics?.economicAnalysis?.totals;
+  if (!totals || totals.billTotal === null || totals.reconstructedCurrentSupplyTotal === null) return "";
+  return ` (lette ${euro(totals.reconstructedCurrentSupplyTotal)} su ${euro(totals.billTotal)}, differenza ${euro(totals.reconstructedCurrentSupplyTotal - totals.billTotal)})`;
+}
+
 function BillSummary({ context, bill }: { readonly context: Context; readonly bill: BillDocumentModel }): ReactNode {
   const ee = context.vector === "EE";
   const period = context.consumption?.period;
@@ -270,7 +277,7 @@ function BillSummary({ context, bill }: { readonly context: Context; readonly bi
   ];
   return <section className="ui-card quote-bill-summary"><h3>Dati della bolletta usati per la scelta</h3>
     <dl className="quote-bill-grid">{rows.map(([label, value]) => <div key={label}><dt>{label}</dt><dd>{value}</dd></div>)}</dl>
-    {context.economicReconciled === false ? <p className="quote-warning">Le voci di costo lette non sommano esattamente al totale della bolletta: il risparmio mostrato è indicativo.</p> : null}
+    {context.economicReconciled === false ? <p className="quote-warning">Le voci di costo lette non sommano esattamente al totale della bolletta{readGap(bill)}: il risparmio mostrato è indicativo.</p> : null}
     {context.missingRequiredData.length ? <p className="quote-missing" role="alert">Mancano: {context.missingRequiredData.map((code) => MISSING[code] ?? code).join(", ")}. Ricarica una bolletta più completa.</p> : null}
   </section>;
 }
