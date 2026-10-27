@@ -124,12 +124,24 @@ const sellerComponents = (input: QuoteReceiptInput) => (input.offerComponents ??
 const officialOf = (input: QuoteReceiptInput, side: "NETWORK" | "SYSTEM") => (input.offerComponents ?? []).filter((component) => regulatedSide(component) === side);
 // No resolution grants a tolerance: tariffs carry 6 decimals and each line is rounded to the cent, so the bill may differ
 // from the official amount by at most 0,01 EUR per component summed (base di calcolo approvata da Tony, 26/10).
-function officialCheck(bill: number | null, components: readonly QuoteReceiptOfferComponent[], hasOfficial: boolean): OfficialCheck {
-  if (!hasOfficial) return { status: "NOT_AVAILABLE", official: null, difference: null, reason: "valori ufficiali ARERA del periodo non calcolati per questa fornitura" };
+function officialCheck(bill: number | null, components: readonly QuoteReceiptOfferComponent[], hasOfficial: boolean, unavailable: string): OfficialCheck {
+  if (!hasOfficial) return { status: "NOT_AVAILABLE", official: null, difference: null, reason: unavailable };
   const official = cents(components.reduce((total, component) => total + signed(component), 0));
   if (bill === null) return { status: "NOT_AVAILABLE", official, difference: null, reason: "importo non letto in bolletta" };
   const difference = cents(bill - official);
   return Math.abs(difference) <= 0.01 * components.length + 1e-9 ? { status: "VERIFIED", official, difference, reason: null } : { status: "DIFFERENCE", official, difference, reason: null };
+}
+
+// Why the ARERA transport/system tables could not be applied (engine warning OFFICIAL_VALUE_MISSING:REGULATED:<code>).
+function regulatedUnavailable(input: QuoteReceiptInput): string {
+  const code = (input.warnings ?? []).find((warning) => warning.startsWith("OFFICIAL_VALUE_MISSING:REGULATED:"))?.slice("OFFICIAL_VALUE_MISSING:REGULATED:".length) ?? "";
+  if (code.startsWith("SCOPE_UNREGISTERED_")) return `tabelle ARERA non ancora caricate per questa tipologia di fornitura (${code.slice("SCOPE_UNREGISTERED_".length)})`;
+  if (/^(POWER_|AVAILABLE_POWER|CONTRACTED_POWER|BTA6_)/.test(code)) return `potenza impegnata/disponibile non letta in bolletta (${code})`;
+  if (/^SUPPLY_USE/.test(code)) return `uso della fornitura (domestico/altri usi) non letto in bolletta (${code})`;
+  if (/^VOLTAGE_LEVEL/.test(code)) return `livello di tensione non letto in bolletta (${code})`;
+  if (/^(REGULATORY_SCOPE|DOMESTIC_)/.test(code)) return `tipologia cliente non determinabile dalla bolletta (${code})`;
+  if (code) return `dati tecnici della bolletta incompleti (${code})`;
+  return "valori ufficiali ARERA del periodo non calcolati per questa fornitura";
 }
 
 const MISSING_KEY: Readonly<Record<string, string>> = { DISPATCHING: "DISPATCHING", CAPACITY_MARKET: "CAPACITY", LOSSES: "LOSSES" };
@@ -137,6 +149,7 @@ const MISSING_REASON: Readonly<Record<string, string>> = {
   OFFICIAL_VALUE_MISSING: "valore ufficiale ARERA/Terna del periodo non in archivio",
   PEAK_HOUR_KWH_MISSING: "servono i kWh prelevati nelle ore di picco Terna",
   AVAILABLE_POWER_MISSING: "potenza disponibile non letta in bolletta",
+  CTE_REFERENCE_MISSING: "la CTE in archivio non indica come si applica: va riletta la CTE",
 };
 function missingOfficial(input: QuoteReceiptInput): ReadonlyMap<string, string> {
   const result = new Map<string, string>();
@@ -156,7 +169,7 @@ const isReactive = (line: BillLine): boolean => /reattiv/i.test(`${line.descript
 // Charges the bill and the CTE both name, so each one is compared on its own line and never hidden in an aggregate (Tony, 26/10).
 const DETAIL_LABEL: Readonly<Record<string, string>> = {
   ENERGY: "Prezzo energia (indice + spread o prezzo fisso)", LOSSES: "Perdite di rete", COMMERCIALIZATION: "Commercializzazione", DISPATCHING: "Dispacciamento",
-  CAPACITY: "Mercato della capacità (capacity market)", IMBALANCE: "Sbilanciamento", SELLER_OTHER: "Altri corrispettivi di vendita", PCV: "Quota fissa di vendita (PCV)",
+  CAPACITY: "Mercato della capacità (capacity market)", CAPACITY_CTE: "Capacity market libero (da CTE)", IMBALANCE: "Sbilanciamento", SELLER_OTHER: "Altri corrispettivi di vendita", PCV: "Quota fissa di vendita (PCV)",
   OPTIONS: "Opzioni e servizi a pagamento (es. Flex)", ONE_OFF: "Corrispettivi una tantum", REACTIVE: "Energia reattiva", NETWORK: "Trasporto e gestione del contatore", SYSTEM: "Oneri di sistema",
 };
 const DETAIL_ORDER = Object.keys(DETAIL_LABEL);
@@ -180,6 +193,8 @@ function offerDetail(component: QuoteReceiptOfferComponent): string {
   // A one-off fee ("gestione APP e servizi 1,50 €") is not a recurring option.
   if (component.category === "ONE_OFF_FEE") return "ONE_OFF";
   if (component.category === "IMBALANCE" || /sbilanciament|imbalance/i.test(text)) return "IMBALANCE";
+  // The CTE's own capacity charge stays apart, so a missing official capacity value still shows its reason.
+  if (component.formulaInputs?.source === "CTE_STATED_VALUE" && /capacit/i.test(text)) return "CAPACITY_CTE";
   if (/capacit/i.test(text)) return "CAPACITY";
   if (/dispacciament|dispatching/i.test(text)) return "DISPATCHING";
   if (/perdit|loss/i.test(text)) return "LOSSES";
@@ -316,7 +331,7 @@ export function buildQuoteReceipt(input: QuoteReceiptInput): QuoteReceipt {
   const officialNetwork = officialOf(input, "NETWORK");
   const officialSystem = officialOf(input, "SYSTEM");
   const hasOfficial = officialNetwork.length + officialSystem.length > 0;
-  const check = { NETWORK: officialCheck(billNetwork, officialNetwork, hasOfficial), SYSTEM: officialCheck(system, officialSystem, hasOfficial) };
+  const check = { NETWORK: officialCheck(billNetwork, officialNetwork, hasOfficial, regulatedUnavailable(input)), SYSTEM: officialCheck(system, officialSystem, hasOfficial, regulatedUnavailable(input)) };
   const offerNetwork = hasOfficial ? cents((check.NETWORK.official ?? 0) + (reactive ?? 0)) : network;
   const offerSystem = hasOfficial ? check.SYSTEM.official ?? 0 : system;
   const currentTaxes = totals?.taxTotal ?? null;

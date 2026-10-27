@@ -153,4 +153,13 @@ const rounding = buildQuoteReceipt({ vector: "EE", offerSupplyCost: 88, analysis
 assert.equal(rounding.officialCheck.SYSTEM.status, "VERIFIED", "2 components (ARIM, ASOS): up to 0,02 EUR of rounding");
 const beyond = buildQuoteReceipt({ vector: "EE", offerSupplyCost: 88, analysis: { components: scontrinoLines, totals: { ...scontrinoTotals, systemChargesTotal: 10.03 } }, domestic: true, validUntil: null, offerComponents: officialComponents });
 assert.equal(beyond.officialCheck.SYSTEM.status, "DIFFERENCE");
+// 13. Tony (27/10): "ancora non si vedono i dati arera e terna". The receipt names what stopped the ARERA tables and
+// keeps the CTE's own Capacity Market libero apart from the official capacity charge, whose reason must stay visible.
+const why = buildQuoteReceipt({ vector: "EE", offerSupplyCost: 88, analysis: { components: scontrinoLines, totals: scontrinoTotals }, domestic: true, validUntil: null, offerComponents: [{ category: "VARIABLE_FEE", sign: "CHARGE", label: "Capacity market libero (da CTE)", amount: { amount: 5 }, formulaInputs: { kind: "CAPACITY_MARKET", source: "CTE_STATED_VALUE" } }], warnings: ["OFFICIAL_VALUE_MISSING:REGULATED:SCOPE_UNREGISTERED_NON_DOMESTIC_BT", "OFFICIAL_VALUE_MISSING:CAPACITY_MARKET:PEAK_HOUR_KWH_MISSING", "OFFICIAL_VALUE_MISSING:DISPATCHING:CTE_REFERENCE_MISSING"] });
+assert.equal(why.officialCheck.NETWORK.reason, "tabelle ARERA non ancora caricate per questa tipologia di fornitura (NON_DOMESTIC_BT)");
+assert.equal(why.rows[0].details.find((item) => item.key === "CAPACITY_CTE").offer, 5);
+assert.equal(why.rows[0].details.find((item) => item.key === "CAPACITY").missingReason, "servono i kWh prelevati nelle ore di picco Terna");
+assert.equal(why.rows[0].details.find((item) => item.key === "DISPATCHING").missingReason, "la CTE in archivio non indica come si applica: va riletta la CTE");
+const powerWhy = buildQuoteReceipt({ vector: "EE", offerSupplyCost: 88, analysis: { components: scontrinoLines, totals: scontrinoTotals }, domestic: true, validUntil: null, warnings: ["OFFICIAL_VALUE_MISSING:REGULATED:AVAILABLE_POWER_MISSING"] });
+assert.equal(powerWhy.officialCheck.SYSTEM.reason, "potenza impegnata/disponibile non letta in bolletta (AVAILABLE_POWER_MISSING)");
 console.log("quote receipt calculation base passed");

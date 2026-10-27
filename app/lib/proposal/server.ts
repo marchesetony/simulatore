@@ -7,7 +7,7 @@ import { calculateApprovedOffer, type CalculationDependencies } from "../calcula
 // @ts-expect-error Node's strip-only test runner requires the explicit extension.
 import { parseSimulationRequest } from "../calculation/input.ts";
 // @ts-expect-error Node's strip-only test runner requires the explicit extension.
-import { resolveTrustedElectricityContextFromSourceBill } from "../calculation/source-bill-context.ts";
+import { resolveTrustedElectricityContextWithReason } from "../calculation/source-bill-context.ts";
 // @ts-expect-error Node's strip-only test runner requires the explicit extension.
 import { compareApprovedOffers } from "../comparison/service.ts";
 // @ts-expect-error Node's strip-only test runner requires the explicit extension.
@@ -56,10 +56,10 @@ function assertStoredComparison(record: Awaited<ReturnType<RuntimeRepositories["
 
 async function dependenciesFor(repositories: RuntimeRepositories, tenantId: string, request: ReturnType<typeof parseSimulationRequest>): Promise<CalculationDependencies | undefined> {
   if (request.vector !== "EE" || !request.sourceBill) return undefined;
-  const trustedElectricityContext = await resolveTrustedElectricityContextFromSourceBill(repositories.billRepository, tenantId, request);
+  const { context: trustedElectricityContext, reason } = await resolveTrustedElectricityContextWithReason(repositories.billRepository, tenantId, request);
   // Without the bill\'s technical readings the quote runs on commercial costs only (regulated charges skipped).
   const regulatoryBridge = new ProductionRegulatoryPersistenceBridge(repositories.regulatoryValues, repositories.approvalDomains);
-  return { ...(trustedElectricityContext ? { trustedElectricityContext } : {}), regulatoryBridge, regulatoryRuntimeResolver: new ProductionCteRegulatoryRuntimeResolver(regulatoryBridge), regulatoryRefreshState: repositories.regulatoryRefreshState };
+  return { ...(trustedElectricityContext ? { trustedElectricityContext } : {}), ...(reason ? { regulatedUnavailableReason: reason } : {}), regulatoryBridge, regulatoryRuntimeResolver: new ProductionCteRegulatoryRuntimeResolver(regulatoryBridge), regulatoryRefreshState: repositories.regulatoryRefreshState };
 }
 
 export async function rebuildAuthoritativeCalculation(repositories: RuntimeRepositories, tenantId: string, calculationId: string, expectedFingerprint: string): Promise<CalculationResult> {

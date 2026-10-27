@@ -181,7 +181,7 @@ function assertCalculationShape(result: CalculationResult, tenantId: string): Si
     if (sameScope && (result.savingsVsBaseline === null || result.savingsVsBaseline.minorUnits !== baselineComparableMinor(result) - comparableMinor(result))) proposalFail("CALCULATION_SAVINGS_INVALID");
     if (!sameScope && result.savingsVsBaseline !== null) proposalFail("CALCULATION_SAVINGS_INVALID");
   }
-  const expectedWarnings = [...(normalized.sourceBill ? ["SOURCE_BILL_REFERENCE_RECORDED"] : []), ...(result.costScope === "COMMERCIAL_PLUS_REGULATED_PARTIAL" ? result.warnings.filter((warning) => warning.startsWith("REGULATED_SUBSET_PARTIAL_") || warning === "BTA6_ASOS_EXCLUDED_CLASS_UNKNOWN") : []), ...(normalized.baseline !== undefined && baselineScope(result) !== result.costScope ? ["BASELINE_COST_SCOPE_MISMATCH"] : [])];
+  const expectedWarnings = [...(normalized.sourceBill ? ["SOURCE_BILL_REFERENCE_RECORDED"] : []), ...(result.costScope === "COMMERCIAL_PLUS_REGULATED_PARTIAL" ? result.warnings.filter((warning) => warning.startsWith("REGULATED_SUBSET_PARTIAL_") || warning === "BTA6_ASOS_EXCLUDED_CLASS_UNKNOWN") : []), ...(normalized.baseline !== undefined && baselineScope(result) !== result.costScope ? ["BASELINE_COST_SCOPE_MISMATCH"] : []), ...(normalized.sourceBill ? result.warnings.filter((warning) => warning.startsWith("OFFICIAL_VALUE_MISSING:")) : [])];
   if (!Array.isArray(result.warnings) || canonical(result.warnings) !== canonical(expectedWarnings)) proposalFail("CALCULATION_WARNINGS_MISMATCH");
   return normalized;
 }

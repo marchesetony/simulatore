@@ -1,7 +1,7 @@
 import { jsonBody } from "../../lib/archive/api";
 import { requestPrincipal } from "../../lib/auth/request";
 import { calculationError } from "../../lib/calculation/api";
-import { resolveTrustedElectricityContextFromSourceBill } from "../../lib/calculation/source-bill-context";
+import { resolveTrustedElectricityContextWithReason } from "../../lib/calculation/source-bill-context";
 import { ProductionRegulatoryPersistenceBridge } from "../../lib/regulatory-bridge";
 import { ProductionCteRegulatoryRuntimeResolver } from "../../lib/calculation/regulatory-runtime-resolvers";
 import { compareApprovedOffers } from "../../lib/comparison/service";
@@ -34,10 +34,10 @@ export async function POST(request: Request): Promise<Response> {
     const parsedSimulation = resolved.simulation;
     let dependencies;
     if (parsedSimulation.vector === "EE" && parsedSimulation.sourceBill) {
-      const trustedElectricityContext = await resolveTrustedElectricityContextFromSourceBill(repositories.billRepository, tenantId, parsedSimulation);
-      // Without the bill\'s technical readings the quote runs on commercial costs only (regulated charges skipped).
+      const { context: trustedElectricityContext, reason } = await resolveTrustedElectricityContextWithReason(repositories.billRepository, tenantId, parsedSimulation);
+      // Without the bill\'s technical readings the quote runs on commercial costs only (regulated charges skipped), and says why.
       const regulatoryBridge = new ProductionRegulatoryPersistenceBridge(repositories.regulatoryValues, repositories.approvalDomains);
-      dependencies = { ...(trustedElectricityContext ? { trustedElectricityContext } : {}), regulatoryBridge, regulatoryRuntimeResolver: new ProductionCteRegulatoryRuntimeResolver(regulatoryBridge), regulatoryRefreshState: repositories.regulatoryRefreshState };
+      dependencies = { ...(trustedElectricityContext ? { trustedElectricityContext } : {}), ...(reason ? { regulatedUnavailableReason: reason } : {}), regulatoryBridge, regulatoryRuntimeResolver: new ProductionCteRegulatoryRuntimeResolver(regulatoryBridge), regulatoryRefreshState: repositories.regulatoryRefreshState };
     }
     const hierarchy = await loadHierarchyAccess(principal, repositories, resolved.simulation.calculationDate);
     const result = await compareApprovedOffers(repositories.cteArchiveRepository, repositories.marketArchiveRepository, parsedSimulation, { ...(dependencies ?? {}), cteUsable: (archiveId) => cteUsability(hierarchy, archiveId) === "USABLE" });

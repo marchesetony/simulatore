@@ -204,7 +204,7 @@ function addCtePassThroughs(target: ComponentDraft[], request: ElectricitySimula
       const unitRate = grossUp(fromNumber(official));
       target.push({ componentId: "cte-pass-through:dispatching", category: "VARIABLE_FEE", label: "Dispacciamento", sign: "CHARGE", value: multiply(unitRate, totalQuantity), formulaId: "CTE_PASS_THROUGH_RATE_TIMES_KWH", formulaInputs: { kind: "DISPATCHING", feeUnit: "EUR_PER_KWH", feeRate: toDecimal(unitRate, 6), officialRate: official, lossFactor: loss ? toDecimal(loss, 6) : 0, basisQuantity: toDecimal(totalQuantity, 3), source: runtime?.dispatching?.officialIdentifier ?? "OFFICIAL" } });
     } else missing.push("DISPATCHING:OFFICIAL_VALUE_MISSING");
-  }
+  } else if (!dispatching && !priced.has("DISPATCHING")) missing.push("DISPATCHING:CTE_REFERENCE_MISSING");
   if (!priced.has("CAPACITY_MARKET")) {
     const period = request.supplyPeriod;
     const entries = (offer.capacityMarketSchedule ?? []).filter((entry) => entry.effectiveFrom < period.periodEnd && entry.effectiveTo > period.periodStart);
@@ -217,7 +217,8 @@ function addCtePassThroughs(target: ComponentDraft[], request: ElectricitySimula
     // The regulated capacity charge (TIV comma 34.8 bis, Terna): published net of losses, so always grossed up. BT up to
     // 55 kW: one monthly value on all kWh. BT above 55 kW, MT, AT: kWh in Terna's 500 peak hours x peak rate + the rest x
     // off-peak rate, which needs the peak-hour kWh of the meter.
-    if (entries.some((entry) => entry.mode === "OFFICIAL_PASS_THROUGH")) {
+    if (!entries.some((entry) => entry.mode === "OFFICIAL_PASS_THROUGH")) missing.push("CAPACITY_MARKET:CTE_REFERENCE_MISSING");
+    else {
       const powerKw = context?.availablePowerKw ?? context?.contractedPowerKw;
       const smallLv = request.voltageLevel === "LV" && powerKw !== undefined && powerKw <= 55;
       const official = runtime?.capacityMarket?.value;
@@ -244,6 +245,8 @@ export interface CalculationDependencies {
   readonly regulatoryRuntimeResolver?: CteRegulatoryRuntimeResolver;
   /** Commercial chain gate: when present, only CTEs it accepts take part in a comparison. */
   readonly cteUsable?: (archiveId: string) => boolean;
+  /** Why the bill's technical readings could not be trusted, so a quote without ARERA charges can say so. */
+  readonly regulatedUnavailableReason?: string;
 }
 
 export async function assertNoKnownDomesticTierDivergence(repository: Pick<TenantRecordRepository<unknown>, "get"> | undefined, tenantId: string): Promise<void> {
@@ -397,6 +400,7 @@ export async function calculatePreparedOffer(request: SimulationRequest, prepare
     if (cteRuntime && !cteRuntime.ready && !request.sourceBill) throw new CalculationEngineError(cteRuntime.blockers[0] ?? "REGULATORY_RUNTIME_VALUE_MISSING");
   }
   let regulated: Awaited<ReturnType<typeof calculateRegulatedEeSubset>> | null = null;
+  let regulatedMissingReason = dependencies.regulatedUnavailableReason ?? "CONTEXT_MISSING";
   // A competitor bill without its technical readings (supply use, BTA6 power basis) is quoted on commercial costs only.
   if (request.vector === "EE" && request.sourceBill && dependencies.trustedElectricityContext) {
     const trustedElectricityContext = dependencies.trustedElectricityContext;
@@ -410,6 +414,7 @@ export async function calculatePreparedOffer(request: SimulationRequest, prepare
       // Customer scopes without official regulated tariffs on file (e.g. business BT other than BTA6) are quoted on commercial costs only.
       if (!(error instanceof Error) || !error.message.startsWith("REGULATORY_REFRESH_DOMAIN_UNREGISTERED")) throw error;
       regulated = null;
+      regulatedMissingReason = `SCOPE_UNREGISTERED_${dependencies.trustedElectricityContext.regulatoryCustomerScope}`;
     }
   }
   const drafts: ComponentDraft[] = [];
@@ -426,6 +431,8 @@ export async function calculatePreparedOffer(request: SimulationRequest, prepare
   if (bta6) addPassThroughComponents(drafts, prepared.offer, request, totalQuantity);
   const missingOfficial: string[] = [];
   if (request.vector === "EE" && request.sourceBill) addCtePassThroughs(drafts, request, prepared.offer, cteRuntime, totalQuantity, dependencies.trustedElectricityContext, missingOfficial);
+  // Tony: transport and system charges always come from the ARERA tables; when they can't, the receipt says why.
+  if (request.vector === "EE" && request.sourceBill && regulated === null) missingOfficial.push(`REGULATED:${regulatedMissingReason}`);
   const commercialComponents = convertDrafts(drafts);
   const regulatedComponents = regulated?.components ?? [];
   const components = [...commercialComponents, ...regulatedComponents];

@@ -105,12 +105,21 @@ export async function resolveTrustedElectricityContextFromSourceBill(
   tenantId: string,
   request: ElectricitySimulationRequest,
 ): Promise<ElectricitySupplyContext | null> {
+  return (await resolveTrustedElectricityContextWithReason(billRepository, tenantId, request)).context;
+}
+
+/** Same as above, plus the code of the reading that was missing when no context could be built, so the quote can say why. */
+export async function resolveTrustedElectricityContextWithReason(
+  billRepository: Pick<BillRepository, "get">,
+  tenantId: string,
+  request: ElectricitySimulationRequest,
+): Promise<{ readonly context: ElectricitySupplyContext | null; readonly reason: string | null }> {
   try {
     const resolved = await resolveApprovedSourceBillContext(billRepository, tenantId, request);
-    return resolved?.supplyContext ?? null;
+    return { context: resolved?.supplyContext ?? null, reason: resolved ? null : "SOURCE_BILL_MISSING" };
   } catch (error) {
     // Without those readings the quote still runs on the generic electricity charges instead of failing.
-    if (error instanceof SourceBillContextError && OPTIONAL_TRUST_CODES.test(error.code)) return null;
+    if (error instanceof SourceBillContextError && OPTIONAL_TRUST_CODES.test(error.code)) return { context: null, reason: error.code };
     throw error;
   }
 }

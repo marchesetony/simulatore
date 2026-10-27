@@ -44,7 +44,8 @@ assert.deepEqual(byKind(quote, "CAPACITY_MARKET"), [5, 4.7]);
 // Losses: 1.000 kWh x 0,1 EUR x 10% = 10 EUR, always present (Tony, 26/10).
 assert.deepEqual(byKind(quote, "LOSSES"), [10], "BT standard losses 10% of the energy cost");
 assert.equal(quote.totalCommercialCost.amount, 100 + 10 + 11.55 + 5 + 4.7);
-assert.equal(quote.warnings.some((warning) => warning.startsWith("OFFICIAL_VALUE_MISSING")), false);
+// The stub has no ARERA tables for business BT: only that reason remains, so the receipt can say why (Tony, 27/10).
+assert.deepEqual(quote.warnings.filter((warning) => warning.startsWith("OFFICIAL_VALUE_MISSING")), ["OFFICIAL_VALUE_MISSING:REGULATED:SCOPE_UNREGISTERED_NON_DOMESTIC_BT"]);
 // Without official values nothing is estimated from the CTE's "attualmente pari a": the reason goes in the warnings.
 const noOfficial = await calculatePreparedOffer(request(true), prepared, deps(null, null, 30));
 assert.deepEqual(byKind(noOfficial, "DISPATCHING"), []);
