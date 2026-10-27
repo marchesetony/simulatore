@@ -39,7 +39,7 @@ export type QuoteReceiptQuotaKey = "CONSUMPTION" | "FIXED" | "POWER" | "OTHER" |
 /** One line of the scontrino: what the bill paid, what the simulated CTE pays, and how much of it is the seller's. */
 export interface QuoteReceiptQuota { readonly key: QuoteReceiptQuotaKey; readonly label: string; readonly basis: string; readonly current: number | null; readonly offer: number | null; readonly difference: number | null; readonly currentSeller: number | null; readonly offerSeller: number | null; readonly details: readonly QuoteReceiptDetail[] }
 /** One named charge inside a quota (energia, dispacciamento, capacity, sbilanciamento, PCV, trasporto, oneri), bill against CTE. */
-export interface QuoteReceiptDetail { readonly key: string; readonly label: string; readonly current: number | null; readonly offer: number | null; readonly difference: number | null; readonly missingReason?: string }
+export interface QuoteReceiptDetail { readonly key: string; readonly label: string; readonly current: number | null; readonly offer: number | null; readonly difference: number | null; readonly missingReason?: string; /** Why the bill has no amount of its own for this charge (e.g. billed inside the energy price). */ readonly currentNote?: string }
 export interface QuoteReceiptOfferComponent { readonly category: string; readonly sign: string; readonly label?: string; readonly formulaId?: string; readonly amount: { readonly amount: number }; readonly formulaInputs?: Readonly<Record<string, string | number | boolean>> }
 export interface QuoteReceiptInput {
   readonly vector: "EE" | "GAS";
@@ -92,7 +92,7 @@ const SELLER_GROUPS = new Set(["ENERGY_PRICE", "COMMERCIALIZATION", "DISPATCHING
 function billQuota(line: { readonly unit?: string | null; readonly rawUnit?: string | null; readonly description: string; readonly rawDescription?: string | null }): Quota | null {
   const unit = `${line.unit ?? ""} ${line.rawUnit ?? ""}`.toLowerCase();
   const text = `${line.description} ${line.rawDescription ?? ""}`.toLowerCase();
-  if (/kwh|mwh|smc|\bmc\b/.test(unit)) return "CONSUMPTION";
+  if (/kwh|mwh|smc|\bmc\b/.test(unit) || /quota (?:energia|per consumi|variabile)|quote variabili/.test(text)) return "CONSUMPTION";
   if (/\bkw\b|kw\s*\/|\/\s*kw\b/.test(unit) || /quota potenza|potenza impegnata/.test(text)) return "POWER";
   if (/mese|mes\b|anno|giorn|\bgg\b|pod|pdr|cliente|month|year|day/.test(unit) || /quota fissa/.test(text)) return "FIXED";
   return null;
@@ -289,12 +289,30 @@ function withDetails(input: QuoteReceiptInput, rows: readonly QuoteReceiptRow[],
     });
   };
   const missing = missingOfficial(input);
-  const seller = entries([
+  // Charges the bill states only as a unit price of its price formula (Box dell'offerta) are billed inside the energy
+  // line: the energy line is then compared with the CTE's energy plus those charges (Tony, 27/10, bolletta BPower).
+  const bundled = new Map<string, string>();
+  for (const line of input.analysis?.components ?? []) {
+    if (line.includedInReconciliation !== false || !SELLER_GROUPS.has(line.group ?? "") || line.quantity !== null || line.unitPrice === null) continue;
+    if (!/\//.test(line.amount ?? "") && amountOf(line.amount) !== amountOf(line.unitPrice)) continue;
+    const key = billDetail(line);
+    if (key !== "ENERGY" && key !== "PCV" && !components.some((other) => SELLER_GROUPS.has(other.group ?? "") && billDetail(other) === key && amountOf(other.amount) !== null)) bundled.set(key, String(line.unitPrice));
+  }
+  const sellerDetails = entries([
     ...components.filter((line) => SELLER_GROUPS.has(line.group ?? "")).flatMap((line) => { const value = amountOf(line.amount); const key = billDetail(line); return value === null ? [] : [[key, DETAIL_LABEL[key] ?? key, value, null] as const]; }),
     ...sellerComponents(input).map((component) => { const key = regulatedSide(component) === "DISPATCHING" ? "DISPATCHING" : offerDetail(component); return [key, DETAIL_LABEL[key] ?? key, null, signed(component)] as const; }),
     // A charge the base requires but whose official value is missing still gets its line, with the reason.
     ...[...missing.keys()].map((key) => [key, DETAIL_LABEL[key] ?? key, null, null] as const),
   ]);
+  // The energy line then holds every consumption charge the bill does not print on its own (losses included).
+  const inEnergy = (item: QuoteReceiptDetail) => bundled.size > 0 && item.current === null && !["ENERGY", "PCV", "ONE_OFF", "OPTIONS"].includes(item.key);
+  const bundledOffer = sellerDetails.filter(inEnergy).reduce((total, item) => total + (item.offer ?? 0), 0);
+  const bundledNames = sellerDetails.filter(inEnergy).map((item) => item.label.replace(/ \(.*\)$/, "").toLowerCase());
+  const seller: readonly QuoteReceiptDetail[] = bundled.size === 0 ? sellerDetails : sellerDetails.map((item) => {
+    if (inEnergy(item)) return { ...item, difference: null, currentNote: `compreso nel prezzo energia della bolletta${bundled.has(item.key) ? ` (${bundled.get(item.key)} €/kWh)` : ""}` };
+    if (item.key !== "ENERGY" || item.current === null || item.missingReason) return item;
+    return { ...item, label: `${item.label}, in bolletta comprende anche ${bundledNames.join(", ")}`, difference: hasBill && !sellerDetails.some((other) => inEnergy(other) && other.missingReason) ? cents((item.offer ?? 0) + bundledOffer - item.current) : null };
+  });
   const label = (quota: Quota | null) => quota ? QUOTA_LABEL[quota].replace("\u20ac/kWh", consumptionUnit) : "altre voci";
   const regulated = (group: string, side: "NETWORK" | "SYSTEM") => {
     const official = officialOf(input, side);

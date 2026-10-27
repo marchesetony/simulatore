@@ -105,9 +105,11 @@ export function classifyBillEconomicComponent(code: string | null | undefined, d
   if (d.includes("CAPACIT_") || d.includes("CAPACITA")) return "CAPACITY_MARKET_SELLER_CHARGE";
   if (d.includes("SERVIZIO_DI_VENDITA") || d.includes("CORRISPETTIVO_DI_VENDITA")) return "SELLER_ENERGY_FEE";
   if (d.includes("ENERGIA") && (/(^|_)F[0-3](_|$)/.test(d) || d.includes("MONORARI") || d.includes("FASCIA"))) return "SELLER_ENERGY_FEE";
-  if (/(^|_)(ASOS|ARIM)(_|$)/.test(d)) return "ARERA_SYSTEM_CHARGES";
+  if (/(^|_)(ASOS|ARIM)(_|$)/.test(d) || (/^ONERI_(GENERALI_)?DI_SISTEMA/.test(d) && !d.startsWith("TOTALE"))) return "ARERA_SYSTEM_CHARGES";
   if (d.includes("DISTRIBUZIONE") || d.includes("TRASMISSIONE") || /(^|_)MISURA(_|$)/.test(d) || d.includes("TRASPORTO")) return "ARERA_NETWORK";
-  if (d.includes("IMPOSTA_ERARIALE")) return "ACCISE";
+  if (d.includes("IMPOSTA_ERARIALE") || d.includes("IMPOSTE_ERARIALI")) return "ACCISE";
+  // BPower prints the seller's monthly fee as "QF" (Tony, 27/10).
+  if (d === "QF" || d.startsWith("QF_")) return "SELLER_FIXED_FEE";
   return "UNCLASSIFIED_BILL_CHARGE";
 }
 
@@ -153,10 +155,19 @@ function isDuplicatedSectionSummary(component: BillEconomicComponent): boolean {
     || key === "ENERGIA_REATTIVA";
 }
 
+// The Box dell'offerta lists the value of each element of the price formula ("Dispacciamento: 0,010501 €/kWh") with no
+// quantity: that is a unit price, not money billed (Tony, 27/10, bolletta BPower Be Smart: read as 0,01 € of dispatching).
+function unitPriceOnly(amount: string | null, quantity: string | null, unitPrice: string | null): boolean {
+  if (amount === null) return false;
+  if (/(?:€|eur(?:o)?|c€|cent)\s*\/\s*(?:k?wh|kw|kvarh|mese|anno|giorno|smc|pod|pdr)/i.test(amount)) return true;
+  const value = numberFrom(amount); const price = numberFrom(unitPrice);
+  return quantity === null && value !== null && price !== null && Math.abs(value) < 1 && value === price;
+}
+
 export function normalizeBillEconomicComponent(input: BillEconomicComponentInput): BillEconomicComponent {
   const description = text(input.description ?? input.rawDescription); const quantity = text(input.quantity ?? input.rawQuantity) || null; const unit = text(input.unit ?? input.rawUnit) || null; const unitPrice = text(input.unitPrice ?? input.rawUnitPrice) || null; const amount = text(input.amount ?? input.rawAmount) || null; const period = text(input.period ?? input.rawPeriod) || null;
   const rawDescription = text(input.rawDescription ?? description); const rawValue = text(input.rawValue ?? input.value ?? input.amount ?? input.unitPrice ?? ""); const rawUnit = text(input.rawUnit ?? unit); const rawQuantity = text(input.rawQuantity ?? quantity); const rawUnitPrice = text(input.rawUnitPrice ?? unitPrice); const rawAmount = text(input.rawAmount ?? amount); const rawPeriod = text(input.rawPeriod ?? period);
-  const code = text(input.code) || "UNCLASSIFIED_BILL_CHARGE"; const key = keyOf(description); const classification = classifyBillEconomicComponent(code, description); const role = accountingRole(classification, description);
+  const code = text(input.code) || "UNCLASSIFIED_BILL_CHARGE"; const key = keyOf(description); const classification = classifyBillEconomicComponent(code, description); const role = unitPriceOnly(amount, quantity, unitPrice) ? "DETAIL_INCLUDED_IN_SUBTOTAL" : accountingRole(classification, description);
   const normalizedCode = code !== "UNCLASSIFIED_BILL_CHARGE" ? code : key.includes("TOTALE_VENDITA") ? "TOTAL_SELLER_ENERGY" : key.includes("TOTALE_TARIFFA") ? "TOTAL_NETWORK_TARIFF" : key.includes("TOTALE_ONERI") ? "TOTAL_SYSTEM_CHARGES" : key === "TOTALE_IMPOSTE" ? "TAX_SUBTOTAL" : key === "TOTALE_FORNITURA" ? "TOTAL_SUPPLY" : key === "TOTALE_BOLLETTA" ? "BILL_TOTAL" : key === "TOTALE_DA_PAGARE" ? "AMOUNT_DUE" : code;
   return { lineId: "", code, normalizedCode, classification, group: groupOf(classification), accountingRole: role, includedInReconciliation: role === "ATOMIC", aggregate: role !== "ATOMIC" && role !== "PRIOR_BALANCE", atomic: role === "ATOMIC", parentComponent: null, childComponents: [], description: description || rawDescription || "Voce economica non descritta", quantity, unitPrice, unit, amount, period, rawDescription, rawValue, rawUnit, rawQuantity, rawUnitPrice, rawAmount, rawPeriod, documentEvidence: text(input.documentEvidence ?? rawDescription), calculationCheck: calculationCheck({ quantity: rawQuantity, unitPrice: rawUnitPrice, unit: rawUnit, amount: rawAmount }), status: text(input.status) || "FOUND" };
 }
@@ -216,6 +227,31 @@ function withoutSummaries(items: readonly BillEconomicComponent[], total: number
   const excluded = best.excluded;
   return items.map((item) => excluded.has(item.lineId) ? { ...item, accountingRole: "DETAIL_INCLUDED_IN_SUBTOTAL" as const, includedInReconciliation: false, atomic: false } : item);
 }
+// A bill that prints only the quadro sintetico gives "spesa per la rete e gli oneri generali di sistema" per quota, and the
+// oneri page splits ASOS/ARIM per quota: transport and metering are the difference (Bolletta 2.0, delibera 501/2014/R/com).
+// Tony, 27/10, bolletta BPower: 171,77 - 117,65 = 54,12 quota energia, 3,81 - 1,36 = 2,45 quota fissa, 67,39 - 24,05 =
+// 43,34 quota potenza, the transport lines of the detailed bill.
+type SummaryQuota = "CONSUMPTION" | "FIXED" | "POWER";
+const summaryQuota = (item: BillEconomicComponent): SummaryQuota => { const key = keyOf(`${item.description} ${item.unit ?? ""}`); return key.includes("POTENZA") || /(^|_)KW(_|$)/.test(key) ? "POWER" : key.includes("FISS") || key.includes("MESE") || key.includes("POD") ? "FIXED" : "CONSUMPTION"; };
+const isNetworkAndSystemSummary = (item: BillEconomicComponent): boolean => /RETE_E_(GLI_)?ONERI/.test(keyOf(item.description));
+function networkFromSummary(items: readonly BillEconomicComponent[]): readonly BillEconomicComponent[] {
+  const live = (item: BillEconomicComponent) => item.includedInReconciliation && numberFrom(item.amount) !== null;
+  const summaries = items.filter((item) => live(item) && isNetworkAndSystemSummary(item));
+  const system = items.filter((item) => live(item) && item.classification === "ARERA_SYSTEM_CHARGES" && !isNetworkAndSystemSummary(item));
+  if (!summaries.length || !system.length) return items;
+  const replaced = new Map<string, BillEconomicComponent>();
+  for (const quota of ["CONSUMPTION", "FIXED", "POWER"] as const) {
+    if (items.some((item) => live(item) && item.classification === "ARERA_NETWORK" && !isNetworkAndSystemSummary(item) && summaryQuota(item) === quota)) continue;
+    const [first, ...copies] = summaries.filter((item) => summaryQuota(item) === quota);
+    if (!first) continue;
+    const systemQuota = round(system.filter((item) => summaryQuota(item) === quota).reduce((total, item) => total + (numberFrom(item.amount) ?? 0), 0));
+    const network = round((numberFrom(first.amount) ?? 0) - systemQuota);
+    const label = quota === "CONSUMPTION" ? "quota energia" : quota === "FIXED" ? "quota fissa" : "quota potenza";
+    replaced.set(first.lineId, { ...first, code: "NETWORK_FROM_SUMMARY", normalizedCode: "NETWORK_FROM_SUMMARY", classification: "ARERA_NETWORK", group: "REGULATED_NETWORK", accountingRole: "ATOMIC", atomic: true, aggregate: false, amount: network.toFixed(2).replace(".", ","), quantity: null, unitPrice: null, calculationCheck: "NOT_CHECKABLE", description: `Trasporto e gestione del contatore, ${label}: rete e oneri del quadro sintetico ${numberFrom(first.amount)?.toFixed(2).replace(".", ",")} € meno oneri di sistema ${systemQuota.toFixed(2).replace(".", ",")} €` });
+    for (const copy of copies) replaced.set(copy.lineId, { ...copy, accountingRole: "DETAIL_INCLUDED_IN_SUBTOTAL", includedInReconciliation: false, atomic: false });
+  }
+  return items.map((item) => replaced.get(item.lineId) ?? item);
+}
 const reconcilable = (i: BillEconomicComponent): boolean => i.classification !== "CANONE_RAI" && i.classification !== "BILL_TOTAL" && i.classification !== "AMOUNT_DUE" && i.classification !== "PRIOR_BALANCE" && i.classification !== "TAX_SUBTOTAL";
 
 function ownership(components: readonly BillEconomicComponent[]): readonly BillEconomicComponent[] {
@@ -256,6 +292,7 @@ export function buildCurrentBillEconomicAnalysis(inputs: readonly BillEconomicCo
   if (hasExpandedAtomicBreakdown) components = components.map((item) => isDuplicatedSectionSummary(item) ? { ...item, accountingRole: "DETAIL_INCLUDED_IN_SUBTOTAL", includedInReconciliation: false } : item);
   const periodStart = options.billingPeriodStart ? isoDates(options.billingPeriodStart)[0] ?? options.billingPeriodStart.slice(0, 10) : null;
   if (periodStart) components = components.map((item) => { const end = isoDates(item.period ?? item.rawPeriod).at(-1); return end !== undefined && end < periodStart && item.group !== "TAX" ? asRecalculation(item) : item; });
+  components = networkFromSummary(components);
   components = withoutSummaries(components, numberFrom(options.sourceBillTotal ?? billTotal) ?? numberFrom(components.find((i) => i.classification === "BILL_TOTAL")?.amount));
   const seller = { ENERGY_PRICE: components.filter((i) => i.group === "ENERGY_PRICE"), COMMERCIALIZATION: components.filter((i) => i.group === "COMMERCIALIZATION"), DISPATCHING_OR_PASS_THROUGH: components.filter((i) => i.group === "DISPATCHING_OR_PASS_THROUGH"), CAPACITY_MARKET: components.filter((i) => i.group === "CAPACITY_MARKET"), OTHER_SELLER_CHARGES: components.filter((i) => i.group === "OTHER_SELLER_CHARGES") } as const;
   const regulatedAndSystemCosts = { ARERA_NETWORK: components.filter((i) => i.group === "REGULATED_NETWORK"), ARERA_SYSTEM_CHARGES: components.filter((i) => i.group === "SYSTEM_CHARGES"), TERNA_DISPATCHING_REFERENCES: components.filter((i) => i.classification === "TERNA_DISPATCHING_REFERENCES"), GME_MARKET_REFERENCE: components.filter((i) => i.classification === "GME_MARKET_REFERENCE") } as const;
