@@ -25,6 +25,8 @@ import { add, divide, fromNumber, multiply, rational, roundCents, toDecimal, typ
 // @ts-expect-error Node's strip-only test runner requires the explicit extension.
 import { monthsInSimulationPeriod } from "./input.ts";
 // @ts-expect-error Node's strip-only test runner requires the explicit extension.
+import { areraCapacityForPeriod } from "../foundation/arera-capacity-tiv.ts";
+// @ts-expect-error Node's strip-only test runner requires the explicit extension.
 import { BTA6_REGULATED_COMPONENTS_INCLUDED, calculateRegulatedEeSubset, isDomesticNetOfTaxCompleteComponents, type RegulatedEeExecutionContext } from "./regulated-ee.ts";
 
 export class CalculationEngineError extends Error {
@@ -221,13 +223,16 @@ function addCtePassThroughs(target: ComponentDraft[], request: ElectricitySimula
     else {
       const powerKw = context?.availablePowerKw ?? context?.contractedPowerKw;
       const smallLv = request.voltageLevel === "LV" && powerKw !== undefined && powerKw <= 55;
-      const official = runtime?.capacityMarket?.value;
+      // BT up to 55 kW: the monthly value ARERA fixes in the quarterly TIV update (art. 4.1), when the archive has none.
+      const arera = smallLv && runtime?.capacityMarket?.value === undefined ? areraCapacityForPeriod(period.periodStart, period.periodEnd) : null;
+      const official = runtime?.capacityMarket?.value ?? arera?.eurPerKwh;
+      const officialSource = runtime?.capacityMarket?.officialIdentifier ?? (arera ? `ARERA ${arera.months.map((month) => month.resolution).join(", ")}` : "OFFICIAL");
       if (request.voltageLevel === "LV" && powerKw === undefined) missing.push("CAPACITY_MARKET:AVAILABLE_POWER_MISSING");
       else if (!smallLv) missing.push("CAPACITY_MARKET:PEAK_HOUR_KWH_MISSING");
       else if (official === undefined || !Number.isFinite(official) || official <= 0) missing.push("CAPACITY_MARKET:OFFICIAL_VALUE_MISSING");
       else {
         const unitRate = grossUp(fromNumber(official));
-        target.push({ componentId: "cte-pass-through:capacity", category: "VARIABLE_FEE", label: "Mercato della capacità", sign: "CHARGE", value: multiply(unitRate, totalQuantity), formulaId: "CTE_PASS_THROUGH_RATE_TIMES_KWH", formulaInputs: { kind: "CAPACITY_MARKET", feeUnit: "EUR_PER_KWH", feeRate: toDecimal(unitRate, 6), officialRate: official, lossFactor: loss ? toDecimal(loss, 6) : 0, basisQuantity: toDecimal(totalQuantity, 3), source: runtime?.capacityMarket?.officialIdentifier ?? "OFFICIAL" } });
+        target.push({ componentId: "cte-pass-through:capacity", category: "VARIABLE_FEE", label: "Mercato della capacità", sign: "CHARGE", value: multiply(unitRate, totalQuantity), formulaId: "CTE_PASS_THROUGH_RATE_TIMES_KWH", formulaInputs: { kind: "CAPACITY_MARKET", feeUnit: "EUR_PER_KWH", feeRate: toDecimal(unitRate, 6), officialRate: official, lossFactor: loss ? toDecimal(loss, 6) : 0, basisQuantity: toDecimal(totalQuantity, 3), source: officialSource } });
       }
     }
   }

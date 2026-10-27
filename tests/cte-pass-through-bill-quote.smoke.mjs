@@ -50,7 +50,10 @@ assert.deepEqual(quote.warnings.filter((warning) => warning.startsWith("OFFICIAL
 const noOfficial = await calculatePreparedOffer(request(true), prepared, deps(null, null, 30));
 assert.deepEqual(byKind(noOfficial, "DISPATCHING"), []);
 assert.ok(noOfficial.warnings.includes("OFFICIAL_VALUE_MISSING:DISPATCHING:OFFICIAL_VALUE_MISSING"));
-assert.ok(noOfficial.warnings.includes("OFFICIAL_VALUE_MISSING:CAPACITY_MARKET:OFFICIAL_VALUE_MISSING"));
+// Tony (27/10, bolletta BPower): with no archive value, BT up to 55 kW takes the monthly value ARERA fixes in the TIV
+// quarterly update: settembre 2026 0,3197 c€/kWh (219/2026/R/eel art. 4.1) x 1,10 x 1.000 kWh = 3,52.
+assert.deepEqual(byKind(noOfficial, "CAPACITY_MARKET"), [5, 3.52]);
+assert.ok(!noOfficial.warnings.includes("OFFICIAL_VALUE_MISSING:CAPACITY_MARKET:OFFICIAL_VALUE_MISSING"));
 // BT above 55 kW: the charge needs the kWh in Terna's peak hours, which the bill quote does not have yet.
 const large = await calculatePreparedOffer(request(true), prepared, deps(0.0105, 0.004275, 98));
 assert.deepEqual(byKind(large, "CAPACITY_MARKET"), [5]);

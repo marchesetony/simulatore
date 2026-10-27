@@ -29,7 +29,13 @@ const repositories = { regulatoryValues: new MemoryRepository(), approvalDomains
 const empty = await officialArchiveReport(repositories, tenant, now);
 assert.equal(empty.lastSuccessfulAt, null);
 assert.equal(empty.stale, true);
-assert.ok(empty.domains.every((domain) => domain.records.length === 0 && domain.missingMonths.length === 13), "empty archive: every month missing");
+// Tony (27/10): "non hai ancora estrapolato dal sito arera i dati": the monthly ARERA capacity charge for BT up to 55 kW
+// (TIV quarterly updates) is listed too, from the resolutions themselves, so it is there even with an empty archive.
+const tivCapacity = (domain) => domain.key === "CAPACITY_MARKET|LV_UP_TO_55KW|EUR/KWH|TIV_MONTHLY";
+assert.ok(empty.domains.filter((domain) => !tivCapacity(domain)).every((domain) => domain.records.length === 0 && domain.missingMonths.length === 13), "empty archive: every month missing");
+const capacity = empty.domains.find(tivCapacity);
+assert.deepEqual(capacity.missingMonths, [], "ottobre 2025 - ottobre 2026 coperti dalle delibere 428/2025 ... 338/2026");
+assert.equal(capacity.records.find((record) => record.effectiveFrom.startsWith("2026-09")).value, 0.003197, "219/2026/R/eel: settembre 2026 0,3197 c€/kWh");
 
 const run = await runRegulatoryRefresh({ tenantId: tenant, repositories, sourceReader: { adapterName: "ARERA_ELECTRICITY", async load() { return records; } }, now, runId: "refresh_archive_run", trigger: "TEST" });
 assert.equal(run.status, "SUCCESS");
