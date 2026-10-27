@@ -481,7 +481,9 @@ export function tryBuildAuthoritativeCteContract(record: Pick<CteIngestionRecord
     ? isoDate(date(expiryRaw.value) ?? (typeof expiryRaw.sourceText === "string" ? date(expiryRaw.sourceText) : null) ?? "")
     : null;
   if (expiryRaw && expiryRaw.status !== "NOT_FOUND" && expiryRaw.value !== null && !expiryDate) return authoritativeFailure("CTE_AUTHORITATIVE_MAPPING_INVALID", ["expiry.date"]);
-  const passThroughSource = sourceComplete(passThroughField);
+  // The AI may quote dispatching, capacity and losses under any field (or cut the pass-through quote short): every
+  // field's evidence is read, so a monthly CTE that words or splits these paragraphs differently is still understood.
+  const passThroughSource = [sourceComplete(passThroughField), ...[...fields.entries()].filter(([path]) => path !== "commercialTerms.passThroughComponents").map(([, field]) => sourceComplete(field))].filter(Boolean).join(" \n ");
   const punResolutionRule = record.vector === "EE" ? punRule(fields.get("pricing.reference"), fields.get("pricing.mode"), validityDates[0], validityDates[1]) : null;
   const capacityMarketSchedule = record.vector === "EE" ? capacitySchedule(passThroughSource, validityDates[0], validityDates[1]) : [];
   const dispatching = record.vector === "EE" ? dispatchingReference(passThroughSource, validityDates[0], validityDates[1]) : null;
@@ -773,11 +775,29 @@ export function cteApprovalGate(record: Pick<CteIngestionRecord, "fields" | "vec
   } else if (!persistedCandidate) {
     blockers.push({ code: "AUTHORITATIVE_CONTRACT_MISSING", label: "Contratto autorevole non ancora disponibile", required: true });
   }
+  // Tony (27/10): "non posso permettere di avere letture errate". A CTE whose text names a charge the reading did not
+  // turn into the contract cannot be approved until the reading is corrected.
+  if (contract && record.vector === "EE" && record.status !== "APPROVED") {
+    const gaps = passThroughReadingGaps(record.fields, contract);
+    if (gaps.length) blockers.push({ code: "AUTHORITATIVE_CONTRACT_MISSING", label: `La CTE cita ${gaps.join(", ")} ma la lettura non li ha riconosciuti: rileggi la CTE o correggi con Modifica`, required: true });
+  }
   // An expired CTE cannot be archived, so say it here instead of failing when Approva is pressed.
   const until = contract ? (contract.expiry.status === "EXPIRES_ON" ? contract.expiry.date : contract.validity.periodEnd) : null;
   const today = (now ?? new Date().toISOString()).slice(0, 10);
   if (contract && until && (contract.expiry.status === "EXPIRES_ON" ? today > until : today >= until)) blockers.push({ code: "CTE_EXPIRED", label: `CTE scaduta il ${until.split("-").reverse().join("/")}: se la data letta è sbagliata correggi validità o scadenza con Modifica`, required: true });
   return { approvalReady: record.status === "APPROVED" ? false : blockers.length === 0, blockers, optionalNotFound: review.approvalGate.optionalNotFound };
+}
+
+/** Charges the CTE text names (in any field's evidence) that the built contract does not carry. */
+export function passThroughReadingGaps(fields: readonly { readonly sourceText?: unknown; readonly sourceTextComplete?: unknown }[], contract: CteContract): readonly string[] {
+  const text = fields.map((field) => typeof field.sourceTextComplete === "string" ? field.sourceTextComplete : typeof field.sourceText === "string" ? field.sourceText : "").join(" \n ");
+  const terms = contract.commercialTerms;
+  const gaps: string[] = [];
+  const included = (word: string) => new RegExp(`${word}[^.;]{0,120}?(?:inclus|compres|comprensiv)|(?:inclus|compres|comprensiv)[^.;]{0,120}?${word}`, "i").test(text);
+  if (/dispacciament/i.test(text) && !included("dispacciament") && !terms.dispatchingReference && !(terms.passThroughComponents ?? []).some((item) => item.kind === "DISPATCHING")) gaps.push("il dispacciamento");
+  if (/mercato\s+(?:della\s+)?capacit|capacity\s+market/i.test(text) && !included("capacit") && !(terms.capacityMarketSchedule ?? []).length && !(terms.passThroughComponents ?? []).some((item) => item.kind === "CAPACITY_MARKET")) gaps.push("il mercato della capacità");
+  if (/sbilanciament/i.test(text) && !included("sbilanciament") && terms.imbalance.status !== "DECLARED") gaps.push("lo sbilanciamento");
+  return gaps;
 }
 
 export function formatCteReviewValue(field: CteReviewField): string {

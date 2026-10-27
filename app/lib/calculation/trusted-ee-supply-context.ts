@@ -153,13 +153,15 @@ function selectAsosClass(profile: BillSupplyProfile, options: TrustedElectricity
   };
 }
 
+const LIMITER_MAX_KW = 30;
+
 function regulatoryPowerBasis(profile: BillSupplyProfile, scope: RegulatoryCustomerScope, contractedPowerKw: number): { readonly regulatoryPowerBasisKind: Exclude<PowerBillingBasis, "UNKNOWN">; readonly regulatoryPowerBasisKw: number } | undefined {
   if (scope !== "NON_DOMESTIC_BT_BTA6") return undefined;
-  // TIT: in BT altri usi above 16,5 kW the power charge applies to the maximum power drawn in the month, so a bill
-  // that prints that reading but not the wording of the basis is still priced on it (e.g. Repower: 151,80 kW drawn, 85 kW committed).
+  // TIT art. 1, "potenza impegnata" (FAQ TIT 348/07, e-distribuzione BTA6): the contractually committed power where a power
+  // limiter is installed, otherwise the maximum power drawn in the month. Limiters are fitted only up to 30 kW, so above
+  // that the rule alone gives the basis (Tony, 27/10: the criterion comes from the resolutions, never from the bill).
   const stated = profile.powerBillingBasis.status === "FOUND" ? profile.powerBillingBasis.normalizedValue : "UNKNOWN";
-  const basis = stated === "UNKNOWN" && profile.powerMaximumDrawn.status === "FOUND" ? "MONTHLY_MAX_DRAWN" : stated;
-  if (basis === "UNKNOWN") fail("BTA6_POWER_BILLING_BASIS_REQUIRED");
+  const basis = contractedPowerKw > LIMITER_MAX_KW ? "MONTHLY_MAX_DRAWN" : stated === "UNKNOWN" ? "CONTRACTUAL_COMMITTED" : stated;
   if (basis === "CONTRACTUAL_COMMITTED") return { regulatoryPowerBasisKind: basis, regulatoryPowerBasisKw: contractedPowerKw };
   if (basis === "MONTHLY_MAX_DRAWN") return { regulatoryPowerBasisKind: basis, regulatoryPowerBasisKw: parseMaximumDrawnPowerKw(profile.powerMaximumDrawn) };
   return fail("BTA6_POWER_BILLING_BASIS_REQUIRED");
