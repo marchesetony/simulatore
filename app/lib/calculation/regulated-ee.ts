@@ -38,6 +38,8 @@ export interface RegulatedEeCalculation {
   readonly references: readonly RegulatoryDataReference[];
   readonly includedComponents: readonly RegulatedComponentIncluded[];
   readonly partialWarning: string;
+  /** Domestic only: the month's CDISPD is not in the archive, so dispatching is left out and the rest is still priced. */
+  readonly dispatchingMissing?: boolean;
 }
 
 const fail = (code: string): never => { throw new Error(code); };
@@ -249,7 +251,13 @@ export async function calculateRegulatedEeSubset(
   }
 
   if (context.regulatoryCustomerScope === "DOMESTIC_RESIDENT_BT") {
-    const cdispd = await timelineFor(request, context, bridge, "DISPATCHING_TOTAL", "EUR/KWH");
+    // Tony (28/10, bolletta Minniti): "voci non verificate su ARERA non deve esistere". CDISPD is published month by month
+    // (TIV comma 48.9) while transport and system charges are fixed for the year: a month of CDISPD not yet in the archive
+    // leaves only dispatching out, never transport and oneri.
+    const cdispd = await timelineFor(request, context, bridge, "DISPATCHING_TOTAL", "EUR/KWH").catch((error: unknown) => {
+      if (error instanceof Error && error.message.startsWith("REGULATORY_TIMELINE_GAP")) return null;
+      throw error;
+    });
     const uc3 = await timelineFor(request, context, bridge, "UC3", "EUR/KWH");
     const uc6Energy = await timelineFor(request, context, bridge, "UC6", "EUR/KWH");
     const uc6Power = await timelineFor(request, context, bridge, "UC6", "EUR/KW/YEAR");
@@ -258,12 +266,13 @@ export async function calculateRegulatedEeSubset(
     const transmissionEnergy = await timelineFor(request, context, bridge, "TRANSMISSION_ENERGY", "EUR/KWH");
     const asosEnergy = await timelineFor(request, context, bridge, "ASOS", "EUR/KWH");
     const arimEnergy = await timelineFor(request, context, bridge, "ARIM", "EUR/KWH");
-    [cdispd, uc3, uc6Energy, uc6Power, networkFixed, networkPower, transmissionEnergy, asosEnergy, arimEnergy].forEach(assertMonthAligned);
+    const timelines = [cdispd, uc3, uc6Energy, uc6Power, networkFixed, networkPower, transmissionEnergy, asosEnergy, arimEnergy].filter((timeline): timeline is RegulatoryTimeline => timeline !== null);
+    timelines.forEach(assertMonthAligned);
     asosEnergy.segments.forEach(assertDomesticEqualRateSegment);
     arimEnergy.segments.forEach(assertDomesticEqualRateSegment);
     const components: CalculationComponent[] = [];
     for (const [timeline, componentId, label, formulaId] of [
-      [cdispd, "regulated:domestic-cdispd", "Dispacciamento e mercato della capacità (CDISPD)", "REGULATED_DOMESTIC_CDISPD_RATE_TIMES_KWH"],
+      ...(cdispd === null ? [] : [[cdispd, "regulated:domestic-cdispd", "Dispacciamento e mercato della capacità (CDISPD)", "REGULATED_DOMESTIC_CDISPD_RATE_TIMES_KWH"] as const]),
       [uc3, "regulated:domestic-uc3", "UC3 energia regolata", "REGULATED_UC3_RATE_TIMES_KWH"],
       [uc6Energy, "regulated:domestic-uc6-energy", "UC6 energia regolata", "REGULATED_UC6_ENERGY_RATE_TIMES_KWH"],
       [asosEnergy, "regulated:domestic-asos-energy", "ASOS energia domestica residente regolata", "REGULATED_DOMESTIC_ASOS_ENERGY_RATE_TIMES_KWH"],
@@ -273,8 +282,8 @@ export async function calculateRegulatedEeSubset(
     networkFixed.segments.forEach((segment) => { const monthsApplied = monthsInSimulationPeriod({ periodStart: segment.segmentStart.slice(0, 10), periodEnd: segment.segmentEnd.slice(0, 10) }).length; components.push(fixedComponent(segment, `regulated:domestic-network-fixed:${segment.regulatoryRecordId}`, monthsApplied)); });
     networkPower.segments.forEach((segment) => { const monthsApplied = monthsInSimulationPeriod({ periodStart: segment.segmentStart.slice(0, 10), periodEnd: segment.segmentEnd.slice(0, 10) }).length; components.push(powerComponent(segment, context, `regulated:domestic-network-power:${segment.regulatoryRecordId}`, monthsApplied, false, true)); });
     transmissionEnergy.segments.forEach((segment) => components.push(energyComponent(segment, quantityForSegment(request, segment, transmissionEnergy.segments.length), `regulated:domestic-transmission-energy:${segment.regulatoryRecordId}`, "Trasmissione energia regolata", "REGULATED_TRANSMISSION_RATE_TIMES_KWH")));
-    const timelines = [cdispd, uc3, uc6Energy, uc6Power, networkFixed, networkPower, transmissionEnergy, asosEnergy, arimEnergy];
-    return { components, references: timelines.flatMap((timeline) => timeline.segments.map(referenceOf)), includedComponents: [...REGULATED_COMPONENTS_INCLUDED, "ASOS_ENERGY", "ARIM_ENERGY"], partialWarning: DOMESTIC_RESIDENT_REGULATED_SUBSET_PARTIAL_WARNING };
+    const included = [...REGULATED_COMPONENTS_INCLUDED, "ASOS_ENERGY", "ARIM_ENERGY"] as RegulatedComponentIncluded[];
+    return { components, references: timelines.flatMap((timeline) => timeline.segments.map(referenceOf)), includedComponents: cdispd === null ? included.filter((component) => component !== "DISPATCHING_TOTAL_ENERGY") : included, partialWarning: DOMESTIC_RESIDENT_REGULATED_SUBSET_PARTIAL_WARNING, ...(cdispd === null ? { dispatchingMissing: true } : {}) };
   }
 
   const uc3 = await timelineFor(request, context, bridge, "UC3", "EUR/KWH");

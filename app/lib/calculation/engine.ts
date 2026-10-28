@@ -183,7 +183,7 @@ function standardLoss(request: ElectricitySimulationRequest, runtime: CteRuntime
   if (request.supplyPeriod.periodStart < "2023-01-01") return null;
   return { ratio: fromNumber(TIS_TABLE_4_COLUMN_A[request.voltageLevel]), source: "TIS_TABELLA_4_COLONNA_A" };
 }
-function addCtePassThroughs(target: ComponentDraft[], request: ElectricitySimulationRequest, offer: CalculationReadyOffer, runtime: CteRuntimeResolution | null, totalQuantity: Rational, context: ElectricitySupplyContext | undefined, missing: string[], capacityMonths: readonly AreraCapacityMonth[] = ARERA_TIV_CAPACITY_MONTHS, tideQuarters: readonly TernaTideQuarter[] = TERNA_TIDE_DISPATCHING_QUARTERS): void {
+function addCtePassThroughs(target: ComponentDraft[], request: ElectricitySimulationRequest, offer: CalculationReadyOffer, runtime: CteRuntimeResolution | null, totalQuantity: Rational, context: ElectricitySupplyContext | undefined, missing: string[], capacityMonths: readonly AreraCapacityMonth[] = ARERA_TIV_CAPACITY_MONTHS, tideQuarters: readonly TernaTideQuarter[] = TERNA_TIDE_DISPATCHING_QUARTERS, domesticCdispd: "PRICED" | "MISSING" | null = null): void {
   const priced = new Set(target.filter((draft) => draft.formulaId.startsWith("CONTRACTUAL_PASS_THROUGH")).map((draft) => String(draft.formulaInputs.kind ?? "")));
   const standard = standardLoss(request, runtime);
   const loss = standard?.ratio ?? null;
@@ -211,9 +211,14 @@ function addCtePassThroughs(target: ComponentDraft[], request: ElectricitySimula
   // They are regulated charges every free-market customer pays (TIS art. 24, TIV 34.8 bis): unless the CTE includes them in
   // the energy price or excludes them, the official value applies.
   const statedAway = (kind: "DISPATCHING" | "CAPACITY_MARKET") => (offer.passThroughComponents ?? []).some((item) => item.kind === kind && (item.declarationState === "INCLUDED_IN_ENERGY_PRICE" || item.declarationState === "NOT_APPLICABLE"));
-  if ((dispatching || !statedAway("DISPATCHING")) && !priced.has("DISPATCHING")) {
+  // Households on the free market pay one CDISPD per kWh, published monthly by ARERA, which already includes the capacity
+  // charge (TIV comma 48.9: "ricomprende anche i valori del corrispettivo mercato capacità", 338/2026/R/eel). The ARERA
+  // tables price it with transport and oneri; here it is neither added again nor joined by a separate capacity line.
+  const domestic = context?.regulatoryCustomerScope?.startsWith("DOMESTIC") === true;
+  const inCdispd = domestic && domesticCdispd !== null;
+  if (inCdispd && domesticCdispd === "MISSING" && !priced.has("DISPATCHING")) missing.push("DISPATCHING:CDISPD_MISSING");
+  if (!inCdispd && (dispatching || !statedAway("DISPATCHING")) && !priced.has("DISPATCHING")) {
     // Customers other than households: Terna's quarterly TIDE dispatching charge, when the archive resolves none.
-    const domestic = context?.regulatoryCustomerScope?.startsWith("DOMESTIC") === true;
     const terna = runtime?.dispatching?.value === undefined && !domestic ? ternaTideForPeriod(request.supplyPeriod.periodStart, request.supplyPeriod.periodEnd, tideQuarters) : null;
     const official = runtime?.dispatching?.value ?? terna?.eurPerKwh;
     if (official !== undefined && Number.isFinite(official) && official > 0) {
@@ -234,8 +239,9 @@ function addCtePassThroughs(target: ComponentDraft[], request: ElectricitySimula
     // The regulated capacity charge (TIV comma 34.8 bis, Terna): published net of losses, so always grossed up. BT up to
     // 55 kW: one monthly value on all kWh. BT above 55 kW, MT, AT: kWh in Terna's 500 peak hours x peak rate + the rest x
     // off-peak rate, which needs the peak-hour kWh of the meter.
-    if (!entries.some((entry) => entry.mode === "OFFICIAL_PASS_THROUGH") && (entries.length > 0 || statedAway("CAPACITY_MARKET"))) missing.push("CAPACITY_MARKET:CTE_REFERENCE_MISSING");
-    else {
+    // Households: inside CDISPD, see above.
+    if (!inCdispd && !entries.some((entry) => entry.mode === "OFFICIAL_PASS_THROUGH") && (entries.length > 0 || statedAway("CAPACITY_MARKET"))) missing.push("CAPACITY_MARKET:CTE_REFERENCE_MISSING");
+    else if (!inCdispd) {
       const powerKw = context?.availablePowerKw ?? context?.contractedPowerKw;
       const smallLv = request.voltageLevel === "LV" && powerKw !== undefined && powerKw <= 55;
       // BT up to 55 kW: the monthly value ARERA fixes in the quarterly TIV update (art. 4.1), when the archive has none.
@@ -468,7 +474,7 @@ export async function calculatePreparedOffer(request: SimulationRequest, prepare
     // The monthly ARERA capacity charges the refresh stored, over the hand-checked table.
     const stored = dependencies.regulatoryBridge ? await dependencies.regulatoryBridge.list(request.tenantId, { componentCode: "CAPACITY_MARKET", customerScope: "ALL_ELECTRICITY", normalizedUnit: "EUR/KWH" }).catch(() => []) : [];
     const tide = dependencies.regulatoryBridge ? await dependencies.regulatoryBridge.list(request.tenantId, { componentCode: "DISPATCHING_TOTAL", regulatoryVariant: "TIDE" }).catch(() => []) : [];
-    addCtePassThroughs(drafts, request, prepared.offer, cteRuntime, totalQuantity, dependencies.trustedElectricityContext, missingOfficial, mergeAreraCapacityMonths(stored), mergeTernaTideQuarters(tide));
+    addCtePassThroughs(drafts, request, prepared.offer, cteRuntime, totalQuantity, dependencies.trustedElectricityContext, missingOfficial, mergeAreraCapacityMonths(stored), mergeTernaTideQuarters(tide), regulated === null || dependencies.trustedElectricityContext?.regulatoryCustomerScope !== "DOMESTIC_RESIDENT_BT" ? null : regulated.dispatchingMissing ? "MISSING" : "PRICED");
   }
   // Tony: transport and system charges always come from the ARERA tables; when they can't, the receipt says why.
   if (request.vector === "EE" && request.sourceBill && regulated === null) missingOfficial.push(`REGULATED:${regulatedMissingReason}`);

@@ -159,6 +159,7 @@ const MISSING_REASON: Readonly<Record<string, string>> = {
   PEAK_HOUR_KWH_MISSING: "servono i kWh prelevati nelle ore di picco Terna",
   AVAILABLE_POWER_MISSING: "potenza disponibile non letta in bolletta",
   CTE_REFERENCE_MISSING: "la CTE in archivio non indica come si applica: va riletta la CTE",
+  CDISPD_MISSING: "CDISPD ARERA del mese (dispacciamento e capacità, TIV comma 48.9) non ancora in archivio: va eseguito l'aggiornamento ARERA",
 };
 function missingOfficial(input: QuoteReceiptInput): ReadonlyMap<string, string> {
   const result = new Map<string, string>();
