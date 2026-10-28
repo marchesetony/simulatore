@@ -80,3 +80,6 @@ export function assertAutoRefreshCoverage(domains: readonly RegulatoryRefreshDom
 
 /** The monthly ARERA capacity charge for BT up to 55 kW (TIV quarterly updates, art. 4.1), read from each resolution. */
 export const ARERA_CAPACITY_DOMAIN: RegulatoryRefreshDomain = Object.freeze({ componentCode: "CAPACITY_MARKET", customerScope: "ALL_ELECTRICITY", normalizedUnit: "EUR/KWH", sourceAdapter: "ARERA_ELECTRICITY" });
+
+/** Terna's quarterly TIDE dispatching total for customers other than households. */
+export const TERNA_TIDE_DOMAIN: RegulatoryRefreshDomain = Object.freeze({ componentCode: "DISPATCHING_TOTAL", customerScope: "NON_DOMESTIC_BT", normalizedUnit: "EUR/KWH", regulatoryVariant: "TIDE", sourceAdapter: "TERNA_CAPACITY" });

@@ -5,7 +5,7 @@ import { configuredRefreshTenants, cronAuthorizationMatches, cronSecretConfigure
 // @ts-expect-error Node's strip-only test runner requires the explicit extension.
 import { runRegulatoryRefresh } from "../../../lib/regulatory-refresh/service.ts";
 // @ts-expect-error Node's strip-only test runner requires the explicit extension.
-import { runTernaCapacityRefresh } from "../../../lib/regulatory-refresh/terna.ts";
+import { runTernaCapacityRefresh, runTernaDispatchingRefresh } from "../../../lib/regulatory-refresh/terna.ts";
 // @ts-expect-error Node's strip-only test runner requires the explicit extension.
 import { runAreraCapacityRefresh } from "../../../lib/regulatory-refresh/arera-capacity.ts";
 // @ts-expect-error Node's strip-only test runner requires the explicit extension.
@@ -24,7 +24,7 @@ export async function GET(request: Request): Promise<Response> {
     const tenants = await officialDataTenants(() => configuredRefreshTenants(), repositories.companies);
     const results = [];
     for (const tenantId of tenants) {
-      const observed = await observeJob({ repository: repositories.jobRuns, incidents: repositories.jobIncidents, tenantId, jobKey: "REGULATORY_REFRESH", trigger: "CRON", now: new Date().toISOString(), operation: async () => ({ ...await runRegulatoryRefresh({ tenantId, repositories, trigger: "CRON" }), terna: await runTernaCapacityRefresh({ tenantId, repositories, trigger: "CRON" }), capacity: await runAreraCapacityRefresh({ tenantId, repositories, trigger: "CRON" }) }), summary: (result) => ({ domains: result.sourceChecks.length, failed: result.failedCount, created: result.createdCount, replaced: result.replacedCount, ternaFailed: result.terna.errors.length, ternaCreated: result.terna.createdCount, capacityFailed: result.capacity.errors.length, capacityCreated: result.capacity.createdCount }) });
+      const observed = await observeJob({ repository: repositories.jobRuns, incidents: repositories.jobIncidents, tenantId, jobKey: "REGULATORY_REFRESH", trigger: "CRON", now: new Date().toISOString(), operation: async () => ({ ...await runRegulatoryRefresh({ tenantId, repositories, trigger: "CRON" }), terna: await runTernaCapacityRefresh({ tenantId, repositories, trigger: "CRON" }), capacity: await runAreraCapacityRefresh({ tenantId, repositories, trigger: "CRON" }), dispatching: await runTernaDispatchingRefresh({ tenantId, repositories, trigger: "CRON" }) }), summary: (result) => ({ domains: result.sourceChecks.length, failed: result.failedCount, created: result.createdCount, replaced: result.replacedCount, ternaFailed: result.terna.errors.length, ternaCreated: result.terna.createdCount, capacityFailed: result.capacity.errors.length, capacityCreated: result.capacity.createdCount, dispatchingFailed: result.dispatching.errors.length }) });
       results.push(observed.value ?? { status: "ALREADY_RUNNING", runId: observed.run.payload.runId, tenantId });
     }
     return Response.json({ status: "OK", results });

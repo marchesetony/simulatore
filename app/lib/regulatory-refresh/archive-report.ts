@@ -7,6 +7,8 @@ import { deterministicRecordId } from "../persistence/types.ts";
 // @ts-expect-error Node's strip-only test runner requires the explicit extension.
 import { mergeAreraCapacityMonths, type AreraCapacityMonth } from "../foundation/arera-capacity-tiv.ts";
 // @ts-expect-error Node's strip-only test runner requires the explicit extension.
+import { mergeTernaTideQuarters } from "../foundation/terna-tide-dispatching.ts";
+// @ts-expect-error Node's strip-only test runner requires the explicit extension.
 import { CALCULATED_REGULATORY_DOMAINS, REGULATORY_REFRESH_STALE_DAYS, TERNA_CAPACITY_DOMAINS, regulatoryDomainKey, type RegulatoryRefreshDomain } from "./registry.ts";
 
 export interface ArchiveRecordView { readonly value: number; readonly unit: string; readonly effectiveFrom: string; readonly effectiveTo: string | null; readonly retrievedAt: string; readonly sourceReference: string }
@@ -62,7 +64,7 @@ export async function officialArchiveReport(repositories: Pick<RuntimeRepositori
   return {
     tenantId, checkedAt: now, lastSuccessfulAt, lastErrors: state?.errors ?? [],
     stale: lastSuccessfulAt === null || Date.parse(now) - Date.parse(lastSuccessfulAt) > REGULATORY_REFRESH_STALE_DAYS * 86_400_000,
-    domains: [...[...CALCULATED_REGULATORY_DOMAINS, ...TERNA_CAPACITY_DOMAINS].map(view), areraCapacityView(months, mergeAreraCapacityMonths(approved), approved)],
+    domains: [...[...CALCULATED_REGULATORY_DOMAINS, ...TERNA_CAPACITY_DOMAINS].map(view), areraCapacityView(months, mergeAreraCapacityMonths(approved), approved), ternaTideView(months, approved)],
   };
 }
 
@@ -75,5 +77,18 @@ function areraCapacityView(months: readonly { readonly label: string }[], capaci
     key: "CAPACITY_MARKET|LV_UP_TO_55KW|EUR/KWH|TIV_MONTHLY", componentCode: "CAPACITY_MARKET", customerScope: "LV_UP_TO_55KW", unit: "EUR/KWH", variant: null, source: "ARERA",
     records: [...capacity].reverse().map((item) => ({ value: Math.round(item.centsPerKwh * 1e6) / 1e8, unit: "EUR/KWH", effectiveFrom: `${item.month}-01T00:00:00.000Z`, effectiveTo: next(item.month), retrievedAt: retrieved(item), sourceReference: item.url })),
     missingMonths: months.filter((month) => !capacity.some((item) => item.month === month.label)).map((month) => month.label),
+  };
+}
+
+/** Terna's TIDE dispatching total for customers other than households, by quarter: stored values over the checked table.
+ *  Months before the first known quarter are not reported missing (the calculator never needs them). */
+function ternaTideView(months: readonly { readonly label: string; readonly from: number; readonly to: number }[], approved: readonly RegulatoryValueRecord[]): ArchiveDomainView {
+  const quarters = mergeTernaTideQuarters(approved);
+  const stored = (from: string) => approved.find((record) => record.componentCode === "DISPATCHING_TOTAL" && record.regulatoryVariant === "TIDE" && record.effectiveFrom.slice(0, 10) === from);
+  const first = quarters.length ? Date.parse(quarters[0].from) : Number.POSITIVE_INFINITY;
+  return {
+    key: "DISPATCHING_TOTAL|NON_DOMESTIC_BT|EUR/KWH|TIDE", componentCode: "DISPATCHING_TOTAL", customerScope: "NON_DOMESTIC_BT", unit: "EUR/KWH", variant: "TIDE", source: "TERNA",
+    records: [...quarters].reverse().map((item) => ({ value: Math.round(item.centsPerKwh * 1e5) / 1e7, unit: "EUR/KWH", effectiveFrom: `${item.from}T00:00:00.000Z`, effectiveTo: `${item.to}T00:00:00.000Z`, retrievedAt: stored(item.from)?.retrievedAt ?? "2026-10-28T00:00:00.000Z", sourceReference: item.url })),
+    missingMonths: months.filter((month) => month.from >= first && !quarters.some((item) => Date.parse(item.from) <= month.from && month.to <= Date.parse(item.to))).map((month) => month.label),
   };
 }

@@ -213,3 +213,41 @@ export async function importTernaCapacityQuarter(input: { readonly tenantId: str
   const records = TERNA_CAPACITY_SCOPES.flatMap((scope) => [record("CAPACITY_MARKET_OFF_PEAK", values.offPeak, scope), ...(values.peak === null ? [] : [record("CAPACITY_MARKET_PEAK", values.peak, scope)])]);
   return { quarter: input.quarter, document: { url: document.url, title: String(item.Title), publicationDate: published, sourceSha256: sha }, records };
 }
+
+/** The total TIDE dispatching charge (c€/kWh) of Terna's quarterly document: it is the sum of the published elements
+ *  (uplift, unità essenziali, modulazione, ...), so it is the largest of the values printed with seven decimals. */
+export function extractTernaTideTotal(text: string): number {
+  const values = [...text.matchAll(/(?<![\d.,])(-?\d{1,2}[.,]\d{7})(?![\d])/g)].map((match) => Number(match[1].replace(",", "."))).filter((value) => Number.isFinite(value));
+  if (values.length < 2) throw new Error("TERNA_TIDE_VALUE_NOT_FOUND");
+  const total = Math.max(...values);
+  if (!(total > 0 && total < 10)) throw new Error("TERNA_TIDE_VALUE_IMPLAUSIBLE");
+  return total;
+}
+
+export interface TernaTideQuarterImport {
+  readonly quarter: TernaQuarter;
+  readonly document: { readonly url: string; readonly title: string; readonly publicationDate: string; readonly sourceSha256: string };
+  readonly records: readonly RegulatoryValueRecord[];
+}
+
+/** Finds Terna's TIDE dispatching document for one quarter: one total for customers other than households. */
+export async function importTernaTideQuarter(input: { readonly tenantId: string; readonly retrievedAt: string; readonly quarter: TernaQuarter; readonly fetcher?: TernaFetcher; readonly discovery?: TernaEndpointDiscovery }): Promise<TernaTideQuarterImport> {
+  const fetcher = input.fetcher ?? (fetch as unknown as TernaFetcher);
+  const discovery = input.discovery ?? await discoverTernaCorrispettiviEndpoints(fetcher);
+  const url = new URL(discovery.dispatchingEndpoint);
+  url.search = new URLSearchParams({ datasource: discovery.dispatchingDatasource, year: String(input.quarter.year), month: "0", day: "", datePublishing: "", type: "", area: "", pageNumber: "0", pageSize: "100", orderBy: "0", orderDirection: "desc", language: "it-IT", searchTerm: "", upType: "", quarter: "" }).toString();
+  const listing = JSON.parse(new TextDecoder().decode((await fetchTerna(url.toString(), fetcher)).bytes)) as { readonly Results?: readonly Record<string, unknown>[] };
+  const item = (listing.Results ?? []).find((result) => ternaTitleMatchesQuarter(String(result.Title ?? ""), input.quarter));
+  if (!item || typeof item.Url !== "string" || typeof item.PublicationDate !== "string") throw new Error("TERNA_TIDE_DOCUMENT_NOT_PUBLISHED");
+  const document = await fetchTerna(absoluteTernaUrl(item.Url), fetcher);
+  const total = extractTernaTideTotal(pdfText(document.bytes));
+  const sha = sourceHash(document.bytes);
+  const published = publicationDate(item.PublicationDate);
+  const record = createRegulatoryValue({
+    tenantId: input.tenantId, sourceType: "OFFICIAL_ATTACHMENT", sourceReference: document.url, officialIdentifier: `TERNA_TIDE_${input.quarter.year}Q${input.quarter.quarter}`, publicationDate: published, retrievedAt: input.retrievedAt,
+    effectiveFrom: input.quarter.effectiveFrom, effectiveTo: input.quarter.effectiveTo, componentCode: "DISPATCHING_TOTAL", customerScope: "NON_DOMESTIC_BT", regulatoryVariant: "TIDE", originalValue: total, originalUnit: "CENT_EUR/KWH",
+    authority: "TERNA", publishedBy: "TERNA", calculatedBy: "TERNA", officialName: "Corrispettivo di dispacciamento (TIDE)",
+    applicationBasis: `Corrispettivi di dispacciamento ai sensi del TIDE — ${input.quarter.quarter}° trimestre ${input.quarter.year}; documento ufficiale Terna "${String(item.Title)}"; al netto delle perdite`, sourceSha256: sha, contractPassThroughRequired: true,
+  });
+  return { quarter: input.quarter, document: { url: document.url, title: String(item.Title), publicationDate: published, sourceSha256: sha }, records: [record] };
+}

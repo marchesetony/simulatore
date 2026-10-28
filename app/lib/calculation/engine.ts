@@ -27,6 +27,8 @@ import { monthsInSimulationPeriod } from "./input.ts";
 // @ts-expect-error Node's strip-only test runner requires the explicit extension.
 import { ARERA_TIV_CAPACITY_MONTHS, areraCapacityForPeriod, mergeAreraCapacityMonths, type AreraCapacityMonth } from "../foundation/arera-capacity-tiv.ts";
 // @ts-expect-error Node's strip-only test runner requires the explicit extension.
+import { TERNA_TIDE_DISPATCHING_QUARTERS, mergeTernaTideQuarters, ternaTideForPeriod, type TernaTideQuarter } from "../foundation/terna-tide-dispatching.ts";
+// @ts-expect-error Node's strip-only test runner requires the explicit extension.
 import { BTA6_REGULATED_COMPONENTS_INCLUDED, calculateRegulatedEeSubset, isDomesticNetOfTaxCompleteComponents, type RegulatedEeExecutionContext } from "./regulated-ee.ts";
 
 export class CalculationEngineError extends Error {
@@ -177,7 +179,7 @@ function standardLoss(request: ElectricitySimulationRequest, runtime: CteRuntime
   if (request.supplyPeriod.periodStart < "2023-01-01") return null;
   return { ratio: fromNumber(TIS_TABLE_4_COLUMN_A[request.voltageLevel]), source: "TIS_TABELLA_4_COLONNA_A" };
 }
-function addCtePassThroughs(target: ComponentDraft[], request: ElectricitySimulationRequest, offer: CalculationReadyOffer, runtime: CteRuntimeResolution | null, totalQuantity: Rational, context: ElectricitySupplyContext | undefined, missing: string[], capacityMonths: readonly AreraCapacityMonth[] = ARERA_TIV_CAPACITY_MONTHS): void {
+function addCtePassThroughs(target: ComponentDraft[], request: ElectricitySimulationRequest, offer: CalculationReadyOffer, runtime: CteRuntimeResolution | null, totalQuantity: Rational, context: ElectricitySupplyContext | undefined, missing: string[], capacityMonths: readonly AreraCapacityMonth[] = ARERA_TIV_CAPACITY_MONTHS, tideQuarters: readonly TernaTideQuarter[] = TERNA_TIDE_DISPATCHING_QUARTERS): void {
   const priced = new Set(target.filter((draft) => draft.formulaId.startsWith("CONTRACTUAL_PASS_THROUGH")).map((draft) => String(draft.formulaInputs.kind ?? "")));
   const standard = standardLoss(request, runtime);
   const loss = standard?.ratio ?? null;
@@ -200,11 +202,14 @@ function addCtePassThroughs(target: ComponentDraft[], request: ElectricitySimula
   // valore ufficiale la voce non si stima: il motivo va nei warnings e lo scontrino lo mostra.
   const dispatching = offer.dispatchingReference;
   if (dispatching && !priced.has("DISPATCHING")) {
-    const official = runtime?.dispatching?.value;
+    // Customers other than households: Terna's quarterly TIDE dispatching charge, when the archive resolves none.
+    const domestic = context?.regulatoryCustomerScope?.startsWith("DOMESTIC") === true;
+    const terna = runtime?.dispatching?.value === undefined && !domestic ? ternaTideForPeriod(request.supplyPeriod.periodStart, request.supplyPeriod.periodEnd, tideQuarters) : null;
+    const official = runtime?.dispatching?.value ?? terna?.eurPerKwh;
     if (official !== undefined && Number.isFinite(official) && official > 0) {
       // TIDE charges apply to the energy withdrawn plus losses (TIS Tabella 4).
       const unitRate = grossUp(fromNumber(official));
-      target.push({ componentId: "cte-pass-through:dispatching", category: "VARIABLE_FEE", label: "Dispacciamento", sign: "CHARGE", value: multiply(unitRate, totalQuantity), formulaId: "CTE_PASS_THROUGH_RATE_TIMES_KWH", formulaInputs: { kind: "DISPATCHING", feeUnit: "EUR_PER_KWH", feeRate: toDecimal(unitRate, 6), officialRate: official, lossFactor: loss ? toDecimal(loss, 6) : 0, basisQuantity: toDecimal(totalQuantity, 3), source: runtime?.dispatching?.officialIdentifier ?? "OFFICIAL" } });
+      target.push({ componentId: "cte-pass-through:dispatching", category: "VARIABLE_FEE", label: "Dispacciamento", sign: "CHARGE", value: multiply(unitRate, totalQuantity), formulaId: "CTE_PASS_THROUGH_RATE_TIMES_KWH", formulaInputs: { kind: "DISPATCHING", feeUnit: "EUR_PER_KWH", feeRate: toDecimal(unitRate, 6), officialRate: official, lossFactor: loss ? toDecimal(loss, 6) : 0, basisQuantity: toDecimal(totalQuantity, 3), source: runtime?.dispatching?.officialIdentifier ?? (terna ? terna.quarters.map((item) => item.reference).join(", ") : "OFFICIAL") } });
     } else missing.push("DISPATCHING:OFFICIAL_VALUE_MISSING");
   } else if (!dispatching && !priced.has("DISPATCHING")) missing.push("DISPATCHING:CTE_REFERENCE_MISSING");
   if (!priced.has("CAPACITY_MARKET")) {
@@ -440,7 +445,8 @@ export async function calculatePreparedOffer(request: SimulationRequest, prepare
   if (request.vector === "EE" && request.sourceBill) {
     // The monthly ARERA capacity charges the refresh stored, over the hand-checked table.
     const stored = dependencies.regulatoryBridge ? await dependencies.regulatoryBridge.list(request.tenantId, { componentCode: "CAPACITY_MARKET", customerScope: "ALL_ELECTRICITY", normalizedUnit: "EUR/KWH" }).catch(() => []) : [];
-    addCtePassThroughs(drafts, request, prepared.offer, cteRuntime, totalQuantity, dependencies.trustedElectricityContext, missingOfficial, mergeAreraCapacityMonths(stored));
+    const tide = dependencies.regulatoryBridge ? await dependencies.regulatoryBridge.list(request.tenantId, { componentCode: "DISPATCHING_TOTAL", regulatoryVariant: "TIDE" }).catch(() => []) : [];
+    addCtePassThroughs(drafts, request, prepared.offer, cteRuntime, totalQuantity, dependencies.trustedElectricityContext, missingOfficial, mergeAreraCapacityMonths(stored), mergeTernaTideQuarters(tide));
   }
   // Tony: transport and system charges always come from the ARERA tables; when they can't, the receipt says why.
   if (request.vector === "EE" && request.sourceBill && regulated === null) missingOfficial.push(`REGULATED:${regulatedMissingReason}`);
