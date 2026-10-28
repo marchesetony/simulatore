@@ -78,7 +78,9 @@ function addFeeComponents(target: ComponentDraft[], fees: readonly CteFeeCompone
   });
 }
 function addDeclaredComponent(target: ComponentDraft[], declared: CteDeclaredComponent, category: "IMBALANCE", request: SimulationRequest, totalQuantity: Rational, months: Rational): void {
-  if (declared.status === "NOT_DECLARED") { if (declared.reason === "NOT_PROVIDED") fail("IMBALANCE_UNAVAILABLE"); return; }
+  // A CTE that says nothing about imbalance charges none apart: it is a seller fee with no official value to fall back on
+  // (Tony, 28/10, BPower BE Family Casa Protetta, Porta un amico Family, Be Family Fast 26 left out for it).
+  if (declared.status === "NOT_DECLARED") return;
   const multiplier = quantityForFee(declared.component, request, totalQuantity, months);
   target.push({ componentId: `${category.toLowerCase()}:${declared.component.feeId}`, category, label: declared.component.label, sign: "CHARGE", value: multiply(fromNumber(declared.component.amount), multiplier), formulaId: "IMBALANCE_RATE_TIMES_BASIS", formulaInputs: { feeId: declared.component.feeId, feeUnit: declared.component.unit, feeRate: declared.component.amount, basisQuantity: toDecimal(multiplier, 6), taxTreatment: declared.component.taxTreatment } });
 }
@@ -390,7 +392,6 @@ async function prepareAdjustedOffer(record: CteArchiveRecord, version: CteArchiv
   if (!contract.eligibility.customerTypes.includes(request.customerCategory)) fail("CUSTOMER_NOT_ELIGIBLE");
   if (request.vector === "EE" && contract.vector === "EE" && !contract.eligibility.voltageLevels.includes(request.voltageLevel)) fail("VOLTAGE_NOT_ELIGIBLE");
   if (offer.commercialDiscounts.some((fee) => fee.unit === "EUR_PER_SMC" && request.vector === "EE" || fee.unit === "EUR_PER_KWH" && request.vector === "GAS")) fail("FEE_UNIT_MISMATCH");
-  if (offer.imbalance.status === "NOT_DECLARED" && offer.imbalance.reason === "NOT_PROVIDED") fail("IMBALANCE_UNAVAILABLE");
   const indexed = offer.pricing.mode === "INDEXED"; const markets = await marketForMonths(marketRepository, request, indexed);
   return { record, version, offer, markets };
 }

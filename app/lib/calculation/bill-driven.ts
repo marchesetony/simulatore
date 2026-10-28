@@ -454,7 +454,6 @@ async function evaluateCte(repository: BillDrivenRepositories["marketArchiveRepo
   if (annualConsumptionRulesOf(version.contract).some((rule) => !annualConsumptionWithin(rule, annual))) return offerMetadata(record, version, offer, "NOT_COMPATIBLE", "CONSUMPTION_NOT_ELIGIBLE");
   if (context.vector === "EE" && version.contract.vector === "EE" && (!context.supply.voltageLevel || !version.contract.eligibility.voltageLevels.includes(context.supply.voltageLevel))) return offerMetadata(record, version, offer, "NOT_COMPATIBLE", "VOLTAGE_NOT_ELIGIBLE", "READY", ["VOLTAGE_MISMATCH"]);
   if (taxTreatment !== undefined && offer.taxTreatment !== taxTreatment) return offerMetadata(record, version, offer, "NOT_COMPATIBLE", "TAX_TREATMENT_INCOMPATIBLE");
-  if (offer.imbalance.status === "NOT_DECLARED" && offer.imbalance.reason === "NOT_PROVIDED") return offerMetadata(record, version, offer, "NOT_COMPATIBLE", "IMBALANCE_UNAVAILABLE");
   const feeUnits = [...offer.fixedFees, ...offer.variableFees, ...offer.oneOffFees, ...offer.commercialDiscounts, ...(offer.imbalance.status === "DECLARED" ? [offer.imbalance.component] : [])].map((fee) => fee.unit);
   if (feeUnits.some((unit) => context.vector === "EE" ? unit === "EUR_PER_SMC" : unit === "EUR_PER_KWH")) return offerMetadata(record, version, offer, "NOT_COMPATIBLE", "FEE_UNIT_MISMATCH");
   if (context.missingRequiredData.length > 0) return offerMetadata(record, version, offer, "NOT_COMPATIBLE", "BILL_DATA_INSUFFICIENT", "NOT_READY", ["CALCULATION_NOT_READY"]);

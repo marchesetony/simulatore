@@ -95,4 +95,9 @@ const includedOffer = structuredClone(silent);
 includedOffer.offer.passThroughComponents = ["DISPATCHING", "CAPACITY_MARKET"].map((kind) => ({ componentId: `pt-${kind}`, kind, effectiveFrom: "2026-08-03", effectiveTo: "2027-01-01", declarationState: "INCLUDED_IN_ENERGY_PRICE" }));
 const includedQuote = await calculatePreparedOffer(request(true), includedOffer, deps(null, null, 6));
 assert.deepEqual(byKind(includedQuote, "DISPATCHING"), []); assert.deepEqual(byKind(includedQuote, "CAPACITY_MARKET"), []);
+// Tony (28/10): the BPower Family CTEs (Casa Protetta, Porta un amico, Fast 26) say nothing about imbalance and were left
+// out. A CTE silent on imbalance charges none apart, so it is calculated with no imbalance line.
+const imbalanceSilent = structuredClone(prepared); imbalanceSilent.offer.imbalance = { status: "NOT_DECLARED", reason: "NOT_PROVIDED" };
+const imbalanceSilentQuote = await calculatePreparedOffer(request(true), imbalanceSilent, deps(0.0105, 0.004275, 3));
+assert.equal(imbalanceSilentQuote.components.filter((component) => component.category === "IMBALANCE").length, 0);
 console.log("CTE_PASS_THROUGH_BILL_QUOTE=PASS");
