@@ -207,7 +207,7 @@ export async function createCteArchive(repository: CteArchiveRepository, input: 
   const version: CteArchiveVersion = { versionId, versionNumber: 1, supersedesVersionId: null, status: statusForContract(input.contract), contract: input.contract, createdAt: now };
   if (version.status === "APPROVED") {
     ensureCalculationReady(input.contract, undefined, now);
-    const overlap = (await repository.list(input.tenantId)).some((candidate) => { const approved = candidate.currentApprovedVersionId ? candidate.versions.find((item) => item.versionId === candidate.currentApprovedVersionId) : null; return approved !== null && approved !== undefined && sameOffer(approved.contract, input.contract) && intervalsOverlap(approved.contract.validity.periodStart, approved.contract.validity.periodEnd, input.contract.validity.periodStart, input.contract.validity.periodEnd); });
+    const overlap = (await repository.list(input.tenantId)).filter((candidate) => commercialStatusOf(candidate) !== "DELETED").some((candidate) => { const approved = candidate.currentApprovedVersionId ? candidate.versions.find((item) => item.versionId === candidate.currentApprovedVersionId) : null; return approved !== null && approved !== undefined && sameOffer(approved.contract, input.contract) && intervalsOverlap(approved.contract.validity.periodStart, approved.contract.validity.periodEnd, input.contract.validity.periodStart, input.contract.validity.periodEnd); });
     if (overlap) throw new Error("CTE_APPROVED_VALIDITY_OVERLAP");
   }
   const record: CteArchiveRecord = {
@@ -283,7 +283,7 @@ export async function approveCteArchive(repository: CteArchiveRepository, tenant
     : previous && version.versionId === previous.versionId ? { ...version, status: "EXPIRED" as const } : version);
   const approvedVersion = versions.find((version) => version.versionId === source.versionId) as CteArchiveVersion;
   ensureNoApprovedOverlap({ ...record, versions }, approvedVersion);
-  const overlap = (await repository.list(tenantId)).filter((candidate) => candidate.archiveId !== archiveId && candidate.currentApprovedVersionId !== null).some((candidate) => { const approved = candidate.versions.find((item) => item.versionId === candidate.currentApprovedVersionId); return approved ? sameOffer(approved.contract, approvedVersion.contract) && intervalsOverlap(approved.contract.validity.periodStart, approved.contract.validity.periodEnd, approvedVersion.contract.validity.periodStart, approvedVersion.contract.validity.periodEnd) : false; });
+  const overlap = (await repository.list(tenantId)).filter((candidate) => candidate.archiveId !== archiveId && candidate.currentApprovedVersionId !== null && commercialStatusOf(candidate) !== "DELETED").some((candidate) => { const approved = candidate.versions.find((item) => item.versionId === candidate.currentApprovedVersionId); return approved ? sameOffer(approved.contract, approvedVersion.contract) && intervalsOverlap(approved.contract.validity.periodStart, approved.contract.validity.periodEnd, approvedVersion.contract.validity.periodStart, approvedVersion.contract.validity.periodEnd) : false; });
   if (overlap) throw new Error("CTE_APPROVED_VALIDITY_OVERLAP");
   const approval = approvalFor(approvedVersion, actor, when, "APPROVED", record.approvals.at(-1)?.approvalId ?? null);
   const next: CteArchiveRecord = { ...record, updatedAt: when, currentApprovedVersionId: approvedVersion.versionId, versions: sortVersions(versions), approvals: [...record.approvals, approval], history: [...record.history, ...(previous ? [event(record, "EXPIRED", previous, when, actor, "SUPERSEDED_BY_APPROVAL", null)] : []), event(record, "APPROVED", approvedVersion, when, actor, null, source.supersedesVersionId)] };
@@ -370,7 +370,8 @@ export async function deleteCteArchive(repository: CteArchiveRepository, tenantI
   const approved = approvedLifecycleVersion(record);
   const actor = actorValue(actorValueInput);
   const when = nowValue(at);
-  if (!isSyntheticQaContract(approved.contract) && !isExpiredAt(approved.contract, when)) throw new Error("CTE_RETENTION_NOT_DUE");
+  // Tony (28/10, "non cancella e non ricarica la nuova"): an administrator can take an active CTE out of the archive, e.g.
+  // to load it again. The removal is soft: the contract, its versions and its history stay readable.
   const next: CteArchiveRecord = { ...record, updatedAt: when, commercialStatus: "DELETED", deletedAt: when, deletedBy: actor, history: [...record.history, event(record, "COMMERCIAL_DELETED", approved, when, actor, record.blockReason ?? null, null)] };
   await repository.save(next);
   return structuredClone(next);
