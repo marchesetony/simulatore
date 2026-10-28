@@ -73,6 +73,7 @@ export function createAreraRegulatorySourceReader(input: { readonly fetcher?: Ar
           return await new AreraElectricityRegulatorySourceAdapter(sink(), { tenantId, fetcher: input.fetcher, includeBta6Uc: true, includeBta6Arim: true }).importOfficial({ retrievedAt });
         }
       });
+      current?.skippedDecisions.forEach((error) => errors.push(`ARERA_TARIFFS:${error}`));
       if (!bta6 && !cdispd && !current) throw new Error(errors[0] ?? "ARERA_SOURCES_UNREADABLE");
       const infrastructure = new Map((current?.infrastructure.records ?? []).map((record) => [record.componentCode, record]));
       const system = current?.systemChargeRecords ?? [];

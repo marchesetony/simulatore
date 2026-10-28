@@ -672,6 +672,28 @@ export function parseArera588DomesticAsosArimXlsx(input: {
   });
 }
 
+/** The decisions an ARERA tariff page lists with their start ("dal 01.10.26: delibera 343/2026/R/com"), newest first, up to `retrievedAt`. */
+export function discoverAreraSystemChargeDecisions(html: string, retrievedAt: string, baseUrl: string = ARERA_SYSTEM_CHARGES_PAGE): readonly { readonly url: string; readonly identifier: string; readonly effectiveFrom: string }[] {
+  const at = Date.parse(retrievedAt);
+  const found = new Map<string, { readonly url: string; readonly identifier: string; readonly effectiveFrom: string }>();
+  for (const match of html.matchAll(/<a\b[^>]*href=["']([^"']*\/atti-e-provvedimenti\/dettaglio\/(\d{2})\/(\d+)-\d{2}[^"']*)["']/gi)) {
+    // The start date is the last "dal ..." written just before the link, in the same list item.
+    const before = stripTags(html.slice(Math.max(0, (match.index ?? 0) - 400), match.index ?? 0));
+    const date = [...before.matchAll(/\bdal\s+0?(\d{1,2})[./\s](0?\d{1,2}|gennaio|febbraio|marzo|aprile|maggio|giugno|luglio|agosto|settembre|ottobre|novembre|dicembre)[./\s](\d{2,4})/gi)].at(-1);
+    if (!date) continue;
+    const month = /^\d/.test(date[2]) ? Number(date[2]) : italianMonths[date[2].toLowerCase()];
+    const year = Number(date[3].length === 2 ? `20${date[3]}` : date[3]);
+    const effectiveFrom = `${year}-${String(month).padStart(2, "0")}-${date[1].padStart(2, "0")}`;
+    if (!Number.isFinite(Date.parse(effectiveFrom)) || Date.parse(effectiveFrom) > at) continue;
+    const url = new URL(match[1], baseUrl).toString();
+    if (!isAllowedAreraUrl(url)) continue;
+    const identifier = `${match[3]}/20${match[2]}/R/com`;
+    const previous = found.get(url);
+    if (!previous || previous.effectiveFrom < effectiveFrom) found.set(url, { url, identifier, effectiveFrom });
+  }
+  return [...found.values()].sort((left, right) => right.effectiveFrom.localeCompare(left.effectiveFrom));
+}
+
 export function discoverAreraCurrentEffectiveFrom(html: string, retrievedAt: string): string {
   const at = Date.parse(retrievedAt);
   if (!Number.isFinite(at)) throw new Error("ARERA_RETRIEVAL_DATE_INVALID");
@@ -686,9 +708,18 @@ export function discoverAreraCurrentEffectiveFrom(html: string, retrievedAt: str
   return dates[0].iso;
 }
 
-function parseArera227Xlsx(input: { readonly body: Uint8Array; readonly sourceReference: string; readonly publicationDate: string; readonly retrievedAt: string; readonly sourceSha256: string; readonly tenantId: string; readonly effectiveFrom: string }): readonly RegulatoryValueRecord[] {
+function parseArera227Xlsx(input: { readonly body: Uint8Array; readonly sourceReference: string; readonly publicationDate: string; readonly retrievedAt: string; readonly sourceSha256: string; readonly tenantId: string; readonly effectiveFrom: string; readonly officialIdentifier?: string }): readonly RegulatoryValueRecord[] {
   const shared = xlsxSharedStrings(input.body);
-  const records: RegulatoryValueRecord[] = [...parseAreraAsosBta6ClassesXlsx({ ...input, officialIdentifier: ARERA_227_IDENTIFIER, effectiveFrom: input.effectiveFrom, effectiveTo: null })];
+  const officialIdentifier = input.officialIdentifier ?? ARERA_227_IDENTIFIER;
+  // Not every attachment of a decision carries the ASOS tables of the BTA6 classes: one without them still gives its
+  // domestic ASOS and ARIM rows (Tony, 28/10: the whole ARERA refresh stopped on ARERA_ASOS_BTA6_CLASS_ROWS_MISSING).
+  const bta6Classes = (() => {
+    try { return parseAreraAsosBta6ClassesXlsx({ ...input, officialIdentifier, effectiveFrom: input.effectiveFrom, effectiveTo: null }); } catch (error) {
+      if (error instanceof Error && error.message === "ARERA_ASOS_BTA6_CLASS_ROWS_MISSING") return [];
+      throw error;
+    }
+  })();
+  const records: RegulatoryValueRecord[] = [...bta6Classes];
   for (let sheetNumber = 1; sheetNumber <= 12; sheetNumber += 1) {
     const sheetName = `xl/worksheets/sheet${sheetNumber}.xml`;
     let cells: readonly XlsxCell[];
@@ -706,10 +737,10 @@ function parseArera227Xlsx(input: { readonly body: Uint8Array; readonly sourceRe
       const applicationBasis = scope === "DOMESTIC_RESIDENT_BT"
         ? `${DOMESTIC_EQUAL_RATE_APPLICATION_BASIS}; ${DOMESTIC_FORMAL_TIER_PROVENANCE}; Tabella ufficiale ${componentCode}; riga ${scope}`
         : componentCode === "ARIM"
-          ? `Tabella B ufficiale ${componentCode}; valori confermati dal 01/07/2026, precedentemente in vigore secondo la fonte richiamata ${ARERA_227_IDENTIFIER}`
+          ? `Tabella B ufficiale ${componentCode}; valori confermati dal 01/07/2026, precedentemente in vigore secondo la fonte richiamata ${officialIdentifier}`
           : `Tabella A ufficiale ${componentCode}; classe di agevolazione 0; riga ${scope}`;
-      if (fixed !== null) records.push(createValue({ tenantId: input.tenantId, sourceType: "OFFICIAL_ATTACHMENT", sourceReference: input.sourceReference, officialIdentifier: ARERA_227_IDENTIFIER, publicationDate: input.publicationDate, retrievedAt: input.retrievedAt, effectiveFrom: input.effectiveFrom, effectiveTo: null, componentCode, customerScope: scope, originalValue: fixed, originalUnit: "CENT_EUR/POD/YEAR", applicationBasis, sourceSha256: input.sourceSha256 }));
-      if (energy !== null) records.push(createValue({ tenantId: input.tenantId, sourceType: "OFFICIAL_ATTACHMENT", sourceReference: input.sourceReference, officialIdentifier: ARERA_227_IDENTIFIER, publicationDate: input.publicationDate, retrievedAt: input.retrievedAt, effectiveFrom: input.effectiveFrom, effectiveTo: null, componentCode, customerScope: scope, originalValue: energy, originalUnit: "CENT_EUR/KWH", applicationBasis, sourceSha256: input.sourceSha256 }));
+      if (fixed !== null) records.push(createValue({ tenantId: input.tenantId, sourceType: "OFFICIAL_ATTACHMENT", sourceReference: input.sourceReference, officialIdentifier, publicationDate: input.publicationDate, retrievedAt: input.retrievedAt, effectiveFrom: input.effectiveFrom, effectiveTo: null, componentCode, customerScope: scope, originalValue: fixed, originalUnit: "CENT_EUR/POD/YEAR", applicationBasis, sourceSha256: input.sourceSha256 }));
+      if (energy !== null) records.push(createValue({ tenantId: input.tenantId, sourceType: "OFFICIAL_ATTACHMENT", sourceReference: input.sourceReference, officialIdentifier, publicationDate: input.publicationDate, retrievedAt: input.retrievedAt, effectiveFrom: input.effectiveFrom, effectiveTo: null, componentCode, customerScope: scope, originalValue: energy, originalUnit: "CENT_EUR/KWH", applicationBasis, sourceSha256: input.sourceSha256 }));
     }
   }
   if (records.length === 0) throw new Error("ARERA_227_XLSX_STRUCTURED_ROWS_MISSING");
@@ -845,7 +876,7 @@ export function parseAreraDomesticJuly2026Xlsx(body: Uint8Array): AreraDomesticJ
   return { sheetName: sheet.name, rowCount: rows.length, componentCount: rows.length, unmappedCount: rows.filter((row) => row.componentCode === null).length, rows };
 }
 
-export function parseArera227StructuredAttachment(input: { readonly body: string | Uint8Array; readonly contentType?: string; readonly sourceReference: string; readonly publicationDate: string; readonly retrievedAt: string; readonly sourceSha256?: string; readonly tenantId?: string; readonly effectiveFrom?: string }): readonly RegulatoryValueRecord[] {
+export function parseArera227StructuredAttachment(input: { readonly body: string | Uint8Array; readonly contentType?: string; readonly sourceReference: string; readonly publicationDate: string; readonly retrievedAt: string; readonly sourceSha256?: string; readonly tenantId?: string; readonly effectiveFrom?: string; readonly officialIdentifier?: string }): readonly RegulatoryValueRecord[] {
   const type = (input.contentType ?? "").toLowerCase();
   const isSpreadsheet = type.includes("spreadsheet") || /\.(?:xls|xlsx)(?:$|\?)/i.test(input.sourceReference);
   const tenantId = input.tenantId ?? "tenant_local-demo";
@@ -853,7 +884,7 @@ export function parseArera227StructuredAttachment(input: { readonly body: string
   if (isSpreadsheet) {
     if (!(input.body instanceof Uint8Array) || !/\.xlsx(?:$|\?)/i.test(input.sourceReference)) throw new Error("ARERA_227_STRUCTURED_PARSE_BLOCKED");
     if (!input.effectiveFrom) throw new Error("ARERA_EFFECTIVE_FROM_REQUIRED");
-    return parseArera227Xlsx({ body: input.body, sourceReference: input.sourceReference, publicationDate: input.publicationDate, retrievedAt: input.retrievedAt, sourceSha256, tenantId, effectiveFrom: input.effectiveFrom });
+    return parseArera227Xlsx({ body: input.body, sourceReference: input.sourceReference, publicationDate: input.publicationDate, retrievedAt: input.retrievedAt, sourceSha256, tenantId, effectiveFrom: input.effectiveFrom, ...(input.officialIdentifier ? { officialIdentifier: input.officialIdentifier } : {}) });
   }
   if (type.includes("pdf") || /\.pdf(?:$|\?)/i.test(input.sourceReference)) throw new Error("ARERA_227_STRUCTURED_PARSE_BLOCKED");
   if (typeof input.body !== "string") throw new Error("ARERA_227_STRUCTURED_PARSE_BLOCKED");
@@ -1142,38 +1173,70 @@ export class AreraElectricityRegulatorySourceAdapter {
     this.options = options;
   }
 
-  async importOfficial(input: { readonly retrievedAt: string }): Promise<{ readonly infrastructure: AreraInfrastructureImport; readonly systemChargeRecords: readonly RegulatoryValueRecord[]; readonly attachment: AreraAttachment | null; readonly attachments: readonly AreraAttachment[]; readonly missingComponentCodes: readonly ("UC3" | "UC6")[]; readonly structuredParse: "PARSED" | "BLOCKED" | "MISSING"; readonly actions: readonly string[]; readonly backup: Awaited<ReturnType<typeof backupRegulatoryArchive>> | null; readonly documentCount: number; readonly documentsInspected: readonly string[]; readonly uc3SourceStrategy: "DIRECT_227" | "OFFICIAL_CARRY_FORWARD" | "UNRESOLVED"; readonly uc6SourceStrategy: "DIRECT_227" | "OFFICIAL_CARRY_FORWARD" | "UNRESOLVED"; readonly uc3PriorSourceIdentifier: string | null; readonly uc6PriorSourceIdentifier: string | null }> {
+  async importOfficial(input: { readonly retrievedAt: string }): Promise<{ readonly skippedDecisions: readonly string[]; readonly infrastructure: AreraInfrastructureImport; readonly systemChargeRecords: readonly RegulatoryValueRecord[]; readonly attachment: AreraAttachment | null; readonly attachments: readonly AreraAttachment[]; readonly missingComponentCodes: readonly ("UC3" | "UC6")[]; readonly structuredParse: "PARSED" | "BLOCKED" | "MISSING"; readonly actions: readonly string[]; readonly backup: Awaited<ReturnType<typeof backupRegulatoryArchive>> | null; readonly documentCount: number; readonly documentsInspected: readonly string[]; readonly uc3SourceStrategy: "DIRECT_227" | "OFFICIAL_CARRY_FORWARD" | "UNRESOLVED"; readonly uc6SourceStrategy: "DIRECT_227" | "OFFICIAL_CARRY_FORWARD" | "UNRESOLVED"; readonly uc3PriorSourceIdentifier: string | null; readonly uc6PriorSourceIdentifier: string | null }> {
     const fetcher = this.options.fetcher ?? (fetch as unknown as AreraFetcher);
     const tenantId = this.options.tenantId ?? "tenant_local-demo";
     const infrastructurePayload = await fetchOfficialAreraSource(ARERA_575_PAGE, fetcher);
     const infrastructure = parseArera575DomesticInfrastructure({ html: new TextDecoder().decode(infrastructurePayload.bytes), sourceReference: infrastructurePayload.url, retrievedAt: input.retrievedAt, sourceSha256: sourceHash(infrastructurePayload.bytes), tenantId });
-    const decisionPayload = await fetchOfficialAreraSource(this.options.systemChargesPage ?? ARERA_227_PAGE, fetcher);
-    const attachments = discoverAreraAttachments(new TextDecoder().decode(decisionPayload.bytes));
-    const structuredAttachments = attachments.filter((item) => ["XLSX", "CSV", "HTML"].includes(item.extension));
-    const attachment = structuredAttachments[0] ?? attachments.find((item) => ["XLSX", "XLS", "CSV", "HTML", "PDF"].includes(item.extension)) ?? null;
-    let currentEffectiveFrom: string | undefined;
-    try { currentEffectiveFrom = discoverAreraCurrentEffectiveFrom(new TextDecoder().decode(decisionPayload.bytes), input.retrievedAt); } catch (error) {
-      if (!(error instanceof Error) || error.message !== "ARERA_EFFECTIVE_FROM_NOT_DISCOVERED") throw error;
-    }
-    let systemChargeRecords: RegulatoryValueRecord[] = [];
-    let structuredParse: "PARSED" | "BLOCKED" | "MISSING" = "MISSING";
-    for (const currentAttachment of structuredAttachments) {
-      try {
-        if (currentAttachment.extension === "XLSX") {
-          const attachmentPayload = await fetchOfficialAreraSource(currentAttachment.url, fetcher);
-          systemChargeRecords = [...systemChargeRecords, ...parseArera227StructuredAttachment({ body: attachmentPayload.bytes, contentType: attachmentPayload.contentType, sourceReference: attachmentPayload.url, publicationDate: "2026-06-25", retrievedAt: input.retrievedAt, sourceSha256: sourceHash(attachmentPayload.bytes), tenantId, effectiveFrom: currentEffectiveFrom })];
-        } else {
-          const attachmentPayload = await fetchOfficialAreraSource(currentAttachment.url, fetcher);
-          systemChargeRecords = [...systemChargeRecords, ...parseArera227StructuredAttachment({ body: new TextDecoder().decode(attachmentPayload.bytes), contentType: currentAttachment.extension === "HTML" ? "text/html" : "text/csv", sourceReference: attachmentPayload.url, publicationDate: "2026-06-25", retrievedAt: input.retrievedAt, sourceSha256: sourceHash(attachmentPayload.bytes), tenantId, effectiveFrom: currentEffectiveFrom })];
+    // The ARERA page of the oneri lists, quarter by quarter, the decision in force ("dal 01.10.26: delibera 343/2026/R/com"):
+    // its tables are the source. The page's own attachments are the archive of past years (Tony, 28/10: the refresh read a
+    // 2025 table and stopped).
+    const indexPayload = await fetchOfficialAreraSource(this.options.systemChargesPage ?? ARERA_227_PAGE, fetcher);
+    const indexHtml = new TextDecoder().decode(indexPayload.bytes);
+    const decisions = discoverAreraSystemChargeDecisions(indexHtml, input.retrievedAt, indexPayload.url);
+    const readDecision = async (html: string, effectiveFrom: string | undefined, officialIdentifier: string | undefined) => {
+      const attachments = discoverAreraAttachments(html);
+      const structured = attachments.filter((item) => ["XLSX", "CSV", "HTML"].includes(item.extension));
+      // On a decision page the tables of the decision ("…-TABELLE.xlsx", "…-tab1.xlsx"), not those of its technical report.
+      const decisionTables = structured.filter((item) => /(?:tabelle|[-_]tab\d*)\.xlsx$/i.test(item.url) && !/relazione/i.test(item.url));
+      const structuredAttachments = officialIdentifier && decisionTables.length ? decisionTables : structured;
+      const attachment = structuredAttachments[0] ?? attachments.find((item) => ["XLSX", "XLS", "CSV", "HTML", "PDF"].includes(item.extension)) ?? null;
+      const currentEffectiveFrom = effectiveFrom;
+      let systemChargeRecords: RegulatoryValueRecord[] = [];
+      let structuredParse: "PARSED" | "BLOCKED" | "MISSING" = "MISSING";
+      for (const currentAttachment of structuredAttachments) {
+        try {
+          if (currentAttachment.extension === "XLSX") {
+            const attachmentPayload = await fetchOfficialAreraSource(currentAttachment.url, fetcher);
+            systemChargeRecords = [...systemChargeRecords, ...parseArera227StructuredAttachment({ body: attachmentPayload.bytes, contentType: attachmentPayload.contentType, sourceReference: attachmentPayload.url, publicationDate: "2026-06-25", retrievedAt: input.retrievedAt, sourceSha256: sourceHash(attachmentPayload.bytes), tenantId, effectiveFrom: currentEffectiveFrom, ...(officialIdentifier ? { officialIdentifier } : {}) })];
+          } else {
+            const attachmentPayload = await fetchOfficialAreraSource(currentAttachment.url, fetcher);
+            systemChargeRecords = [...systemChargeRecords, ...parseArera227StructuredAttachment({ body: new TextDecoder().decode(attachmentPayload.bytes), contentType: currentAttachment.extension === "HTML" ? "text/html" : "text/csv", sourceReference: attachmentPayload.url, publicationDate: "2026-06-25", retrievedAt: input.retrievedAt, sourceSha256: sourceHash(attachmentPayload.bytes), tenantId, effectiveFrom: currentEffectiveFrom, ...(officialIdentifier ? { officialIdentifier } : {}) })];
+          }
+          structuredParse = "PARSED";
+        } catch (error) {
+          if (error instanceof Error && error.message.includes("BLOCKED")) structuredParse = systemChargeRecords.length ? "PARSED" : "BLOCKED";
+          else if (error instanceof Error && error.message === "ARERA_227_XLSX_STRUCTURED_ROWS_MISSING") continue;
+          else throw error;
         }
-        structuredParse = "PARSED";
+      }
+      if (!structuredAttachments.length && attachment?.extension === "PDF") structuredParse = "BLOCKED";
+      return { attachments, structuredAttachments, attachment, systemChargeRecords, structuredParse };
+    };
+    const skippedDecisions: string[] = [];
+    let decision: Awaited<ReturnType<typeof readDecision>> | null = null;
+    // The newest decision first; one whose tables cannot be read is reported and the previous one, still official, is used.
+    for (const candidate of decisions) {
+      try {
+        const page = await fetchOfficialAreraSource(candidate.url, fetcher);
+        const read = await readDecision(new TextDecoder().decode(page.bytes), candidate.effectiveFrom, candidate.identifier);
+        if (read.systemChargeRecords.length === 0) throw new Error("ARERA_DECISION_TABLES_UNREADABLE");
+        decision = read;
+        break;
       } catch (error) {
-        if (error instanceof Error && error.message.includes("BLOCKED")) structuredParse = systemChargeRecords.length ? "PARSED" : "BLOCKED";
-        else if (error instanceof Error && error.message === "ARERA_227_XLSX_STRUCTURED_ROWS_MISSING") continue;
-        else throw error;
+        skippedDecisions.push(`${candidate.identifier}:${error instanceof Error ? error.message : "ARERA_DECISION_UNREADABLE"}`);
       }
     }
-    if (!structuredAttachments.length && attachment?.extension === "PDF") structuredParse = "BLOCKED";
+    if (decision === null) {
+      if (decisions.length > 0) throw new Error(skippedDecisions[0]);
+      let currentEffectiveFrom: string | undefined;
+      try { currentEffectiveFrom = discoverAreraCurrentEffectiveFrom(indexHtml, input.retrievedAt); } catch (error) {
+        if (!(error instanceof Error) || error.message !== "ARERA_EFFECTIVE_FROM_NOT_DISCOVERED") throw error;
+      }
+      decision = await readDecision(indexHtml, currentEffectiveFrom, undefined);
+    }
+    const { attachments, structuredAttachments, attachment, structuredParse } = decision;
+    let systemChargeRecords = decision.systemChargeRecords;
     const uniqueRecords = new Map<string, RegulatoryValueRecord>();
     for (const record of systemChargeRecords) {
       const existing = uniqueRecords.get(record.identityKey);
@@ -1208,6 +1271,6 @@ export class AreraElectricityRegulatorySourceAdapter {
     const backup = allRecords.length && this.options.regulatoryRoot ? await backupRegulatoryArchive(this.options.regulatoryRoot) : null;
     const actions: string[] = [];
     for (const record of allRecords) actions.push(await this.repository.saveRegulatoryValue(record));
-    return { infrastructure, systemChargeRecords, attachment, attachments, missingComponentCodes, structuredParse, actions, backup, documentCount: attachments.length, documentsInspected: [...new Set([...attachments.map((item) => item.url), ...documentsInspected])], uc3SourceStrategy, uc6SourceStrategy, uc3PriorSourceIdentifier: uc3SourceStrategy === "OFFICIAL_CARRY_FORWARD" ? ARERA_588_IDENTIFIER : null, uc6PriorSourceIdentifier: uc6SourceStrategy === "OFFICIAL_CARRY_FORWARD" ? ARERA_588_IDENTIFIER : null };
+    return { skippedDecisions, infrastructure, systemChargeRecords, attachment, attachments, missingComponentCodes, structuredParse, actions, backup, documentCount: attachments.length, documentsInspected: [...new Set([...attachments.map((item) => item.url), ...documentsInspected])], uc3SourceStrategy, uc6SourceStrategy, uc3PriorSourceIdentifier: uc3SourceStrategy === "OFFICIAL_CARRY_FORWARD" ? ARERA_588_IDENTIFIER : null, uc6PriorSourceIdentifier: uc6SourceStrategy === "OFFICIAL_CARRY_FORWARD" ? ARERA_588_IDENTIFIER : null };
   }
 }
