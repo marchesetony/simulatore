@@ -181,4 +181,23 @@ const fixDetails = Object.fromEntries(buildQuoteReceipt({ vector: "EE", offerSup
 for (const key of ["LOSSES", "COMMERCIALIZATION", "DISPATCHING", "IMBALANCE"]) assert.match(fixDetails[key]?.currentNote ?? "", /compreso nel prezzo energia/, key);
 assert.match(fixDetails.ENERGY.label, /comprende anche/);
 assert.equal(fixDetails.ENERGY.difference, Math.round((38.13 + 3.81 + 2.46 + 0.75 + 0.85 + 1.07 - 49.21) * 100) / 100);
+// Tony (28/10, BPower Casa Protetta, domestico non residente 3 kW, 65 kWh, totale 128,07 EUR): the quadro sintetico prices
+// the quota fissa per day ("di cui spesa per la rete" 8,86 EUR at 0,328148 EUR/giorno). A per-day line is the quota fissa,
+// so its transport is 8,86 - 7,13 ASOS quota fissa, not dropped as a second quota energia.
+const dayUnit = (description, amount, unitPrice, unit) => ({ ...line(description, amount, null, unitPrice), unit });
+const dailyBill = buildCurrentBillEconomicAnalysis([
+  { ...line("Quota per consumi", "20,48", "65", "0,315077"), unit: "kWh" },
+  dayUnit("di cui spesa per la vendita di energia elettrica", "17,37", "0,267231", "€/kWh"),
+  dayUnit("di cui spesa per la rete e gli oneri generali di sistema", "3,11", "0,047846", "€/kWh"),
+  { ...line("Quota fissa e Quota potenza", "21,86", "27", "0,80963"), unit: "giorni" },
+  dayUnit("di cui spesa per la vendita di energia elettrica", "13,00", "0,481481", "€/giorno"),
+  dayUnit("di cui spesa per la rete e gli oneri generali di sistema", "8,86", "0,328148", "€/giorno"),
+  { ...line("Quota potenza", "5,33", "3,0", "0,065802"), unit: "kW" },
+  dayUnit("di cui spesa per la rete e gli oneri generali di sistema", "5,33", "0,065802", "€/kW/giorno"),
+  line("Altre partite - Costo Pratica", "50,00"), line("Altre partite - Deposito cauzionale", "19,00"), line("Accise e IVA", "11,40"),
+  line("Imposte erariali", "1,48", null, null, "ACCISE"), line("IVA vendite 10%", "9,92", null, null, "IVA"),
+  line("Componente ASOS quota per consumi", "2,05", null, null, "ASOS"), line("Componente ASOS quota fissa", "7,13", null, null, "ASOS"), line("Componente ARIM quota per consumi", "0,11", null, null, "ARIM"),
+], "128,07");
+assert.equal(dailyBill.totals.reconstructedCurrentSupplyTotal, 128.07);
+assert.ok(dailyBill.components.some((item) => item.accountingRole === "ATOMIC" && /quota fissa/.test(item.description) && item.amount === "1,73"), "transport of the quota fissa");
 console.log("BPOWER_BE_SMART_BILL=PASS");

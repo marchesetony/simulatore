@@ -51,4 +51,11 @@ assert.ok(gate.blockers.some((blocker) => /dispacciamento, il mercato della capa
 // 4. A CTE that includes them in the energy price is not blocked.
 const included = build(base("Il prezzo è comprensivo degli oneri di dispacciamento e del mercato della capacità", "Commercializzazione pari a 0,002 €/kWh"), "included");
 assert.deepEqual(passThroughReadingGaps(included.record.fields, included.contract), []);
+// Tony (28/10, BPower Casa Protetta): "le cte ci sono come mai non li vede". The customer kinds are read one by one, so
+// "domestici e non domestici" admits both and a domestic offer is never read as business only.
+const customerOf = (text, id) => build(base(`1.3 Oneri di dispacciamento ${DISPATCHING}, ${CAPACITY}`, "Commercializzazione pari a 0,002 €/kWh al netto delle perdite di rete").map((item) => item.path === "eligibility.customerTypes" ? field(item.path, text) : item), id).contract.eligibility.customerTypes;
+assert.deepEqual(customerOf("Clienti Finali Non Domestici con utenze Altri Usi Business", "c1"), ["NON_RESIDENTIAL"]);
+assert.deepEqual(customerOf("Clienti domestici residenti e non residenti", "c2"), ["RESIDENTIAL"]);
+assert.deepEqual([...customerOf("Clienti domestici e non domestici", "c3")].sort(), ["NON_RESIDENTIAL", "RESIDENTIAL"]);
+assert.deepEqual(customerOf("Uso domestico", "c4"), ["RESIDENTIAL"]);
 console.log("CTE_BE_SMART_READING=PASS");

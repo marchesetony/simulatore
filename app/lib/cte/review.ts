@@ -189,9 +189,11 @@ function customerTypes(field: CteReviewField | undefined): readonly ("RESIDENTIA
   const values = Array.isArray(field.normalizedValue) ? field.normalizedValue : [field.normalizedValue];
   const result = values.flatMap((value) => {
     if (typeof value !== "string") return [];
-    if (/non\s+domestic/i.test(value)) return ["NON_RESIDENTIAL" as const];
-    if (/domestic/i.test(value)) return ["RESIDENTIAL" as const];
-    return [];
+    // "Clienti domestici e non domestici" admits both: each kind is read on its own (Tony, 28/10, Casa Protetta).
+    const types: ("RESIDENTIAL" | "NON_RESIDENTIAL")[] = [];
+    if (/(?<!non[\s-]{1,3})domestic|residenzial|\bconsumer\b|\bfamigli|\bprivat[io]\b/i.test(value)) types.push("RESIDENTIAL");
+    if (/non[\s-]+domestic|domestic\w*\s+e\s+non\b|altri\s+usi|\bbusiness\b|impres[ae]\b|aziend[ae]\b|\bPMI\b/i.test(value)) types.push("NON_RESIDENTIAL");
+    return types;
   });
   return result.length ? [...new Set(result)] : null;
 }

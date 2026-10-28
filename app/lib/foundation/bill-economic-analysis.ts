@@ -251,10 +251,12 @@ function withoutSummaries(items: readonly BillEconomicComponent[], total: number
 // Tony, 27/10, bolletta BPower: 171,77 - 117,65 = 54,12 quota energia, 3,81 - 1,36 = 2,45 quota fissa, 67,39 - 24,05 =
 // 43,34 quota potenza, the transport lines of the detailed bill.
 type SummaryQuota = "CONSUMPTION" | "FIXED" | "POWER";
-const summaryQuota = (item: BillEconomicComponent): SummaryQuota => { const key = keyOf(`${item.description} ${item.unit ?? ""}`); return key.includes("POTENZA") || /(^|_)KW(_|$)/.test(key) ? "POWER" : key.includes("FISS") || key.includes("MESE") || key.includes("POD") ? "FIXED" : "CONSUMPTION"; };
+const summaryQuota = (item: BillEconomicComponent): SummaryQuota => { const key = keyOf(`${item.description} ${item.unit ?? ""}`); return key.includes("POTENZA") || /(^|_)KW(_|$)/.test(key) ? "POWER" : key.includes("FISS") || key.includes("MESE") || key.includes("POD") || /(^|_)(GIORN[OI]|GG)(_|$)/.test(key) ? "FIXED" : "CONSUMPTION"; };
 const isNetworkAndSystemSummary = (item: BillEconomicComponent): boolean => /RETE_E_(GLI_)?ONERI/.test(keyOf(item.description));
+// A line priced per day (€/giorno) is the quota fissa (Tony, 28/10, BPower Casa Protetta: "di cui spesa per la rete" 8,86 € at
+// 0,328148 €/giorno).
 // A system-charge line names its quota; one that names none (a page total, an ASOS/ARIM line without quota) has none.
-const systemQuota = (item: BillEconomicComponent): SummaryQuota | null => { const key = keyOf(`${item.description} ${item.unit ?? ""}`); return key.includes("POTENZA") || /(^|_)KW(_|$)/.test(key) ? "POWER" : key.includes("FISS") || key.includes("MESE") || key.includes("POD") ? "FIXED" : /CONSUM|VARIABIL|ENERGIA|(^|_)K?WH(_|$)/.test(key) ? "CONSUMPTION" : null; };
+const systemQuota = (item: BillEconomicComponent): SummaryQuota | null => { const key = keyOf(`${item.description} ${item.unit ?? ""}`); return key.includes("POTENZA") || /(^|_)KW(_|$)/.test(key) ? "POWER" : key.includes("FISS") || key.includes("MESE") || key.includes("POD") || /(^|_)(GIORN[OI]|GG)(_|$)/.test(key) ? "FIXED" : /CONSUM|VARIABIL|ENERGIA|(^|_)K?WH(_|$)/.test(key) ? "CONSUMPTION" : null; };
 /** The bill can show the oneri twice, per quota and as one total or a list without quota (Tony, 28/10, BPower Be Smart:
  *  24,05 + 117,65 + 1,36 and again 143,06): the lines without quota that add up to the per-quota ones are the same money. */
 function systemChargeViews(items: readonly BillEconomicComponent[]): readonly BillEconomicComponent[] {
