@@ -203,7 +203,7 @@ export async function runRegulatoryRefresh(input: { readonly tenantId: string } 
     : CALCULATED_REGULATORY_DOMAINS.filter((domain) => requestedDomainKeys.has(regulatoryDomainKey(domain)));
   if (requestedDomainKeys !== null && (domains.length !== requestedDomainKeys.size || domains.length === 0)) throw new Error("REGULATORY_REFRESH_DOMAIN_ALLOWLIST_INVALID");
   let candidates: readonly RegulatoryValueRecord[] = [];
-  try { candidates = (await withBoundedRetry(() => reader.load({ tenantId: input.tenantId, retrievedAt: now }), { maxAttempts: 3, baseDelayMs: 50, maxDelayMs: 250, jitterRatio: 0, sleep: async () => undefined })).value; } catch (error) { errors.push(errorText(error)); }
+  try { candidates = (await withBoundedRetry(() => reader.load({ tenantId: input.tenantId, retrievedAt: now }), { maxAttempts: 3, baseDelayMs: 50, maxDelayMs: 250, jitterRatio: 0, sleep: async () => undefined })).value; errors.push(...(reader.lastErrors?.() ?? [])); } catch (error) { errors.push(errorText(error)); }
   for (const domain of domains) {
     try {
       const domainCandidates = recordsForDomain(domain, candidates);

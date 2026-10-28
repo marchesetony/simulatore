@@ -807,7 +807,20 @@ const julyLabelForColumn = (column: string, row: number): string => {
 
 function xlsxSheetNames(body: Uint8Array): readonly { readonly name: string; readonly path: string }[] {
   const workbook = new TextDecoder().decode(zipEntry(body, "xl/workbook.xml"));
-  return [...workbook.matchAll(/<sheet\b[^>]*\bname="([^"]+)"[^>]*\bsheetId="(\d+)"/gi)].map((match, index) => ({ name: xmlDecode(match[1]), path: `xl/worksheets/sheet${index + 1}.xml` }));
+  // Each sheet's file is named by the workbook relationships, not by its position: a month ARERA inserts at the front of
+  // the workbook gets the next file number (sheet9.xml) while it is the first tab.
+  let targets = new Map<string, string>();
+  try {
+    const rels = new TextDecoder().decode(zipEntry(body, "xl/_rels/workbook.xml.rels"));
+    targets = new Map([...rels.matchAll(/<Relationship\b[^>]*>/gi)].map((match) => [/\bId="([^"]+)"/.exec(match[0])?.[1] ?? "", /\bTarget="([^"]+)"/.exec(match[0])?.[1] ?? ""]));
+  } catch { /* no relationships part: sheets follow their position */ }
+  return [...workbook.matchAll(/<sheet\b[^>]*>/gi)].flatMap((match, index) => {
+    const name = /\bname="([^"]+)"/.exec(match[0])?.[1];
+    if (name === undefined) return [];
+    const target = targets.get(/\br:id="([^"]+)"/.exec(match[0])?.[1] ?? "");
+    const path = target ? (target.startsWith("/") ? target.slice(1) : `xl/${target.replace(/^\.\//, "")}`) : `xl/worksheets/sheet${index + 1}.xml`;
+    return [{ name: xmlDecode(name), path }];
+  });
 }
 
 export function parseAreraDomesticJuly2026Xlsx(body: Uint8Array): AreraDomesticJulyDiagnostic {
@@ -899,14 +912,17 @@ export interface AreraDomesticCdispdImport {
   readonly source: { readonly sourceReference: string; readonly officialIdentifier: string; readonly publicationDate: string; readonly retrievedAt: string; readonly sourceSha256: string };
   readonly sheetNames: readonly string[];
   readonly records: readonly RegulatoryValueRecord[];
+  /** Monthly sheets that could not be read, with the reason: the other months are still imported. */
+  readonly errors: readonly string[];
 }
 
 const italianMonths: Readonly<Record<string, number>> = Object.freeze({ gennaio: 1, febbraio: 2, marzo: 3, aprile: 4, maggio: 5, giugno: 6, luglio: 7, agosto: 8, settembre: 9, ottobre: 10, novembre: 11, dicembre: 12 });
 
 function domesticMonthInterval(sheetName: string): { readonly year: number; readonly month: number; readonly effectiveFrom: string; readonly effectiveTo: string } {
-  const match = /^(gennaio|febbraio|marzo|aprile|maggio|giugno|luglio|agosto|settembre|ottobre|novembre|dicembre)\s+(20\d{2})$/i.exec(clean(sheetName));
+  // "settembre 2026", also abbreviated ("set 2026", "Sett. 2026") or with a note after the year.
+  const match = /^(gen|feb|mar|apr|mag|giu|lug|ago|set|ott|nov|dic)[a-z]*\.?\s*(20\d{2})\b/i.exec(clean(sheetName));
   if (!match) throw new Error(`ARERA_DOMESTIC_CDISPD_SHEET_NAME_AMBIGUOUS:${sheetName}`);
-  const month = italianMonths[match[1].toLowerCase()];
+  const month = Object.entries(italianMonths).find(([name]) => name.startsWith(match[1].toLowerCase()))![1];
   const year = Number(match[2]);
   const effectiveFrom = `${String(year).padStart(4, "0")}-${String(month).padStart(2, "0")}-01`;
   const next = new Date(Date.UTC(year, month, 1));
@@ -950,13 +966,25 @@ export function parseAreraDomesticCdispdXlsx(input: { readonly body: Uint8Array;
   const tenantId = input.tenantId ?? "tenant_local-demo";
   const records: RegulatoryValueRecord[] = [];
   const years = new Set<number>();
+  const errors: string[] = [];
+  const read: string[] = [];
+  // Tony (28/10): "sono dati che si devono aggiornare in automatico". One month ARERA lays out differently is reported and
+  // skipped; it never stops the other months from being imported.
   for (const sheet of monthSheets) {
-    const interval = domesticMonthInterval(sheet.name);
+    let interval: ReturnType<typeof domesticMonthInterval>;
+    let resident: number;
+    try {
+      interval = domesticMonthInterval(sheet.name);
+      const cells = xlsxSheet(input.body, sheet.path, shared);
+      resident = domesticCdispdSheetValue(cells, sheet.name, 14);
+      const nonResident = domesticCdispdSheetValue(cells, sheet.name, 24);
+      if (Math.abs(resident - nonResident) > 1e-12) throw new Error(`ARERA_DOMESTIC_CDISPD_RESIDENCY_DIVERGENCE:${sheet.name}`);
+    } catch (error) {
+      errors.push(error instanceof Error ? error.message : `ARERA_DOMESTIC_CDISPD_SHEET_UNREADABLE:${sheet.name}`);
+      continue;
+    }
     years.add(interval.year);
-    const cells = xlsxSheet(input.body, sheet.path, shared);
-    const resident = domesticCdispdSheetValue(cells, sheet.name, 14);
-    const nonResident = domesticCdispdSheetValue(cells, sheet.name, 24);
-    if (Math.abs(resident - nonResident) > 1e-12) throw new Error(`ARERA_DOMESTIC_CDISPD_RESIDENCY_DIVERGENCE:${sheet.name}`);
+    read.push(sheet.name);
     const officialIdentifier = `ARERA_DOMESTIC_FREE_CDISPD_${interval.year}`;
     records.push(createRegulatoryValue({
       tenantId,
@@ -982,8 +1010,9 @@ export function parseAreraDomesticCdispdXlsx(input: { readonly body: Uint8Array;
       referenceDomain: "DISPATCHING",
     }));
   }
+  if (records.length === 0) throw new Error(errors[0] ?? "ARERA_DOMESTIC_CDISPD_MONTHLY_SHEETS_MISSING");
   if (years.size !== 1) throw new Error("ARERA_DOMESTIC_CDISPD_MULTIPLE_YEARS_UNSUPPORTED");
-  return { source: { sourceReference: input.sourceReference, officialIdentifier: `ARERA_DOMESTIC_FREE_CDISPD_${[...years][0]}`, publicationDate: input.publicationDate ?? records[0].publicationDate, retrievedAt: input.retrievedAt, sourceSha256 }, sheetNames: monthSheets.map((sheet) => sheet.name), records };
+  return { source: { sourceReference: input.sourceReference, officialIdentifier: `ARERA_DOMESTIC_FREE_CDISPD_${[...years][0]}`, publicationDate: input.publicationDate ?? records[0].publicationDate, retrievedAt: input.retrievedAt, sourceSha256 }, sheetNames: read, records, errors };
 }
 
 export function parseArera588Bta6Uc3Uc6TableRows(input: { readonly rows: readonly (readonly string[])[]; readonly sourceReference?: string; readonly publicationDate?: string; readonly retrievedAt: string; readonly sourceSha256: string; readonly tenantId?: string; readonly effectiveFrom?: string; readonly effectiveTo?: string | null }): readonly RegulatoryValueRecord[] {

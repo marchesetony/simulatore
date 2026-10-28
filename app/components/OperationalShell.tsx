@@ -391,7 +391,7 @@ function ProposalArchivePanel({ readonly }: { readonly: boolean }) {
   return <Card><div className="card-heading"><h3>Archivio proposte</h3><button className="button secondary" type="button" onClick={() => void load()}>Aggiorna</button></div>{error ? <ErrorState message={error} /> : null}{records.length === 0 ? <EmptyState title="Nessuna proposta archiviata" detail="Le proposte generate dal server compariranno qui." /> : records.map((record) => <div className="data-line" key={record.recordId}><span>{record.payload.proposal.proposalId} · {record.payload.proposal.selectedOffer.supplier} · {formatEuro(record.payload.proposal.commercialCost.amount)}</span><span className="button-row">{(["JSON", "CSV", "HTML", "PDF"] as const).map((format) => <button className="button compact" type="button" key={format} disabled={readonly || Boolean(pending)} onClick={() => void download(record.payload.proposal.proposalId, format)}>{pending === record.payload.proposal.proposalId + format ? "Download…" : format}</button>)}</span></div>)}</Card>;
 }
 
-type OfficialSourcesReport = { readonly checkedAt: string; readonly terna: { readonly status: "OK" | "ERROR"; readonly quarter: string; readonly title?: string; readonly url?: string; readonly publicationDate?: string; readonly offPeakEurPerMwh?: number | null; readonly peakEurPerMwh?: number | null; readonly error?: string }; readonly psv: { readonly status: "OK" | "ERROR"; readonly url: string; readonly months?: readonly { readonly month: string; readonly eurPerSmc: number; readonly eurPerMwh: number }[]; readonly error?: string } };
+type OfficialSourcesReport = { readonly checkedAt: string; readonly cdispd?: { readonly status: "OK" | "ERROR"; readonly url?: string; readonly months?: readonly { readonly month: string; readonly eurPerKwh: number }[]; readonly errors?: readonly string[]; readonly error?: string }; readonly terna: { readonly status: "OK" | "ERROR"; readonly quarter: string; readonly title?: string; readonly url?: string; readonly publicationDate?: string; readonly offPeakEurPerMwh?: number | null; readonly peakEurPerMwh?: number | null; readonly error?: string }; readonly psv: { readonly status: "OK" | "ERROR"; readonly url: string; readonly months?: readonly { readonly month: string; readonly eurPerSmc: number; readonly eurPerMwh: number }[]; readonly error?: string } };
 
 /** Lets an administrator see what the nightly refresh would read from Terna and ARERA right now. */
 function OfficialSourcesCheck() {
@@ -406,6 +406,10 @@ function OfficialSourcesCheck() {
     <DataLine label="PSV ARERA (CMEM,m)" value={report.psv.status === "OK" ? "Letto" : "Errore: " + String(report.psv.error)} />
     {(report.psv.months ?? []).map((month) => <DataLine key={month.month} label={"PSV " + month.month} value={euro(month.eurPerSmc, 6) + " €/Smc"} />)}
     <p><a href={report.psv.url} target="_blank" rel="noreferrer">Apri la tabella ARERA</a></p>
+    {report.cdispd ? <><DataLine label="CDISPD domestici ARERA" value={report.cdispd.status === "OK" ? "Letto" : "Errore: " + String(report.cdispd.error)} />
+    {(report.cdispd.months ?? []).slice(0, 4).map((month) => <DataLine key={month.month} label={"CDISPD " + month.month} value={euro(month.eurPerKwh, 6) + " €/kWh"} />)}
+    {report.cdispd.errors?.length ? <p className="quote-check open">Fogli non letti: {report.cdispd.errors.join("; ")}</p> : null}
+    {report.cdispd.url ? <p><a href={report.cdispd.url} target="_blank" rel="noreferrer">Apri il file ARERA</a></p> : null}</> : null}
   </div> : null}</Card>;
 }
 

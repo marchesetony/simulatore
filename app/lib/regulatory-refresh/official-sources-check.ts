@@ -2,11 +2,13 @@
 import { discoverTernaCorrispettiviEndpoints, importTernaCapacityQuarter, ternaQuarterFor, type TernaFetcher } from "../foundation/terna-electricity-regulatory.ts";
 // @ts-expect-error Node's strip-only test runner requires the explicit extension.
 import { ARERA_CMEM_PAGE, fetchAreraCmem, type AreraCmemFetcher } from "../market/arera-cmem-source.ts";
+// @ts-expect-error Node's strip-only test runner requires the explicit extension.
+import { fetchAreraDomesticCdispdWorkbook, parseAreraDomesticCdispdXlsx, type AreraFetcher } from "../foundation/arera-electricity-regulatory.ts";
 
 const message = (error: unknown): string => error instanceof Error ? error.message : "CHECK_FAILED";
 
 /** Reads the official sources the nightly refresh depends on and reports what it finds, without saving anything. */
-export async function checkOfficialSources(input: { readonly now?: string; readonly ternaFetcher?: TernaFetcher; readonly areraFetcher?: AreraCmemFetcher } = {}) {
+export async function checkOfficialSources(input: { readonly now?: string; readonly ternaFetcher?: TernaFetcher; readonly areraFetcher?: AreraCmemFetcher; readonly cdispdFetcher?: AreraFetcher } = {}) {
   const now = input.now ?? new Date().toISOString();
   const quarter = ternaQuarterFor(now);
   const terna = await (async () => {
@@ -23,5 +25,13 @@ export async function checkOfficialSources(input: { readonly now?: string; reado
       return { status: "OK" as const, url: ARERA_CMEM_PAGE, months: rows.slice(0, 4).map((row) => ({ month: row.month, eurPerSmc: row.eurPerSmc, eurPerMwh: row.eurPerMwh })) };
     } catch (error) { return { status: "ERROR" as const, url: ARERA_CMEM_PAGE, error: message(error) }; }
   })();
-  return { checkedAt: now, terna, psv };
+  // Households' CDISPD (dispatching + capacity, TIV comma 48.9): the months the ARERA workbook holds today and any it cannot read.
+  const cdispd = await (async () => {
+    try {
+      const workbook = await fetchAreraDomesticCdispdWorkbook(input.cdispdFetcher);
+      const imported = parseAreraDomesticCdispdXlsx({ body: workbook.bytes, sourceReference: workbook.url, retrievedAt: now, discoveryReference: workbook.discoveryUrl });
+      return { status: "OK" as const, url: workbook.url, months: [...imported.records].sort((left, right) => right.effectiveFrom.localeCompare(left.effectiveFrom)).map((record) => ({ month: record.effectiveFrom.slice(0, 7), eurPerKwh: record.normalizedValue })), errors: imported.errors };
+    } catch (error) { return { status: "ERROR" as const, error: message(error) }; }
+  })();
+  return { checkedAt: now, terna, psv, cdispd };
 }
