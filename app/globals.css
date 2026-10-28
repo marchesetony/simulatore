@@ -405,7 +405,7 @@ button:focus-visible,a:focus-visible,input:focus-visible,select:focus-visible,te
 .cte-adjustment-form label { display:grid; gap:4px; font-size:12px; font-weight:700; }
 .cte-adjustment-form small, .cte-adjustment-form .button-row { grid-column:1 / -1; }
 /* Guided quote: upload the bill, check it, pick an offer, read the receipt. */
-.nav-more { margin-top:auto; padding:10px 12px; border:1px dashed var(--line); border-radius:10px; background:transparent; color:var(--muted); font-weight:700; cursor:pointer; text-align:left; }
+.nav-more { margin-top:12px; padding:10px 12px; border:1px dashed var(--line); border-radius:10px; background:transparent; color:var(--muted); font-weight:700; cursor:pointer; text-align:left; }
 .quote-flow { max-width:960px; }
 .quote-steps { display:flex; gap:10px; margin:0; padding:0; list-style:none; flex-wrap:wrap; }
 .quote-steps li { display:flex; align-items:center; gap:8px; padding:8px 14px; border:1px solid var(--line); border-radius:999px; background:#fff; color:var(--muted); font-weight:700; font-size:14px; }

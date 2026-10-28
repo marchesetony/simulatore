@@ -24,7 +24,8 @@ import type { BillDocumentModel, CalculationModel, ComparisonModel, CteArchiveMo
 const PLATFORM_SECTIONS: readonly string[] = ["dashboard", "access", "system"];
 // Companies see only what the daily work needs; the rest stays one click away for their administrators.
 const SALES_SECTIONS: readonly string[] = ["quote", "proposals"];
-const COMPANY_ADMIN_SECTIONS: readonly string[] = ["quote", "proposals", "cte", "chain", "access"];
+// Tony (28/10): "dove trovo il tasto aggiorna?": Dati di mercato, with the refresh button, is always in a company admin's menu.
+const COMPANY_ADMIN_SECTIONS: readonly string[] = ["quote", "proposals", "cte", "market", "chain", "access"];
 type SectionId = "quote" | "dashboard" | "bills" | "cte" | "market" | "simulations" | "proposals" | "chain" | "access" | "permissions" | "system";
 type LoadState = "loading" | "ready" | "error";
 const sections: readonly { readonly id: SectionId; readonly label: string; readonly short: string }[] = [{ id: "quote", label: "Nuova simulazione", short: "N" }, { id: "dashboard", label: "Dashboard", short: "D" }, { id: "bills", label: "Bollette", short: "B" }, { id: "cte", label: "Archivio CTE", short: "C" }, { id: "market", label: "Dati di mercato", short: "M" }, { id: "simulations", label: "Simulazioni", short: "S" }, { id: "proposals", label: "Proposte", short: "P" }, { id: "chain", label: "Catena e CTE", short: "R" }, { id: "access", label: "Accessi", short: "A" }, { id: "permissions", label: "Permessi bolletta", short: "F" }, { id: "system", label: "Stato sistema", short: "Z" }];
