@@ -293,10 +293,10 @@ function withDetails(input: QuoteReceiptInput, rows: readonly QuoteReceiptRow[],
   // line: the energy line is then compared with the CTE's energy plus those charges (Tony, 27/10, bolletta BPower).
   const bundled = new Map<string, string>();
   for (const line of input.analysis?.components ?? []) {
-    if (line.includedInReconciliation !== false || !SELLER_GROUPS.has(line.group ?? "") || line.quantity !== null || line.unitPrice === null) continue;
-    if (!/\//.test(line.amount ?? "") && amountOf(line.amount) !== amountOf(line.unitPrice)) continue;
+    if (line.includedInReconciliation !== false || line.accountingRole !== "DETAIL_INCLUDED_IN_SUBTOTAL" || !SELLER_GROUPS.has(line.group ?? "") || line.quantity !== null || (line.unitPrice === null && line.amount === null)) continue;
+    if (!/\//.test(line.amount ?? "") && Math.abs(amountOf(line.amount) ?? 0) >= 1) continue;
     const key = billDetail(line);
-    if (key !== "ENERGY" && key !== "PCV" && !components.some((other) => SELLER_GROUPS.has(other.group ?? "") && billDetail(other) === key && amountOf(other.amount) !== null)) bundled.set(key, String(line.unitPrice));
+    if (key !== "ENERGY" && key !== "PCV" && !components.some((other) => SELLER_GROUPS.has(other.group ?? "") && billDetail(other) === key && amountOf(other.amount) !== null)) bundled.set(key, String(line.unitPrice ?? amountOf(line.amount)));
   }
   const sellerDetails = entries([
     ...components.filter((line) => SELLER_GROUPS.has(line.group ?? "")).flatMap((line) => { const value = amountOf(line.amount); const key = billDetail(line); return value === null ? [] : [[key, DETAIL_LABEL[key] ?? key, value, null] as const]; }),

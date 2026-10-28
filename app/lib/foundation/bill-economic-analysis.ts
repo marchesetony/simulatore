@@ -157,17 +157,20 @@ function isDuplicatedSectionSummary(component: BillEconomicComponent): boolean {
 
 // The Box dell'offerta lists the value of each element of the price formula ("Dispacciamento: 0,010501 €/kWh") with no
 // quantity: that is a unit price, not money billed (Tony, 27/10, bolletta BPower Be Smart: read as 0,01 € of dispatching).
-function unitPriceOnly(amount: string | null, quantity: string | null, unitPrice: string | null): boolean {
+function unitPriceOnly(amount: string | null, quantity: string | null, unitPrice: string | null, code: string | null = null): boolean {
   if (amount === null) return false;
   if (/(?:€|eur(?:o)?|c€|cent)\s*\/\s*(?:k?wh|kw|kvarh|mese|anno|giorno|smc|pod|pdr)/i.test(amount)) return true;
   const value = numberFrom(amount); const price = numberFrom(unitPrice);
-  return quantity === null && value !== null && price !== null && Math.abs(value) < 1 && value === price;
+  if (quantity !== null || value === null || Math.abs(value) >= 1) return false;
+  // Also when the reading rounded the unit price to cents (0,010501 read as 0,01 €; Tony, 28/10), or kept only that.
+  if (price !== null) return Math.abs(value - price) < 0.005;
+  return code !== null && /^(?:ENERGY_PRICE(?:_F\d)?|SPREAD|DISPATCHING|CAPACITY_MARKET|COMMERCIALIZATION|IMBALANCE)$/.test(code);
 }
 
 export function normalizeBillEconomicComponent(input: BillEconomicComponentInput): BillEconomicComponent {
   const description = text(input.description ?? input.rawDescription); const quantity = text(input.quantity ?? input.rawQuantity) || null; const unit = text(input.unit ?? input.rawUnit) || null; const unitPrice = text(input.unitPrice ?? input.rawUnitPrice) || null; const amount = text(input.amount ?? input.rawAmount) || null; const period = text(input.period ?? input.rawPeriod) || null;
   const rawDescription = text(input.rawDescription ?? description); const rawValue = text(input.rawValue ?? input.value ?? input.amount ?? input.unitPrice ?? ""); const rawUnit = text(input.rawUnit ?? unit); const rawQuantity = text(input.rawQuantity ?? quantity); const rawUnitPrice = text(input.rawUnitPrice ?? unitPrice); const rawAmount = text(input.rawAmount ?? amount); const rawPeriod = text(input.rawPeriod ?? period);
-  const code = text(input.code) || "UNCLASSIFIED_BILL_CHARGE"; const key = keyOf(description); const classification = classifyBillEconomicComponent(code, description); const role = unitPriceOnly(amount, quantity, unitPrice) ? "DETAIL_INCLUDED_IN_SUBTOTAL" : accountingRole(classification, description);
+  const code = text(input.code) || "UNCLASSIFIED_BILL_CHARGE"; const key = keyOf(description); const classification = classifyBillEconomicComponent(code, description); const role = unitPriceOnly(amount, quantity, unitPrice, text(input.code) || null) ? "DETAIL_INCLUDED_IN_SUBTOTAL" : accountingRole(classification, description);
   const normalizedCode = code !== "UNCLASSIFIED_BILL_CHARGE" ? code : key.includes("TOTALE_VENDITA") ? "TOTAL_SELLER_ENERGY" : key.includes("TOTALE_TARIFFA") ? "TOTAL_NETWORK_TARIFF" : key.includes("TOTALE_ONERI") ? "TOTAL_SYSTEM_CHARGES" : key === "TOTALE_IMPOSTE" ? "TAX_SUBTOTAL" : key === "TOTALE_FORNITURA" ? "TOTAL_SUPPLY" : key === "TOTALE_BOLLETTA" ? "BILL_TOTAL" : key === "TOTALE_DA_PAGARE" ? "AMOUNT_DUE" : code;
   return { lineId: "", code, normalizedCode, classification, group: groupOf(classification), accountingRole: role, includedInReconciliation: role === "ATOMIC", aggregate: role !== "ATOMIC" && role !== "PRIOR_BALANCE", atomic: role === "ATOMIC", parentComponent: null, childComponents: [], description: description || rawDescription || "Voce economica non descritta", quantity, unitPrice, unit, amount, period, rawDescription, rawValue, rawUnit, rawQuantity, rawUnitPrice, rawAmount, rawPeriod, documentEvidence: text(input.documentEvidence ?? rawDescription), calculationCheck: calculationCheck({ quantity: rawQuantity, unitPrice: rawUnitPrice, unit: rawUnit, amount: rawAmount }), status: text(input.status) || "FOUND" };
 }
@@ -234,20 +237,32 @@ function withoutSummaries(items: readonly BillEconomicComponent[], total: number
 type SummaryQuota = "CONSUMPTION" | "FIXED" | "POWER";
 const summaryQuota = (item: BillEconomicComponent): SummaryQuota => { const key = keyOf(`${item.description} ${item.unit ?? ""}`); return key.includes("POTENZA") || /(^|_)KW(_|$)/.test(key) ? "POWER" : key.includes("FISS") || key.includes("MESE") || key.includes("POD") ? "FIXED" : "CONSUMPTION"; };
 const isNetworkAndSystemSummary = (item: BillEconomicComponent): boolean => /RETE_E_(GLI_)?ONERI/.test(keyOf(item.description));
+// A system-charge line names its quota; one that names none (a page total, an ASOS/ARIM line without quota) has none.
+const systemQuota = (item: BillEconomicComponent): SummaryQuota | null => { const key = keyOf(`${item.description} ${item.unit ?? ""}`); return key.includes("POTENZA") || /(^|_)KW(_|$)/.test(key) ? "POWER" : key.includes("FISS") || key.includes("MESE") || key.includes("POD") ? "FIXED" : /CONSUM|VARIABIL|ENERGIA|(^|_)K?WH(_|$)/.test(key) ? "CONSUMPTION" : null; };
+/** The bill can show the oneri twice, per quota and as one total or a list without quota (Tony, 28/10, BPower Be Smart:
+ *  24,05 + 117,65 + 1,36 and again 143,06): the lines without quota that add up to the per-quota ones are the same money. */
+function systemChargeViews(items: readonly BillEconomicComponent[]): readonly BillEconomicComponent[] {
+  const live = (item: BillEconomicComponent) => item.includedInReconciliation && numberFrom(item.amount) !== null && item.classification === "ARERA_SYSTEM_CHARGES" && !isNetworkAndSystemSummary(item);
+  const total = (list: readonly BillEconomicComponent[]) => round(list.reduce((sum, item) => sum + (numberFrom(item.amount) ?? 0), 0));
+  const tagged = items.filter((item) => live(item) && systemQuota(item) !== null); const untagged = items.filter((item) => live(item) && systemQuota(item) === null);
+  if (!tagged.length || !untagged.length || Math.abs(total(tagged) - total(untagged)) > 0.02) return items;
+  const duplicate = new Set(untagged.map((item) => item.lineId));
+  return items.map((item) => duplicate.has(item.lineId) ? { ...item, accountingRole: "DETAIL_INCLUDED_IN_SUBTOTAL", includedInReconciliation: false, atomic: false, aggregate: true } : item);
+}
 function networkFromSummary(items: readonly BillEconomicComponent[]): readonly BillEconomicComponent[] {
   const live = (item: BillEconomicComponent) => item.includedInReconciliation && numberFrom(item.amount) !== null;
   const summaries = items.filter((item) => live(item) && isNetworkAndSystemSummary(item));
-  const system = items.filter((item) => live(item) && item.classification === "ARERA_SYSTEM_CHARGES" && !isNetworkAndSystemSummary(item));
+  const system = items.filter((item) => live(item) && item.classification === "ARERA_SYSTEM_CHARGES" && !isNetworkAndSystemSummary(item) && systemQuota(item) !== null);
   if (!summaries.length || !system.length) return items;
   const replaced = new Map<string, BillEconomicComponent>();
   for (const quota of ["CONSUMPTION", "FIXED", "POWER"] as const) {
     if (items.some((item) => live(item) && item.classification === "ARERA_NETWORK" && !isNetworkAndSystemSummary(item) && summaryQuota(item) === quota)) continue;
     const [first, ...copies] = summaries.filter((item) => summaryQuota(item) === quota);
     if (!first) continue;
-    const systemQuota = round(system.filter((item) => summaryQuota(item) === quota).reduce((total, item) => total + (numberFrom(item.amount) ?? 0), 0));
-    const network = round((numberFrom(first.amount) ?? 0) - systemQuota);
+    const systemAmount = round(system.filter((item) => systemQuota(item) === quota).reduce((total, item) => total + (numberFrom(item.amount) ?? 0), 0));
+    const network = round((numberFrom(first.amount) ?? 0) - systemAmount);
     const label = quota === "CONSUMPTION" ? "quota energia" : quota === "FIXED" ? "quota fissa" : "quota potenza";
-    replaced.set(first.lineId, { ...first, code: "NETWORK_FROM_SUMMARY", normalizedCode: "NETWORK_FROM_SUMMARY", classification: "ARERA_NETWORK", group: "REGULATED_NETWORK", accountingRole: "ATOMIC", atomic: true, aggregate: false, amount: network.toFixed(2).replace(".", ","), quantity: null, unitPrice: null, calculationCheck: "NOT_CHECKABLE", description: `Trasporto e gestione del contatore, ${label}: rete e oneri del quadro sintetico ${numberFrom(first.amount)?.toFixed(2).replace(".", ",")} € meno oneri di sistema ${systemQuota.toFixed(2).replace(".", ",")} €` });
+    replaced.set(first.lineId, { ...first, code: "NETWORK_FROM_SUMMARY", normalizedCode: "NETWORK_FROM_SUMMARY", classification: "ARERA_NETWORK", group: "REGULATED_NETWORK", accountingRole: "ATOMIC", atomic: true, aggregate: false, amount: network.toFixed(2).replace(".", ","), quantity: null, unitPrice: null, calculationCheck: "NOT_CHECKABLE", description: `Trasporto e gestione del contatore, ${label}: rete e oneri del quadro sintetico ${numberFrom(first.amount)?.toFixed(2).replace(".", ",")} € meno oneri di sistema ${systemAmount.toFixed(2).replace(".", ",")} €` });
     for (const copy of copies) replaced.set(copy.lineId, { ...copy, accountingRole: "DETAIL_INCLUDED_IN_SUBTOTAL", includedInReconciliation: false, atomic: false });
   }
   return items.map((item) => replaced.get(item.lineId) ?? item);
@@ -292,7 +307,7 @@ export function buildCurrentBillEconomicAnalysis(inputs: readonly BillEconomicCo
   if (hasExpandedAtomicBreakdown) components = components.map((item) => isDuplicatedSectionSummary(item) ? { ...item, accountingRole: "DETAIL_INCLUDED_IN_SUBTOTAL", includedInReconciliation: false } : item);
   const periodStart = options.billingPeriodStart ? isoDates(options.billingPeriodStart)[0] ?? options.billingPeriodStart.slice(0, 10) : null;
   if (periodStart) components = components.map((item) => { const end = isoDates(item.period ?? item.rawPeriod).at(-1); return end !== undefined && end < periodStart && item.group !== "TAX" ? asRecalculation(item) : item; });
-  components = networkFromSummary(components);
+  components = networkFromSummary(systemChargeViews(components));
   components = withoutSummaries(components, numberFrom(options.sourceBillTotal ?? billTotal) ?? numberFrom(components.find((i) => i.classification === "BILL_TOTAL")?.amount));
   const seller = { ENERGY_PRICE: components.filter((i) => i.group === "ENERGY_PRICE"), COMMERCIALIZATION: components.filter((i) => i.group === "COMMERCIALIZATION"), DISPATCHING_OR_PASS_THROUGH: components.filter((i) => i.group === "DISPATCHING_OR_PASS_THROUGH"), CAPACITY_MARKET: components.filter((i) => i.group === "CAPACITY_MARKET"), OTHER_SELLER_CHARGES: components.filter((i) => i.group === "OTHER_SELLER_CHARGES") } as const;
   const regulatedAndSystemCosts = { ARERA_NETWORK: components.filter((i) => i.group === "REGULATED_NETWORK"), ARERA_SYSTEM_CHARGES: components.filter((i) => i.group === "SYSTEM_CHARGES"), TERNA_DISPATCHING_REFERENCES: components.filter((i) => i.classification === "TERNA_DISPATCHING_REFERENCES"), GME_MARKET_REFERENCE: components.filter((i) => i.classification === "GME_MARKET_REFERENCE") } as const;

@@ -95,4 +95,26 @@ assert.match(details.LOSSES.currentNote, /compreso nel prezzo energia/);
 assert.match(details.ENERGY.label, /comprende anche/);
 assert.equal(details.ENERGY.difference, Math.round((774.31 + 77.43 + 40.56 + 28.97 + 7.02 + 17.56 - 963.56) * 100) / 100);
 assert.equal(receipt.rows.find((row) => row.key === "NETWORK").current, 99.91);
+
+// Tony (28/10): "come fa ad essere diversa se la fattura ... è stata emessa con le caratteristiche della cte selezionata?".
+// The stored reading of the same bill had the Box prices rounded to cents (0,01 € of dispatching, 0,21 € of F1) and the
+// oneri both per quota and as one 143,06 € total: the receipt showed 964,20 € of energy and -88,94 € of transport.
+const rounded = summaryBill.filter((item) => !/^Componente/.test(item.description) && !/ENERGY_PRICE|SPREAD|DISPATCHING|CAPACITY_MARKET|COMMERCIALIZATION|IMBALANCE/.test(item.code ?? "")).concat([
+  line("Energia Attiva F1", "0,21 €", null, "0,206350", "ENERGY_PRICE_F1"), line("Energia Attiva F2", "0,23 €", null, "0,227576", "ENERGY_PRICE_F2"), line("Energia Attiva F3", "0,20 €", null, "0,197024", "ENERGY_PRICE_F3"),
+  line("Dispacciamento", "0,01 €", null, null, "DISPATCHING"), line("Corrispettivo mercato capacità", "0,01 €", null, null, "CAPACITY_MARKET"), line("Sbilanciamento", "0,01 €", null, "0,005540", "IMBALANCE"),
+  line("Oneri di sistema quota potenza", "24,05 €", null, null, "SYSTEM_CHARGES"), line("Oneri di sistema quota energia", "117,65 €", null, null, "SYSTEM_CHARGES"), line("Oneri di sistema quota fissa", "1,36 €", null, null, "SYSTEM_CHARGES"),
+  line("Spesa per oneri di sistema", "143,06 €", null, null, "SYSTEM_CHARGES"),
+]);
+const stored = buildCurrentBillEconomicAnalysis(rounded, "1.546,10", { billingPeriodStart: "2026-09-01" });
+assert.equal(stored.totals.reconciliationStatus, "RECONCILED", `difference ${stored.totals.reconciliationDifference}`);
+assert.equal(stored.totals.sellerEnergyTotal, 963.56);
+assert.equal(stored.totals.sellerOtherTotal, null);
+assert.equal(stored.totals.systemChargesTotal, 143.06);
+assert.equal(stored.totals.regulatedNetworkTotal, 99.91);
+const storedReceipt = buildQuoteReceipt({ vector: "EE", offerSupplyCost: 960.85, analysis: stored, domestic: false, validUntil: null, offerComponents: offer });
+assert.equal(storedReceipt.rows.find((row) => row.key === "ENERGY").current, 978.56);
+const storedDetails = Object.fromEntries(storedReceipt.rows.find((row) => row.key === "ENERGY").details.map((item) => [item.key, item]));
+assert.equal(storedDetails.DISPATCHING.current, null); assert.match(storedDetails.DISPATCHING.currentNote, /compreso nel prezzo energia/);
+assert.equal(storedReceipt.rows.find((row) => row.key === "NETWORK").current, 99.91);
+assert.equal(storedReceipt.rows.find((row) => row.key === "SYSTEM").current, 143.06);
 console.log("BPOWER_BE_SMART_BILL=PASS");
