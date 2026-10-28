@@ -296,10 +296,10 @@ function withDetails(input: QuoteReceiptInput, rows: readonly QuoteReceiptRow[],
   // line: the energy line is then compared with the CTE's energy plus those charges (Tony, 27/10, bolletta BPower).
   const bundled = new Map<string, string>();
   for (const line of input.analysis?.components ?? []) {
-    if (line.includedInReconciliation !== false || line.accountingRole !== "DETAIL_INCLUDED_IN_SUBTOTAL" || !SELLER_GROUPS.has(line.group ?? "") || line.quantity !== null || (line.unitPrice === null && line.amount === null)) continue;
+    if (line.includedInReconciliation !== false || line.accountingRole !== "DETAIL_INCLUDED_IN_SUBTOTAL" || !SELLER_GROUPS.has(line.group ?? "") || (line.unitPrice === null && line.amount === null)) continue;
     if (!/\//.test(line.amount ?? "") && Math.abs(amountOf(line.amount) ?? 0) >= 1) continue;
     const key = billDetail(line);
-    if (key !== "ENERGY" && key !== "PCV" && !components.some((other) => SELLER_GROUPS.has(other.group ?? "") && billDetail(other) === key && amountOf(other.amount) !== null)) bundled.set(key, String(line.unitPrice ?? amountOf(line.amount)));
+    if (key !== "ENERGY" && key !== "PCV" && !components.some((other) => SELLER_GROUPS.has(other.group ?? "") && billDetail(other) === key && amountOf(other.amount) !== null)) bundled.set(key, line.unitPrice ?? (/[.,]\d{4,}/.test(line.amount ?? "") ? String(amountOf(line.amount)) : ""));
   }
   const sellerDetails = entries([
     ...components.filter((line) => SELLER_GROUPS.has(line.group ?? "")).flatMap((line) => { const value = amountOf(line.amount); const key = billDetail(line); return value === null ? [] : [[key, DETAIL_LABEL[key] ?? key, value, null] as const]; }),
@@ -312,7 +312,7 @@ function withDetails(input: QuoteReceiptInput, rows: readonly QuoteReceiptRow[],
   const bundledOffer = sellerDetails.filter(inEnergy).reduce((total, item) => total + (item.offer ?? 0), 0);
   const bundledNames = sellerDetails.filter(inEnergy).map((item) => item.label.replace(/ \(.*\)$/, "").toLowerCase());
   const seller: readonly QuoteReceiptDetail[] = bundled.size === 0 ? sellerDetails : sellerDetails.map((item) => {
-    if (inEnergy(item)) return { ...item, difference: null, currentNote: `compreso nel prezzo energia della bolletta${bundled.has(item.key) ? ` (${bundled.get(item.key)} €/kWh)` : ""}` };
+    if (inEnergy(item)) return { ...item, difference: null, currentNote: `compreso nel prezzo energia della bolletta${bundled.get(item.key) ? ` (${bundled.get(item.key)} €/kWh)` : ""}` };
     if (item.key !== "ENERGY" || item.current === null || item.missingReason) return item;
     return { ...item, label: `${item.label}, in bolletta comprende anche ${bundledNames.join(", ")}`, difference: hasBill && !sellerDetails.some((other) => inEnergy(other) && other.missingReason) ? cents((item.offer ?? 0) + bundledOffer - item.current) : null };
   });

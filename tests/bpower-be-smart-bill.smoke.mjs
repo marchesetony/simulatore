@@ -137,4 +137,20 @@ const archivedReceipt = buildQuoteReceipt({ vector: "EE", offerSupplyCost: 960.8
 const archivedDetails = Object.fromEntries(archivedReceipt.rows.find((row) => row.key === "ENERGY").details.map((item) => [item.key, item]));
 for (const key of ["DISPATCHING", "CAPACITY_MARKET"]) if (archivedDetails[key]) assert.equal(archivedDetails[key].current, null, key);
 assert.equal(archivedReceipt.rows.find((row) => row.key === "ENERGY").current, 978.56);
+// Tony (28/10, fb5aede, screenshot): still 964,20 € of energy and 0,01 € of dispatching, capacity and imbalance. The archived
+// Box lines also carry the kWh of the period (and sometimes the unit price): a few cents on 3.863 kWh is the price itself.
+const withKwh = rounded.filter((item) => !/ENERGY_PRICE|DISPATCHING|CAPACITY_MARKET|IMBALANCE/.test(item.code ?? "")).concat([
+  { ...unitLine("Energia Attiva F1", "0,21", "kWh", "PUN_F1", "0,206350"), quantity: "1.290 kWh" }, { ...unitLine("Energia Attiva F2", "0,23", "kWh", "PUN_F2"), quantity: "1.020" }, { ...unitLine("Energia Attiva F3", "0,20", "kWh", "PUN_F3"), quantity: "1.202 kWh" },
+  { ...unitLine("Dispacciamento", "0,01", "kWh", "DISPATCHING_SELLER_CHARGE", "0,010501"), quantity: "3.863 kWh" }, { ...unitLine("Corrispettivo mercato capacità", "0,01", "€", "UNKNOWN"), quantity: "3.863" }, { ...unitLine("Sbilanciamento", "0,01", "kWh", "BALANCING_CHARGE"), quantity: "3.863 kWh" },
+]);
+const withKwhAnalysis = buildCurrentBillEconomicAnalysis(withKwh, "1.546,10", { billingPeriodStart: "2026-09-01" });
+assert.equal(withKwhAnalysis.totals.sellerEnergyTotal, 963.56);
+assert.equal(withKwhAnalysis.totals.reconciliationStatus, "RECONCILED", `difference ${withKwhAnalysis.totals.reconciliationDifference}`);
+const withKwhReceipt = buildQuoteReceipt({ vector: "EE", offerSupplyCost: 960.85, analysis: withKwhAnalysis, domestic: false, validUntil: null, offerComponents: offer });
+const withKwhDetails = Object.fromEntries(withKwhReceipt.rows.find((row) => row.key === "ENERGY").details.map((item) => [item.key, item]));
+assert.equal(withKwhDetails.ENERGY.current, 963.56);
+for (const key of ["DISPATCHING", "CAPACITY_MARKET", "IMBALANCE", "LOSSES", "COMMERCIALIZATION"]) if (withKwhDetails[key]) { assert.equal(withKwhDetails[key].current, null, key); assert.match(withKwhDetails[key].currentNote ?? "", /compreso nel prezzo energia/, key); }
+// A real small charge on few kWh stays billed.
+assert.equal(buildCurrentBillEconomicAnalysis([line("Dispacciamento", "0,40 €", "5 kWh", "0,08", "DISPATCHING")], null).components[0].accountingRole, "ATOMIC");
+assert.doesNotMatch(withKwhDetails.IMBALANCE.currentNote, /0\.01/, "a price rounded to cents is not shown as the unit price");
 console.log("BPOWER_BE_SMART_BILL=PASS");
