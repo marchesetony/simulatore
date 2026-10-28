@@ -6,6 +6,8 @@ import type { RegulatoryCustomerScope, RegulatoryValueComponentCode, RegulatoryV
 import { referenceDomainForComponent } from "./regulatory-domains.ts";
 // @ts-expect-error Node's strip-only test runner requires the explicit extension.
 import { checksumFor } from "./regulatory-validation.ts";
+// @ts-expect-error Node's strip-only test runner requires the explicit extension.
+import { pdfCompactText } from "../regulatory-refresh/pdf-text.ts";
 
 export const ARERA_ALLOWED_HOSTS = new Set(["arera.it", "www.arera.it"]);
 export const TERNA_ALLOWED_HOSTS = new Set(["terna.it", "www.terna.it", "dati.terna.it"]);
@@ -672,6 +674,16 @@ export function parseArera588DomesticAsosArimXlsx(input: {
   });
 }
 
+/** Whether a decision's text says the values of `previous` are confirmed ("... della deliberazione 227/2026/R/com, sono confermati"). */
+async function decisionConfirms(html: string, previous: string, fetcher: AreraFetcher): Promise<boolean> {
+  const text = discoverAreraAttachments(html).find((item) => item.extension === "PDF" && /-R-com\.pdf$/i.test(item.url)) ?? discoverAreraAttachments(html).find((item) => item.extension === "PDF");
+  if (!text) return false;
+  try {
+    const compact = pdfCompactText((await fetchOfficialAreraSource(text.url, fetcher)).bytes).text;
+    return /sonoconfermat/i.test(compact) && compact.includes(previous.replace(/\s+/g, ""));
+  } catch { return false; }
+}
+
 /** The decisions an ARERA tariff page lists with their start ("dal 01.10.26: delibera 343/2026/R/com"), newest first, up to `retrievedAt`. */
 export function discoverAreraSystemChargeDecisions(html: string, retrievedAt: string, baseUrl: string = ARERA_SYSTEM_CHARGES_PAGE): readonly { readonly url: string; readonly identifier: string; readonly effectiveFrom: string }[] {
   const at = Date.parse(retrievedAt);
@@ -1173,7 +1185,7 @@ export class AreraElectricityRegulatorySourceAdapter {
     this.options = options;
   }
 
-  async importOfficial(input: { readonly retrievedAt: string }): Promise<{ readonly skippedDecisions: readonly string[]; readonly infrastructure: AreraInfrastructureImport; readonly systemChargeRecords: readonly RegulatoryValueRecord[]; readonly attachment: AreraAttachment | null; readonly attachments: readonly AreraAttachment[]; readonly missingComponentCodes: readonly ("UC3" | "UC6")[]; readonly structuredParse: "PARSED" | "BLOCKED" | "MISSING"; readonly actions: readonly string[]; readonly backup: Awaited<ReturnType<typeof backupRegulatoryArchive>> | null; readonly documentCount: number; readonly documentsInspected: readonly string[]; readonly uc3SourceStrategy: "DIRECT_227" | "OFFICIAL_CARRY_FORWARD" | "UNRESOLVED"; readonly uc6SourceStrategy: "DIRECT_227" | "OFFICIAL_CARRY_FORWARD" | "UNRESOLVED"; readonly uc3PriorSourceIdentifier: string | null; readonly uc6PriorSourceIdentifier: string | null }> {
+  async importOfficial(input: { readonly retrievedAt: string }): Promise<{ readonly skippedDecisions: readonly string[]; readonly confirmingDecisions: readonly string[]; readonly infrastructure: AreraInfrastructureImport; readonly systemChargeRecords: readonly RegulatoryValueRecord[]; readonly attachment: AreraAttachment | null; readonly attachments: readonly AreraAttachment[]; readonly missingComponentCodes: readonly ("UC3" | "UC6")[]; readonly structuredParse: "PARSED" | "BLOCKED" | "MISSING"; readonly actions: readonly string[]; readonly backup: Awaited<ReturnType<typeof backupRegulatoryArchive>> | null; readonly documentCount: number; readonly documentsInspected: readonly string[]; readonly uc3SourceStrategy: "DIRECT_227" | "OFFICIAL_CARRY_FORWARD" | "UNRESOLVED"; readonly uc6SourceStrategy: "DIRECT_227" | "OFFICIAL_CARRY_FORWARD" | "UNRESOLVED"; readonly uc3PriorSourceIdentifier: string | null; readonly uc6PriorSourceIdentifier: string | null }> {
     const fetcher = this.options.fetcher ?? (fetch as unknown as AreraFetcher);
     const tenantId = this.options.tenantId ?? "tenant_local-demo";
     const infrastructurePayload = await fetchOfficialAreraSource(ARERA_575_PAGE, fetcher);
@@ -1214,19 +1226,30 @@ export class AreraElectricityRegulatorySourceAdapter {
       return { attachments, structuredAttachments, attachment, systemChargeRecords, structuredParse };
     };
     const skippedDecisions: string[] = [];
+    const confirmingDecisions: string[] = [];
+    const unread: { readonly identifier: string; readonly html: string | null; readonly error: string }[] = [];
     let decision: Awaited<ReturnType<typeof readDecision>> | null = null;
     // The newest decision first; one whose tables cannot be read is reported and the previous one, still official, is used.
     for (const candidate of decisions) {
+      let html: string | null = null;
       try {
         const page = await fetchOfficialAreraSource(candidate.url, fetcher);
-        const read = await readDecision(new TextDecoder().decode(page.bytes), candidate.effectiveFrom, candidate.identifier);
+        html = new TextDecoder().decode(page.bytes);
+        const read = await readDecision(html, candidate.effectiveFrom, candidate.identifier);
         if (read.systemChargeRecords.length === 0) throw new Error("ARERA_DECISION_TABLES_UNREADABLE");
         decision = read;
+        // A newer decision that only confirms this one's values is not an error: 343/2026 (dal 1° ottobre 2026) states that
+        // the values of 227/2026 and 588/2025 "sono confermati" and has no electricity tables of its own (Tony, 28/10).
+        for (const newer of unread) {
+          const confirms = newer.html !== null && await decisionConfirms(newer.html, candidate.identifier, fetcher);
+          if (confirms) confirmingDecisions.push(newer.identifier); else skippedDecisions.push(`${newer.identifier}:${newer.error}`);
+        }
         break;
       } catch (error) {
-        skippedDecisions.push(`${candidate.identifier}:${error instanceof Error ? error.message : "ARERA_DECISION_UNREADABLE"}`);
+        unread.push({ identifier: candidate.identifier, html, error: error instanceof Error ? error.message : "ARERA_DECISION_UNREADABLE" });
       }
     }
+    if (decision === null) unread.forEach((item) => skippedDecisions.push(`${item.identifier}:${item.error}`));
     if (decision === null) {
       if (decisions.length > 0) throw new Error(skippedDecisions[0]);
       let currentEffectiveFrom: string | undefined;
@@ -1271,6 +1294,6 @@ export class AreraElectricityRegulatorySourceAdapter {
     const backup = allRecords.length && this.options.regulatoryRoot ? await backupRegulatoryArchive(this.options.regulatoryRoot) : null;
     const actions: string[] = [];
     for (const record of allRecords) actions.push(await this.repository.saveRegulatoryValue(record));
-    return { skippedDecisions, infrastructure, systemChargeRecords, attachment, attachments, missingComponentCodes, structuredParse, actions, backup, documentCount: attachments.length, documentsInspected: [...new Set([...attachments.map((item) => item.url), ...documentsInspected])], uc3SourceStrategy, uc6SourceStrategy, uc3PriorSourceIdentifier: uc3SourceStrategy === "OFFICIAL_CARRY_FORWARD" ? ARERA_588_IDENTIFIER : null, uc6PriorSourceIdentifier: uc6SourceStrategy === "OFFICIAL_CARRY_FORWARD" ? ARERA_588_IDENTIFIER : null };
+    return { skippedDecisions, confirmingDecisions, infrastructure, systemChargeRecords, attachment, attachments, missingComponentCodes, structuredParse, actions, backup, documentCount: attachments.length, documentsInspected: [...new Set([...attachments.map((item) => item.url), ...documentsInspected])], uc3SourceStrategy, uc6SourceStrategy, uc3PriorSourceIdentifier: uc3SourceStrategy === "OFFICIAL_CARRY_FORWARD" ? ARERA_588_IDENTIFIER : null, uc6PriorSourceIdentifier: uc6SourceStrategy === "OFFICIAL_CARRY_FORWARD" ? ARERA_588_IDENTIFIER : null };
   }
 }

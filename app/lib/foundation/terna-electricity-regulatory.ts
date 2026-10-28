@@ -217,7 +217,10 @@ export async function importTernaCapacityQuarter(input: { readonly tenantId: str
 /** The total TIDE dispatching charge (c€/kWh) of Terna's quarterly document: it is the sum of the published elements
  *  (uplift, unità essenziali, modulazione, ...), so it is the largest of the values printed with seven decimals. */
 export function extractTernaTideTotal(text: string): number {
-  const values = [...text.matchAll(/(?<![\d.,])(-?\d{1,2}[.,]\d{7})(?![\d])/g)].map((match) => Number(match[1].replace(",", "."))).filter((value) => Number.isFinite(value));
+  const printed = (decimals: number) => [...text.matchAll(new RegExp(`(?<![\\d.,])(-?\\d{1,2}[.,]\\d{${decimals}})(?![\\d])`, "g"))].map((match) => Number(match[1].replace(",", "."))).filter((value) => Number.isFinite(value));
+  // Terna prints the elements with seven decimals; a quarter printed with six or eight is read the same way (2026Q4 was
+  // not found, Tony 28/10).
+  const values = [7, 6, 8].map(printed).find((found) => found.length >= 2) ?? [];
   if (values.length < 2) throw new Error("TERNA_TIDE_VALUE_NOT_FOUND");
   const total = Math.max(...values);
   if (!(total > 0 && total < 10)) throw new Error("TERNA_TIDE_VALUE_IMPLAUSIBLE");

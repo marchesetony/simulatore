@@ -1,10 +1,9 @@
 import { createHash } from "node:crypto";
-import { inflateSync } from "fflate";
 import type { RegulatoryValueRecord } from "../foundation/regulatory-types.ts";
 // @ts-expect-error Node's strip-only test runner requires the explicit extension.
 import { createRegulatoryValue, fetchOfficialAreraSource, type AreraFetcher } from "../foundation/arera-electricity-regulatory.ts";
 // @ts-expect-error Node's strip-only test runner requires the explicit extension.
-import { documentTextItems } from "../ingestion/document-numeric-evidence.ts";
+import { expandPdfObjectStreams, pdfCompactText } from "./pdf-text.ts";
 // @ts-expect-error Node's strip-only test runner requires the explicit extension.
 import { applyRegulatoryRefreshCandidate, type RegulatoryRefreshDependencies } from "./service.ts";
 // @ts-expect-error Node's strip-only test runner requires the explicit extension.
@@ -14,6 +13,8 @@ import { ARERA_CAPACITY_DOMAIN } from "./registry.ts";
 // capacità for BT up to 55 kW month by month in the quarterly TIV updates (art. 4.1: "a) 0,3197 c€/kWh per il mese di
 // settembre 2026"). The refresh reads the resolutions the TIV page cites, takes art. 4.1 from each resolution's PDF and
 // stores one approved value per month, so a new quarter lands on its own as soon as ARERA publishes it.
+
+export { expandPdfObjectStreams, pdfCompactText };
 
 export const ARERA_TIV_PAGE = "https://www.arera.it/atti-e-provvedimenti/dettaglio/23/362-23";
 const MONTHS = ["gennaio", "febbraio", "marzo", "aprile", "maggio", "giugno", "luglio", "agosto", "settembre", "ottobre", "novembre", "dicembre"] as const;
@@ -36,39 +37,6 @@ export function discoverTivResolutions(html: string, now: string): readonly Arer
     .sort((left, right) => right.year - left.year || right.number - left.number).slice(0, MAX_RESOLUTIONS);
 }
 
-const latin1 = (bytes: Uint8Array): string => Buffer.from(bytes).toString("latin1");
-
-/** Copies the objects packed in PDF object streams out as plain objects, so the text-layer reader finds pages and fonts. */
-export function expandPdfObjectStreams(bytes: Uint8Array): Uint8Array {
-  const pdf = latin1(bytes);
-  const extra: string[] = [];
-  for (const match of pdf.matchAll(/(\d+)\s+0\s+obj\b([\s\S]*?)stream\r?\n/g)) {
-    const dictionary = match[2];
-    if (!/\/Type\s*\/ObjStm\b/.test(dictionary) || !/\/FlateDecode\b/.test(dictionary)) continue;
-    const start = (match.index ?? 0) + match[0].length;
-    const length = Number(dictionary.match(/\/Length\s+(\d+)(?!\s+\d+\s+R)/)?.[1] ?? NaN);
-    const end = Number.isFinite(length) ? start + length : pdf.indexOf("endstream", start);
-    if (end <= start) continue;
-    let content: string;
-    try { content = latin1(inflateSync(bytes.subarray(start + 2, end))); } catch { continue; }
-    const count = Number(dictionary.match(/\/N\s+(\d+)/)?.[1] ?? 0); const first = Number(dictionary.match(/\/First\s+(\d+)/)?.[1] ?? 0);
-    const header = content.slice(0, first).trim().split(/\s+/).map(Number);
-    for (let index = 0; index < count && index * 2 + 1 < header.length; index += 1) {
-      const id = header[index * 2]; const offset = header[index * 2 + 1];
-      const next = index + 1 < count ? header[(index + 1) * 2 + 1] : content.length - first;
-      extra.push(`\n${id} 0 obj\n${content.slice(first + offset, first + next)}\nendobj\n`);
-    }
-  }
-  if (extra.length === 0) return bytes;
-  return new Uint8Array([...bytes, ...Buffer.from(extra.join(""), "latin1")]);
-}
-
-/** The text of the PDF's text layer in stream order, with every whitespace removed (words can be split across items). */
-export function pdfCompactText(bytes: Uint8Array): { readonly text: string; readonly sourceSha256: string } {
-  const result = documentTextItems(expandPdfObjectStreams(bytes));
-  return { text: result.items.map((item) => item.text).join("").replace(/\s+/g, ""), sourceSha256: createHash("sha256").update(bytes).digest("hex") };
-}
-
 const decimal = (value: string): number => Number(value.replace(/\./g, "").replace(",", "."));
 
 /** Art. 4.1 of a quarterly TIV update: one value in c€/kWh per month, net of losses. Empty when the resolution has none. */
@@ -76,9 +44,11 @@ export function parseAreraCapacityText(compact: string): { readonly publicationD
   const date = compact.match(/DELIBERAZIONE(\d{1,2})([A-Za-z]+)(20\d{2})/i);
   const dateMonth = date ? MONTHS.indexOf(date[2].toLowerCase() as typeof MONTHS[number]) : -1;
   const publicationDate = date && dateMonth >= 0 ? `${date[3]}-${String(dateMonth + 1).padStart(2, "0")}-${date[1].padStart(2, "0")}` : null;
-  const anchor = compact.search(/corrispettivo(?:di)?capacit/i);
-  if (anchor < 0) return { publicationDate, months: [] };
-  const window = compact.slice(anchor, anchor + 1500);
+  // Every mention of the capacity charge, not only the first: 338/2026 names the quarterly PD element ("corrispettivo
+  // mercato capacità ... 0,6193") in its premises before art. 4.1, and October 2026 was missed (Tony, 28/10).
+  const anchors = [...compact.matchAll(/corrispettivo(?:di)?(?:mercato)?(?:della)?capacit/gi)].map((match) => match.index ?? 0);
+  if (anchors.length === 0) return { publicationDate, months: [] };
+  const window = anchors.map((anchor) => compact.slice(anchor, anchor + 1500)).join("|");
   const months = new Map<string, number>();
   for (const match of window.matchAll(new RegExp(`(\\d{1,2},\\d{2,6})c.{0,2}?/kWhperilmesedi(${MONTHS.join("|")})(20\\d{2})`, "gi"))) {
     const month = `${match[3]}-${String(MONTHS.indexOf(match[2].toLowerCase() as typeof MONTHS[number]) + 1).padStart(2, "0")}`;
