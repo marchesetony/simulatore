@@ -157,20 +157,25 @@ function isDuplicatedSectionSummary(component: BillEconomicComponent): boolean {
 
 // The Box dell'offerta lists the value of each element of the price formula ("Dispacciamento: 0,010501 €/kWh") with no
 // quantity: that is a unit price, not money billed (Tony, 27/10, bolletta BPower Be Smart: read as 0,01 € of dispatching).
-function unitPriceOnly(amount: string | null, quantity: string | null, unitPrice: string | null, code: string | null = null): boolean {
+const PER_UNIT = /(?:€|eur(?:o)?|c€|cent)\s*\/\s*(?:k?wh|kw|kvarh|mese|anno|giorno|smc|pod|pdr)/i;
+function unitPriceOnly(amount: string | null, quantity: string | null, unitPrice: string | null, code: string | null = null, unit: string | null = null, sellerPrice = false): boolean {
   if (amount === null) return false;
-  if (/(?:€|eur(?:o)?|c€|cent)\s*\/\s*(?:k?wh|kw|kvarh|mese|anno|giorno|smc|pod|pdr)/i.test(amount)) return true;
+  if (PER_UNIT.test(amount)) return true;
   const value = numberFrom(amount); const price = numberFrom(unitPrice);
   if (quantity !== null || value === null || Math.abs(value) >= 1) return false;
+  // The stored reading keeps the €/kWh of the Box in the unit, not in the amount (Tony, 28/10: still 0,01 € of dispatching).
+  if (unit !== null && PER_UNIT.test(unit)) return true;
+  // A seller price-formula line carrying a quantity unit (kWh) but no quantity is the same Box value.
+  if (sellerPrice && unit !== null && !/^(?:€|eur(?:o)?)$/i.test(unit.trim())) return true;
   // Also when the reading rounded the unit price to cents (0,010501 read as 0,01 €; Tony, 28/10), or kept only that.
   if (price !== null) return Math.abs(value - price) < 0.005;
-  return code !== null && /^(?:ENERGY_PRICE(?:_F\d)?|SPREAD|DISPATCHING|CAPACITY_MARKET|COMMERCIALIZATION|IMBALANCE)$/.test(code);
+  return code !== null && /^(?:ENERGY_PRICE(?:_F\d)?|PUN_(?:SINGLE|F\d)|ENERGY_INDEX|ENERGY_SPREAD|ENERGY_FIXED_PRICE|SPREAD|DISPATCHING(?:_SELLER_CHARGE)?|CAPACITY_MARKET(?:_SELLER_CHARGE)?|COMMERCIALIZATION(?:_VARIABLE_FEE)?|SELLER_ENERGY_FEE|IMBALANCE|BALANCING_CHARGE|NETWORK_LOSS_CHARGE)$/.test(code);
 }
 
 export function normalizeBillEconomicComponent(input: BillEconomicComponentInput): BillEconomicComponent {
   const description = text(input.description ?? input.rawDescription); const quantity = text(input.quantity ?? input.rawQuantity) || null; const unit = text(input.unit ?? input.rawUnit) || null; const unitPrice = text(input.unitPrice ?? input.rawUnitPrice) || null; const amount = text(input.amount ?? input.rawAmount) || null; const period = text(input.period ?? input.rawPeriod) || null;
   const rawDescription = text(input.rawDescription ?? description); const rawValue = text(input.rawValue ?? input.value ?? input.amount ?? input.unitPrice ?? ""); const rawUnit = text(input.rawUnit ?? unit); const rawQuantity = text(input.rawQuantity ?? quantity); const rawUnitPrice = text(input.rawUnitPrice ?? unitPrice); const rawAmount = text(input.rawAmount ?? amount); const rawPeriod = text(input.rawPeriod ?? period);
-  const code = text(input.code) || "UNCLASSIFIED_BILL_CHARGE"; const key = keyOf(description); const classification = classifyBillEconomicComponent(code, description); const role = unitPriceOnly(amount, quantity, unitPrice, text(input.code) || null) ? "DETAIL_INCLUDED_IN_SUBTOTAL" : accountingRole(classification, description);
+  const code = text(input.code) || "UNCLASSIFIED_BILL_CHARGE"; const key = keyOf(description); const classification = classifyBillEconomicComponent(code, description); const role = unitPriceOnly(amount, quantity, unitPrice, text(input.code) || null, unit, ["ENERGY_PRICE", "DISPATCHING_OR_PASS_THROUGH", "CAPACITY_MARKET"].includes(groupOf(classification))) ? "DETAIL_INCLUDED_IN_SUBTOTAL" : accountingRole(classification, description);
   const normalizedCode = code !== "UNCLASSIFIED_BILL_CHARGE" ? code : key.includes("TOTALE_VENDITA") ? "TOTAL_SELLER_ENERGY" : key.includes("TOTALE_TARIFFA") ? "TOTAL_NETWORK_TARIFF" : key.includes("TOTALE_ONERI") ? "TOTAL_SYSTEM_CHARGES" : key === "TOTALE_IMPOSTE" ? "TAX_SUBTOTAL" : key === "TOTALE_FORNITURA" ? "TOTAL_SUPPLY" : key === "TOTALE_BOLLETTA" ? "BILL_TOTAL" : key === "TOTALE_DA_PAGARE" ? "AMOUNT_DUE" : code;
   return { lineId: "", code, normalizedCode, classification, group: groupOf(classification), accountingRole: role, includedInReconciliation: role === "ATOMIC", aggregate: role !== "ATOMIC" && role !== "PRIOR_BALANCE", atomic: role === "ATOMIC", parentComponent: null, childComponents: [], description: description || rawDescription || "Voce economica non descritta", quantity, unitPrice, unit, amount, period, rawDescription, rawValue, rawUnit, rawQuantity, rawUnitPrice, rawAmount, rawPeriod, documentEvidence: text(input.documentEvidence ?? rawDescription), calculationCheck: calculationCheck({ quantity: rawQuantity, unitPrice: rawUnitPrice, unit: rawUnit, amount: rawAmount }), status: text(input.status) || "FOUND" };
 }

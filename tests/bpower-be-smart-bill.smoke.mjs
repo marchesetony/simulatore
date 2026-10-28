@@ -123,4 +123,18 @@ assert.equal(isSameOffer({ billSupplier: "BPower Energia S.p.A.", billOffer: "00
 const sameOfferCheck = sameOfferDifferences(storedReceipt);
 assert.ok(sameOfferCheck.length > 0 && sameOfferCheck.every((item) => item.cause.length > 0));
 assert.ok(!sameOfferCheck.some((item) => /Dispacciamento/.test(item.label) && item.current === null && item.offer === null), "charges billed inside the energy price are not differences");
+// Tony (28/10, c6b6519): "ancora errori e mancate letture anche dei dati in archivio". The archived reading keeps the Box
+// unit (€/kWh or kWh) in the unit field and uses the stored catalogue codes: still read as 0,01 € billed.
+const unitLine = (description, amount, unit, code, unitPrice = null) => ({ ...line(description, amount, null, unitPrice, code), unit });
+const archived = rounded.filter((item) => !/ENERGY_PRICE|DISPATCHING|CAPACITY_MARKET|IMBALANCE/.test(item.code ?? "")).concat([
+  unitLine("Energia Attiva F1", "0,21", "€/kWh", "PUN_F1"), unitLine("Energia Attiva F2", "0,23", "€/kWh", "PUN_F2"), unitLine("Energia Attiva F3", "0,20", "kWh", "PUN_F3"),
+  unitLine("Dispacciamento", "0,01", "€/kWh", "DISPATCHING_SELLER_CHARGE"), unitLine("Corrispettivo mercato capacità", "0,01", "EUR/KWH", "CAPACITY_MARKET_SELLER_CHARGE"), unitLine("Sbilanciamento", "0,01", "€/kWh", "BALANCING_CHARGE"),
+]);
+const archivedAnalysis = buildCurrentBillEconomicAnalysis(archived, "1.546,10", { billingPeriodStart: "2026-09-01" });
+assert.equal(archivedAnalysis.totals.sellerEnergyTotal, 963.56);
+assert.equal(archivedAnalysis.totals.reconciliationStatus, "RECONCILED", `difference ${archivedAnalysis.totals.reconciliationDifference}`);
+const archivedReceipt = buildQuoteReceipt({ vector: "EE", offerSupplyCost: 960.85, analysis: archivedAnalysis, domestic: false, validUntil: null, offerComponents: offer });
+const archivedDetails = Object.fromEntries(archivedReceipt.rows.find((row) => row.key === "ENERGY").details.map((item) => [item.key, item]));
+for (const key of ["DISPATCHING", "CAPACITY_MARKET"]) if (archivedDetails[key]) assert.equal(archivedDetails[key].current, null, key);
+assert.equal(archivedReceipt.rows.find((row) => row.key === "ENERGY").current, 978.56);
 console.log("BPOWER_BE_SMART_BILL=PASS");
