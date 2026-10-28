@@ -421,3 +421,33 @@ export function regulatedVerification(audit: BillRegulatoryAuditDTO | null | und
   const reason = open ? REASON[open.notComparableReason] ?? REASON[open.auditStatus] ?? "non confrontabile" : null;
   return { status: "NOT_VERIFIABLE", checked: verified.length, difference: 0, reason: verified.length ? `${verified.length} di ${lines.length} voci verificate; le altre: ${reason}` : reason };
 }
+
+/** One charge that differs when the bill was issued with the very CTE being simulated. */
+export interface SameOfferDifference { readonly label: string; readonly current: number | null; readonly offer: number | null; readonly difference: number | null; readonly cause: string }
+
+const normalizedOffer = (value: string | null | undefined): string => (value ?? "").toUpperCase().replace(/[^A-Z0-9]/g, "");
+/** The bill was issued with the simulated CTE: same supplier and same offer code (or the CTE's code inside the bill's offer). */
+export function isSameOffer(input: { readonly billSupplier: string | null; readonly billOffer: string | null; readonly offerSupplier: string | null; readonly offerCode: string | null; readonly offerName: string | null }): boolean {
+  const supplier = (value: string | null) => normalizedOffer(value).replace(/(SPA|SRL)$/, "").replace(/ENERGIA$/, "");
+  if (!supplier(input.billSupplier) || supplier(input.billSupplier) !== supplier(input.offerSupplier)) return false;
+  const bill = normalizedOffer(input.billOffer);
+  return bill !== "" && [input.offerCode, input.offerName].some((value) => { const offer = normalizedOffer(value); return offer.length >= 4 && (bill === offer || bill.includes(offer) || offer.includes(bill)); });
+}
+
+/** Tony (28/10): the bill and the simulation of the same CTE must match line by line; every charge apart by more than
+ *  0,01 € is listed with its likely cause, so each case becomes a correction that holds for every company. */
+export function sameOfferDifferences(receipt: Pick<QuoteReceipt, "rows">): readonly SameOfferDifference[] {
+  const out: SameOfferDifference[] = [];
+  const check = (label: string, item: { readonly current: number | null; readonly offer: number | null; readonly difference?: number | null; readonly missingReason?: string; readonly currentNote?: string }) => {
+    if (item.missingReason) { out.push({ label, current: item.current, offer: null, difference: null, cause: `Simulazione: ${item.missingReason}` }); return; }
+    if (item.current === null && item.currentNote) return;
+    if (item.current === null && (item.offer ?? 0) !== 0) { out.push({ label, current: null, offer: item.offer, difference: null, cause: "Bolletta: la voce non è stata letta o la bolletta non la addebita" }); return; }
+    const difference = item.difference ?? (item.current !== null && item.offer !== null ? Math.round((item.offer - item.current) * 100) / 100 : null);
+    if (difference !== null && Math.abs(difference) > 0.01) out.push({ label, current: item.current, offer: item.offer, difference, cause: "Importo diverso: va controllata la lettura di bolletta e CTE" });
+  };
+  for (const row of receipt.rows) {
+    if (row.details?.length) for (const detail of row.details) check(`${row.label} · ${detail.label}`, detail);
+    else check(row.label, row);
+  }
+  return out;
+}

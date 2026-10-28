@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useState, type ChangeEvent, type ReactNode } from "react";
 import { EmptyState, ErrorState, LoadingState } from "./UiStates";
 import { downloadExport, requestForm, requestJson, toUiError } from "../lib/ui/client";
-import { buildQuoteReceipt, regulatedVerification, type QuoteReceipt, type RegulatedDomain } from "../lib/quote/receipt";
+import { buildQuoteReceipt, isSameOffer, regulatedVerification, sameOfferDifferences, type QuoteReceipt, type RegulatedDomain } from "../lib/quote/receipt";
 import type { ApprovedBillSummaryModel, BillDocumentModel, CalculationModel, ComparisonModel, ProposalModel } from "../lib/ui/models";
 
 type Step = "bill" | "review" | "offers";
@@ -402,6 +402,21 @@ function VerificationNote({ bill, rowKey, receipt }: { readonly bill: BillDocume
 // A lower cost is green, a higher one red: the difference reads CTE minus bill.
 function difference(value: number | null): string | undefined { return value === null || Math.abs(value) < 0.01 ? undefined : value < 0 ? "positive" : "negative"; }
 function signedEuro(value: number | null): string { return value === null ? "—" : Math.abs(value) < 0.01 ? "=" : `${value > 0 ? "+" : "−"}${EURO.format(Math.abs(value))}`; }
+// Tony (28/10): when the bill was issued with the simulated CTE the two columns must match; every difference is listed with
+// its likely cause, and each case is a correction to make in the shared calculation, valid for every company.
+function SameOfferCheck({ offer, bill, context }: { readonly offer: Offer; readonly bill: BillDocumentModel; readonly context: Context }): ReactNode {
+  if (!isSameOffer({ billSupplier: context.currentSupplier, billOffer: billOfferName(bill, context), offerSupplier: offer.supplier, offerCode: offer.calculation.sourceCte.offerCode, offerName: offer.offerName })) return null;
+  const differences = sameOfferDifferences(offer.receipt);
+  return <div className={differences.length ? "same-offer-check differs" : "same-offer-check"} role="status">
+    <p className="eyebrow">VERIFICA STESSA CTE</p>
+    {differences.length === 0 ? <p>La bolletta è emessa con questa CTE e la simulazione coincide voce per voce.</p> : <>
+      <p>La bolletta è emessa con questa CTE: le due colonne devono coincidere. {differences.length === 1 ? "Una voce è diversa" : `${differences.length} voci sono diverse`}:</p>
+      <ul>{differences.map((item) => <li key={item.label}><strong>{item.label}</strong>: bolletta {euro(item.current)}, simulazione {euro(item.offer)}{item.difference === null ? "" : ` (${item.difference > 0 ? "+" : ""}${EURO.format(item.difference)})`}. {item.cause}.</li>)}</ul>
+      <p className="muted">Mandaci questo caso: la correzione vale per tutte le aziende e resta nei test.</p>
+    </>}
+  </div>;
+}
+
 // Box offerta of the scontrino, side by side: how the bill prices energy and how the simulated CTE would, line by line.
 function OfferBox({ offer, bill, context }: { readonly offer: Offer; readonly bill: BillDocumentModel; readonly context: Context }): ReactNode {
   const ee = context.vector === "EE";
@@ -494,6 +509,7 @@ function Receipt({ offer: quoted, today, business, context, bill }: { readonly o
       </select>
       <small>Accise uguali alla bolletta: non dipendono dal fornitore. Cambia l&apos;IVA solo se l&apos;azienda ha diritto all&apos;aliquota agevolata.</small>
     </label> : null}
+    <SameOfferCheck offer={offer} bill={bill} context={context} />
     <OfferBox offer={offer} bill={bill} context={context} />
     <div className="quote-validity">
       <span>Offerta valida fino al</span><strong>{date(receipt.validUntil)}</strong>

@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { buildCurrentBillEconomicAnalysis } from "../app/lib/foundation/bill-economic-analysis.ts";
-import { buildQuoteReceipt } from "../app/lib/quote/receipt.ts";
+import { buildQuoteReceipt, isSameOffer, sameOfferDifferences } from "../app/lib/quote/receipt.ts";
 
 // Tony (27/10): "la simulazione dovrebbe dare lo stesso risultato della bolletta, perchè la cte bsmart è la stessa
 // utilizzata per la bolletta". BPower Energia, Alone srl, settembre 2026, BT altri usi 15 kW, 3.512 kWh, totale 1.546,10 EUR.
@@ -117,4 +117,10 @@ const storedDetails = Object.fromEntries(storedReceipt.rows.find((row) => row.ke
 assert.equal(storedDetails.DISPATCHING.current, null); assert.match(storedDetails.DISPATCHING.currentNote, /compreso nel prezzo energia/);
 assert.equal(storedReceipt.rows.find((row) => row.key === "NETWORK").current, 99.91);
 assert.equal(storedReceipt.rows.find((row) => row.key === "SYSTEM").current, 143.06);
+// Tony (28/10): the bill is issued with the Be Smart CTE, so the receipt lists every charge that differs and why.
+assert.equal(isSameOffer({ billSupplier: "BPower Energia S.p.A.", billOffer: "003888ESVFL04XXXXXXXXXBSMART1125", offerSupplier: "BPower Energia S.p.A.", offerCode: "003888ESVFL04XXXXXXXXXBSMART1125", offerName: "Be Smart" }), true);
+assert.equal(isSameOffer({ billSupplier: "BPower Energia S.p.A.", billOffer: "003888ESVFL04XXXXXXXXXBSMART1125", offerSupplier: "Enel Energia S.p.A.", offerCode: "003888ESVFL04XXXXXXXXXBSMART1125", offerName: "Be Smart" }), false);
+const sameOfferCheck = sameOfferDifferences(storedReceipt);
+assert.ok(sameOfferCheck.length > 0 && sameOfferCheck.every((item) => item.cause.length > 0));
+assert.ok(!sameOfferCheck.some((item) => /Dispacciamento/.test(item.label) && item.current === null && item.offer === null), "charges billed inside the energy price are not differences");
 console.log("BPOWER_BE_SMART_BILL=PASS");

@@ -538,3 +538,7 @@ button:focus-visible,a:focus-visible,input:focus-visible,select:focus-visible,te
 .password-input input { width:100%; padding-right:92px; }
 .password-toggle { position:absolute; right:8px; top:50%; transform:translateY(-50%); padding:6px 10px; border:1px solid var(--line); border-radius:8px; background:transparent; color:inherit; font-size:0.85em; cursor:pointer; }
 .password-toggle:disabled { cursor:default; opacity:0.6; }
+.same-offer-check { margin:16px 0; padding:14px 16px; border-radius:12px; background:#ecfdf3; border:1px solid #abefc6; }
+.same-offer-check.differs { background:#fffaeb; border-color:#fedf89; }
+.same-offer-check ul { margin:8px 0; padding-left:20px; }
+.same-offer-check li { margin:4px 0; }
