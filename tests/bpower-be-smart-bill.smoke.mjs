@@ -153,4 +153,13 @@ for (const key of ["DISPATCHING", "CAPACITY_MARKET", "IMBALANCE", "LOSSES", "COM
 // A real small charge on few kWh stays billed.
 assert.equal(buildCurrentBillEconomicAnalysis([line("Dispacciamento", "0,40 €", "5 kWh", "0,08", "DISPATCHING")], null).components[0].accountingRole, "ATOMIC");
 assert.doesNotMatch(withKwhDetails.IMBALANCE.currentNote, /0\.01/, "a price rounded to cents is not shown as the unit price");
+// Tony (28/10, 23a6078): BPower bills commercialisation and imbalance at 0,002216 and 0,00554 €/kWh on kWh with losses,
+// the CTE prints 0,002 and 0,005 net of losses: "derivano da un arrotondamento di decimali sulla cte ... la consideriamo
+// corretta". The -5,35 € on the energy price and the -1,18 € of IVA on it are accepted; a larger gap is still a difference.
+const sameCte = (energyGap, vatGap) => sameOfferDifferences({ rows: [
+  { key: "ENERGY", label: "Spesa per la materia energia", current: 978.56, offer: 978.56 + energyGap, details: [{ key: "ENERGY", label: "Prezzo energia, in bolletta comprende anche commercializzazione, sbilanciamento", current: 963.56, offer: 963.56 + energyGap, difference: energyGap }, { key: "PCV", label: "Quota fissa di vendita (PCV)", current: 15, offer: 15, difference: 0 }] },
+  { key: "TAX", label: "Imposte (accise e IVA)", current: 322.29, offer: 322.29 + vatGap, details: [{ key: "EXCISE", label: "Accise", current: 43.9, offer: 43.9, difference: 0 }, { key: "VAT", label: "IVA", current: 278.39, offer: 278.39 + vatGap, difference: vatGap }] },
+] });
+assert.ok(sameCte(-5.35, -1.18).every((item) => item.accepted === true), JSON.stringify(sameCte(-5.35, -1.18)));
+assert.equal(sameCte(-20, -4.4).filter((item) => !item.accepted).length, 2, "a gap above 1% of the energy price is a real difference");
 console.log("BPOWER_BE_SMART_BILL=PASS");

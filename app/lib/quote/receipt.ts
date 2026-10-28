@@ -426,7 +426,7 @@ export function regulatedVerification(audit: BillRegulatoryAuditDTO | null | und
 }
 
 /** One charge that differs when the bill was issued with the very CTE being simulated. */
-export interface SameOfferDifference { readonly label: string; readonly current: number | null; readonly offer: number | null; readonly difference: number | null; readonly cause: string }
+export interface SameOfferDifference { readonly label: string; readonly current: number | null; readonly offer: number | null; readonly difference: number | null; readonly cause: string; readonly accepted?: boolean }
 
 /** Tony (28/10): the bill and the simulation of the same CTE must match line by line; every charge apart by more than
  *  0,01 € is listed with its likely cause, so each case becomes a correction that holds for every company. */
@@ -443,5 +443,13 @@ export function sameOfferDifferences(receipt: Pick<QuoteReceipt, "rows">): reado
     if (row.details?.length) for (const detail of row.details) check(`${row.label} · ${detail.label}`, detail);
     else check(row.label, row);
   }
-  return out;
+  // Tony (28/10): "questa maggiorazione che deriva da un arrotondamento di decimali sulla cte ... la consideriamo corretta".
+  // The CTE prints its prices with fewer decimals than the supplier bills (BPower: commercialisation and imbalance, 5,38 € on
+  // 978,56 €): a gap on the energy price that bundles those charges, within 1% of it, is accepted; so is the IVA on it.
+  const accepted = out.map((item) => item.difference !== null && item.current !== null && /comprende anche/.test(item.label) && Math.abs(item.difference) <= Math.abs(item.current) * 0.01
+    ? { ...item, accepted: true, cause: "Arrotondamento dei decimali dei prezzi della CTE (es. commercializzazione e sbilanciamento): considerato corretto" } : item);
+  const acceptedTotal = accepted.filter((item) => item.accepted).reduce((total, item) => total + (item.difference ?? 0), 0);
+  const others = accepted.filter((item) => !item.accepted && !/(?:^|· )IVA$/.test(item.label));
+  return accepted.map((item) => !item.accepted && others.length === 0 && acceptedTotal !== 0 && /(?:^|· )IVA$/.test(item.label) && item.difference !== null && Math.abs(item.difference - acceptedTotal * 0.22) <= 0.02
+    ? { ...item, accepted: true, cause: "IVA sulla differenza di arrotondamento accettata" } : item);
 }

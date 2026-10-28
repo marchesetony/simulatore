@@ -406,14 +406,18 @@ function signedEuro(value: number | null): string { return value === null ? "—
 // its likely cause, and each case is a correction to make in the shared calculation, valid for every company.
 function SameOfferCheck({ offer, bill, context }: { readonly offer: Offer; readonly bill: BillDocumentModel; readonly context: Context }): ReactNode {
   if (!isSameOffer({ billSupplier: context.currentSupplier, billOffer: billOfferName(bill, context), offerSupplier: offer.supplier, offerCode: offer.calculation.sourceCte.offerCode, offerName: offer.offerName })) return null;
-  const differences = sameOfferDifferences(offer.receipt);
+  const all = sameOfferDifferences(offer.receipt);
+  const differences = all.filter((item) => !item.accepted);
+  const accepted = all.filter((item) => item.accepted);
+  const line = (item: (typeof all)[number]) => <li key={item.label}><strong>{item.label}</strong>: bolletta {euro(item.current)}, simulazione {euro(item.offer)}{item.difference === null ? "" : ` (${item.difference > 0 ? "+" : ""}${EURO.format(item.difference)})`}. {item.cause}.</li>;
   return <div className={differences.length ? "same-offer-check differs" : "same-offer-check"} role="status">
     <p className="eyebrow">VERIFICA STESSA CTE</p>
-    {differences.length === 0 ? <p>La bolletta è emessa con questa CTE e la simulazione coincide voce per voce.</p> : <>
+    {differences.length === 0 ? <p>La bolletta è emessa con questa CTE e la simulazione coincide voce per voce{accepted.length ? ", salvo gli arrotondamenti accettati qui sotto" : ""}.</p> : <>
       <p>La bolletta è emessa con questa CTE: le due colonne devono coincidere. {differences.length === 1 ? "Una voce è diversa" : `${differences.length} voci sono diverse`}:</p>
-      <ul>{differences.map((item) => <li key={item.label}><strong>{item.label}</strong>: bolletta {euro(item.current)}, simulazione {euro(item.offer)}{item.difference === null ? "" : ` (${item.difference > 0 ? "+" : ""}${EURO.format(item.difference)})`}. {item.cause}.</li>)}</ul>
+      <ul>{differences.map(line)}</ul>
       <p className="muted">Mandaci questo caso: la correzione vale per tutte le aziende e resta nei test.</p>
     </>}
+    {accepted.length ? <><p className="muted">Differenze accettate:</p><ul className="muted">{accepted.map(line)}</ul></> : null}
   </div>;
 }
 
