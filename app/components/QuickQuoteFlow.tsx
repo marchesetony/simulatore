@@ -4,6 +4,7 @@ import { useCallback, useEffect, useState, type ChangeEvent, type ReactNode } fr
 import { EmptyState, ErrorState, LoadingState } from "./UiStates";
 import { downloadExport, requestForm, requestJson, toUiError } from "../lib/ui/client";
 import { buildQuoteReceipt, isSameOffer, regulatedVerification, sameOfferDifferences, type QuoteReceipt, type RegulatedDomain } from "../lib/quote/receipt";
+import { customerTypeOf } from "../lib/ingestion/customer-type";
 import type { ApprovedBillSummaryModel, BillDocumentModel, CalculationModel, ComparisonModel, ProposalModel } from "../lib/ui/models";
 
 type Step = "bill" | "review" | "offers";
@@ -221,7 +222,10 @@ function punStructure(bill: BillDocumentModel): string {
 
 function BillContractFacts({ bill }: { readonly bill: BillDocumentModel }): ReactNode {
   const receipt = bill.analystReview.receipt;
-  const type = bill.structuredBill?.customerType.status === "FOUND" ? bill.structuredBill.customerType.value : null;
+  // Same reading as the search for CTEs, so "Domestico non residente" shows Consumer here too (Tony, 28/10).
+  const type = bill.structuredBill ? customerTypeOf(bill.structuredBill) : null;
+  const offerName = bill.analystReview.receipt.offerName.value?.trim() || bill.structuredBill?.documentOfferName?.trim() || null;
+  const offerCode = bill.analystReview.receipt.offerCode.value?.trim() || null;
   const start = italianDate(receipt.contractStartDate.value ?? factValue(bill, "CONTRACT_START_DATE")) ?? italianDate(receipt.economicConditionsStartDate.value ?? factValue(bill, "ECONOMIC_CONDITIONS_START_DATE"));
   const conditionsEnd = italianDate(receipt.economicConditionsExpiryDate.value ?? factValue(bill, "ECONOMIC_EXPIRY"));
   const contractEnd = receipt.contractDurationType === "INDEFINITE" || /indeterminat/i.test(factValue(bill, "CONTRACT_EXPIRY", "CONTRACT_INDEFINITE") ?? "") ? "contratto a tempo indeterminato" : italianDate(receipt.contractExpiryDate.value);
@@ -229,6 +233,8 @@ function BillContractFacts({ bill }: { readonly bill: BillDocumentModel }): Reac
   const pcv = monthlyPcv(bill);
   const rows: readonly (readonly [string, ReactNode])[] = [
     ["Tipo contratto", type === "RESIDENTIAL" ? <span className="cte-segment-consumer">Consumer</span> : type === "NON_RESIDENTIAL" ? <span className="cte-segment-business">Business</span> : "Non indicato"],
+    // Tony (28/10): "dovevamo vedere anche il nome della cte utilizzata".
+    ["Offerta attuale (CTE)", offerName ? (offerCode && offerCode !== offerName ? `${offerName} · codice ${offerCode}` : offerName) : offerCode ?? "Non indicata"],
     ["Attivo dal", start ?? "Non indicato"],
     ["Scadenza o rinnovo", expiry || "Non indicata"],
     ["Tipo di prezzo", priceType(bill)],
