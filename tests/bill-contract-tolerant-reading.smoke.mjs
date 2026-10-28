@@ -20,4 +20,11 @@ assert.equal(contract(extraction()), null);
 assert.equal(structuredBillContractIssue(extraction()), "VOLTAGE_MISSING");
 assert.equal(structuredBillContractIssue(extraction({ customerType: notFound() })), "CUSTOMER_TYPE_MISSING");
 assert.equal(structuredBillContractIssue(extraction({ pod: notFound() })), "POD_MISSING");
+// Tony (28/10, bolletta BPower Casa Protetta): "Tipologia cliente: Domestico non residente" was refused as neither Consumer
+// nor Business. The supply characteristics, or else the holder's tax code, give the customer type (synthetic codes).
+const lv = [{ code: "NOMINAL_VOLTAGE", value: "220 V", status: "FOUND" }];
+assert.equal(contract(extraction({ customerType: notFound(), extendedFacts: [...lv, { code: "DOMESTIC_RESIDENCE_STATUS_RAW", value: "Domestico non residente", status: "FOUND" }] }))?.customer.customerType, "RESIDENTIAL");
+assert.equal(contract(extraction({ customerType: notFound(), extendedFacts: [...lv, { code: "SUPPLY_USE_CATEGORY_RAW", value: "Altri usi", status: "FOUND" }] }))?.customer.customerType, "NON_RESIDENTIAL");
+assert.equal(contract(extraction({ customerType: notFound(), customerTaxIdentifier: found("RSSMRA80A01H501U"), extendedFacts: lv }))?.customer.customerType, "RESIDENTIAL");
+assert.equal(contract(extraction({ customerType: notFound(), customerTaxIdentifier: found("IT01234567890"), extendedFacts: lv }))?.customer.customerType, "NON_RESIDENTIAL");
 console.log("bill contract tolerant reading: ok");

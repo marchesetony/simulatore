@@ -396,6 +396,21 @@ export function createAnthropicStructuredBillProvider(env: NodeJS.ProcessEnv = p
 }
 
 function valueOf<T>(item: StructuredBillField<T>): T | null { return item.status === "FOUND" ? item.value : null; }
+
+/** The bill's customer type, or what its supply characteristics state when the reading left it out: Tony (28/10, bolletta
+ *  BPower Casa Protetta) "Tipologia cliente: Domestico non residente" was refused as neither Consumer nor Business. */
+export function customerTypeOf(extraction: StructuredBillExtraction): CustomerType | null {
+  const read = valueOf(extraction.customerType);
+  if (read) return read;
+  const text = extraction.extendedFacts.filter((fact) => fact.status === "FOUND" && /SUPPLY_USE|DOMESTIC_RESIDENCE|TARIFF_CATEGORY|CUSTOMER/.test(fact.code)).map((fact) => fact.value).join(" ");
+  if (/non\s+domestic|altri\s+usi|illuminazione\s+pubblica|\bBTA\d?\b|business/i.test(text)) return "NON_RESIDENTIAL";
+  if (/domestic|residente|\bD[23]\b|\bTD\b/i.test(text)) return "RESIDENTIAL";
+  // Last resort, the holder's tax code: a VAT number is a business, a personal codice fiscale alone a household.
+  const tax = String(valueOf(extraction.customerTaxIdentifier) ?? "").replace(/\s/g, "").toUpperCase().replace(/^IT/, "");
+  if (/^\d{11}$/.test(tax)) return "NON_RESIDENTIAL";
+  if (/^[A-Z]{6}\d{2}[A-Z]\d{2}[A-Z]\d{3}[A-Z]$/.test(tax)) return "RESIDENTIAL";
+  return null;
+}
 export function structuredBillFields(extraction: StructuredBillExtraction): BillFields {
   const text = (item: StructuredBillField<unknown>, format: (value: unknown) => string = String) => item.status === "FOUND" && item.value !== null ? { value: format(item.value), confidence: item.confidence, source: "document-ai" as const, confirmed: false } : { value: null, confidence: item.confidence, source: "unavailable" as const, confirmed: false };
   const resolvedVector = resolveBillVectorFromEvidence(extraction).vector;
@@ -497,7 +512,7 @@ export function structuredBillContractIssue(source: StructuredBillExtraction): s
   if (!valueOf(extraction.supplier)) return "SUPPLIER_MISSING";
   const period = valueOf(extraction.billingPeriod);
   if (!period || !isoDate(period.from) || !isoDate(period.to) || period.from >= period.to) return "PERIOD_MISSING";
-  if (!valueOf(extraction.customerType)) return "CUSTOMER_TYPE_MISSING";
+  if (!customerTypeOf(extraction)) return "CUSTOMER_TYPE_MISSING";
   if (vector === "EE") {
     const pod = valueOf(extraction.pod);
     if (!pod || !/^IT[A-Z0-9]{6,30}$/i.test(pod)) return "POD_MISSING";
@@ -514,7 +529,7 @@ export function structuredBillContract(input: { readonly extraction: StructuredB
   const vector = resolveBillVectorFromEvidence(extraction).vector;
   const supplier = valueOf(extraction.supplier);
   const period = valueOf(extraction.billingPeriod);
-  const customerType = valueOf(extraction.customerType);
+  const customerType = customerTypeOf(extraction);
   if (vector === "UNKNOWN" || !supplier || !period || !isoDate(period.from) || !isoDate(period.to) || period.from >= period.to || !customerType) return null;
   const customerId = valueOf(extraction.customerId);
   const provenanceFields = ["billingPeriod", "customer", "supply", "consumption", "supplier", "offer", "regulatedCharges"] as const;

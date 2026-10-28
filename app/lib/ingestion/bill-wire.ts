@@ -6,7 +6,7 @@ import type { BillContract } from "../energy/types";
 import { BILL_ECONOMIC_CHARGE_CODES, normalizeAnalystItemCode, type BillEconomicChargeLineCode, type BillExtendedFactCode } from "./bill-extended-contract.ts";
 import type { StructuredBillExtraction, StructuredBillField, StructuredBillPeriod } from "./structured-bill.ts";
 // @ts-expect-error Node's strip-only test runner requires the explicit extension.
-import { validateStructuredBillExtraction } from "./structured-bill.ts";
+import { customerTypeOf, validateStructuredBillExtraction } from "./structured-bill.ts";
 // @ts-expect-error Node's strip-only test runner requires the explicit extension.
 import { resolveBillVectorFromEvidence } from "./vector-resolution.ts";
 // @ts-expect-error Node's strip-only test runner requires the explicit extension.
@@ -271,7 +271,7 @@ export function mapBillWireToContract(input: { readonly extraction: StructuredBi
   const vector = resolveBillVectorFromEvidence(extraction).vector;
   const supplier = valueOf(extraction.supplier);
   const period = valueOf(extraction.billingPeriod);
-  const customerType = valueOf(extraction.customerType);
+  const customerType = customerTypeOf(extraction);
   if (vector === "UNKNOWN" || !supplier || !period || !isoDate(period.from) || !isoDate(period.to) || period.from >= period.to || !customerType) return null;
   const customerId = valueOf(extraction.customerId);
   const provenanceFields = ["billingPeriod", "customer", "supply", "consumption", "supplier", "offer", "regulatedCharges"] as const;
