@@ -388,6 +388,12 @@ function dispatchingReference(source: string, validityStart: string, validityEnd
   return { mode: "OFFICIAL_PASS_THROUGH", reference: officialReference("ARERA_TERNA", "TIS", source, { article: "Art. 24" }), formula: "Corrispettivo Art. 24 TIS risolto dal riferimento ufficiale applicabile al periodo, con fattore perdite Tabella 4 colonna A TIS", lossTreatment: "OFFICIAL_REFERENCE", ...(snapshotValue === null ? {} : { snapshotValue, snapshotUnit: "EUR_PER_KWH" as const }), effectiveFrom: validityStart, effectiveTo: validityEnd, sourceEvidence: source };
 }
 
+/** Tony (28/10, BPower BE Family Casa Protetta): "uno spread in €/kWh ... riportato in tabella al lordo delle perdite di rete".
+ *  A spread stated gross of losses already contains them: the losses are applied to the index alone. */
+function spreadGrossOfLosses(fields: readonly { readonly value?: unknown; readonly sourceText?: unknown }[]): boolean {
+  return fields.some((field) => [field.sourceText, field.value].some((text) => typeof text === "string" && /spread[^.]{0,160}?al\s+lordo\s+delle\s+perdite/i.test(text)));
+}
+
 function lossReference(source: string): CteLossReference | null {
   // "Tabella 4 colonna A TIS" or "Tabella 4, colonna A allegata al TIS".
   if (!/Tabella\s+4\s*,?\s+colonna\s+A\b[\s\S]{0,40}?\bTIS\b/i.test(source)) return null;
@@ -473,7 +479,7 @@ export function tryBuildAuthoritativeCteContract(record: Pick<CteIngestionRecord
   ].filter((path): path is string => path !== null);
   if (unmapped.length) return authoritativeFailure("CTE_AUTHORITATIVE_MAPPING_INVALID", unmapped);
   const pricing = !fixedPricing
-    ? { mode: "INDEXED" as const, reference: expectedIndex(record.vector) as "PUN" | "PSV", spread: { amount: spread as number, currency: "EUR" as const, unit: expectedUnit, taxTreatment: tax } }
+    ? { mode: "INDEXED" as const, reference: expectedIndex(record.vector) as "PUN" | "PSV", spread: { amount: spread as number, currency: "EUR" as const, unit: expectedUnit, taxTreatment: tax, ...(spreadGrossOfLosses(record.fields) ? { lossTreatment: "GROSS_OF_LOSSES" as const } : {}) } }
     : fixedPricing
       ? { mode: "FIXED" as const, reference: "NONE" as const, fixedPrice: { amount: fixedPrice as number, currency: "EUR" as const, unit: expectedUnit, taxTreatment: tax }, spread: { status: "NOT_DECLARED" as const, reason: "NOT_APPLICABLE" as const } }
       : null;

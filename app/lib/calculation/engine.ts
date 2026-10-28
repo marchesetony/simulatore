@@ -192,7 +192,9 @@ function addCtePassThroughs(target: ComponentDraft[], request: ElectricitySimula
   // Losses on energy: the energy price (index and spread, or the fixed price) applied to the energy lost on the networks.
   // Only a CTE that names the index alone as grossed up keeps the spread out of the base.
   if (loss && standard && !priced.has("LOSSES")) {
-    const indexOnly = targets.has("ENERGY_INDEX") && !targets.has("SPREAD");
+    // A spread stated gross of losses already contains them (Tony, 28/10, BE Family Casa Protetta).
+    const spreadGross = offer.pricing.mode === "INDEXED" && offer.pricing.spread.lossTreatment === "GROSS_OF_LOSSES";
+    const indexOnly = (targets.has("ENERGY_INDEX") && !targets.has("SPREAD")) || spreadGross;
     const energy = target.filter((draft) => draft.category === "ENERGY" && ["EE_PUN_MWH_TO_KWH_PLUS_SPREAD", "EE_FIXED_PRICE_TIMES_KWH", "EE_SPREAD_TIMES_KWH"].includes(draft.formulaId));
     const base = energy.reduce((total, draft) => {
       if (!indexOnly) return add(total, draft.value);
@@ -445,7 +447,12 @@ export async function calculatePreparedOffer(request: SimulationRequest, prepare
   const months = monthCount(request);
   if (request.vector === "EE") addElectricityEnergy(drafts, request, prepared.offer, prepared.markets); else addGasEnergy(drafts, request, prepared.offer, prepared.markets);
   addFeeComponents(drafts, prepared.offer.fixedFees, "FIXED_FEE", request, totalQuantity, months);
-  addFeeComponents(drafts, prepared.offer.variableFees, "VARIABLE_FEE", request, totalQuantity, months);
+  // Tony (28/10, BPower BE Family Casa Protetta): "PUN Index GME + 0,03 €/kWh" was read as the spread and again as a
+  // generic per-kWh fee ("Quote variabili 0,0300"). A per-kWh fee equal to the indexed spread, with no name of its own, is
+  // that spread repeated.
+  const indexedSpread = prepared.offer.pricing.mode === "INDEXED" ? prepared.offer.pricing.spread.amount : null;
+  const repeatsSpread = (fee: CalculationReadyOffer["variableFees"][number]) => indexedSpread !== null && fee.unit === "EUR_PER_KWH" && Math.abs(fee.amount - indexedSpread) < 1e-9 && !/commercializ|sbilanc|dispacc|capacit|perdit|gestion|servizi|verde|green/i.test(fee.label);
+  addFeeComponents(drafts, prepared.offer.variableFees.filter((fee) => !repeatsSpread(fee)), "VARIABLE_FEE", request, totalQuantity, months);
   addDeclaredComponent(drafts, prepared.offer.imbalance, "IMBALANCE", request, totalQuantity, months);
   // Tony (28/10): "certamente il contributo una tantum solo sulla prima bolletta". A bill already issued with this CTE that
   // does not charge it is not the first one, so its simulation leaves the one-off fees out.

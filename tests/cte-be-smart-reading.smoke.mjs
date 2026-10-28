@@ -58,4 +58,8 @@ assert.deepEqual(customerOf("Clienti Finali Non Domestici con utenze Altri Usi B
 assert.deepEqual(customerOf("Clienti domestici residenti e non residenti", "c2"), ["RESIDENTIAL"]);
 assert.deepEqual([...customerOf("Clienti domestici e non domestici", "c3")].sort(), ["NON_RESIDENTIAL", "RESIDENTIAL"]);
 assert.deepEqual(customerOf("Uso domestico", "c4"), ["RESIDENTIAL"]);
+// Tony (28/10, BE Family Casa Protetta): a spread "riportato in tabella al lordo delle perdite di rete" is read as such.
+const grossFields = base(`1.3 Oneri di dispacciamento ${DISPATCHING}, ${CAPACITY}`, "Commercializzazione pari a 0,002 €/kWh al netto delle perdite di rete").map((item) => item.path === "pricing.spread.amount" ? field(item.path, "0,03 €/kWh", "somma del prezzo PUN Index GME e di uno spread in €/kWh definito dal venditore e riportato in tabella al lordo delle perdite di rete") : item);
+assert.equal(build(grossFields, "gross").contract.pricing.spread.lossTreatment, "GROSS_OF_LOSSES");
+assert.equal(build(base(`1.3 Oneri di dispacciamento ${DISPATCHING}, ${CAPACITY}`, "Commercializzazione pari a 0,002 €/kWh al netto delle perdite di rete"), "net").contract.pricing.spread.lossTreatment, undefined);
 console.log("CTE_BE_SMART_READING=PASS");

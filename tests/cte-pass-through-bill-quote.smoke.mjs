@@ -100,4 +100,10 @@ assert.deepEqual(byKind(includedQuote, "DISPATCHING"), []); assert.deepEqual(byK
 const imbalanceSilent = structuredClone(prepared); imbalanceSilent.offer.imbalance = { status: "NOT_DECLARED", reason: "NOT_PROVIDED" };
 const imbalanceSilentQuote = await calculatePreparedOffer(request(true), imbalanceSilent, deps(0.0105, 0.004275, 3));
 assert.equal(imbalanceSilentQuote.components.filter((component) => component.category === "IMBALANCE").length, 0);
+// Tony (28/10, BE Family Casa Protetta): "spread ... riportato in tabella al lordo delle perdite di rete". The losses are
+// applied to the PUN alone: 1.000 kWh at PUN 100 €/MWh is 100 € of index, 10 € of losses, whatever the spread.
+const indexedLoss = (lossTreatment) => { const offer = structuredClone(prepared); offer.offer.pricing = { mode: "INDEXED", reference: "PUN", spread: { amount: 0.03, currency: "EUR", unit: "EUR_PER_KWH", taxTreatment: "EXCLUDED", ...(lossTreatment ? { lossTreatment } : {}) } }; offer.markets = [{ month: "2026-09", record: { vector: "EE", f1: { value: 100 }, f2: { value: 100 }, f3: { value: 100 } } }]; return offer; };
+const lossOf = async (offer) => Number((await calculatePreparedOffer(request(true), offer, deps(0.0105, 0.004275, 3))).components.find((component) => component.formulaInputs?.kind === "LOSSES")?.amount.amount);
+assert.equal(await lossOf(indexedLoss("GROSS_OF_LOSSES")), 10);
+assert.equal(await lossOf(indexedLoss()), 13);
 console.log("CTE_PASS_THROUGH_BILL_QUOTE=PASS");

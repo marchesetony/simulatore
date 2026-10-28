@@ -96,6 +96,11 @@ try {
   const indexedEeResult = await calculateApprovedOffer(cteRepository, marketRepository, indexedEeRequest, indexedEe.archiveId);
   assert.equal(indexedEeResult.marketData.length, 2);
   assert.equal(indexedEeResult.components.filter((component) => component.formulaId === "EE_PUN_MWH_TO_KWH_PLUS_SPREAD").length, 6);
+  // Tony (28/10, BPower BE Family Casa Protetta, "PUN Index GME + 0,03 €/kWh ... spread al lordo delle perdite di rete"):
+  // the spread read again as a generic per-kWh fee is not charged twice.
+  const grossSpread = await createCteArchive(cteRepository, { tenantId: tenant, contract: cte("EE", "cte-ee-gross-spread", { pricing: { mode: "INDEXED", reference: "PUN", spread: { ...price(0.01, "EUR_PER_KWH"), lossTreatment: "GROSS_OF_LOSSES" } }, variableFees: [fee("cte-ee-gross-spread-variable", "Quote variabili", 0.01, "EUR_PER_KWH"), fee("cte-ee-gross-spread-comm", "Commercializzazione", 0.01, "EUR_PER_KWH")] }), now: "2026-01-02T00:00:00.000Z", actor: "SMOKE" });
+  const grossResult = await calculateApprovedOffer(cteRepository, marketRepository, indexedEeRequest, grossSpread.archiveId);
+  assert.deepEqual(grossResult.components.filter((component) => component.category === "VARIABLE_FEE" && component.formulaId === "FEE_RATE_TIMES_BASIS").map((component) => component.label), ["Commercializzazione"]);
 
   const fixedGasResult = await calculateApprovedOffer(cteRepository, marketRepository, gasRequest(), fixedGas.archiveId);
   assert.ok(fixedGasResult.components.some((component) => component.formulaId === "GAS_FIXED_PRICE_TIMES_SMC"));
