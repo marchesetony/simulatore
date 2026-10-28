@@ -2,6 +2,9 @@ import type { BillEconomicAnalysis } from "../foundation/bill-economic-analysis"
 import type { BillRegulatoryAuditDTO } from "../foundation/bill-regulatory-audit";
 // @ts-expect-error Node's strip-only test runner requires the explicit extension.
 import { referenceDomainForComponent } from "../foundation/regulatory-domains.ts";
+// @ts-expect-error Node's strip-only test runner requires the explicit extension.
+import { isSameOffer } from "./same-offer.ts";
+export { isSameOffer };
 
 /**
  * Bolletta 2.0 style "scontrino dell'energia" for one offer, side by side with the bill it was simulated on.
@@ -424,15 +427,6 @@ export function regulatedVerification(audit: BillRegulatoryAuditDTO | null | und
 
 /** One charge that differs when the bill was issued with the very CTE being simulated. */
 export interface SameOfferDifference { readonly label: string; readonly current: number | null; readonly offer: number | null; readonly difference: number | null; readonly cause: string }
-
-const normalizedOffer = (value: string | null | undefined): string => (value ?? "").toUpperCase().replace(/[^A-Z0-9]/g, "");
-/** The bill was issued with the simulated CTE: same supplier and same offer code (or the CTE's code inside the bill's offer). */
-export function isSameOffer(input: { readonly billSupplier: string | null; readonly billOffer: string | null; readonly offerSupplier: string | null; readonly offerCode: string | null; readonly offerName: string | null }): boolean {
-  const supplier = (value: string | null) => normalizedOffer(value).replace(/(SPA|SRL)$/, "").replace(/ENERGIA$/, "");
-  if (!supplier(input.billSupplier) || supplier(input.billSupplier) !== supplier(input.offerSupplier)) return false;
-  const bill = normalizedOffer(input.billOffer);
-  return bill !== "" && [input.offerCode, input.offerName].some((value) => { const offer = normalizedOffer(value); return offer.length >= 4 && (bill === offer || bill.includes(offer) || offer.includes(bill)); });
-}
 
 /** Tony (28/10): the bill and the simulation of the same CTE must match line by line; every charge apart by more than
  *  0,01 € is listed with its likely cause, so each case becomes a correction that holds for every company. */

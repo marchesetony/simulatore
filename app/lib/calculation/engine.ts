@@ -29,6 +29,8 @@ import { ARERA_TIV_CAPACITY_MONTHS, areraCapacityForPeriod, mergeAreraCapacityMo
 // @ts-expect-error Node's strip-only test runner requires the explicit extension.
 import { TERNA_TIDE_DISPATCHING_QUARTERS, mergeTernaTideQuarters, ternaTideForPeriod, type TernaTideQuarter } from "../foundation/terna-tide-dispatching.ts";
 // @ts-expect-error Node's strip-only test runner requires the explicit extension.
+import { isSameOffer } from "../quote/same-offer.ts";
+// @ts-expect-error Node's strip-only test runner requires the explicit extension.
 import { BTA6_REGULATED_COMPONENTS_INCLUDED, calculateRegulatedEeSubset, isDomesticNetOfTaxCompleteComponents, type RegulatedEeExecutionContext } from "./regulated-ee.ts";
 
 export class CalculationEngineError extends Error {
@@ -257,7 +259,11 @@ export interface CalculationDependencies {
   readonly cteUsable?: (archiveId: string) => boolean;
   /** Why the bill's technical readings could not be trusted, so a quote without ARERA charges can say so. */
   readonly regulatedUnavailableReason?: string;
+  /** The supplier and offer of the source bill, and whether it charges a one-off fee. */
+  readonly currentOffer?: CurrentSupplyOffer;
 }
+
+export interface CurrentSupplyOffer { readonly supplier: string | null; readonly offer: string | null; readonly oneOffBilled: boolean }
 
 export async function assertNoKnownDomesticTierDivergence(repository: Pick<TenantRecordRepository<unknown>, "get"> | undefined, tenantId: string): Promise<void> {
   if (!repository) return;
@@ -436,7 +442,11 @@ export async function calculatePreparedOffer(request: SimulationRequest, prepare
   addFeeComponents(drafts, prepared.offer.fixedFees, "FIXED_FEE", request, totalQuantity, months);
   addFeeComponents(drafts, prepared.offer.variableFees, "VARIABLE_FEE", request, totalQuantity, months);
   addDeclaredComponent(drafts, prepared.offer.imbalance, "IMBALANCE", request, totalQuantity, months);
-  addOneOffComponents(drafts, prepared.offer.oneOffFees);
+  // Tony (28/10): "certamente il contributo una tantum solo sulla prima bolletta". A bill already issued with this CTE that
+  // does not charge it is not the first one, so its simulation leaves the one-off fees out.
+  const current = dependencies.currentOffer;
+  const laterBill = current !== undefined && !current.oneOffBilled && isSameOffer({ billSupplier: current.supplier, billOffer: current.offer, offerSupplier: prepared.version.contract.supplier.name, offerCode: prepared.version.contract.offer.code, offerName: prepared.version.contract.offer.name });
+  if (!laterBill) addOneOffComponents(drafts, prepared.offer.oneOffFees);
   addFeeComponents(drafts, prepared.offer.commercialDiscounts, "DISCOUNT", request, totalQuantity, months);
   const bta6 = request.vector === "EE" && dependencies.trustedElectricityContext?.regulatoryCustomerScope === "NON_DOMESTIC_BT_BTA6";
   const contractual = bta6 ? evaluateContractualPassThrough(prepared.offer, request.supplyPeriod) : null;

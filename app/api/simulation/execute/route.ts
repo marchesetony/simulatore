@@ -38,10 +38,10 @@ export async function POST(request: Request): Promise<Response> {
     const resolved = await resolveBillDrivenExecution(principal, repositories, input);
     let dependencies: CalculationDependencies | undefined;
     if (resolved.simulation.vector === "EE") {
-      const { context: trustedElectricityContext, reason } = await resolveTrustedElectricityContextWithReason(repositories.billRepository, principal.tenantId, resolved.simulation);
+      const { context: trustedElectricityContext, reason, currentOffer } = await resolveTrustedElectricityContextWithReason(repositories.billRepository, principal.tenantId, resolved.simulation);
       // Without the bill's technical readings the quote runs on commercial costs only (regulated charges skipped).
       const regulatoryBridge = new ProductionRegulatoryPersistenceBridge(repositories.regulatoryValues, repositories.approvalDomains);
-      dependencies = { ...(trustedElectricityContext ? { trustedElectricityContext } : {}), ...(reason ? { regulatedUnavailableReason: reason } : {}), regulatoryBridge, regulatoryRuntimeResolver: new ProductionCteRegulatoryRuntimeResolver(regulatoryBridge), regulatoryRefreshState: repositories.regulatoryRefreshState };
+      dependencies = { ...(trustedElectricityContext ? { trustedElectricityContext } : {}), ...(reason ? { regulatedUnavailableReason: reason } : {}), ...(currentOffer ? { currentOffer } : {}), regulatoryBridge, regulatoryRuntimeResolver: new ProductionCteRegulatoryRuntimeResolver(regulatoryBridge), regulatoryRefreshState: repositories.regulatoryRefreshState };
     }
     const result = await calculateApprovedOffer(repositories.cteArchiveRepository, repositories.marketArchiveRepository, resolved.simulation, resolved.cte.record.archiveId, dependencies);
     if (result.tenantId !== resolved.binding.tenantId || result.normalizedInput.sourceBill?.billId !== resolved.binding.billId || result.normalizedInput.sourceBill?.version !== resolved.binding.billVersionId || result.sourceCte.versionId !== resolved.binding.selectedCteVersionId) throw new BillDrivenSimulationError("SIMULATION_SOURCE_BINDING_INVALID");

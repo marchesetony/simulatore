@@ -8,6 +8,9 @@ import { validateStructuredBillExtraction } from "../ingestion/structured-bill.t
 import { resolveBillVectorFromEvidence } from "../ingestion/vector-resolution.ts";
 import type { CustomerResidency, CustomerType } from "../energy/types";
 import type { ElectricitySimulationRequest } from "./types";
+import type { CurrentSupplyOffer } from "./engine";
+// @ts-expect-error Node's strip-only test runner requires the explicit extension.
+import { ONE_OFF_BILL_LINE } from "../quote/same-offer.ts";
 // @ts-expect-error Node's strip-only test runner requires the explicit extension.
 import { buildTrustedElectricitySupplyContext, type ElectricitySupplyContext, type TrustedElectricitySupplyContextError } from "./trusted-ee-supply-context.ts";
 // @ts-expect-error Node's strip-only test runner requires the explicit extension.
@@ -113,15 +116,28 @@ export async function resolveTrustedElectricityContextWithReason(
   billRepository: Pick<BillRepository, "get">,
   tenantId: string,
   request: ElectricitySimulationRequest,
-): Promise<{ readonly context: ElectricitySupplyContext | null; readonly reason: string | null }> {
+): Promise<{ readonly context: ElectricitySupplyContext | null; readonly reason: string | null; readonly currentOffer?: CurrentSupplyOffer }> {
   try {
     const resolved = await resolveApprovedSourceBillContext(billRepository, tenantId, request);
-    return { context: resolved?.supplyContext ?? null, reason: resolved ? null : "SOURCE_BILL_MISSING" };
+    return { context: resolved?.supplyContext ?? null, reason: resolved ? null : "SOURCE_BILL_MISSING", ...await currentOfferOf(billRepository, tenantId, request) };
   } catch (error) {
     // Without those readings the quote still runs on the generic electricity charges instead of failing.
-    if (error instanceof SourceBillContextError && OPTIONAL_TRUST_CODES.test(error.code)) return { context: null, reason: error.code };
+    if (error instanceof SourceBillContextError && OPTIONAL_TRUST_CODES.test(error.code)) return { context: null, reason: error.code, ...await currentOfferOf(billRepository, tenantId, request) };
     throw error;
   }
+}
+
+/** The source bill's supplier and offer, and whether it charges a one-off fee (only the first bill of a contract does). */
+async function currentOfferOf(billRepository: Pick<BillRepository, "get">, tenantId: string, request: ElectricitySimulationRequest): Promise<{ readonly currentOffer?: CurrentSupplyOffer }> {
+  if (!request.sourceBill) return {};
+  try {
+    const document = await billRepository.get(tenantId, request.sourceBill.billId);
+    const bill = document && document.tenantId === tenantId ? toPublicApprovedDocument(document)?.structuredBill : null;
+    if (!bill) return {};
+    const found = (field: { readonly status: string; readonly value: unknown } | undefined) => field?.status === "FOUND" && typeof field.value === "string" ? field.value : null;
+    const offer = [found(bill.offerCode), found(bill.offerName), bill.documentOfferName ?? null].filter((value): value is string => !!value?.trim()).join(" ") || null;
+    return { currentOffer: { supplier: found(bill.supplier), offer, oneOffBilled: bill.economicChargeLines.some((line) => ONE_OFF_BILL_LINE.test(`${line.description} ${line.rawDescription ?? ""}`)) } };
+  } catch { return {}; }
 }
 
 export async function resolveTrustedElectricityFiscalContextFromSourceBill(

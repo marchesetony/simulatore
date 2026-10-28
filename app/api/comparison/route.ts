@@ -34,10 +34,10 @@ export async function POST(request: Request): Promise<Response> {
     const parsedSimulation = resolved.simulation;
     let dependencies;
     if (parsedSimulation.vector === "EE" && parsedSimulation.sourceBill) {
-      const { context: trustedElectricityContext, reason } = await resolveTrustedElectricityContextWithReason(repositories.billRepository, tenantId, parsedSimulation);
+      const { context: trustedElectricityContext, reason, currentOffer } = await resolveTrustedElectricityContextWithReason(repositories.billRepository, tenantId, parsedSimulation);
       // Without the bill\'s technical readings the quote runs on commercial costs only (regulated charges skipped), and says why.
       const regulatoryBridge = new ProductionRegulatoryPersistenceBridge(repositories.regulatoryValues, repositories.approvalDomains);
-      dependencies = { ...(trustedElectricityContext ? { trustedElectricityContext } : {}), ...(reason ? { regulatedUnavailableReason: reason } : {}), regulatoryBridge, regulatoryRuntimeResolver: new ProductionCteRegulatoryRuntimeResolver(regulatoryBridge), regulatoryRefreshState: repositories.regulatoryRefreshState };
+      dependencies = { ...(trustedElectricityContext ? { trustedElectricityContext } : {}), ...(reason ? { regulatedUnavailableReason: reason } : {}), ...(currentOffer ? { currentOffer } : {}), regulatoryBridge, regulatoryRuntimeResolver: new ProductionCteRegulatoryRuntimeResolver(regulatoryBridge), regulatoryRefreshState: repositories.regulatoryRefreshState };
     }
     const hierarchy = await loadHierarchyAccess(principal, repositories, resolved.simulation.calculationDate);
     const result = await compareApprovedOffers(repositories.cteArchiveRepository, repositories.marketArchiveRepository, parsedSimulation, { ...(dependencies ?? {}), cteUsable: (archiveId) => cteUsability(hierarchy, archiveId) === "USABLE" });

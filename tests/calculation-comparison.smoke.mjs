@@ -83,6 +83,14 @@ try {
   assert.equal(fixedEeResult.totalCommercialCost.currency, "EUR");
   assert.ok(fixedEeResult.components.some((component) => component.formulaId === "EE_FIXED_PRICE_TIMES_KWH"));
   assert.deepEqual(fixedEeResult, await calculateApprovedOffer(cteRepository, marketRepository, eeRequest(), fixedEe.archiveId), "calculation must be reproducible");
+  // Tony (28/10): "certamente il contributo una tantum solo sulla prima bolletta". A bill already issued with this CTE that
+  // does not charge it is a later bill: no one-off fee. The first bill (it charges it) and a different supplier keep it.
+  const oneOff = (result) => result.components.filter((component) => component.category === "ONE_OFF_FEE").length;
+  const later = await calculateApprovedOffer(cteRepository, marketRepository, eeRequest(), fixedEe.archiveId, { currentOffer: { supplier: "cte-ee-fixed Supplier S.p.A.", offer: "Offerta cte-ee-fixed-CODE", oneOffBilled: false } });
+  assert.equal(oneOff(fixedEeResult), 1); assert.equal(oneOff(later), 0);
+  assert.equal(fixedEeResult.totalCommercialCost.minorUnits - later.totalCommercialCost.minorUnits, 200);
+  assert.equal(oneOff(await calculateApprovedOffer(cteRepository, marketRepository, eeRequest(), fixedEe.archiveId, { currentOffer: { supplier: "cte-ee-fixed Supplier", offer: "cte-ee-fixed-CODE", oneOffBilled: true } })), 1);
+  assert.equal(oneOff(await calculateApprovedOffer(cteRepository, marketRepository, eeRequest(), fixedEe.archiveId, { currentOffer: { supplier: "Altro fornitore", offer: "cte-ee-fixed-CODE", oneOffBilled: false } })), 1);
 
   const indexedEeRequest = eeRequest({ supplyPeriod: { periodStart: "2026-01-01", periodEnd: "2026-03-01" }, consumption: { basis: "PERIOD", unit: "KWH", f1: 300, f2: 100, f3: 100, monthlyProfile: [{ month: "2026-01", f1: 150, f2: 50, f3: 25 }, { month: "2026-02", f1: 150, f2: 50, f3: 75 }] } });
   const indexedEeResult = await calculateApprovedOffer(cteRepository, marketRepository, indexedEeRequest, indexedEe.archiveId);
