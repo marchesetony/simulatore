@@ -179,7 +179,6 @@ function indexedBill(bill: BillDocumentModel): boolean {
   return /variabil|indicizz|pun|psv|index/i.test(text) || bill.analystReview.receipt.priceMechanism === "INDEXED_PUN_PLUS_SPREAD";
 }
 // The spread is never printed on the bill: the server derives it as applied energy price minus the official GME PUN of the same months.
-const BAND_LABEL: Record<string, string> = { F0: "Prezzo energia", F1: "F1", F2: "F2", F3: "F3", F23: "F23" };
 function billSpread(bill: BillDocumentModel): ReactNode {
   const spread = bill.currentSpread;
   if (!spread) return "Non calcolabile per questa bolletta";
@@ -187,10 +186,8 @@ function billSpread(bill: BillDocumentModel): ReactNode {
   if (spread.status === "PUN_EXPIRED") return "Non calcolabile: il PUN di quel mese non è più in archivio (lo conserviamo circa 5 mesi)";
   if (spread.status === "PUN_MISSING") return "Non calcolabile: il PUN GME del mese non è ancora in archivio, verrà acquisito al prossimo aggiornamento (ogni 15 giorni)";
   if (spread.status === "PRICE_MISSING" || spread.spread === null) return "Non calcolabile: la bolletta non mostra il prezzo dell'energia";
-  const detail = spread.source === "BILL"
-    ? `Letto nella tabella della spesa per la vendita: ${spread.lines.map((line) => `${line.label ?? (line.band === "F0" ? "Monorario" : BAND_LABEL[line.band])} ${RATE.format(line.spread)} €/kWh`).join(" · ")}`
-    : `Prezzo energia in bolletta meno PUN GME: ${spread.lines.map((line) => line.billPrice !== null && line.officialPun !== null ? `${BAND_LABEL[line.band]} ${line.components ? `(${line.components.map((part) => `${part.label} ${RATE.format(part.price)}`).join(" + ")}) ` : ""}${RATE.format(line.billPrice)} − ${spread.structure === "HOURLY" ? "PUN delle fasce pesato sui consumi della bolletta " : "PUN "}${PUN.format(line.officialPun)} = ${RATE.format(line.spread)}` : `${BAND_LABEL[line.band]} ${RATE.format(line.spread)}`).join(" · ")}`;
-  return <>{RATE.format(spread.spread)} €/kWh <small className="quote-spread-detail">{detail}</small></>;
+  // Tony (28/10): only the value; the "prezzo energia in bolletta meno PUN" working was confusing in the column.
+  return `${RATE.format(spread.spread)} €/kWh`;
 }
 const MONTH_NAME = new Intl.DateTimeFormat("it-IT", { month: "long", year: "numeric", timeZone: "UTC" });
 // The official PUN the spread is measured against, shown even when the bill's energy price cannot be read.
@@ -228,15 +225,14 @@ function BillContractFacts({ bill }: { readonly bill: BillDocumentModel }): Reac
   const offerCode = bill.analystReview.receipt.offerCode.value?.trim() || null;
   const start = italianDate(receipt.contractStartDate.value ?? factValue(bill, "CONTRACT_START_DATE")) ?? italianDate(receipt.economicConditionsStartDate.value ?? factValue(bill, "ECONOMIC_CONDITIONS_START_DATE"));
   const conditionsEnd = italianDate(receipt.economicConditionsExpiryDate.value ?? factValue(bill, "ECONOMIC_EXPIRY"));
-  const contractEnd = receipt.contractDurationType === "INDEFINITE" || /indeterminat/i.test(factValue(bill, "CONTRACT_EXPIRY", "CONTRACT_INDEFINITE") ?? "") ? "contratto a tempo indeterminato" : italianDate(receipt.contractExpiryDate.value);
-  const expiry = [conditionsEnd ? `Condizioni fino al ${conditionsEnd}` : null, contractEnd ? (conditionsEnd ? contractEnd : contractEnd.replace(/^c/, "C")) : null].filter(Boolean).join(" · ");
   const pcv = monthlyPcv(bill);
   const rows: readonly (readonly [string, ReactNode])[] = [
     ["Tipo contratto", type === "RESIDENTIAL" ? <span className="cte-segment-consumer">Consumer</span> : type === "NON_RESIDENTIAL" ? <span className="cte-segment-business">Business</span> : "Non indicato"],
     // Tony (28/10): "dovevamo vedere anche il nome della cte utilizzata".
     ["Offerta attuale (CTE)", offerName ? (offerCode && offerCode !== offerName ? `${offerName} · codice ${offerCode}` : offerName) : offerCode ?? "Non indicata"],
     ["Attivo dal", start ?? "Non indicato"],
-    ["Scadenza o rinnovo", expiry || "Non indicata"],
+    // Tony (28/10): "nella scadenza mettere solo data e nessun altro testo".
+    ["Scadenza", conditionsEnd ?? italianDate(receipt.contractExpiryDate.value) ?? "Non indicata"],
     ["Tipo di prezzo", priceType(bill)],
     ...(indexedBill(bill) && bill.resolvedVector !== "GAS" ? [["PUN GME del mese di riferimento", referencePun(bill)] as const] : []),
     ...(indexedBill(bill) ? [[`Spread sul ${bill.resolvedVector === "GAS" ? "PSV" : "PUN"} (calcolato)`, bill.resolvedVector === "GAS" ? "Non calcolato per il gas" : billSpread(bill)] as const, [`Struttura del ${bill.resolvedVector === "GAS" ? "PSV" : "PUN"}`, bill.resolvedVector === "GAS" ? "Mensile" : punStructure(bill)] as const] : []),

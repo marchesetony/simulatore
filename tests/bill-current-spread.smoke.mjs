@@ -52,3 +52,9 @@ assert.equal(hourly.source, "BILL");
 close(hourly.spread, 0.0159);
 close(hourly.referencePun, profile);
 console.log("BILL_HOURLY_FORMULA_TABLE=PASS");
+// Tony (28/10, BPower Casa Protetta): the Box prints "Energia Attiva: F1 0,206350 €/kWh ... Spread: 0,020000 €/kWh", the
+// energy price equal to the PUN. Price minus PUN is zero, so the spread printed on its own row is the one shown.
+const boxIndex = estimateBillSpread(bill([line("Energia Attiva F1", "0,1200", 600), line("Energia Attiva F2", "0,1100", 300), line("Energia Attiva F3", "0,1000", 100)], [{ code: "SPREAD", value: "0,020000 €/kWh", status: "FOUND" }]), ["2026-09"], [record], official);
+assert.equal(boxIndex.source, "BILL");
+close(boxIndex.spread, 0.02);
+console.log("BILL_SPREAD_BOX_INDEX=PASS");

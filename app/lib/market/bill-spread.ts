@@ -225,9 +225,21 @@ export function estimateBillSpread(extraction: StructuredBillExtraction | null, 
     lines.push({ band, billPrice, officialPun, spread: billPrice - officialPun, ...(parts && parts.length > 1 ? { components: parts } : {}) });
   }
   if (!lines.length) return { status: officialPunMissing(bands, pun) ? "PUN_MISSING" : "PRICE_MISSING", ...empty, referencePun, referenceBands };
+  // The Box dell'offerta can print the index as the energy price and the spread on its own row ("Energia Attiva: F1
+  // 0,206350 €/kWh; Spread: 0,020000 €/kWh"): price minus PUN is then zero and the printed spread is the one (Tony, 28/10).
+  const printedMarkup = lines.every((line) => Math.abs(line.spread) < 0.0005) ? statedSpread(extraction) : null;
+  if (printedMarkup !== null) return { status: "CALCULATED", source: "BILL", structure, months, lines: lines.map((line) => ({ band: line.band, billPrice: null, officialPun: null, spread: printedMarkup, label: "Spread" })), referencePun, referenceBands, spread: printedMarkup };
   const weightOf = (band: BillSpreadBand) => band === "F23" ? consumption.F2 + consumption.F3 : band === "F0" ? consumption.F1 + consumption.F2 + consumption.F3 : consumption[band];
   return { status: "CALCULATED", source: "CALCULATED", structure, months, lines, referencePun, referenceBands, spread: weighted(lines.map((line) => [line.spread, weightOf(line.band)] as const)) };
 }
+/** The spread the bill states on its own row or fact, in €/kWh. */
+function statedSpread(extraction: StructuredBillExtraction): number | null {
+  const fact = extraction.extendedFacts.find((item) => item.status === "FOUND" && /^(ENERGY_)?SPREAD$/.test(item.code));
+  const line = extraction.economicChargeLines.find((item) => /^(ENERGY_)?SPREAD$/.test(item.code) || (/^\s*spread\b/i.test(lineText(item)) && !/dispacciament|perdit|capacit|sbilanc/i.test(lineText(item))));
+  const value = perKwh(decimal(fact?.value ?? null) ?? decimal(line?.unitPrice ?? null) ?? (line && numberLike(line.amount) && (decimal(line.amount) ?? 1) < 1 ? decimal(line.amount) : null));
+  return value !== null && value > 0 && value < 0.5 ? value : null;
+}
+const numberLike = (value: string | null | undefined): boolean => Boolean(value && /\d/.test(value));
 /** The official PUN of the billed months for the bill's structure, when the archive has every month. */
 function punReference(months: readonly string[], records: readonly MarketArchiveRecord[], isOfficial: (record: MarketArchiveRecord) => boolean, consumption: { readonly F1: number; readonly F2: number; readonly F3: number }, structure: BillPunStructure): Pick<BillCurrentSpread, "referencePun" | "referenceBands"> {
   const monthly = months.map((month) => ratesFor(records, month, isOfficial));
