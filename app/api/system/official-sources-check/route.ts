@@ -3,7 +3,7 @@ import { requestPrincipal } from "../../../lib/auth/request";
 import { checkOfficialSources } from "../../../lib/regulatory-refresh/official-sources-check";
 
 export const runtime = "nodejs";
-export const maxDuration = 60;
+export const maxDuration = 300;
 
 /** The platform owner checks, from the server, what Terna and ARERA publish today. Nothing is saved. */
 export async function POST(request: Request): Promise<Response> {

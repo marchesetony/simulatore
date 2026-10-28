@@ -4,6 +4,8 @@ import { discoverTernaCorrispettiviEndpoints, importTernaCapacityQuarter, ternaQ
 import { ARERA_CMEM_PAGE, fetchAreraCmem, type AreraCmemFetcher } from "../market/arera-cmem-source.ts";
 // @ts-expect-error Node's strip-only test runner requires the explicit extension.
 import { fetchAreraDomesticCdispdWorkbook, parseAreraDomesticCdispdXlsx, type AreraFetcher } from "../foundation/arera-electricity-regulatory.ts";
+// @ts-expect-error Node's strip-only test runner requires the explicit extension.
+import { createAreraRegulatorySourceReader } from "./arera.ts";
 
 const message = (error: unknown): string => error instanceof Error ? error.message : "CHECK_FAILED";
 
@@ -33,5 +35,16 @@ export async function checkOfficialSources(input: { readonly now?: string; reado
       return { status: "OK" as const, url: workbook.url, months: [...imported.records].sort((left, right) => right.effectiveFrom.localeCompare(left.effectiveFrom)).map((record) => ({ month: record.effectiveFrom.slice(0, 7), eurPerKwh: record.normalizedValue })), errors: imported.errors };
     } catch (error) { return { status: "ERROR" as const, error: message(error) }; }
   })();
-  return { checkedAt: now, terna, psv, cdispd };
+  // The ARERA tariffs the nightly refresh reads (transport, oneri, BTA6, CDISPD), read the same way and not saved: what each
+  // customer type gets, and each source that cannot be read with its reason.
+  const tariffs = await (async () => {
+    const reader = createAreraRegulatorySourceReader({ fetcher: input.cdispdFetcher });
+    try {
+      const records = await reader.load({ tenantId: "tenant_official-sources-check", retrievedAt: now });
+      const byScope: Record<string, number> = {};
+      for (const record of records) byScope[record.customerScope] = (byScope[record.customerScope] ?? 0) + 1;
+      return { status: "OK" as const, values: records.length, byScope, errors: reader.lastErrors?.() ?? [] };
+    } catch (error) { return { status: "ERROR" as const, error: message(error), errors: reader.lastErrors?.() ?? [] }; }
+  })();
+  return { checkedAt: now, terna, psv, cdispd, tariffs };
 }

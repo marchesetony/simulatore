@@ -82,7 +82,12 @@ const actor = "user_regulatory-auto-refresh";
 const validDate = (value: string): string => { if (!Number.isFinite(Date.parse(value))) throw new Error("REGULATORY_REFRESH_TIMESTAMP_INVALID"); return new Date(value).toISOString(); };
 const addDays = (value: string, days: number): string => new Date(Date.parse(value) + days * 86_400_000).toISOString();
 const runIdFor = (tenantId: string, trigger: string, now: string): string => `refresh_${createHash("sha256").update(`${tenantId}|${trigger}|${now}`, "utf8").digest("hex").slice(0, 40)}`;
-const errorText = (error: unknown): string => error instanceof Error ? error.message : "REGULATORY_REFRESH_UNKNOWN_ERROR";
+// The retry wrapper hides why the source failed: keep its last cause, so the archive page says what to fix (Tony, 28/10).
+const errorText = (error: unknown): string => {
+  if (!(error instanceof Error)) return "REGULATORY_REFRESH_UNKNOWN_ERROR";
+  const cause = (error as { readonly lastError?: unknown }).lastError;
+  return cause instanceof Error ? `${error.message}:${cause.message}` : error.message;
+};
 
 function initialState(tenantId: string): RegulatoryRefreshState {
   return { tenantId, status: "NEVER_SUCCESSFUL", lastAttemptAt: null, lastSuccessfulAt: null, nextExpectedCheckAt: null, consecutiveFailures: 0, sourceStatus: {}, errors: [], lease: null };
@@ -203,8 +208,11 @@ export async function runRegulatoryRefresh(input: { readonly tenantId: string } 
     : CALCULATED_REGULATORY_DOMAINS.filter((domain) => requestedDomainKeys.has(regulatoryDomainKey(domain)));
   if (requestedDomainKeys !== null && (domains.length !== requestedDomainKeys.size || domains.length === 0)) throw new Error("REGULATORY_REFRESH_DOMAIN_ALLOWLIST_INVALID");
   let candidates: readonly RegulatoryValueRecord[] = [];
-  try { candidates = (await withBoundedRetry(() => reader.load({ tenantId: input.tenantId, retrievedAt: now }), { maxAttempts: 3, baseDelayMs: 50, maxDelayMs: 250, jitterRatio: 0, sleep: async () => undefined })).value; errors.push(...(reader.lastErrors?.() ?? [])); } catch (error) { errors.push(errorText(error)); }
+  let sourcesRead = true;
+  try { candidates = (await withBoundedRetry(() => reader.load({ tenantId: input.tenantId, retrievedAt: now }), { maxAttempts: 3, baseDelayMs: 50, maxDelayMs: 250, jitterRatio: 0, sleep: async () => undefined })).value; errors.push(...(reader.lastErrors?.() ?? [])); } catch (error) { sourcesRead = false; errors.push(errorText(error)); }
   for (const domain of domains) {
+    // Sources that could not be read are one error, not one per domain.
+    if (!sourcesRead) { failedCount += 1; checks.push({ domain: regulatoryDomainKey(domain), status: "FAIL", error: "ARERA_SOURCES_UNREADABLE" }); continue; }
     try {
       const domainCandidates = recordsForDomain(domain, candidates);
       checks.push({ domain: regulatoryDomainKey(domain), status: "PASS", sourceReference: domainCandidates[0].sourceReference, sourceSha256: domainCandidates[0].sourceSha256 });
