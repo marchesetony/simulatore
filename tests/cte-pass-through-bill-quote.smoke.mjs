@@ -82,4 +82,17 @@ const bta6Context = { ...context(85), contractedPowerKw: 85, regulatoryCustomerS
 const gap = await calculatePreparedOffer(request(true), prepared, { ...deps(0.0105, 0.004275, undefined), trustedElectricityContext: bta6Context });
 assert.equal(gap.totalRegulatedSubsetCost, null);
 assert.ok(gap.warnings.some((warning) => /^OFFICIAL_VALUE_MISSING:REGULATED:TIMELINE_(GAP|OVERLAP)_.+_NON_DOMESTIC_BT_BTA6$|^OFFICIAL_VALUE_MISSING:REGULATED:ASOS_CLASS_UNKNOWN_/.test(warning)), gap.warnings.join(","));
+// Tony (28/10, BPower Be FIX RELAX 26 microbus): the archived CTE says nothing on dispatching and capacity ("la CTE in
+// archivio non indica come si applica"), yet the bill charges them. Regulated charges apply unless the CTE includes them.
+const silent = structuredClone(prepared);
+delete silent.offer.dispatchingReference; delete silent.offer.capacityMarketSchedule; silent.version.contract.commercialTerms = {};
+const silentQuote = await calculatePreparedOffer(request(true), silent, deps(null, null, 6));
+assert.deepEqual(byKind(silentQuote, "DISPATCHING"), [11.55]);
+// ARERA TIV 219/2026 art. 4.1, settembre 2026: 0,3197 c€/kWh x 1,10 x 1.000 kWh = 3,52.
+assert.deepEqual(byKind(silentQuote, "CAPACITY_MARKET"), [3.52]);
+assert.ok(!silentQuote.warnings.some((warning) => /CTE_REFERENCE_MISSING/.test(warning)), silentQuote.warnings.join(","));
+const includedOffer = structuredClone(silent);
+includedOffer.offer.passThroughComponents = ["DISPATCHING", "CAPACITY_MARKET"].map((kind) => ({ componentId: `pt-${kind}`, kind, effectiveFrom: "2026-08-03", effectiveTo: "2027-01-01", declarationState: "INCLUDED_IN_ENERGY_PRICE" }));
+const includedQuote = await calculatePreparedOffer(request(true), includedOffer, deps(null, null, 6));
+assert.deepEqual(byKind(includedQuote, "DISPATCHING"), []); assert.deepEqual(byKind(includedQuote, "CAPACITY_MARKET"), []);
 console.log("CTE_PASS_THROUGH_BILL_QUOTE=PASS");

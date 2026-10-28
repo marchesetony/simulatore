@@ -162,4 +162,23 @@ const sameCte = (energyGap, vatGap) => sameOfferDifferences({ rows: [
 ] });
 assert.ok(sameCte(-5.35, -1.18).every((item) => item.accepted === true), JSON.stringify(sameCte(-5.35, -1.18)));
 assert.equal(sameCte(-20, -4.4).filter((item) => !item.accepted).length, 2, "a gap above 1% of the energy price is a real difference");
+// Tony (28/10, BPower Be FIX RELAX 26 microbus, 213 kWh): "quello che segni non in bolletta, in effetti si trova dentro il
+// prezzo energia". The bill prints one energy line (49,21 €) and no Box: losses, commercialisation, dispatching, capacity
+// and imbalance of the CTE are compared inside it, not shown as "non in bolletta".
+const fixBill = buildCurrentBillEconomicAnalysis([
+  line("Energia attiva prezzo fisso", "49,21 €", "213 kWh", "0,231033", "ENERGY_FIXED_PRICE"), line("Quota fissa", "15,00 €", "1 mese", "15,00", "PCV"),
+], "64,21");
+const fixOffer = [
+  { category: "ENERGY", sign: "CHARGE", label: "Energia a prezzo fisso", amount: { amount: 38.13 } },
+  { category: "VARIABLE_FEE", sign: "CHARGE", label: "Perdite di rete", amount: { amount: 3.81 }, formulaInputs: { kind: "LOSSES" } },
+  { category: "VARIABLE_FEE", sign: "CHARGE", label: "Dispacciamento", amount: { amount: 2.46 }, formulaInputs: { kind: "DISPATCHING" } },
+  { category: "VARIABLE_FEE", sign: "CHARGE", label: "Mercato della capacità", amount: { amount: 0.75 }, formulaInputs: { kind: "CAPACITY_MARKET" } },
+  { category: "VARIABLE_FEE", sign: "CHARGE", label: "Commercializzazione", amount: { amount: 0.85 }, formulaInputs: { feeUnit: "EUR_PER_KWH" } },
+  { category: "IMBALANCE", sign: "CHARGE", label: "Sbilanciamento", amount: { amount: 1.07 }, formulaInputs: { feeUnit: "EUR_PER_KWH" } },
+  { category: "FIXED_FEE", sign: "CHARGE", label: "Quota fissa", amount: { amount: 15 }, formulaInputs: { feeUnit: "EUR_PER_MONTH" } },
+];
+const fixDetails = Object.fromEntries(buildQuoteReceipt({ vector: "EE", offerSupplyCost: 62.07, analysis: fixBill, domestic: false, validUntil: null, offerComponents: fixOffer }).rows.find((row) => row.key === "ENERGY").details.map((item) => [item.key, item]));
+for (const key of ["LOSSES", "COMMERCIALIZATION", "DISPATCHING", "IMBALANCE"]) assert.match(fixDetails[key]?.currentNote ?? "", /compreso nel prezzo energia/, key);
+assert.match(fixDetails.ENERGY.label, /comprende anche/);
+assert.equal(fixDetails.ENERGY.difference, Math.round((38.13 + 3.81 + 2.46 + 0.75 + 0.85 + 1.07 - 49.21) * 100) / 100);
 console.log("BPOWER_BE_SMART_BILL=PASS");

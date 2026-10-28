@@ -430,7 +430,9 @@ function OfferBox({ offer, bill, context }: { readonly offer: Offer; readonly bi
   const energyRow = offer.receipt.rows.find((row) => row.key === "ENERGY");
   const fees = offer.calculation.components.filter((component) => component.category === "FIXED_FEE");
   const extras = fees.filter((component) => /flex|opzion|servizi/i.test(component.label));
-  const billSpread = bill.currentSpread?.status === "CALCULATED" ? bill.currentSpread.spread : null;
+  // A fixed-price bill has no spread on an index: its fixed price is shown instead (Tony, 28/10, Be FIX RELAX: -0,028542).
+  const billFixed = !indexedBill(bill) && /^Prezzo fisso/.test(priceType(bill)) ? factValue(bill, "FIXED_PRICE", "ENERGY_FIXED_PRICE", "MONORARIO_PRICE") : null;
+  const billSpread = !billFixed && bill.currentSpread?.status === "CALCULATED" ? bill.currentSpread.spread : null;
   const billPcv = monthlyPcv(bill);
   const billUnit = energyRow?.current != null && basis ? energyRow.current / basis.billed : null;
   const index = offer.candidate.pricingReference === "PSV" || !ee ? "PSV" : "PUN";
@@ -440,7 +442,7 @@ function OfferBox({ offer, bill, context }: { readonly offer: Offer; readonly bi
     ["Tipo di prezzo", priceType(bill), offerType, undefined],
     ...(ee && indexedBill(bill) ? [["Indice nel periodo (GME)", referencePun(bill), "stesso indice e stesso periodo", undefined] as const] : []),
     ["Spread sull'indice", billSpread === null ? "—" : `${RATE.format(billSpread)} ${unit}`, terms?.spread == null ? "—" : `${RATE.format(terms.spread)} ${unit}`, billSpread !== null && terms?.spread != null ? difference(terms.spread - billSpread) : undefined],
-    ...(terms?.fixedPrice != null ? [["Prezzo fisso energia", "—", `${RATE.format(terms.fixedPrice)} ${unit}`, undefined] as const] : []),
+    ...(terms?.fixedPrice != null || billFixed ? [["Prezzo fisso energia", billFixed ? `${billFixed} ${unit}` : "—", terms?.fixedPrice == null ? "—" : `${RATE.format(terms.fixedPrice)} ${unit}`, undefined] as const] : []),
     ["Quota fissa di vendita", billPcv === null ? "—" : `${EURO.format(billPcv)} al mese`, terms?.monthlyFixedFee == null ? "—" : `${EURO.format(terms.monthlyFixedFee)} al mese`, billPcv !== null && terms?.monthlyFixedFee != null ? difference(terms.monthlyFixedFee - billPcv) : undefined],
     ["Opzioni e servizi a pagamento", "—", extras.length ? extras.map((component) => `${component.label} ${EURO.format(component.amount.amount)}`).join(" · ") : "nessuno", extras.length ? "negative" : undefined],
     ["Costo medio della materia", billUnit === null ? "—" : `${RATE.format(billUnit)} ${unit}`, `${RATE.format(offer.calculation.unitCost.amount)} ${unit}`, billUnit === null ? undefined : difference(offer.calculation.unitCost.amount - billUnit)],

@@ -308,12 +308,15 @@ function withDetails(input: QuoteReceiptInput, rows: readonly QuoteReceiptRow[],
     ...[...missing.keys()].map((key) => [key, DETAIL_LABEL[key] ?? key, null, null] as const),
   ]);
   // The energy line then holds every consumption charge the bill does not print on its own (losses included).
-  const inEnergy = (item: QuoteReceiptDetail) => bundled.size > 0 && item.current === null && !["ENERGY", "PCV", "ONE_OFF", "OPTIONS"].includes(item.key);
+  // Tony (28/10): "quello che segni non in bolletta, in effetti si trova dentro il prezzo energia": a seller charge the bill
+  // does not print on its own line is billed inside its energy line, Box dell'offerta or not.
+  const energyBilled = sellerDetails.some((item) => item.key === "ENERGY" && item.current !== null);
+  const inEnergy = (item: QuoteReceiptDetail) => (bundled.size > 0 || energyBilled) && item.current === null && !["ENERGY", "PCV", "ONE_OFF", "OPTIONS"].includes(item.key);
   const bundledOffer = sellerDetails.filter(inEnergy).reduce((total, item) => total + (item.offer ?? 0), 0);
   const bundledNames = sellerDetails.filter(inEnergy).map((item) => item.label.replace(/ \(.*\)$/, "").toLowerCase());
-  const seller: readonly QuoteReceiptDetail[] = bundled.size === 0 ? sellerDetails : sellerDetails.map((item) => {
+  const seller: readonly QuoteReceiptDetail[] = bundled.size === 0 && !energyBilled ? sellerDetails : sellerDetails.map((item) => {
     if (inEnergy(item)) return { ...item, difference: null, currentNote: `compreso nel prezzo energia della bolletta${bundled.get(item.key) ? ` (${bundled.get(item.key)} €/kWh)` : ""}` };
-    if (item.key !== "ENERGY" || item.current === null || item.missingReason) return item;
+    if (item.key !== "ENERGY" || item.current === null || item.missingReason || bundledNames.length === 0) return item;
     return { ...item, label: `${item.label}, in bolletta comprende anche ${bundledNames.join(", ")}`, difference: hasBill && !sellerDetails.some((other) => inEnergy(other) && other.missingReason) ? cents((item.offer ?? 0) + bundledOffer - item.current) : null };
   });
   const label = (quota: Quota | null) => quota ? QUOTA_LABEL[quota].replace("\u20ac/kWh", consumptionUnit) : "altre voci";

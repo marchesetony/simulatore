@@ -50,7 +50,14 @@ export function parseMaximumDrawnPowerKw(field: BillSupplyProfile["powerMaximumD
 }
 
 function requiredVoltageLevel(profile: BillSupplyProfile): VoltageLevel {
-  if (profile.voltageClass.status !== "FOUND") fail("VOLTAGE_LEVEL_REQUIRED");
+  if (profile.voltageClass.status !== "FOUND") {
+    // Tony (28/10, bolletta BPower Be FIX RELAX): the bill does not print the voltage. A supply of at most 30 kW is connected
+    // in bassa tensione (TIC: BT up to 100 kW), so the BT tables apply; above that the voltage must be read.
+    let power: number | undefined;
+    try { power = parseAvailablePowerKw(profile.powerAvailable) ?? parseContractedPowerKw(profile.powerCommitted); } catch { power = undefined; }
+    if (power !== undefined && power > 0 && power <= 30) return "LV";
+    fail("VOLTAGE_LEVEL_REQUIRED");
+  }
   const value = profile.voltageClass.normalizedValue?.toUpperCase();
   if (!value || !VOLTAGE_LEVELS.includes(value as VoltageLevel)) fail("VOLTAGE_LEVEL_INVALID");
   return value as VoltageLevel;

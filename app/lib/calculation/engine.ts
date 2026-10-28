@@ -203,7 +203,11 @@ function addCtePassThroughs(target: ComponentDraft[], request: ElectricitySimula
   // ufficiali ARERA/Terna del periodo; il valore che la CTE scrive ("attualmente pari a") serve solo da controllo. Senza
   // valore ufficiale la voce non si stima: il motivo va nei warnings e lo scontrino lo mostra.
   const dispatching = offer.dispatchingReference;
-  if (dispatching && !priced.has("DISPATCHING")) {
+  // Tony (28/10, BPower Be FIX RELAX): the archived CTE says nothing on dispatching and capacity, yet the bill charges them.
+  // They are regulated charges every free-market customer pays (TIS art. 24, TIV 34.8 bis): unless the CTE includes them in
+  // the energy price or excludes them, the official value applies.
+  const statedAway = (kind: "DISPATCHING" | "CAPACITY_MARKET") => (offer.passThroughComponents ?? []).some((item) => item.kind === kind && (item.declarationState === "INCLUDED_IN_ENERGY_PRICE" || item.declarationState === "NOT_APPLICABLE"));
+  if ((dispatching || !statedAway("DISPATCHING")) && !priced.has("DISPATCHING")) {
     // Customers other than households: Terna's quarterly TIDE dispatching charge, when the archive resolves none.
     const domestic = context?.regulatoryCustomerScope?.startsWith("DOMESTIC") === true;
     const terna = runtime?.dispatching?.value === undefined && !domestic ? ternaTideForPeriod(request.supplyPeriod.periodStart, request.supplyPeriod.periodEnd, tideQuarters) : null;
@@ -213,7 +217,7 @@ function addCtePassThroughs(target: ComponentDraft[], request: ElectricitySimula
       const unitRate = grossUp(fromNumber(official));
       target.push({ componentId: "cte-pass-through:dispatching", category: "VARIABLE_FEE", label: "Dispacciamento", sign: "CHARGE", value: multiply(unitRate, totalQuantity), formulaId: "CTE_PASS_THROUGH_RATE_TIMES_KWH", formulaInputs: { kind: "DISPATCHING", feeUnit: "EUR_PER_KWH", feeRate: toDecimal(unitRate, 6), officialRate: official, lossFactor: loss ? toDecimal(loss, 6) : 0, basisQuantity: toDecimal(totalQuantity, 3), source: runtime?.dispatching?.officialIdentifier ?? (terna ? terna.quarters.map((item) => item.reference).join(", ") : "OFFICIAL") } });
     } else missing.push("DISPATCHING:OFFICIAL_VALUE_MISSING");
-  } else if (!dispatching && !priced.has("DISPATCHING")) missing.push("DISPATCHING:CTE_REFERENCE_MISSING");
+  }
   if (!priced.has("CAPACITY_MARKET")) {
     const period = request.supplyPeriod;
     const entries = (offer.capacityMarketSchedule ?? []).filter((entry) => entry.effectiveFrom < period.periodEnd && entry.effectiveTo > period.periodStart);
@@ -226,7 +230,7 @@ function addCtePassThroughs(target: ComponentDraft[], request: ElectricitySimula
     // The regulated capacity charge (TIV comma 34.8 bis, Terna): published net of losses, so always grossed up. BT up to
     // 55 kW: one monthly value on all kWh. BT above 55 kW, MT, AT: kWh in Terna's 500 peak hours x peak rate + the rest x
     // off-peak rate, which needs the peak-hour kWh of the meter.
-    if (!entries.some((entry) => entry.mode === "OFFICIAL_PASS_THROUGH")) missing.push("CAPACITY_MARKET:CTE_REFERENCE_MISSING");
+    if (!entries.some((entry) => entry.mode === "OFFICIAL_PASS_THROUGH") && (entries.length > 0 || statedAway("CAPACITY_MARKET"))) missing.push("CAPACITY_MARKET:CTE_REFERENCE_MISSING");
     else {
       const powerKw = context?.availablePowerKw ?? context?.contractedPowerKw;
       const smallLv = request.voltageLevel === "LV" && powerKw !== undefined && powerKw <= 55;
