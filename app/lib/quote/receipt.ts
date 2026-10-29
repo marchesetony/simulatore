@@ -399,6 +399,25 @@ export function buildQuoteReceipt(input: QuoteReceiptInput): QuoteReceipt {
   return { status: "COMPLETE", rows: withDetails(input, rows, true), currentTotal, offerTotal, savings, savingsPercent, taxesIncluded, vatRate: taxesIncluded ? chosenRate ?? vatRate : null, vatRateEstimated: taxesIncluded && chosenRate === null && printedRate === null, billVatRate: taxesIncluded ? vatRate : null, validUntil: input.validUntil, quotas: quotasOf(input, currentEnergy, offerEnergy, network, system, taxesIncluded ? currentTaxes : null, offerTaxes, offerNetwork, offerSystem), officialCheck: check, excluded };
 }
 
+/**
+ * The spread a household bill really charges on top of the index, losses included: (seller's consumption quota − index ×
+ * (1 + losses) − CDISPD) ÷ kWh. From 1 April 2026 a household CTE states one spread covering every cost outside the index,
+ * sbilanciamento and commercializzazione included, "al lordo delle perdite di rete" (delibera 386/2025/R/com, Codice di
+ * condotta commerciale art. 5.1.a): this is the number to compare with it (Tony, 29/10, bolletta Casa Protetta: 0,02 billed
+ * as (PUN + 0,02) × 1,10 against 0,03 in the CTE). Null unless the simulation priced the index and the household CDISPD.
+ */
+export function effectiveBillSpread(receipt: Pick<QuoteReceipt, "quotas">, components: readonly QuoteReceiptOfferComponent[]): number | null {
+  const seller = receipt.quotas.find((quota) => quota.key === "CONSUMPTION")?.currentSeller ?? null;
+  const index = components.filter((component) => component.formulaId === "EE_PUN_MWH_TO_KWH_PLUS_SPREAD");
+  const cdispd = components.filter((component) => component.formulaId === "REGULATED_DOMESTIC_CDISPD_RATE_TIMES_KWH" || /CDISPD/.test(component.label ?? ""));
+  if (seller === null || !index.length || !cdispd.length) return null;
+  const kwh = index.reduce((total, component) => total + Number(component.formulaInputs?.quantityKwh ?? 0), 0);
+  const indexCost = index.reduce((total, component) => total + Number(component.formulaInputs?.punEurPerMwh ?? 0) / 1000 * Number(component.formulaInputs?.quantityKwh ?? 0), 0);
+  const loss = Number(components.find((component) => component.formulaInputs?.kind === "LOSSES")?.formulaInputs?.lossFactor ?? 0);
+  if (!(kwh > 0)) return null;
+  return Math.round((seller - indexCost * (1 + loss) - cdispd.reduce((total, component) => total + signed(component), 0)) / kwh * 1e6) / 1e6;
+}
+
 /** Whether the bill's regulated charges match the official ARERA (network, system charges) and Terna (dispatching, capacity) values of the period. */
 // Excise and VAT are not checked: the same excise applies to every supplier and the VAT rate is the customer's (Tony, 26/10).
 export type RegulatedDomain = "NETWORK" | "SYSTEM_CHARGES" | "DISPATCHING" | "CAPACITY_MARKET";

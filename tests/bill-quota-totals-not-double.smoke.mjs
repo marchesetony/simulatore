@@ -38,3 +38,17 @@ for (const withFixedNetwork of [true, false]) {
   assert.deepEqual(receipt.excluded.map((item) => item.amount).sort((a, b) => a - b), [-16.8, 9], "only bonus and TV licence left out");
 }
 console.log("BILL_QUOTA_TOTALS_NOT_DOUBLE=PASS");
+
+// Tony (29/10, delibera 386/2025/R/com): a household CTE's spread covers sbilanciamento and commercializzazione and is
+// gross of losses. The bill's effective spread is its seller consumption quota less PUN x 1,10 and CDISPD, per kWh:
+// 120,55 - 94,46 x 1,10 - 6,74 on 447 kWh = 0,022 EUR/kWh, against 0,03 in the CTE.
+const { effectiveBillSpread } = await import("../app/lib/quote/receipt.ts");
+const spreadComponents = [
+  { category: "ENERGY", sign: "CHARGE", formulaId: "EE_PUN_MWH_TO_KWH_PLUS_SPREAD", amount: { amount: 107.87 }, formulaInputs: { punEurPerMwh: 211.3199, quantityKwh: 447 } },
+  { category: "VARIABLE_FEE", sign: "CHARGE", formulaId: "CTE_PASS_THROUGH_LOSSES_ON_ENERGY", amount: { amount: 9.45 }, formulaInputs: { kind: "LOSSES", lossFactor: "0.1" } },
+  { category: "REGULATED_ENERGY", sign: "CHARGE", label: "Dispacciamento e mercato della capacità (CDISPD)", formulaId: "REGULATED_DOMESTIC_CDISPD_RATE_TIMES_KWH", amount: { amount: 6.74 }, formulaInputs: {} },
+];
+const effective = effectiveBillSpread({ quotas: [{ key: "CONSUMPTION", currentSeller: 120.55 }] }, spreadComponents);
+assert.ok(Math.abs(effective - 0.02215) < 0.00005, `effective spread ${effective}`);
+assert.equal(effectiveBillSpread({ quotas: [{ key: "CONSUMPTION", currentSeller: 120.55 }] }, spreadComponents.slice(0, 2)), null, "no CDISPD, no effective spread");
+console.log("EFFECTIVE_BILL_SPREAD=PASS");

@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useState, type ChangeEvent, type ReactNode } from "react";
 import { EmptyState, ErrorState, LoadingState } from "./UiStates";
 import { downloadExport, requestForm, requestJson, toUiError } from "../lib/ui/client";
-import { buildQuoteReceipt, isSameOffer, regulatedVerification, sameOfferDifferences, type QuoteReceipt, type RegulatedDomain } from "../lib/quote/receipt";
+import { buildQuoteReceipt, effectiveBillSpread, isSameOffer, regulatedVerification, sameOfferDifferences, type QuoteReceipt, type RegulatedDomain } from "../lib/quote/receipt";
 import { customerTypeOf } from "../lib/ingestion/customer-type";
 import type { ApprovedBillSummaryModel, BillDocumentModel, CalculationModel, ComparisonModel, ProposalModel } from "../lib/ui/models";
 
@@ -436,6 +436,8 @@ function OfferBox({ offer, bill, context }: { readonly offer: Offer; readonly bi
   // A fixed-price bill has no spread on an index: its fixed price is shown instead (Tony, 28/10, Be FIX RELAX: -0,028542).
   const billFixed = !indexedBill(bill) && /^Prezzo fisso/.test(priceType(bill)) ? factValue(bill, "FIXED_PRICE", "ENERGY_FIXED_PRICE", "MONORARIO_PRICE") : null;
   const billSpread = !billFixed && bill.currentSpread?.status === "CALCULATED" ? bill.currentSpread.spread : null;
+  // What the household bill really charges above the index, against the CTE's single spread (Tony, 29/10).
+  const effective = ee && billSpread !== null ? effectiveBillSpread(offer.receipt, offer.calculation.components) : null;
   const billPcv = monthlyPcv(bill);
   const billUnit = energyRow?.current != null && basis ? energyRow.current / basis.billed : null;
   const index = offer.candidate.pricingReference === "PSV" || !ee ? "PSV" : "PUN";
@@ -445,6 +447,7 @@ function OfferBox({ offer, bill, context }: { readonly offer: Offer; readonly bi
     ["Tipo di prezzo", priceType(bill), offerType, undefined],
     ...(ee && indexedBill(bill) ? [["Indice nel periodo (GME)", referencePun(bill), "stesso indice e stesso periodo", undefined] as const] : []),
     ["Spread sull'indice", billSpread === null ? "—" : `${RATE.format(billSpread)} ${unit}`, terms?.spread == null ? "—" : `${RATE.format(terms.spread)} ${unit}`, billSpread !== null && terms?.spread != null ? difference(terms.spread - billSpread) : undefined],
+    ...(effective !== null && terms?.spread != null ? [["Spread effettivo (perdite comprese, delibera 386/2025)", `${RATE.format(effective)} ${unit}`, `${RATE.format(terms.spread)} ${unit}`, difference(terms.spread - effective)] as const] : []),
     ...(terms?.fixedPrice != null || billFixed ? [["Prezzo fisso energia", billFixed ? `${billFixed} ${unit}` : "—", terms?.fixedPrice == null ? "—" : `${RATE.format(terms.fixedPrice)} ${unit}`, undefined] as const] : []),
     ["Quota fissa di vendita", billPcv === null ? "—" : `${EURO.format(billPcv)} al mese`, terms?.monthlyFixedFee == null ? "—" : `${EURO.format(terms.monthlyFixedFee)} al mese`, billPcv !== null && terms?.monthlyFixedFee != null ? difference(terms.monthlyFixedFee - billPcv) : undefined],
     ["Opzioni e servizi a pagamento", "—", extras.length ? extras.map((component) => `${component.label} ${EURO.format(component.amount.amount)}`).join(" · ") : "nessuno", extras.length ? "negative" : undefined],
