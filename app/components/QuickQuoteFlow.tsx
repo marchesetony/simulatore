@@ -412,12 +412,20 @@ function SameOfferCheck({ offer, bill, context }: { readonly offer: Offer; reado
   const all = sameOfferDifferences(offer.receipt);
   const differences = all.filter((item) => !item.accepted);
   const accepted = all.filter((item) => item.accepted);
+  const real = differences.filter((item) => !item.consequence).length;
+  // Household bills (Tony, 29/10): when the gap is the spread, say which spread the bill really applies and why it can
+  // differ from the CTE (contracts in force adapt by 1/1/2027, delibera 386/2025 art. 6.3).
+  const effective = context.vector === "EE" ? effectiveBillSpread(offer.receipt, offer.calculation.components) : null;
+  const cteSpread = offer.candidate.terms?.spread ?? null;
+  const spreadGap = effective !== null && cteSpread !== null && Math.abs(cteSpread - effective) >= 0.0005 ? cteSpread - effective : null;
+  const kwh = annualBasis(context)?.billed ?? null;
   const line = (item: (typeof all)[number]) => <li key={item.label}><strong>{item.label}</strong>: bolletta {euro(item.current)}, simulazione {euro(item.offer)}{item.difference === null ? "" : ` (${item.difference > 0 ? "+" : ""}${EURO.format(item.difference)})`}. {item.cause}.</li>;
   return <div className={differences.length ? "same-offer-check differs" : "same-offer-check"} role="status">
     <p className="eyebrow">VERIFICA STESSA CTE</p>
     {differences.length === 0 ? <p>La bolletta è emessa con questa CTE e la simulazione coincide voce per voce{accepted.length ? ", salvo gli arrotondamenti accettati qui sotto" : ""}.</p> : <>
-      <p>La bolletta è emessa con questa CTE: le due colonne devono coincidere. {differences.length === 1 ? "Una voce è diversa" : `${differences.length} voci sono diverse`}:</p>
+      <p>La bolletta è emessa con questa CTE: le due colonne devono coincidere. {real === 1 ? "Una voce è diversa" : `${real} voci sono diverse`}:</p>
       <ul>{differences.map(line)}</ul>
+      {spreadGap !== null ? <p>La bolletta applica sull&apos;indice uno spread effettivo di {RATE.format(effective!)} €/kWh (perdite comprese), la CTE {RATE.format(cteSpread!)} €/kWh{kwh ? `: ${RATE.format(spreadGap)} €/kWh per ${amount(kwh, "kWh")} fanno circa ${euro(spreadGap * kwh)}` : ""}. Il fornitore ha fatturato con uno spread diverso da questa CTE: o il contratto del cliente è ancora alle condizioni precedenti (i contratti in essere si adeguano entro il 1/1/2027, delibera 386/2025 art. 6.3), o la CTE caricata non è quella del contratto.</p> : null}
       <p className="muted">Mandaci questo caso: la correzione vale per tutte le aziende e resta nei test.</p>
     </>}
     {accepted.length ? <><p className="muted">Differenze accettate:</p><ul className="muted">{accepted.map(line)}</ul></> : null}

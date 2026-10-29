@@ -450,7 +450,7 @@ export function regulatedVerification(audit: BillRegulatoryAuditDTO | null | und
 }
 
 /** One charge that differs when the bill was issued with the very CTE being simulated. */
-export interface SameOfferDifference { readonly label: string; readonly current: number | null; readonly offer: number | null; readonly difference: number | null; readonly cause: string; readonly accepted?: boolean }
+export interface SameOfferDifference { readonly label: string; readonly current: number | null; readonly offer: number | null; readonly difference: number | null; readonly cause: string; readonly accepted?: boolean; readonly consequence?: boolean }
 
 /** Tony (28/10): the bill and the simulation of the same CTE must match line by line; every charge apart by more than
  *  0,01 € is listed with its likely cause, so each case becomes a correction that holds for every company. */
@@ -461,7 +461,10 @@ export function sameOfferDifferences(receipt: Pick<QuoteReceipt, "rows">): reado
     if (item.current === null && item.currentNote) return;
     if (item.current === null && (item.offer ?? 0) !== 0) { out.push({ label, current: null, offer: item.offer, difference: null, cause: "Bolletta: la voce non è stata letta o la bolletta non la addebita" }); return; }
     const difference = item.difference ?? (item.current !== null && item.offer !== null ? Math.round((item.offer - item.current) * 100) / 100 : null);
-    if (difference !== null && Math.abs(difference) > 0.01) out.push({ label, current: item.current, offer: item.offer, difference, cause: "Importo diverso: va controllata la lettura di bolletta e CTE" });
+    // The simulation shown is the bill plus the difference, so a bill line that bundles more charges (losses, dispatching)
+    // is set against the same charges of the simulation (Tony, 29/10: 120,55 against 107,87 read as +3,51).
+    const offer = difference !== null && item.current !== null ? Math.round((item.current + difference) * 100) / 100 : item.offer;
+    if (difference !== null && Math.abs(difference) > 0.01) out.push({ label, current: item.current, offer, difference, cause: "Importo diverso: va controllata la lettura di bolletta e CTE" });
   };
   for (const row of receipt.rows) {
     if (row.details?.length) for (const detail of row.details) check(`${row.label} · ${detail.label}`, detail);
@@ -474,6 +477,9 @@ export function sameOfferDifferences(receipt: Pick<QuoteReceipt, "rows">): reado
     ? { ...item, accepted: true, cause: "Arrotondamento dei decimali dei prezzi della CTE (es. commercializzazione e sbilanciamento): considerato corretto" } : item);
   const acceptedTotal = accepted.filter((item) => item.accepted).reduce((total, item) => total + (item.difference ?? 0), 0);
   const others = accepted.filter((item) => !item.accepted && !/(?:^|· )IVA$/.test(item.label));
-  return accepted.map((item) => !item.accepted && others.length === 0 && acceptedTotal !== 0 && /(?:^|· )IVA$/.test(item.label) && item.difference !== null && Math.abs(item.difference - acceptedTotal * 0.22) <= 0.02
+  // An IVA gap that is just the IVA on the other gaps is their consequence, not a gap of its own (Tony, 29/10).
+  const othersTotal = others.reduce((total, item) => total + (item.difference ?? 0), 0);
+  const vatOnOthers = (item: SameOfferDifference) => others.length > 0 && item.difference !== null && [0.1, 0.22].some((rate) => Math.abs(item.difference! - othersTotal * rate) <= 0.02);
+  return accepted.map((item) => !item.accepted && /(?:^|· )IVA$/.test(item.label) && vatOnOthers(item) ? { ...item, consequence: true, cause: "È l'IVA sulla differenza qui sopra: si sistema con quella" } : item).map((item) => !item.accepted && others.length === 0 && acceptedTotal !== 0 && /(?:^|· )IVA$/.test(item.label) && item.difference !== null && Math.abs(item.difference - acceptedTotal * 0.22) <= 0.02
     ? { ...item, accepted: true, cause: "IVA sulla differenza di arrotondamento accettata" } : item);
 }

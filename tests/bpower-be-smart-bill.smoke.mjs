@@ -162,6 +162,16 @@ const sameCte = (energyGap, vatGap) => sameOfferDifferences({ rows: [
 ] });
 assert.ok(sameCte(-5.35, -1.18).every((item) => item.accepted === true), JSON.stringify(sameCte(-5.35, -1.18)));
 assert.equal(sameCte(-20, -4.4).filter((item) => !item.accepted).length, 2, "a gap above 1% of the energy price is a real difference");
+// Tony (29/10, Casa Protetta 447 kWh): the check read "bolletta 120,55 €, simulazione 107,87 € (+3,51 €)" because the bill's
+// energy line also holds losses and dispatching; the simulation shown is now the same bundle, and the IVA on that gap
+// (+0,35 € at 10%) is its consequence, not a second difference.
+const casa = sameOfferDifferences({ rows: [
+  { key: "ENERGY", label: "Spesa per la vendita di energia elettrica", current: 133.55, offer: 137.06, details: [{ key: "ENERGY", label: "Prezzo energia, in bolletta comprende anche perdite di rete, dispacciamento", current: 120.55, offer: 107.87, difference: 3.51 }] },
+  { key: "TAXES", label: "Imposte (accise e IVA)", current: 15.62, offer: 15.97, details: [{ key: "VAT", label: "IVA", current: 15.62, offer: 15.97, difference: 0.35 }] },
+] });
+assert.equal(casa[0].offer, 124.06, "simulation shown on the bill's bundle");
+assert.equal(casa[1].consequence, true, "IVA on the energy gap is its consequence");
+assert.ok(!casa[0].consequence);
 // Tony (28/10, BPower Be FIX RELAX 26 microbus, 213 kWh): "quello che segni non in bolletta, in effetti si trova dentro il
 // prezzo energia". The bill prints one energy line (49,21 €) and no Box: losses, commercialisation, dispatching, capacity
 // and imbalance of the CTE are compared inside it, not shown as "non in bolletta".
