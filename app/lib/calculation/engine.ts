@@ -183,7 +183,7 @@ function standardLoss(request: ElectricitySimulationRequest, runtime: CteRuntime
   if (request.supplyPeriod.periodStart < "2023-01-01") return null;
   return { ratio: fromNumber(TIS_TABLE_4_COLUMN_A[request.voltageLevel]), source: "TIS_TABELLA_4_COLONNA_A" };
 }
-function addCtePassThroughs(target: ComponentDraft[], request: ElectricitySimulationRequest, offer: CalculationReadyOffer, runtime: CteRuntimeResolution | null, totalQuantity: Rational, context: ElectricitySupplyContext | undefined, missing: string[], capacityMonths: readonly AreraCapacityMonth[] = ARERA_TIV_CAPACITY_MONTHS, tideQuarters: readonly TernaTideQuarter[] = TERNA_TIDE_DISPATCHING_QUARTERS, domesticCdispd: "PRICED" | "MISSING" | null = null): void {
+function addCtePassThroughs(target: ComponentDraft[], request: ElectricitySimulationRequest, offer: CalculationReadyOffer, runtime: CteRuntimeResolution | null, totalQuantity: Rational, context: ElectricitySupplyContext | undefined, missing: string[], capacityMonths: readonly AreraCapacityMonth[] = ARERA_TIV_CAPACITY_MONTHS, tideQuarters: readonly TernaTideQuarter[] = TERNA_TIDE_DISPATCHING_QUARTERS, domesticCdispd: "PRICED" | "MISSING" | null = null, cdispdMonths: readonly AreraCapacityMonth[] | null = null): void {
   const priced = new Set(target.filter((draft) => draft.formulaId.startsWith("CONTRACTUAL_PASS_THROUGH")).map((draft) => String(draft.formulaInputs.kind ?? "")));
   const standard = standardLoss(request, runtime);
   const loss = standard?.ratio ?? null;
@@ -215,8 +215,19 @@ function addCtePassThroughs(target: ComponentDraft[], request: ElectricitySimula
   // charge (TIV comma 48.9: "ricomprende anche i valori del corrispettivo mercato capacità", 338/2026/R/eel). The ARERA
   // tables price it with transport and oneri; here it is neither added again nor joined by a separate capacity line.
   const domestic = context?.regulatoryCustomerScope?.startsWith("DOMESTIC") === true;
-  const inCdispd = domestic && domesticCdispd !== null;
+  const inCdispd = domestic && (domesticCdispd !== null || cdispdMonths !== null);
   if (inCdispd && domesticCdispd === "MISSING" && !priced.has("DISPATCHING")) missing.push("DISPATCHING:CDISPD_MISSING");
+  // Tony (29/10, bolletta Casa Protetta domestico non residente: "come fa a costare meno la proposta se ha una cte con spread
+  // superiore alla fattura?"): the bill charges "Dispacciamento: 0,015068 €/kWh", the simulation charged none and a separate
+  // capacity line instead. CDISPD is one value for every household, resident or not (the ARERA workbook prints both and the
+  // import checks they are equal), so it is priced here when the ARERA tables of the scope do not price it.
+  if (domestic && cdispdMonths !== null && !priced.has("DISPATCHING")) {
+    const cdispd = areraCapacityForPeriod(request.supplyPeriod.periodStart, request.supplyPeriod.periodEnd, cdispdMonths);
+    if (cdispd) {
+      const unitRate = fromNumber(cdispd.eurPerKwh);
+      target.push({ componentId: "cte-pass-through:domestic-cdispd", category: "VARIABLE_FEE", label: "Dispacciamento e mercato della capacità (CDISPD)", sign: "CHARGE", value: multiply(unitRate, totalQuantity), formulaId: "CTE_PASS_THROUGH_RATE_TIMES_KWH", formulaInputs: { kind: "DISPATCHING", feeUnit: "EUR_PER_KWH", feeRate: toDecimal(unitRate, 6), officialRate: cdispd.eurPerKwh, lossFactor: 0, basisQuantity: toDecimal(totalQuantity, 3), source: cdispd.months.map((month) => month.resolution).join(", ") } });
+    } else missing.push("DISPATCHING:CDISPD_MISSING");
+  }
   if (!inCdispd && (dispatching || !statedAway("DISPATCHING")) && !priced.has("DISPATCHING")) {
     // Customers other than households: Terna's quarterly TIDE dispatching charge, when the archive resolves none.
     const terna = runtime?.dispatching?.value === undefined && !domestic ? ternaTideForPeriod(request.supplyPeriod.periodStart, request.supplyPeriod.periodEnd, tideQuarters) : null;
@@ -474,7 +485,16 @@ export async function calculatePreparedOffer(request: SimulationRequest, prepare
     // The monthly ARERA capacity charges the refresh stored, over the hand-checked table.
     const stored = dependencies.regulatoryBridge ? await dependencies.regulatoryBridge.list(request.tenantId, { componentCode: "CAPACITY_MARKET", customerScope: "ALL_ELECTRICITY", normalizedUnit: "EUR/KWH" }).catch(() => []) : [];
     const tide = dependencies.regulatoryBridge ? await dependencies.regulatoryBridge.list(request.tenantId, { componentCode: "DISPATCHING_TOTAL", regulatoryVariant: "TIDE" }).catch(() => []) : [];
-    addCtePassThroughs(drafts, request, prepared.offer, cteRuntime, totalQuantity, dependencies.trustedElectricityContext, missingOfficial, mergeAreraCapacityMonths(stored), mergeTernaTideQuarters(tide), regulated === null || dependencies.trustedElectricityContext?.regulatoryCustomerScope !== "DOMESTIC_RESIDENT_BT" ? null : regulated.dispatchingMissing ? "MISSING" : "PRICED");
+    // Households other than residents: the month's CDISPD from the archive (one value for all households, TIV comma 48.9).
+    const scope = dependencies.trustedElectricityContext?.regulatoryCustomerScope;
+    const cdispdMonths = scope?.startsWith("DOMESTIC") && scope !== "DOMESTIC_RESIDENT_BT" && dependencies.regulatoryBridge
+      ? [...await dependencies.regulatoryBridge.list(request.tenantId, { componentCode: "DISPATCHING_TOTAL", customerScope: "DOMESTIC_RESIDENT_BT", normalizedUnit: "EUR/KWH" }).catch(() => [])]
+        // Household dispatching is only CDISPD; the latest reading of a month wins.
+        .sort((left, right) => left.retrievedAt.localeCompare(right.retrievedAt))
+        .map((record) => ({ month: record.effectiveFrom.slice(0, 7), centsPerKwh: record.normalizedValue * 100, resolution: `ARERA CDISPD ${record.effectiveFrom.slice(0, 7)}`, url: record.sourceReference }))
+        .filter((month, index, all) => all.findLastIndex((other) => other.month === month.month) === index)
+      : null;
+    addCtePassThroughs(drafts, request, prepared.offer, cteRuntime, totalQuantity, dependencies.trustedElectricityContext, missingOfficial, mergeAreraCapacityMonths(stored), mergeTernaTideQuarters(tide), regulated === null || scope !== "DOMESTIC_RESIDENT_BT" ? null : regulated.dispatchingMissing ? "MISSING" : "PRICED", cdispdMonths);
   }
   // Tony: transport and system charges always come from the ARERA tables; when they can't, the receipt says why.
   if (request.vector === "EE" && request.sourceBill && regulated === null) missingOfficial.push(`REGULATED:${regulatedMissingReason}`);

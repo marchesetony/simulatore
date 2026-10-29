@@ -91,6 +91,17 @@ assert.equal(kinds(unpublished, "CAPACITY_MARKET").length, 0);
 assert.ok(unpublished.warnings.includes("OFFICIAL_VALUE_MISSING:DISPATCHING:CDISPD_MISSING"));
 assert.equal(unpublished.warnings.some((warning) => warning.startsWith("OFFICIAL_VALUE_MISSING:REGULATED")), false);
 assert.ok(unpublished.components.some((component) => component.formulaId === "REGULATED_UC3_RATE_TIMES_KWH"));
+// Tony (29/10, bolletta Casa Protetta domestico non residente, Box "Dispacciamento: 0,015068 €/kWh"): "come fa a costare
+// meno la proposta se ha una cte con spread superiore alla fattura?". The simulation had no dispatching and a separate
+// capacity line: CDISPD is the same for every household, so the non-resident pays the month's CDISPD and no capacity.
+const nonResident = { ...context, domesticResidenceStatus: "NON_RESIDENT", regulatoryCustomerScope: "DOMESTIC_NON_RESIDENT_BT" };
+const nonResidentQuote = await calculatePreparedOffer(septemberRequest(true), prepared, { regulatoryBridge: await bridgeWith([...yearLong, septemberCdispd]), trustedElectricityContext: nonResident });
+assert.deepEqual(kinds(nonResidentQuote, "DISPATCHING").map((component) => [component.label, component.amount.amount]), [["Dispacciamento e mercato della capacità (CDISPD)", 15.07]]);
+assert.equal(kinds(nonResidentQuote, "CAPACITY_MARKET").length, 0);
+const nonResidentUnpublished = await calculatePreparedOffer(septemberRequest(true), prepared, { regulatoryBridge: await bridgeWith(yearLong), trustedElectricityContext: nonResident });
+assert.ok(nonResidentUnpublished.warnings.includes("OFFICIAL_VALUE_MISSING:DISPATCHING:CDISPD_MISSING"));
+assert.equal(kinds(nonResidentUnpublished, "CAPACITY_MARKET").length, 0);
+console.log("CDISPD_NON_RESIDENT_HOUSEHOLD=PASS");
 console.log("CDISPD_MISSING_KEEPS_TRANSPORT_AND_ONERI=PASS");
 console.log("CDISPD_INCLUDES_CAPACITY_NO_SEPARATE_LINE=PASS");
 console.log("CDISPD_AUGUST_ECONOMIC_QA=PASS");
