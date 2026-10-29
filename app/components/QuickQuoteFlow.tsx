@@ -90,7 +90,8 @@ const NUMBER = new Intl.NumberFormat("it-IT", { maximumFractionDigits: 0, useGro
 function amount(value: number | null | undefined, unit: string): string { return value === null || value === undefined ? "—" : `${NUMBER.format(value)} ${unit}`; }
 const VOLTAGE: Record<string, string> = { LV: "Bassa tensione (BT)", MV: "Media tensione (MT)", HV: "Alta tensione (AT)", EHV: "Altissima tensione (AAT)" };
 const MISSING: Record<string, string> = { customerType: "tipo cliente", billingPeriod: "periodo fatturato", POD: "POD", PDR: "PDR", voltageLevel: "livello di tensione", F1: "consumo F1", F2: "consumo F2", F3: "consumo F3", SMC: "consumo in Smc", technicalClassification: "uso della fornitura" };
-const RATE = new Intl.NumberFormat("it-IT", { minimumFractionDigits: 4, maximumFractionDigits: 6 });
+// Tony (29/10): "proviamo ad usare 5 decimali e vedere meglio lo spread".
+const RATE = new Intl.NumberFormat("it-IT", { minimumFractionDigits: 5, maximumFractionDigits: 6 });
 const PUN = new Intl.NumberFormat("it-IT", { minimumFractionDigits: 5, maximumFractionDigits: 5 });
 // Price lines the agent quotes from the CTE: fixed price or spread on the index, and the monthly PCV.
 function termLines(candidate: Candidate): readonly string[] {
