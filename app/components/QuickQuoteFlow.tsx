@@ -307,9 +307,11 @@ function offersFrom(bill: BillDocumentModel, context: Context, candidates: reado
 const REASON_LABEL: Readonly<Record<string, string>> = { CUSTOMER_LEGAL_TYPE_MISMATCH: "tipo di cliente non ammesso (Consumer/Business)", SUPPLY_USE_MISMATCH: "uso della fornitura non ammesso", IDENTIFIER_TYPE_MISMATCH: "tipo di identificativo non ammesso", VOLTAGE_MISMATCH: "tensione non ammessa (BT/MT)", CONSUMPTION_THRESHOLD_MISMATCH: "consumo annuo fuori dalle soglie della CTE", POWER_THRESHOLD_MISMATCH: "potenza fuori dalle soglie della CTE", VALIDITY_MISMATCH: "CTE non valida per il periodo della bolletta", CALCULATION_NOT_READY: "calcolo non pronto", REVIEW_REQUIRED: "CTE da revisionare", EXPIRED_CTE: "CTE scaduta", MISSING_REGULATORY_DATA: "mancano dati regolatori (PUN o oneri ARERA)", INVALID_CTE: "CTE non valida", MISSING_SOURCE_DOCUMENT: "documento CTE mancante", MARKET_DATA_MISSING: "manca il PUN/PSV del periodo", NOT_READY: "CTE non pronta al calcolo", CONSUMPTION_NOT_ELIGIBLE: "consumo annuo fuori dalle soglie della CTE", CUSTOMER_NOT_ELIGIBLE: "tipo di cliente non ammesso (Consumer/Business)", CONDOMINIUM_ONLY: "riservata ai condomini" };
 const EXCLUSION_LABEL: Readonly<Record<string, string>> = { CALCULATION_READY_INVALID: "la CTE non è completa per il calcolo", MARKET_DATA_MISSING: "manca il PUN/PSV del periodo", MARKET_DATA_INVALID: "PUN/PSV del periodo non valido", COMPARISON_INCOMPATIBLE: "non confrontabile con le altre offerte", MONTHLY_PROFILE_REQUIRED: "servono i consumi mese per mese", CALCULATION_INPUT_INVALID: "dati della bolletta non validi per questa CTE", FEE_UNIT_MISMATCH: "unità di un costo della CTE non compatibile", IMBALANCE_UNAVAILABLE: "sbilanciamento non dichiarato nella CTE", CTE_VALIDITY_MISMATCH: "CTE non valida per il periodo della bolletta", CTE_EXPIRED: "CTE scaduta", CUSTOMER_NOT_ELIGIBLE: "tipo di cliente non ammesso", VOLTAGE_NOT_ELIGIBLE: "tensione non ammessa" };
 // With no offer to show, each assigned CTE says why it was left out: the agent knows what to fix or ask for.
-function NoOfferReasons({ quote }: { readonly quote: Quote }): ReactNode {
-  // Only CTEs of the bill's commodity and voltage are worth explaining; the others never apply to this bill.
-  const candidates = (quote.candidates ?? []).filter((candidate) => ![...(candidate.reasonCodes ?? []), candidate.compatibilityReason ?? ""].some((code) => /VECTOR_MISMATCH|VOLTAGE/.test(code)));
+// Tony (29/10, "la cte di questa è la BE SMILE ma non la vedo"): the CTEs left out are listed with their reason also when
+// other offers are shown.
+function NoOfferReasons({ quote, shown = [] }: { readonly quote: Quote; readonly shown?: readonly string[] }): ReactNode {
+  // Only CTEs of the bill's commodity are worth explaining; a CTE of the other commodity never applies to this bill.
+  const candidates = (quote.candidates ?? []).filter((candidate) => !shown.includes(candidate.archiveId) && ![...(candidate.reasonCodes ?? []), candidate.compatibilityReason ?? ""].some((code) => /VECTOR_MISMATCH/.test(code)));
   if (!candidates.length) return null;
   const rows = candidates.map((candidate) => {
     const excluded = quote.comparison.excludedOffers.find((item) => item.archiveId === candidate.archiveId);
@@ -319,7 +321,7 @@ function NoOfferReasons({ quote }: { readonly quote: Quote }): ReactNode {
       : [...new Set([...(candidate.reasonCodes ?? []), candidate.compatibilityReason].filter((code): code is string => Boolean(code)).map((code) => REASON_LABEL[code] ?? code))];
     return { key: candidate.archiveId, name: `${candidate.supplier} · ${candidate.offer.name || candidate.offer.code}`, reasons };
   });
-  return <details className="quote-cost-detail"><summary>Perché nessuna CTE è utilizzabile ({rows.length})</summary><ul>{rows.map((row) => <li key={row.key}><strong>{row.name}</strong>: {row.reasons.join("; ")}</li>)}</ul></details>;
+  return <details className="quote-cost-detail"><summary>{shown.length ? `CTE non utilizzabili per questa bolletta (${rows.length})` : `Perché nessuna CTE è utilizzabile (${rows.length})`}</summary><ul>{rows.map((row) => <li key={row.key}><strong>{row.name}</strong>: {row.reasons.join("; ")}</li>)}</ul></details>;
 }
 
 function Steps({ step }: { readonly step: Step }): ReactNode {
@@ -680,7 +682,9 @@ export default function QuickQuoteFlow({ readonly }: { readonly readonly: boolea
           {offer.receipt.savingsPercent !== null ? <small className={offer.receipt.savingsPercent >= 0 ? "positive" : "negative"}>{offer.receipt.savingsPercent >= 0 ? "Risparmio" : "Più cara"} {PERCENT.format(Math.abs(offer.receipt.savingsPercent))}%</small> : null}
           {(() => { const projection = annualProjection(offer, quote.context, quote.bill); return projection ? <small className={projection.saving >= 0 ? "positive" : "negative"}>{projection.saving >= 0 ? "Risparmio annuo previsto" : "Costo in più annuo"} {euro(Math.abs(projection.saving))}</small> : null; })()}
           <small>Valida fino al {date(offer.receipt.validUntil)}</small>
-        </button>)}</div> : <><EmptyState title="Nessuna offerta utilizzabile" detail="Nessuna CTE a te assegnata è adatta a questa bolletta. Chiedi all'amministratore di assegnartene una." /><NoOfferReasons quote={quote} /></>}
+        </button>)}</div> : null}
+        {quote.offers.length ? <NoOfferReasons quote={quote} shown={quote.offers.map((offer) => offer.candidate.archiveId)} /> : null}
+        {quote.offers.length ? null : <><EmptyState title="Nessuna offerta utilizzabile" detail="Nessuna CTE a te assegnata è adatta a questa bolletta. Chiedi all'amministratore di assegnartene una." /><NoOfferReasons quote={quote} /></>}
       </section>
       {selected ? <><Receipt offer={selected} today={today} business={quote.context.customerType === "NON_RESIDENTIAL"} context={quote.context} bill={quote.bill} /><div className="button-row"><button className="button primary" type="button" onClick={() => void saveProposal()} disabled={readonly || Boolean(pending)}>{pending === "proposal" ? "Preparazione" : "Scarica la proposta in PDF"}</button>{proposal ? <span className="muted" role="status">Proposta salvata in Proposte.</span> : null}</div></> : null}
     </> : null : null}
