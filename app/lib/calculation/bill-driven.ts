@@ -258,13 +258,16 @@ function buildContext(document: BillDocument, version: BillVersion): BillDrivenS
   }
   const structured = extraction ?? null;
   const profile = structured ? profileFor(structured) : null;
-  const customerType = contract.customer?.customerType;
+  // Tony (29/10, RESIDENCY_MISMATCH): "Domestico non residente" can come back as NON_RESIDENTIAL, the enum's name; a
+  // domestic supply use is a household whatever that field says, and residency only applies to households.
+  const readType = contract.customer?.customerType;
+  const customerType = readType === "NON_RESIDENTIAL" && profile?.supplyUseCategory.normalizedValue === "DOMESTIC" ? "RESIDENTIAL" : readType;
   const period = contract.billingPeriod;
   const annual = structured ? known(structured.annualConsumption) : null;
   const periodConsumption = contract.vector === "EE"
     ? { f1: contract.consumption.f1.status === "KNOWN" ? contract.consumption.f1.value : null, f2: contract.consumption.f2.status === "KNOWN" ? contract.consumption.f2.value : null, f3: contract.consumption.f3.status === "KNOWN" ? contract.consumption.f3.value : null, smc: null }
     : { f1: null, f2: null, f3: null, smc: contract.consumption.smc.status === "KNOWN" ? contract.consumption.smc.value : null };
-  const residency = profile?.domesticResidenceStatus.normalizedValue === "RESIDENT" || profile?.domesticResidenceStatus.normalizedValue === "NON_RESIDENT" ? profile.domesticResidenceStatus.normalizedValue : null;
+  const residency = customerType === "RESIDENTIAL" && (profile?.domesticResidenceStatus.normalizedValue === "RESIDENT" || profile?.domesticResidenceStatus.normalizedValue === "NON_RESIDENT") ? profile!.domesticResidenceStatus.normalizedValue : null;
   let supplyContext: ElectricitySupplyContext | null = null;
   if (contract.vector === "EE" && profile) {
     try { supplyContext = buildTrustedElectricitySupplyContext(profile, { simulationPeriod: period, sourceBillBinding: { billId: document.id, approvedVersionId: version.versionId } }); } catch { supplyContext = null; }
@@ -285,7 +288,7 @@ function buildContext(document: BillDocument, version: BillVersion): BillDrivenS
   }
   const baselineAmount = structured ? known(structured.totalAmount) : null;
   const useCategory = profile?.supplyUseCategory.normalizedValue;
-  const domestic = useCategory === "DOMESTIC" || contract.customer?.customerType === "RESIDENTIAL";
+  const domestic = useCategory === "DOMESTIC" || customerType === "RESIDENTIAL";
   const contractedPowerKw = profile ? parsePower(profile.powerCommitted) : null;
   const billEligibility = deriveBillEligibilityContext({
     customerType,

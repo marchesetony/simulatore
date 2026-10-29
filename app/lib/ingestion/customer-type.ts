@@ -13,8 +13,10 @@ const found = <T>(field: Read<T> | undefined): T | null => field?.status === "FO
  *  BPower Casa Protetta) "Tipologia cliente: Domestico non residente" was refused as neither Consumer nor Business. */
 export function customerTypeOf(extraction: CustomerTypeEvidence): CustomerType | null {
   const read = found(extraction.customerType);
+  const text = (extraction.extendedFacts ?? []).filter((fact) => fact.status === "FOUND" && /SUPPLY_USE|DOMESTIC_RESIDENCE|TARIFF_CATEGORY|CUSTOMER/.test(fact.code)).map((fact) => String(fact.value ?? "")).join(" ");
+  // Tony (29/10, RESIDENCY_MISMATCH): "Domestico non residente" read as NON_RESIDENTIAL is still a household.
+  if (read === "NON_RESIDENTIAL" && /domestic/i.test(text) && !/non\s+domestic|altri\s+usi/i.test(text)) return "RESIDENTIAL";
   if (read) return read;
-  const text = extraction.extendedFacts.filter((fact) => fact.status === "FOUND" && /SUPPLY_USE|DOMESTIC_RESIDENCE|TARIFF_CATEGORY|CUSTOMER/.test(fact.code)).map((fact) => String(fact.value ?? "")).join(" ");
   if (/non\s+domestic|altri\s+usi|illuminazione\s+pubblica|\bBTA\d?\b|business/i.test(text)) return "NON_RESIDENTIAL";
   if (/domestic|residente|\bD[23]\b|\bTD\b/i.test(text)) return "RESIDENTIAL";
   // Last resort, the holder's tax code: a VAT number is a business, a personal codice fiscale alone a household.

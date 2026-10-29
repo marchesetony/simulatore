@@ -80,7 +80,8 @@ for (const field of ["supplier", "pod", "customerName", "billingPeriod", "annual
 assert.equal(classifyBillText(fixture).vector, "EE");
 assert.equal(mapped.classification.vector, "EE");
 assert.equal(mapped.contract.customerId, "E0000000");
-assert.equal(mapped.contract.customer?.customerType, "NON_RESIDENTIAL");
+// "Tipologia cliente: domestico non residente" is a household (Tony, 29/10, RESIDENCY_MISMATCH): residency is not the customer type.
+assert.equal(mapped.contract.customer?.customerType, "RESIDENTIAL");
 assert.equal(mapped.contract.customer?.name.status, "KNOWN");
 assert.equal(mapped.contract.currentSupplier, "FORNITORE LUCE E GAS S.R.L.");
 assert.equal(mapped.contract.customer?.taxIdentifiers.length, 0);
