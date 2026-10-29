@@ -269,6 +269,8 @@ function BillSummary({ context, bill }: { readonly context: Context; readonly bi
   const ee = context.vector === "EE";
   const period = context.consumption?.period;
   const rows: readonly (readonly [string, string])[] = [
+    // Tony (29/10): "non si vede il nome dell'intestatario della bolletta, deve esserci".
+    ["Intestatario", bill.fields.customerName?.value?.trim() || "Non letto in bolletta"],
     ["Tipo fornitura", ee ? "Energia elettrica" : "Gas"],
     ["Cliente", context.customerType === "RESIDENTIAL" ? "Consumer" : "Business"],
     [ee ? "POD" : "PDR", (ee ? context.supply.pod : context.supply.pdr) ?? "—"],
