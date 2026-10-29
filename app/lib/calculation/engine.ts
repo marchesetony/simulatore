@@ -193,7 +193,11 @@ function addCtePassThroughs(target: ComponentDraft[], request: ElectricitySimula
   // Only a CTE that names the index alone as grossed up keeps the spread out of the base.
   if (loss && standard && !priced.has("LOSSES")) {
     // A spread stated gross of losses already contains them (Tony, 28/10, BE Family Casa Protetta).
-    const spreadGross = offer.pricing.mode === "INDEXED" && offer.pricing.spread.lossTreatment === "GROSS_OF_LOSSES";
+    // Households from 1 April 2026 (delibera 386/2025/R/com, Codice di condotta commerciale art. 5.1.a): the seller's
+    // charges are stated "al lordo delle perdite di rete" and the index carries one spread covering every cost outside it,
+    // sbilanciamento and commercializzazione included (Tony, 29/10). Losses apply to the index only, whatever the reading.
+    const householdCode = context?.regulatoryCustomerScope?.startsWith("DOMESTIC") === true && request.supplyPeriod.periodStart.slice(0, 10) >= "2026-04-01";
+    const spreadGross = offer.pricing.mode === "INDEXED" && (offer.pricing.spread.lossTreatment === "GROSS_OF_LOSSES" || householdCode);
     const indexOnly = (targets.has("ENERGY_INDEX") && !targets.has("SPREAD")) || spreadGross;
     const energy = target.filter((draft) => draft.category === "ENERGY" && ["EE_PUN_MWH_TO_KWH_PLUS_SPREAD", "EE_FIXED_PRICE_TIMES_KWH", "EE_SPREAD_TIMES_KWH"].includes(draft.formulaId));
     const base = energy.reduce((total, draft) => {

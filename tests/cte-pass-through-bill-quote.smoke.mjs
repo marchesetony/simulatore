@@ -106,4 +106,10 @@ const indexedLoss = (lossTreatment) => { const offer = structuredClone(prepared)
 const lossOf = async (offer) => Number((await calculatePreparedOffer(request(true), offer, deps(0.0105, 0.004275, 3))).components.find((component) => component.formulaInputs?.kind === "LOSSES")?.amount.amount);
 assert.equal(await lossOf(indexedLoss("GROSS_OF_LOSSES")), 10);
 assert.equal(await lossOf(indexedLoss()), 13);
+// Tony (29/10): "nello spread del consumer deve esserci dentro anche sbilanciamento e commercializzazione" (delibera
+// 386/2025/R/com, Codice di condotta commerciale art. 5.1.a: corrispettivi "al lordo delle perdite di rete"). A household
+// offer from 1 April 2026 has its losses on the PUN alone even when the reading did not mark the spread as gross.
+const household = { ...context(3), supplyUseCategory: "DOMESTIC", domesticResidenceStatus: "NON_RESIDENT", regulatoryCustomerScope: "DOMESTIC_NON_RESIDENT_BT" };
+const householdLoss = await calculatePreparedOffer(request(true), indexedLoss(), { ...deps(0.0105, 0.004275, 3), trustedElectricityContext: household });
+assert.equal(Number(householdLoss.components.find((component) => component.formulaInputs?.kind === "LOSSES")?.amount.amount), 10);
 console.log("CTE_PASS_THROUGH_BILL_QUOTE=PASS");
