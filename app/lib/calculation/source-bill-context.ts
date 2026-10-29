@@ -1,4 +1,6 @@
 // @ts-expect-error Node's strip-only test runner requires the explicit extension.
+import { completeSupplyProfile } from "../ingestion/supply-profile-completion.ts";
+// @ts-expect-error Node's strip-only test runner requires the explicit extension.
 import { toPublicApprovedDocument, type BillRepository, type PublicBillDocument } from "../foundation/real-bill.ts";
 // @ts-expect-error Node's strip-only test runner requires the explicit extension.
 import { buildBillSupplyProfile, validateBillSupplyProfile } from "../ingestion/bill-supply-profile.ts";
@@ -88,9 +90,9 @@ async function resolveApprovedSourceBillContext(
   if (!approvedVersionId) return fail("SOURCE_BILL_NOT_APPROVED");
   if (request.sourceBill.version !== approvedVersionId) return fail("SOURCE_BILL_VERSION_MISMATCH");
   const approved = publicApproved(document, approvedVersionId);
-  const profile = profileFromApprovedStructuredBill(approved);
   const structuredBill = approved.structuredBill;
   if (!structuredBill) return fail("SOURCE_BILL_TRUST_CONTEXT_UNAVAILABLE");
+  const profile = completeSupplyProfile(profileFromApprovedStructuredBill(approved), structuredBill);
   let supplyContext: ElectricitySupplyContext;
   try {
     supplyContext = buildTrustedElectricitySupplyContext(profile, {

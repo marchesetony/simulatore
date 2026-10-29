@@ -187,8 +187,9 @@ try {
   await assertAsyncCode(() => resolveTrustedElectricityContextFromSourceBill(repository, tenantA, request(tenantA, { billId: gas.id, version: gas.currentApprovedVersionId })), "SOURCE_BILL_VECTOR_MISMATCH");
 
   const missingPower = await seed({ repository, storage, tenantId: tenantA, extraction: eeExtraction({}, facts({ committed: null })) });
-  // Product rule (competitor bill quotes): a missing technical reading drops the trusted context, so the quote runs on generic charges instead of failing.
-  assert.equal(await resolveTrustedElectricityContextFromSourceBill(repository, tenantA, request(tenantA, { billId: missingPower.id, version: missingPower.currentApprovedVersionId })), null);
+  // Tony (29/10, fattura dettagliata BPower): the committed power not stated in words is the bill's billed power (powerKw),
+  // so the ARERA tables still apply instead of generic charges.
+  assert.equal((await resolveTrustedElectricityContextFromSourceBill(repository, tenantA, request(tenantA, { billId: missingPower.id, version: missingPower.currentApprovedVersionId })))?.contractedPowerKw, 3);
   const missingBta6AvailablePower = await seed({ repository, storage, tenantId: tenantA, extraction: eeExtraction({}, facts({ supplyUse: "Altri usi", committed: "25 kW", available: null })) });
   assert.equal(await resolveTrustedElectricityContextFromSourceBill(repository, tenantA, request(tenantA, { billId: missingBta6AvailablePower.id, version: missingBta6AvailablePower.currentApprovedVersionId }, { customerCategory: "NON_RESIDENTIAL", residency: undefined })), null);
 

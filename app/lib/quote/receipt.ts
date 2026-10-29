@@ -55,6 +55,8 @@ export interface QuoteReceiptInput {
   readonly offerVatRate?: number | null;
   /** The calculation's warnings: OFFICIAL_VALUE_MISSING:<kind>:<reason> marks a charge priced only from official values that were missing. */
   readonly warnings?: readonly string[];
+  /** Household offer from 1/4/2026: one spread covers commercializzazione and sbilanciamento (delibera 386/2025, Tony 29/10). */
+  readonly householdSpread?: boolean;
 }
 
 const VAT_RATES = [0.04, 0.05, 0.1, 0.22] as const;
@@ -183,7 +185,9 @@ const DETAIL_LABEL: Readonly<Record<string, string>> = {
   OPTIONS: "Opzioni e servizi a pagamento (es. Flex)", ONE_OFF: "Corrispettivi una tantum", REACTIVE: "Energia reattiva", NETWORK: "Tariffa per l'uso della rete (trasporto e gestione del contatore)", SYSTEM: "Oneri generali di sistema",
 };
 const DETAIL_ORDER = Object.keys(DETAIL_LABEL);
-function billDetail(line: { readonly classification: string; readonly group?: string; readonly description: string }): string {
+function billDetail(line: { readonly classification: string; readonly group?: string; readonly description: string; readonly unit?: string | null }): string {
+  // Tony (29/10, fattura dettagliata BPower): "Commercializzazione 429 kWh 0,004432 €/kWh" is a per-kWh charge, never the PCV.
+  if (["PCV", "COMMERCIALIZATION_FIXED_FEE", "SELLER_FIXED_FEE"].includes(line.classification) && /kwh|smc/i.test(line.unit ?? "") && /commercializzazion/i.test(line.description)) return "COMMERCIALIZATION";
   switch (line.classification) {
     case "NETWORK_LOSS_CHARGE": return "LOSSES";
     case "COMMERCIALIZATION_VARIABLE_FEE": return "COMMERCIALIZATION";
@@ -295,6 +299,11 @@ function withDetails(input: QuoteReceiptInput, rows: readonly QuoteReceiptRow[],
     });
   };
   const missing = missingOfficial(input);
+  // A household offer's spread covers commercializzazione and sbilanciamento: the bill's own lines for them are compared
+  // with the offer's energy line (indice + spread), where the CTE prices them (Tony, 29/10: "lo spread 0,03 è comprensivo").
+  const offerPricesApart = (key: string) => sellerComponents(input).some((component) => offerDetail(component) === key);
+  const insideSpread = (key: string) => input.householdSpread === true && (key === "COMMERCIALIZATION" || key === "IMBALANCE") && !offerPricesApart(key);
+  const spreadNames = [...new Set(components.filter((line) => SELLER_GROUPS.has(line.group ?? "") && insideSpread(billDetail(line)) && amountOf(line.amount) !== null).map((line) => DETAIL_LABEL[billDetail(line)].toLowerCase()))];
   // Charges the bill states only as a unit price of its price formula (Box dell'offerta) are billed inside the energy
   // line: the energy line is then compared with the CTE's energy plus those charges (Tony, 27/10, bolletta BPower).
   const bundled = new Map<string, string>();
@@ -305,7 +314,7 @@ function withDetails(input: QuoteReceiptInput, rows: readonly QuoteReceiptRow[],
     if (key !== "ENERGY" && key !== "PCV" && !components.some((other) => SELLER_GROUPS.has(other.group ?? "") && billDetail(other) === key && amountOf(other.amount) !== null)) bundled.set(key, line.unitPrice ?? (/[.,]\d{4,}/.test(line.amount ?? "") ? String(amountOf(line.amount)) : ""));
   }
   const sellerDetails = entries([
-    ...components.filter((line) => SELLER_GROUPS.has(line.group ?? "")).flatMap((line) => { const value = amountOf(line.amount); const key = billDetail(line); return value === null ? [] : [[key, DETAIL_LABEL[key] ?? key, value, null] as const]; }),
+    ...components.filter((line) => SELLER_GROUPS.has(line.group ?? "")).flatMap((line) => { const value = amountOf(line.amount); const key = insideSpread(billDetail(line)) ? "ENERGY" : billDetail(line); return value === null ? [] : [[key, DETAIL_LABEL[key] ?? key, value, null] as const]; }),
     ...sellerComponents(input).map((component) => { const key = regulatedSide(component) === "DISPATCHING" ? "DISPATCHING" : offerDetail(component); return [key, DETAIL_LABEL[key] ?? key, null, signed(component)] as const; }),
     // A charge the base requires but whose official value is missing still gets its line, with the reason.
     ...[...missing.keys()].map((key) => [key, DETAIL_LABEL[key] ?? key, null, null] as const),
@@ -317,7 +326,8 @@ function withDetails(input: QuoteReceiptInput, rows: readonly QuoteReceiptRow[],
   const inEnergy = (item: QuoteReceiptDetail) => (bundled.size > 0 || energyBilled) && item.current === null && !["ENERGY", "PCV", "ONE_OFF", "OPTIONS"].includes(item.key);
   const bundledOffer = sellerDetails.filter(inEnergy).reduce((total, item) => total + (item.offer ?? 0), 0);
   const bundledNames = sellerDetails.filter(inEnergy).map((item) => item.label.replace(/ \(.*\)$/, "").toLowerCase());
-  const seller: readonly QuoteReceiptDetail[] = bundled.size === 0 && !energyBilled ? sellerDetails : sellerDetails.map((item) => {
+  const spreadLabelled = sellerDetails.map((item) => item.key === "ENERGY" && spreadNames.length > 0 ? { ...item, label: `${item.label}, in bolletta comprende anche ${spreadNames.join(" e ")}` } : item);
+  const seller: readonly QuoteReceiptDetail[] = bundled.size === 0 && !energyBilled ? spreadLabelled : spreadLabelled.map((item) => {
     if (inEnergy(item)) return { ...item, difference: null, currentNote: `compreso nel prezzo energia della bolletta${bundled.get(item.key) ? ` (${bundled.get(item.key)} €/kWh)` : ""}` };
     if (item.key !== "ENERGY" || item.current === null || item.missingReason || bundledNames.length === 0) return item;
     return { ...item, label: `${item.label}, in bolletta comprende anche ${bundledNames.join(", ")}`, difference: hasBill && !sellerDetails.some((other) => inEnergy(other) && other.missingReason) ? cents((item.offer ?? 0) + bundledOffer - item.current) : null };
@@ -372,12 +382,18 @@ export function buildQuoteReceipt(input: QuoteReceiptInput): QuoteReceipt {
   const check = { NETWORK: officialCheck(billNetwork, officialNetwork, hasOfficial, regulatedUnavailable(input)), SYSTEM: officialCheck(system, officialSystem, hasOfficial, regulatedUnavailable(input)) };
   const offerNetwork = hasOfficial ? cents((check.NETWORK.official ?? 0) + (reactive ?? 0)) : network;
   const offerSystem = hasOfficial ? check.SYSTEM.official ?? 0 : system;
-  const currentTaxes = totals?.taxTotal ?? null;
   const printedRate = input.analysis ? billVatRate(input.analysis) : null;
   const vatRate = printedRate ?? (input.domestic && input.vector === "EE" ? 0.1 : 0.22);
-  const taxesIncluded = currentTaxes !== null && currentEnergy !== null;
   const chosenRate = input.offerVatRate ?? null;
   const exciseLines = sumKnown((input.analysis?.components ?? []).filter((line) => line.classification === "ACCISE" && !line.aggregate).map((line) => amountOf(line.amount)));
+  // Tony (29/10, fattura dettagliata BPower): the detailed bill lists the charges with their IVA rate but no IVA amount. Its
+  // taxes are then the excise only, and the bill's IVA is the rate on the same taxable amount, as for the new offer.
+  const vatPrinted = (input.analysis?.components ?? []).some((line) => line.classification === "IVA");
+  const exciseOnly = !vatPrinted && exciseLines !== null && totals?.taxTotal !== null && totals?.taxTotal !== undefined && Math.abs(totals.taxTotal - exciseLines) < 0.01;
+  const currentTaxes = totals?.taxTotal === null || totals?.taxTotal === undefined ? null : exciseOnly && currentEnergy !== null
+    ? cents(totals.taxTotal + (currentEnergy + (network ?? 0) + (system ?? 0) + totals.taxTotal) * vatRate)
+    : totals.taxTotal;
+  const taxesIncluded = currentTaxes !== null && currentEnergy !== null;
   // Without excise lines on the bill, excise is what is left of the taxes once VAT at the bill's rate is taken out.
   const excise = !taxesIncluded ? null : exciseLines ?? Math.max(0, cents((currentTaxes - (currentEnergy + (network ?? 0) + (system ?? 0)) * vatRate) / (1 + vatRate)));
   // The bill's own rate keeps the bill's VAT and moves it only with the supply cost, as before.

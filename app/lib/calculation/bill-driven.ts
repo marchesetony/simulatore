@@ -1,4 +1,6 @@
 // @ts-expect-error Node's strip-only test runner requires the explicit extension.
+import { completeSupplyProfile } from "../ingestion/supply-profile-completion.ts";
+// @ts-expect-error Node's strip-only test runner requires the explicit extension.
 import { assertSimulationWithinLimits, cteUsability, loadHierarchyAccess } from "../hierarchy/service.ts";
 // @ts-expect-error Node's strip-only test runner requires the explicit extension.
 import { quoteWindowStart, supplyPeriodTooOld } from "./quote-window.ts";
@@ -257,7 +259,8 @@ function buildContext(document: BillDocument, version: BillVersion): BillDrivenS
     try { validateStructuredBillExtraction(extraction); } catch { fail("SOURCE_BILL_CONTEXT_UNAVAILABLE"); }
   }
   const structured = extraction ?? null;
-  const profile = structured ? profileFor(structured) : null;
+  const readProfile = structured ? profileFor(structured) : null;
+  const profile = structured && readProfile ? completeSupplyProfile(readProfile, structured) : readProfile;
   // Tony (29/10, RESIDENCY_MISMATCH): "Domestico non residente" can come back as NON_RESIDENTIAL, the enum's name; a
   // domestic supply use is a household whatever that field says, and residency only applies to households.
   const readType = contract.customer?.customerType;

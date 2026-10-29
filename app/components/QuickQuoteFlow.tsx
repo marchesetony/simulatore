@@ -85,6 +85,8 @@ const PERCENT = new Intl.NumberFormat("it-IT", { maximumFractionDigits: 1 });
 function euro(value: number | null): string { return value === null ? "—" : EURO.format(value); }
 function date(value: string | null): string { return value && /^\d{4}-\d{2}-\d{2}$/.test(value) ? DATE.format(new Date(`${value}T00:00:00Z`)) : "Non indicata"; }
 function daysUntil(value: string | null, today: string): number | null { return value ? Math.round((Date.parse(`${value}T00:00:00Z`) - Date.parse(`${today}T00:00:00Z`)) / 86_400_000) : null; }
+// Household offers from 1/4/2026 have one spread covering commercializzazione and sbilanciamento (delibera 386/2025).
+function householdSpreadOf(context: Context, calculation: CalculationModel): boolean { return context.classification.domestic && calculation.vector === "EE" && (calculation.supplyPeriod?.periodStart ?? "").slice(0, 10) >= "2026-04-01"; }
 function message(cause: unknown): string { return toUiError(cause).message; }
 // The server's error code, when it sends one, goes with the message so the user can report it.
 function withDetail(cause: unknown): string { const error = toUiError(cause); return error.detail ? `${error.message} (codice ${error.detail})` : error.message; }
@@ -297,7 +299,7 @@ function offersFrom(bill: BillDocumentModel, context: Context, candidates: reado
     // Only the CTEs the eligibility check allows for this bill are offered.
     const candidate = candidates.find((item) => item.archiveId === calculation.sourceCte.archiveId && (item.finalStatus === "ELIGIBLE" || item.finalStatus === "ELIGIBLE_BY_OVERRIDE"));
     if (!candidate) return [];
-    const receipt = buildQuoteReceipt({ vector: calculation.vector, offerSupplyCost: calculation.totalCommercialCost.amount, analysis: bill.analystReview.economics.economicAnalysis, domestic: context.classification.domestic, validUntil: candidate.validity.periodEnd, offerComponents: calculation.components, warnings: calculation.warnings });
+    const receipt = buildQuoteReceipt({ vector: calculation.vector, offerSupplyCost: calculation.totalCommercialCost.amount, analysis: bill.analystReview.economics.economicAnalysis, domestic: context.classification.domestic, validUntil: candidate.validity.periodEnd, offerComponents: calculation.components, warnings: calculation.warnings, householdSpread: householdSpreadOf(context, calculation) });
     return [{ rank: entry.rank, calculation, supplier: entry.supplier, offerName: candidate.offer.name || entry.offerCode, receipt, candidate }];
   });
 }
@@ -479,7 +481,7 @@ function OfferBox({ offer, bill, context }: { readonly offer: Offer; readonly bi
 const VAT_CHOICES = [0.22, 0.1, 0.05, 0.04] as const;
 function Receipt({ offer: quoted, today, business, context, bill }: { readonly offer: Offer; readonly today: string; readonly business: boolean; readonly context: Context; readonly bill: BillDocumentModel }): ReactNode {
   const [offerVatRate, setOfferVatRate] = useState<number | null>(null);
-  const receipt = offerVatRate === null ? quoted.receipt : buildQuoteReceipt({ vector: quoted.calculation.vector, offerSupplyCost: quoted.calculation.totalCommercialCost.amount, analysis: bill.analystReview.economics.economicAnalysis, domestic: context.classification.domestic, validUntil: quoted.candidate.validity.periodEnd, offerComponents: quoted.calculation.components, warnings: quoted.calculation.warnings, offerVatRate });
+  const receipt = offerVatRate === null ? quoted.receipt : buildQuoteReceipt({ vector: quoted.calculation.vector, offerSupplyCost: quoted.calculation.totalCommercialCost.amount, analysis: bill.analystReview.economics.economicAnalysis, domestic: context.classification.domestic, validUntil: quoted.candidate.validity.periodEnd, offerComponents: quoted.calculation.components, warnings: quoted.calculation.warnings, offerVatRate, householdSpread: householdSpreadOf(context, quoted.calculation) });
   const offer: Offer = { ...quoted, receipt };
   // Same saving per kWh (or Smc) as on the bill, simulated over 12 months of the annual consumption.
   const basis = annualBasis(context);
