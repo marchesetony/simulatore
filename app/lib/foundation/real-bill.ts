@@ -798,8 +798,16 @@ export function validatePdf(fileName: string, contentType: string, bytes: Uint8A
   if (bytes.length > maxBytes) throw new Error("PDF_TOO_LARGE");
   if (contentType !== "application/pdf") throw new Error("PDF_MIME_INVALID");
   if (new TextDecoder("latin1").decode(bytes.slice(0, 5)) !== "%PDF-") throw new Error("PDF_SIGNATURE_INVALID");
-  if (!/^[\w .-]{1,120}\.pdf$/i.test(fileName)) throw new Error("PDF_FILENAME_INVALID");
-  return fileName.replace(/[^\w .-]/g, "_");
+  return safeUploadName(fileName, /\.pdf$/i);
+}
+
+// Tony (29/10, "Caricamento bolletta non disponibile"): a bill named the way people name files (accents, parentheses,
+// "n°", long names) is still a bill. Only a path is refused; every other name is kept readable and made safe for storage.
+function safeUploadName(fileName: string, extension: RegExp): string {
+  if (/[\\/]/.test(fileName) || fileName.includes("..") || !extension.test(fileName)) throw new Error("PDF_FILENAME_INVALID");
+  const dot = fileName.lastIndexOf(".");
+  const base = fileName.slice(0, dot).normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[^\w .-]/g, "_").trim().slice(0, 120) || "bolletta";
+  return `${base}${fileName.slice(dot).toLowerCase()}`;
 }
 
 export function validateBillDocument(fileName: string, contentType: string, bytes: Uint8Array, maxBytes: number): string {
@@ -810,8 +818,7 @@ export function validateBillDocument(fileName: string, contentType: string, byte
   const signature = contentType === "image/jpeg" ? bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff : contentType === "image/png" ? Buffer.from(bytes.slice(0, 8)).equals(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a])) : false;
   if (!signature) throw new Error("PDF_SIGNATURE_INVALID");
   const extension = contentType === "image/jpeg" ? /\.(?:jpe?g)$/i : /\.png$/i;
-  if (!extension.test(fileName) || !/^[\w .-]{1,120}\.(?:jpe?g|png)$/i.test(fileName)) throw new Error("PDF_FILENAME_INVALID");
-  return fileName.replace(/[^\w .-]/g, "_");
+  return safeUploadName(fileName, extension);
 }
 
 function extracted(value: string | null, confidence: number): ExtractedField {

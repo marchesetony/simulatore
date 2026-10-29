@@ -54,6 +54,8 @@ const INTERNAL_TO_PUBLIC_CODE: Readonly<Record<string, string>> = {
   PDF_MIME_INVALID: "PDF_MIME_INVALID",
   PDF_SIGNATURE_INVALID: "PDF_SIGNATURE_INVALID",
   PDF_TOO_LARGE: "PDF_TOO_LARGE",
+  PDF_EMPTY: "PDF_EMPTY",
+  PDF_FILENAME_INVALID: "PDF_FILENAME_INVALID",
   EXTRACTION_REQUIRED_FIELD_MISSING: "EXTRACTION_REQUIRED_FIELD_MISSING",
   EXTRACTION_VALUE_INVALID: "EXTRACTION_VALUE_INVALID",
   TENANT_ACCESS_DENIED: "TENANT_ACCESS_DENIED",
@@ -140,6 +142,13 @@ export async function POST(request: Request): Promise<Response> {
     return Response.json({ document: sanitizeBillForFeatureAccess(await attachOfficialPun(toPublicDocument(result.document), repositories.marketArchiveRepository), await resolveBillFeaturePermissions(principal, repositories, await billVisibilityScope(principal, repositories))), energyBill: result.contract }, { status: 201, headers: noStoreHeaders });
   } catch (error) {
     const code = publicCode(error, "INGESTION_FAILED");
+    // The cause of an unmapped failure goes to the server log, so it can be found without asking the user again.
+    if (code === "INGESTION_FAILED") {
+      console.error("BILL_INGESTION_FAILED", error instanceof Error ? `${error.name}: ${error.message}` : String(error));
+      // An internal error code (never free text) is shown with the message, so the user can report it.
+      const internal = error instanceof Error && /^[A-Z][A-Z0-9_]{2,80}$/.test(error.message) ? error.message : null;
+      if (internal) return Response.json({ error: { code, message: messageFor(code), correlationId: CORRELATION_ID, detail: internal } }, { status: publicStatus(code), headers: noStoreHeaders });
+    }
     return deny(code, messageFor(code), publicStatus(code));
   }
 }

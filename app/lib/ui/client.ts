@@ -49,6 +49,8 @@ const messages: Readonly<Record<string, string>> = {
   PDF_MIME_INVALID: "Il file selezionato non è un PDF valido.",
   PDF_SIGNATURE_INVALID: "La firma del PDF non è valida.",
   PDF_TOO_LARGE: "Il PDF supera il limite consentito.",
+  PDF_EMPTY: "Il file caricato è vuoto.",
+  PDF_FILENAME_INVALID: "Il nome del file non è valido: rinominalo in modo semplice (es. bolletta.pdf).",
   BILL_EXTRACTION_REQUIRED_FIELD_MISSING: "Mancano dati obbligatori nella bolletta.",
   BILL_EXTRACTION_VALUE_INVALID: "Un dato estratto dalla bolletta non è valido.",
   BILL_CONTRACT_VALIDATION_FAILED: "I dati estratti dalla bolletta non superano la validazione.",

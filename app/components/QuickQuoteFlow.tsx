@@ -86,6 +86,8 @@ function euro(value: number | null): string { return value === null ? "—" : EU
 function date(value: string | null): string { return value && /^\d{4}-\d{2}-\d{2}$/.test(value) ? DATE.format(new Date(`${value}T00:00:00Z`)) : "Non indicata"; }
 function daysUntil(value: string | null, today: string): number | null { return value ? Math.round((Date.parse(`${value}T00:00:00Z`) - Date.parse(`${today}T00:00:00Z`)) / 86_400_000) : null; }
 function message(cause: unknown): string { return toUiError(cause).message; }
+// The server's error code, when it sends one, goes with the message so the user can report it.
+function withDetail(cause: unknown): string { const error = toUiError(cause); return error.detail ? `${error.message} (codice ${error.detail})` : error.message; }
 const NUMBER = new Intl.NumberFormat("it-IT", { maximumFractionDigits: 0, useGrouping: "always" });
 function amount(value: number | null | undefined, unit: string): string { return value === null || value === undefined ? "—" : `${NUMBER.format(value)} ${unit}`; }
 const VOLTAGE: Record<string, string> = { LV: "Bassa tensione (BT)", MV: "Media tensione (MT)", HV: "Alta tensione (AT)", EHV: "Altissima tensione (AAT)" };
@@ -585,7 +587,7 @@ export default function QuickQuoteFlow({ readonly }: { readonly readonly: boolea
       setDraft(document);
       setValues(readValues(document));
       setStep("review");
-    } catch (cause) { setError(cause instanceof Error && cause.message === "BILL_READ_FAILED" ? "Non siamo riusciti a leggere la bolletta. Riprova con un PDF più nitido." : message(cause)); } finally { setPending(undefined); }
+    } catch (cause) { setError(cause instanceof Error && cause.message === "BILL_READ_FAILED" ? "Non siamo riusciti a leggere la bolletta. Riprova con un PDF più nitido." : withDetail(cause)); } finally { setPending(undefined); }
   };
 
   // An already loaded bill opens on its read data first, like a new upload.
