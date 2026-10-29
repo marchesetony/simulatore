@@ -473,8 +473,13 @@ export async function calculatePreparedOffer(request: SimulationRequest, prepare
   // that spread repeated.
   const indexedSpread = prepared.offer.pricing.mode === "INDEXED" ? prepared.offer.pricing.spread.amount : null;
   const repeatsSpread = (fee: CalculationReadyOffer["variableFees"][number]) => indexedSpread !== null && fee.unit === "EUR_PER_KWH" && Math.abs(fee.amount - indexedSpread) < 1e-9 && !/commercializ|sbilanc|dispacc|capacit|perdit|gestion|servizi|verde|green/i.test(fee.label);
-  addFeeComponents(drafts, prepared.offer.variableFees.filter((fee) => !repeatsSpread(fee)), "VARIABLE_FEE", request, totalQuantity, months);
-  addDeclaredComponent(drafts, prepared.offer.imbalance, "IMBALANCE", request, totalQuantity, months);
+  // Tony (29/10): "lo spread 0,03 è comprensivo di quello che prevede la norma". A household offer from 1 April 2026 has one
+  // spread covering every cost outside the index, sbilanciamento and commercializzazione included (delibera 386/2025/R/com):
+  // a per-kWh imbalance or commercialization charge read apart from it is the spread again, never a second charge.
+  const householdSpreadOnly = request.vector === "EE" && indexedSpread !== null && dependencies.trustedElectricityContext?.regulatoryCustomerScope?.startsWith("DOMESTIC") === true && request.supplyPeriod.periodStart.slice(0, 10) >= "2026-04-01";
+  const insideSpread = (fee: CalculationReadyOffer["variableFees"][number]) => householdSpreadOnly && fee.unit === "EUR_PER_KWH" && /commercializ|sbilanc/i.test(`${fee.label ?? ""} ${fee.feeId ?? ""}`);
+  addFeeComponents(drafts, prepared.offer.variableFees.filter((fee) => !repeatsSpread(fee) && !insideSpread(fee)), "VARIABLE_FEE", request, totalQuantity, months);
+  if (!householdSpreadOnly) addDeclaredComponent(drafts, prepared.offer.imbalance, "IMBALANCE", request, totalQuantity, months);
   // Tony (28/10): "certamente il contributo una tantum solo sulla prima bolletta". A bill already issued with this CTE that
   // does not charge it is not the first one, so its simulation leaves the one-off fees out.
   const current = dependencies.currentOffer;

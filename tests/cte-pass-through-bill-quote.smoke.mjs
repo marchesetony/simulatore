@@ -112,4 +112,12 @@ assert.equal(await lossOf(indexedLoss()), 13);
 const household = { ...context(3), supplyUseCategory: "DOMESTIC", domesticResidenceStatus: "NON_RESIDENT", regulatoryCustomerScope: "DOMESTIC_NON_RESIDENT_BT" };
 const householdLoss = await calculatePreparedOffer(request(true), indexedLoss(), { ...deps(0.0105, 0.004275, 3), trustedElectricityContext: household });
 assert.equal(Number(householdLoss.components.find((component) => component.formulaInputs?.kind === "LOSSES")?.amount.amount), 10);
+// Tony (29/10): "lo spread 0,03 è comprensivo di quello che prevede la norma". Imbalance or commercialization read apart in
+// a household CTE from 1 April 2026 is inside the spread, never a second charge.
+const feeOf = (feeId, label, amount) => ({ feeId, label, amount, currency: "EUR", unit: "EUR_PER_KWH", taxTreatment: "EXCLUDED" });
+const householdExtras = indexedLoss(); householdExtras.offer.imbalance = { status: "DECLARED", component: feeOf("imb", "Sbilanciamento", 0.002) }; householdExtras.offer.variableFees = [feeOf("com", "Commercializzazione", 0.003)];
+const householdExtrasQuote = await calculatePreparedOffer(request(true), householdExtras, { ...deps(0.0105, 0.004275, 3), trustedElectricityContext: household });
+assert.equal(householdExtrasQuote.components.some((component) => component.category === "IMBALANCE" || /Commercializzazione/.test(component.label)), false);
+const businessExtrasQuote = await calculatePreparedOffer(request(true), householdExtras, deps(0.0105, 0.004275, 3));
+assert.equal(businessExtrasQuote.components.some((component) => component.category === "IMBALANCE"), true, "businesses keep their imbalance");
 console.log("CTE_PASS_THROUGH_BILL_QUOTE=PASS");
