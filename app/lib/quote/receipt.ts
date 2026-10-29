@@ -205,6 +205,8 @@ function offerDetail(component: QuoteReceiptOfferComponent): string {
   if (component.category === "IMBALANCE" || /sbilanciament|imbalance/i.test(text)) return "IMBALANCE";
   // The CTE's own capacity charge stays apart, so a missing official capacity value still shows its reason.
   if (component.formulaInputs?.source === "CTE_STATED_VALUE" && /capacit/i.test(text)) return "CAPACITY_CTE";
+  // The household CDISPD is dispatching with capacity inside (TIV art. 48, 386/2025 art. 1.2.b), never the capacity market alone (Tony, 29/10).
+  if (/CDISPD/i.test(text)) return "DISPATCHING";
   if (/capacit/i.test(text)) return "CAPACITY";
   if (/dispacciament|dispatching/i.test(text)) return "DISPATCHING";
   if (/perdit|loss/i.test(text)) return "LOSSES";

@@ -189,6 +189,10 @@ const fixOffer = [
 ];
 const fixDetails = Object.fromEntries(buildQuoteReceipt({ vector: "EE", offerSupplyCost: 62.07, analysis: fixBill, domestic: false, validUntil: null, offerComponents: fixOffer }).rows.find((row) => row.key === "ENERGY").details.map((item) => [item.key, item]));
 for (const key of ["LOSSES", "COMMERCIALIZATION", "DISPATCHING", "IMBALANCE"]) assert.match(fixDetails[key]?.currentNote ?? "", /compreso nel prezzo energia/, key);
+// Tony (29/10, BE FAMILY FAST 26): the household CDISPD was shown as "Mercato della capacità"; it is dispatching with capacity inside.
+const cdispdDetails = buildQuoteReceipt({ vector: "EE", offerSupplyCost: 62.07, analysis: fixBill, domestic: true, validUntil: null, offerComponents: [...fixOffer.filter((item) => !/Dispacciamento|capacità/.test(item.label)), { category: "VARIABLE_FEE", sign: "CHARGE", label: "Dispacciamento e mercato della capacità (CDISPD)", amount: { amount: 3.21 }, formulaInputs: { kind: "DISPATCHING" } }] }).rows.find((row) => row.key === "ENERGY").details;
+assert.equal(cdispdDetails.find((item) => item.key === "DISPATCHING")?.offer, 3.21);
+assert.ok(!cdispdDetails.some((item) => item.key === "CAPACITY"));
 assert.match(fixDetails.ENERGY.label, /comprende anche/);
 assert.equal(fixDetails.ENERGY.difference, Math.round((38.13 + 3.81 + 2.46 + 0.75 + 0.85 + 1.07 - 49.21) * 100) / 100);
 // Tony (28/10, BPower Casa Protetta, domestico non residente 3 kW, 65 kWh, totale 128,07 EUR): the quadro sintetico prices
