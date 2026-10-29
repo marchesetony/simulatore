@@ -481,6 +481,16 @@ function voltageFromFacts(extraction: StructuredBillExtraction): VoltageLevel | 
   return null;
 }
 
+// Tony (29/10, fattura dettagliata BPower senza tensione): a bill that does not print the voltage is in bassa tensione when
+// it is a household (domestic supplies are BT) or at most 30 kW (TIC: BT up to 100 kW).
+function billVoltage(extraction: StructuredBillExtraction): VoltageLevel | null {
+  const read = valueOf(extraction.voltageLevel) ?? voltageFromFacts(extraction);
+  if (read) return read;
+  const domestic = customerTypeOf(extraction) === "RESIDENTIAL" || extraction.extendedFacts.some((fact) => fact.status === "FOUND" && /SUPPLY_USE/.test(fact.code) && /domestic/i.test(fact.value) && !/non\s*domestic|altri\s+usi/i.test(fact.value));
+  const powers = [valueOf(extraction.powerKw), ...extraction.extendedFacts.filter((fact) => fact.status === "FOUND" && /^POWER_(COMMITTED|AVAILABLE)/.test(fact.code)).map((fact) => Number(/(\d+(?:[,.]\d+)?)/.exec(String(fact.value))?.[1]?.replace(",", ".")))].filter((value): value is number => typeof value === "number" && Number.isFinite(value) && value > 0);
+  return domestic || (powers.length > 0 && Math.max(...powers) <= 30) ? "LV" : null;
+}
+
 /**
  * Monthly F1/F2/F3 detail that does not reconcile with the document is dropped, not fatal:
  * the bill stays usable on its period totals and the simulation never sees that detail.
@@ -505,7 +515,7 @@ export function structuredBillContractIssue(source: StructuredBillExtraction): s
   if (vector === "EE") {
     const pod = valueOf(extraction.pod);
     if (!pod || !/^IT[A-Z0-9]{6,30}$/i.test(pod)) return "POD_MISSING";
-    if (!valueOf(extraction.voltageLevel) && !voltageFromFacts(extraction)) return "VOLTAGE_MISSING";
+    if (!billVoltage(extraction)) return "VOLTAGE_MISSING";
   } else {
     const pdr = valueOf(extraction.pdr);
     if (!pdr || !/^\d{14}$/.test(pdr)) return "PDR_MISSING";
@@ -525,7 +535,7 @@ export function structuredBillContract(input: { readonly extraction: StructuredB
   const base = { schemaVersion: 1 as const, recordId: `${input.billId}::structured::${input.versionId}`, version: "1", parentVersionId: null, tenantId: input.tenantId, approval: { status: "DRAFT" as const, reason: "INGESTION_PENDING_REVIEW" }, recordType: "BILL" as const, billId: input.billId, ...(customerId ? { customerId } : {}), billingPeriod: { periodStart: period.from, periodEnd: period.to }, currentSupplier: supplier, customer: { ...(customerId ? { customerId } : {}), customerType, name: declared(extraction.customerName), taxIdentifiers: [] }, offer: { supplier, offerName: declared(extraction.offerName), offerCode: declared(extraction.offerCode) }, regulatedCharges: [], fieldProvenance: provenanceFields.map((field) => ({ field, source: "BILL_DOCUMENT" as const, sourceReference: `bill-document:${input.billId}`, locator: `structured:${field}`, confidence: 0.9, reviewed: false })), reviewState: "NEEDS_REVIEW" as const };
   if (vector === "EE") {
     const pod = valueOf(extraction.pod);
-    const voltageLevel = valueOf(extraction.voltageLevel) ?? voltageFromFacts(extraction);
+    const voltageLevel = billVoltage(extraction);
     if (!pod || !/^IT[A-Z0-9]{6,30}$/i.test(pod) || !voltageLevel) return null;
     const contract: BillContract = { ...base, vector: "EE", supply: { vector: "EE", pod, voltageLevel }, consumption: { vector: "EE", f1: quantity("KWH", extraction.f1Consumption), f2: quantity("KWH", extraction.f2Consumption), f3: quantity("KWH", extraction.f3Consumption), total: quantity("KWH", analyticalElectricityTotal(extraction)) } };
     try { validateBillContract(contract); return contract; } catch { return null; }

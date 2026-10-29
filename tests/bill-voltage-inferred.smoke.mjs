@@ -54,7 +54,7 @@ const archive = (contract, archiveId = contract.cteId, versionId = `${archiveId}
 
 // Tony (29/10, fattura dettagliata BPower): the detailed bill does not print the voltage. A household (6 kW, domestic) is
 // in bassa tensione: the offer choice goes on with BT instead of asking to reload the PDF.
-const bill = approvedBill();
+const bill = structuredClone(approvedBill());
 const version = bill.versions[0];
 version.energyContract.supply.voltageLevel = null;
 version.energyContract.customer.customerType = "RESIDENTIAL";
@@ -65,7 +65,7 @@ version.structuredBill.extendedFacts = [
   { code: "POWER_COMMITTED", value: "6 kW", status: "FOUND" },
   { code: "DOMESTIC_RESIDENCE_STATUS_RAW", value: "Residente", status: "FOUND" },
 ];
-const business = approvedBill();
+const business = structuredClone(approvedBill());
 business.id = "bill-qa-ee-mt";
 business.versions[0].energyContract.billId = business.id;
 business.versions[0].energyContract.supply.voltageLevel = null;
@@ -86,3 +86,14 @@ assert.equal(prepared.context.missingRequiredData.includes("voltageLevel"), fals
 const mt = await prepareBillDrivenSimulation(principal, repositories, business.id, "EXCLUDED", "2026-09-16").catch((error) => error);
 assert.equal(mt instanceof Error ? true : mt.context.missingRequiredData.includes("voltageLevel"), true);
 console.log("bill voltage inferred ok");
+
+// The same bill must also become a bill contract when it is read (structured reading without the voltage).
+const { structuredBillContract, structuredBillContractIssue } = await import("../app/lib/ingestion/structured-bill.ts");
+const reading = structuredClone(version.structuredBill);
+const contract = structuredBillContract({ extraction: reading, tenantId, billId: "bill-qa-ee", versionId: "v-reading" });
+assert.equal(contract?.supply.voltageLevel, "LV");
+const bigBusiness = structuredClone(business.versions[0].structuredBill);
+bigBusiness.powerKw = structuredFound(400);
+assert.equal(structuredBillContract({ extraction: bigBusiness, tenantId, billId: "bill-qa-ee-mt", versionId: "v-mt" }), null);
+assert.equal(structuredBillContractIssue(bigBusiness), "VOLTAGE_MISSING");
+console.log("structured bill voltage inferred ok");
