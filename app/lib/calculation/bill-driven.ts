@@ -272,12 +272,18 @@ function buildContext(document: BillDocument, version: BillVersion): BillDrivenS
   if (contract.vector === "EE" && profile) {
     try { supplyContext = buildTrustedElectricitySupplyContext(profile, { simulationPeriod: period, sourceBillBinding: { billId: document.id, approvedVersionId: version.versionId } }); } catch { supplyContext = null; }
   }
+  // Tony (29/10, fattura dettagliata BPower senza tensione): a bill that does not print the voltage is in bassa tensione
+  // when it is a household (domestic supplies are BT) or at most 30 kW (TIC: BT up to 100 kW), as for the ARERA tables.
+  const contractedPower = profile ? parsePower(profile.powerCommitted) : null;
+  const availablePower = profile ? parsePower(profile.powerAvailable) : null;
+  const inferredLowVoltage = contract.vector === "EE" && (customerType === "RESIDENTIAL" || profile?.supplyUseCategory.normalizedValue === "DOMESTIC" || ((availablePower ?? contractedPower) !== null && (availablePower ?? contractedPower)! > 0 && (availablePower ?? contractedPower)! <= 30));
+  const voltageLevel: VoltageLevel | null = contract.vector === "EE" ? contract.supply.voltageLevel ?? supplyContext?.voltageLevel ?? (inferredLowVoltage ? "LV" : null) : null;
   const missing: string[] = [];
   if (!customerType) missing.push("customerType");
   if (!period.periodStart || !period.periodEnd) missing.push("billingPeriod");
   if (contract.vector === "EE") {
     if (!contract.supply.pod) missing.push("POD");
-    if (!contract.supply.voltageLevel) missing.push("voltageLevel");
+    if (!voltageLevel) missing.push("voltageLevel");
     if (periodConsumption.f1 === null) missing.push("F1");
     if (periodConsumption.f2 === null) missing.push("F2");
     if (periodConsumption.f3 === null) missing.push("F3");
@@ -311,7 +317,7 @@ function buildContext(document: BillDocument, version: BillVersion): BillDrivenS
     supply: {
       pod: contract.vector === "EE" ? contract.supply.pod : null,
       pdr: contract.vector === "GAS" ? contract.supply.pdr : null,
-      voltageLevel: contract.vector === "EE" ? contract.supply.voltageLevel : null,
+      voltageLevel,
       contractedPowerKw,
       availablePowerKw: profile ? parsePower(profile.powerAvailable) : null,
     },
@@ -331,7 +337,7 @@ function buildContext(document: BillDocument, version: BillVersion): BillDrivenS
       domestic,
       nonDomestic: useCategory === "OTHER_USE" || useCategory === "PUBLIC_LIGHTING" || useCategory === "PUBLIC_EV_CHARGING" || contract.customer?.customerType === "NON_RESIDENTIAL",
       resident: residency === null ? null : residency === "RESIDENT",
-      voltageClass: contract.vector === "EE" ? contract.supply.voltageLevel : null,
+      voltageClass: voltageLevel,
       regulatoryCustomerScope: supplyContext?.regulatoryCustomerScope ?? null,
       bta6Eligible: supplyContext ? supplyContext.regulatoryCustomerScope === "NON_DOMESTIC_BT_BTA6" : null,
       status: missing.length === 0 ? "READY" : "PARTIAL",
