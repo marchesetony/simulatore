@@ -292,7 +292,7 @@ export interface CalculationDependencies {
   readonly currentOffer?: CurrentSupplyOffer;
 }
 
-export interface CurrentSupplyOffer { readonly supplier: string | null; readonly offer: string | null; readonly oneOffBilled: boolean }
+export interface CurrentSupplyOffer { readonly supplier: string | null; readonly offer: string | null; readonly oneOffBilled: boolean; readonly indexStructure?: "MONO" | "BANDS" | "HOURLY" | null }
 
 export async function assertNoKnownDomesticTierDivergence(repository: Pick<TenantRecordRepository<unknown>, "get"> | undefined, tenantId: string): Promise<void> {
   if (!repository) return;
@@ -344,7 +344,7 @@ function assertPriceCurrency(offer: CalculationReadyOffer, request: SimulationRe
   if ([...componentTaxTreatments, ...pricingTaxTreatments].some((treatment) => treatment !== request.taxTreatment)) fail("TAX_TREATMENT_INCOMPATIBLE");
 }
 
-function addElectricityEnergy(target: ComponentDraft[], request: ElectricitySimulationRequest, offer: CalculationReadyOffer, markets: readonly MarketArchiveRecord[]): void {
+function addElectricityEnergy(target: ComponentDraft[], request: ElectricitySimulationRequest, offer: CalculationReadyOffer, markets: readonly MarketArchiveRecord[], monthlyIndex = false): void {
   const pricing = offer.pricing as ElectricityPricing;
   if (pricing.mode === "FIXED") {
     const total = add(add(fromNumber(request.consumption.f1), fromNumber(request.consumption.f2)), fromNumber(request.consumption.f3));
@@ -363,6 +363,13 @@ function addElectricityEnergy(target: ComponentDraft[], request: ElectricitySimu
     const f3 = electricityRecord.f3;
     if (!f1 || !f2 || !f3) fail("MARKET_VALUES_MISSING");
     const rates = [f1!.value, f2!.value, f3!.value];
+    // Monorario (PUN mensile): the month's single GME PUN on all the kWh, as the bill applies it (Tony, 29/10: same CTE, same bill).
+    const monthly = electricityRecord.monthly;
+    if (monthlyIndex && monthly) {
+      const quantity = values[0] + values[1] + values[2];
+      target.push({ componentId: `energy:${market.month}:f0`, category: "ENERGY", label: `Energia EE indicizzata monoraria ${market.month}`, sign: "CHARGE", value: multiply(add(divide(fromNumber(monthly.value), fromNumber(1000)), fromNumber(pricing.spread.amount)), fromNumber(quantity)), formulaId: "EE_PUN_MWH_TO_KWH_PLUS_SPREAD", formulaInputs: { month: market.month, band: "F0", quantityKwh: quantity, punEurPerMwh: monthly.value, mwhToKwh: 1000, spreadPerKwh: pricing.spread.amount, marketRecordId: marketRecord.recordId, marketVersion: marketRecord.version, taxTreatment: pricing.spread.taxTreatment } });
+      return;
+    }
     values.forEach((quantity, index) => target.push({ componentId: `energy:${market.month}:f${index + 1}`, category: "ENERGY", label: `Energia EE indicizzata F${index + 1} ${market.month}`, sign: "CHARGE", value: multiply(add(divide(fromNumber(rates[index]), fromNumber(1000)), fromNumber(pricing.spread.amount)), fromNumber(quantity)), formulaId: "EE_PUN_MWH_TO_KWH_PLUS_SPREAD", formulaInputs: { month: market.month, band: `F${index + 1}`, quantityKwh: quantity, punEurPerMwh: rates[index], mwhToKwh: 1000, spreadPerKwh: pricing.spread.amount, marketRecordId: marketRecord.recordId, marketVersion: marketRecord.version, taxTreatment: pricing.spread.taxTreatment } }));
   });
 }
@@ -466,7 +473,9 @@ export async function calculatePreparedOffer(request: SimulationRequest, prepare
   const drafts: ComponentDraft[] = [];
   const totalQuantity = request.vector === "EE" ? add(add(fromNumber(request.consumption.f1), fromNumber(request.consumption.f2)), fromNumber(request.consumption.f3)) : multiply(fromNumber(request.consumption.smc), request.consumption.correctionCoefficient.value === undefined ? fromNumber(1) : fromNumber(request.consumption.correctionCoefficient.value));
   const months = monthCount(request);
-  if (request.vector === "EE") addElectricityEnergy(drafts, request, prepared.offer, prepared.markets); else addGasEnergy(drafts, request, prepared.offer, prepared.markets);
+  // The bill priced with this same CTE says how the index runs over time: a monorario bill takes the monthly PUN.
+  const sameAsBill = dependencies.currentOffer !== undefined && isSameOffer({ billSupplier: dependencies.currentOffer.supplier, billOffer: dependencies.currentOffer.offer, offerSupplier: prepared.version.contract.supplier.name, offerCode: prepared.version.contract.offer.code, offerName: prepared.version.contract.offer.name });
+  if (request.vector === "EE") addElectricityEnergy(drafts, request, prepared.offer, prepared.markets, sameAsBill && dependencies.currentOffer?.indexStructure === "MONO"); else addGasEnergy(drafts, request, prepared.offer, prepared.markets);
   addFeeComponents(drafts, prepared.offer.fixedFees, "FIXED_FEE", request, totalQuantity, months);
   // Tony (28/10, BPower BE Family Casa Protetta): "PUN Index GME + 0,03 €/kWh" was read as the spread and again as a
   // generic per-kWh fee ("Quote variabili 0,0300"). A per-kWh fee equal to the indexed spread, with no name of its own, is

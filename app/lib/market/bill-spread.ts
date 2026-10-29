@@ -78,6 +78,16 @@ export function hourlyIndex(extraction: StructuredBillExtraction): boolean {
   const facts = ["PRICE_TIME_STRUCTURE_RAW", "PRICE_MECHANISM_RAW", "PRICE_FORMULA_RAW", "INDEX_NAME"].map((code) => extraction.extendedFacts.find((item) => item.code === code && item.status === "FOUND")?.value ?? "").join(" ");
   return HOURLY.test(facts) && !/monorari|fascia unica|\bF23\b|biorari/i.test(facts);
 }
+/** How the bill applies the index over time: one monthly PUN, PUN per band, or hour by hour; null when the bill does not say. */
+export function billIndexStructure(extraction: StructuredBillExtraction): "MONO" | "BANDS" | "HOURLY" | null {
+  if (hourlyIndex(extraction)) return "HOURLY";
+  const stated = extraction.extendedFacts.find((item) => item.code === "PRICE_TIME_STRUCTURE_RAW" && item.status === "FOUND")?.value ?? "";
+  if (/monorari|fascia unica|prezzo unico/i.test(String(stated))) return "MONO";
+  if (/fasc|biorari|\bF1\b|\bF23\b/i.test(String(stated))) return "BANDS";
+  const prices = billEnergyPrices(extraction);
+  if (prices.F2 !== undefined || prices.F3 !== undefined || prices.F23 !== undefined) return "BANDS";
+  return prices.F0 !== undefined ? "MONO" : null;
+}
 function isSpreadLine(line: StructuredBillExtraction["economicChargeLines"][number]): boolean { return (line.code === "SPREAD" || line.code === "ENERGY_SPREAD" || SPREAD_LINE.test(lineText(line))) && perKwhLine(line) && !/dispacciament|perdit|capacit/i.test(lineText(line)); }
 
 /** The spread when the sale-of-energy table prints it as its own row (index and markup billed apart). */

@@ -15,6 +15,8 @@ import { ONE_OFF_BILL_LINE } from "../quote/same-offer.ts";
 import { buildTrustedElectricitySupplyContext, type ElectricitySupplyContext, type TrustedElectricitySupplyContextError } from "./trusted-ee-supply-context.ts";
 // @ts-expect-error Node's strip-only test runner requires the explicit extension.
 import { buildTrustedElectricityFiscalContext, type TrustedElectricityFiscalContext } from "./trusted-ee-fiscal-context.ts";
+// @ts-expect-error Node's strip-only test runner requires the explicit extension.
+import { billIndexStructure } from "../market/bill-spread.ts";
 
 export class SourceBillContextError extends Error {
   readonly code: string;
@@ -136,7 +138,7 @@ async function currentOfferOf(billRepository: Pick<BillRepository, "get">, tenan
     if (!bill) return {};
     const found = (field: { readonly status: string; readonly value: unknown } | undefined) => field?.status === "FOUND" && typeof field.value === "string" ? field.value : null;
     const offer = [found(bill.offerCode), found(bill.offerName), bill.documentOfferName ?? null].filter((value): value is string => !!value?.trim()).join(" ") || null;
-    return { currentOffer: { supplier: found(bill.supplier), offer, oneOffBilled: bill.economicChargeLines.some((line) => ONE_OFF_BILL_LINE.test(`${line.description} ${line.rawDescription ?? ""}`)) } };
+    return { currentOffer: { supplier: found(bill.supplier), offer, oneOffBilled: bill.economicChargeLines.some((line) => ONE_OFF_BILL_LINE.test(`${line.description} ${line.rawDescription ?? ""}`)), indexStructure: billIndexStructure(bill) } };
   } catch { return {}; }
 }
 
