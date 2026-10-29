@@ -120,4 +120,11 @@ const householdExtrasQuote = await calculatePreparedOffer(request(true), househo
 assert.equal(householdExtrasQuote.components.some((component) => component.category === "IMBALANCE" || /Commercializzazione/.test(component.label)), false);
 const businessExtrasQuote = await calculatePreparedOffer(request(true), householdExtras, deps(0.0105, 0.004275, 3));
 assert.equal(businessExtrasQuote.components.some((component) => component.category === "IMBALANCE"), true, "businesses keep their imbalance");
+// Tony (29/10, BPower BE SPECIAL 26: imbalance billed on kWh x 1,10), choosing "solo se la CTE lo dice": imbalance takes
+// the losses only when the CTE names it among the loss targets.
+const imbalanceAmount = (quote) => Number(quote.components.find((component) => component.category === "IMBALANCE")?.amount.amount);
+const plainImbalance = imbalanceAmount(businessExtrasQuote);
+const statedLosses = structuredClone(householdExtras); statedLosses.offer.lossReference = { ...(statedLosses.offer.lossReference ?? {}), applicationTargets: ["ENERGY_INDEX", "SPREAD", "IMBALANCE"] };
+const statedQuote = await calculatePreparedOffer(request(true), statedLosses, deps(0.0105, 0.004275, 3));
+assert.equal(imbalanceAmount(statedQuote), Math.round(plainImbalance * 1.1 * 100) / 100, "imbalance on kWh with losses when the CTE says so");
 console.log("CTE_PASS_THROUGH_BILL_QUOTE=PASS");

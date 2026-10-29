@@ -207,6 +207,14 @@ function addCtePassThroughs(target: ComponentDraft[], request: ElectricitySimula
     }, fromNumber(0));
     if (energy.length) target.push({ componentId: "cte-pass-through:losses", category: "VARIABLE_FEE", label: "Perdite di rete", sign: "CHARGE", value: multiply(base, loss), formulaId: "CTE_PASS_THROUGH_LOSSES_ON_ENERGY", formulaInputs: { kind: "LOSSES", lossFactor: toDecimal(loss, 6), base: toDecimal(base, 6), spreadIncluded: !indexOnly, source: standard.source } });
   }
+  // Tony (29/10, BPower BE SPECIAL 26, imbalance billed on 3.970 x 1,10 kWh): "solo se la CTE lo dice". Imbalance and
+  // per-kWh commercialization fees apply to the kWh with losses only when the CTE names them among the loss targets.
+  if (loss) for (let index = 0; index < target.length; index += 1) {
+    const draft = target[index];
+    const imbalance = draft.category === "IMBALANCE" && targets.has("IMBALANCE");
+    const commercialization = draft.category === "VARIABLE_FEE" && draft.formulaId === "FEE_RATE_TIMES_BASIS" && draft.formulaInputs.feeUnit === "EUR_PER_KWH" && /commercializ/i.test(`${draft.label} ${String(draft.formulaInputs.feeId ?? "")}`) && targets.has("COMMERCIALIZATION_FEE");
+    if (imbalance || commercialization) target[index] = { ...draft, value: grossUp(draft.value), formulaInputs: { ...draft.formulaInputs, lossFactor: toDecimal(loss, 6) } };
+  }
   // Base di calcolo approvata da Tony (26/10): dispacciamento (TIDE) e mercato della capacità si prendono solo dai valori
   // ufficiali ARERA/Terna del periodo; il valore che la CTE scrive ("attualmente pari a") serve solo da controllo. Senza
   // valore ufficiale la voce non si stima: il motivo va nei warnings e lo scontrino lo mostra.

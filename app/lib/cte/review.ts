@@ -397,7 +397,10 @@ function spreadGrossOfLosses(fields: readonly { readonly value?: unknown; readon
 function lossReference(source: string): CteLossReference | null {
   // "Tabella 4 colonna A TIS" or "Tabella 4, colonna A allegata al TIS".
   if (!/Tabella\s+4\s*,?\s+colonna\s+A\b[\s\S]{0,40}?\bTIS\b/i.test(source)) return null;
-  return { lossMode: "OFFICIAL_REFERENCE", reference: officialReference("ARERA_TERNA", "TIS", source, { table: "Tabella 4", column: "A" }), applicationTargets: ["DISPATCHING"], sourceEvidence: source };
+  // Tony (29/10, "solo se la CTE lo dice"): imbalance or commercialization take the losses only when the CTE writes so.
+  const withLosses = (name: string) => new RegExp(`${name}[^.]{0,200}?(?:perdite|maggiorat)|(?:perdite|maggiorat)[^.]{0,120}?${name}`, "i").test(source);
+  const targets: ("DISPATCHING" | "IMBALANCE" | "COMMERCIALIZATION_FEE")[] = ["DISPATCHING", ...(withLosses("sbilanciament") ? ["IMBALANCE" as const] : []), ...(withLosses("commercializzazion") ? ["COMMERCIALIZATION_FEE" as const] : [])];
+  return { lossMode: "OFFICIAL_REFERENCE", reference: officialReference("ARERA_TERNA", "TIS", source, { table: "Tabella 4", column: "A" }), applicationTargets: targets, sourceEvidence: source };
 }
 
 function authoritativeFailure(errorCode: string, validationPaths: readonly string[]): CteAuthoritativeBuildResult {
