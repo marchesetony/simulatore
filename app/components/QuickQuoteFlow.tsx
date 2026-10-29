@@ -20,10 +20,11 @@ type Context = {
   readonly missingRequiredData: readonly string[];
   readonly economicReconciled?: boolean;
 };
+type Unlisted = { readonly archiveId: string; readonly supplier: string; readonly offer: { readonly name: string; readonly code: string }; readonly reason: string };
 type Candidate = { readonly archiveId: string; readonly cteVersionId: string | null; readonly supplier: string; readonly offer: { readonly name: string; readonly code: string }; readonly validity: { readonly periodStart: string; readonly periodEnd: string }; readonly finalStatus?: string; readonly calculationReadiness: string; readonly compatibilityReason?: string; readonly reasonCodes?: readonly string[]; readonly scope?: { readonly customer: string; readonly voltage: readonly string[]; readonly consumption: string | null; readonly uses: readonly string[] }; readonly pricingType?: "INDEXED" | "FIXED" | null; readonly pricingReference?: string | null; readonly terms?: Terms };
 type Terms = { readonly fixedPrice: number | null; readonly spread: number | null; readonly priceUnit: "EUR_PER_KWH" | "EUR_PER_SMC"; readonly monthlyFixedFee: number | null };
 type Offer = { readonly rank: number; readonly calculation: CalculationModel; readonly supplier: string; readonly offerName: string; readonly receipt: QuoteReceipt; readonly candidate: Candidate };
-type Quote = { readonly bill: BillDocumentModel; readonly context: Context; readonly comparison: ComparisonModel; readonly offers: readonly Offer[]; readonly candidates?: readonly Candidate[] };
+type Quote = { readonly bill: BillDocumentModel; readonly context: Context; readonly comparison: ComparisonModel; readonly offers: readonly Offer[]; readonly candidates?: readonly Candidate[]; readonly unlisted?: readonly Unlisted[] };
 
 // The seven fields the server needs confirmed before a bill can be used.
 const FIELDS: readonly { readonly name: string; readonly label: string }[] = [
@@ -304,16 +305,19 @@ function offersFrom(bill: BillDocumentModel, context: Context, candidates: reado
   });
 }
 
-const REASON_LABEL: Readonly<Record<string, string>> = { CUSTOMER_LEGAL_TYPE_MISMATCH: "tipo di cliente non ammesso (Consumer/Business)", SUPPLY_USE_MISMATCH: "uso della fornitura non ammesso", IDENTIFIER_TYPE_MISMATCH: "tipo di identificativo non ammesso", VOLTAGE_MISMATCH: "tensione non ammessa (BT/MT)", CONSUMPTION_THRESHOLD_MISMATCH: "consumo annuo fuori dalle soglie della CTE", POWER_THRESHOLD_MISMATCH: "potenza fuori dalle soglie della CTE", VALIDITY_MISMATCH: "CTE non valida per il periodo della bolletta", CALCULATION_NOT_READY: "calcolo non pronto", REVIEW_REQUIRED: "CTE da revisionare", EXPIRED_CTE: "CTE scaduta", MISSING_REGULATORY_DATA: "mancano dati regolatori (PUN o oneri ARERA)", INVALID_CTE: "CTE non valida", MISSING_SOURCE_DOCUMENT: "documento CTE mancante", MARKET_DATA_MISSING: "manca il PUN/PSV del periodo", NOT_READY: "CTE non pronta al calcolo", CONSUMPTION_NOT_ELIGIBLE: "consumo annuo fuori dalle soglie della CTE", CUSTOMER_NOT_ELIGIBLE: "tipo di cliente non ammesso (Consumer/Business)", CONDOMINIUM_ONLY: "riservata ai condomini" };
+const REASON_LABEL: Readonly<Record<string, string>> = { CUSTOMER_LEGAL_TYPE_MISMATCH: "tipo di cliente non ammesso (Consumer/Business)", SUPPLY_USE_MISMATCH: "uso della fornitura non ammesso", IDENTIFIER_TYPE_MISMATCH: "tipo di identificativo non ammesso", VOLTAGE_MISMATCH: "tensione non ammessa (BT/MT)", CONSUMPTION_THRESHOLD_MISMATCH: "consumo annuo fuori dalle soglie della CTE", POWER_THRESHOLD_MISMATCH: "potenza fuori dalle soglie della CTE", VALIDITY_MISMATCH: "CTE non valida per il periodo della bolletta", CALCULATION_NOT_READY: "calcolo non pronto", REVIEW_REQUIRED: "CTE da revisionare", EXPIRED_CTE: "CTE scaduta", MISSING_REGULATORY_DATA: "mancano dati regolatori (PUN o oneri ARERA)", INVALID_CTE: "CTE non valida", MISSING_SOURCE_DOCUMENT: "documento CTE mancante", MARKET_DATA_MISSING: "manca il PUN/PSV del periodo", NOT_READY: "CTE non pronta al calcolo", CONSUMPTION_NOT_ELIGIBLE: "consumo annuo fuori dalle soglie della CTE", CUSTOMER_NOT_ELIGIBLE: "tipo di cliente non ammesso (Consumer/Business)", CONDOMINIUM_ONLY: "riservata ai condomini", CTE_NOT_ACTIVE: "CTE bloccata o non attiva", TAX_TREATMENT_INCOMPATIBLE: "prezzi CTE con imposte incluse, non confrontabili", BILL_DATA_INSUFFICIENT: "mancano dati della bolletta", CALCULATION_READY_INVALID: "la CTE non è completa per il calcolo", CTE_VALIDITY_MISMATCH: "CTE non ancora valida", CTE_EXPIRED: "CTE scaduta", VOLTAGE_NOT_ELIGIBLE: "tensione non ammessa (BT/MT)" };
 const EXCLUSION_LABEL: Readonly<Record<string, string>> = { CALCULATION_READY_INVALID: "la CTE non è completa per il calcolo", MARKET_DATA_MISSING: "manca il PUN/PSV del periodo", MARKET_DATA_INVALID: "PUN/PSV del periodo non valido", COMPARISON_INCOMPATIBLE: "non confrontabile con le altre offerte", MONTHLY_PROFILE_REQUIRED: "servono i consumi mese per mese", CALCULATION_INPUT_INVALID: "dati della bolletta non validi per questa CTE", FEE_UNIT_MISMATCH: "unità di un costo della CTE non compatibile", IMBALANCE_UNAVAILABLE: "sbilanciamento non dichiarato nella CTE", CTE_VALIDITY_MISMATCH: "CTE non valida per il periodo della bolletta", CTE_EXPIRED: "CTE scaduta", CUSTOMER_NOT_ELIGIBLE: "tipo di cliente non ammesso", VOLTAGE_NOT_ELIGIBLE: "tensione non ammessa" };
+// Tony (29/10): a CTE in the archive that is not offered says why, so the operator knows what to fix.
+const UNLISTED_LABEL: Readonly<Record<string, string>> = { NOT_APPROVED: "CTE non ancora approvata in archivio", ASSIGNMENT_EXPIRED: "assegnazione della CTE scaduta", ASSIGNMENT_NOT_YET_VALID: "assegnazione della CTE non ancora valida", EXCLUDED_BY_LIMITS: "esclusa dai limiti impostati per il tuo profilo" };
 // With no offer to show, each assigned CTE says why it was left out: the agent knows what to fix or ask for.
 // Tony (29/10, "la cte di questa è la BE SMILE ma non la vedo"): the CTEs left out are listed with their reason also when
 // other offers are shown.
 function NoOfferReasons({ quote, shown = [] }: { readonly quote: Quote; readonly shown?: readonly string[] }): ReactNode {
   // Only CTEs of the bill's commodity are worth explaining; a CTE of the other commodity never applies to this bill.
   const candidates = (quote.candidates ?? []).filter((candidate) => !shown.includes(candidate.archiveId) && ![...(candidate.reasonCodes ?? []), candidate.compatibilityReason ?? ""].some((code) => /VECTOR_MISMATCH/.test(code)));
-  if (!candidates.length) return null;
-  const rows = candidates.map((candidate) => {
+  const unlisted = (quote.unlisted ?? []).map((item) => ({ key: item.archiveId, name: `${item.supplier} · ${item.offer.name || item.offer.code}`, reasons: [UNLISTED_LABEL[item.reason] ?? item.reason] }));
+  if (!candidates.length && !unlisted.length) return null;
+  const evaluated = candidates.map((candidate) => {
     const excluded = quote.comparison.excludedOffers.find((item) => item.archiveId === candidate.archiveId);
     const eligible = candidate.finalStatus === "ELIGIBLE" || candidate.finalStatus === "ELIGIBLE_BY_OVERRIDE";
     const reasons = eligible
@@ -321,6 +325,7 @@ function NoOfferReasons({ quote, shown = [] }: { readonly quote: Quote; readonly
       : [...new Set([...(candidate.reasonCodes ?? []), candidate.compatibilityReason].filter((code): code is string => Boolean(code)).map((code) => REASON_LABEL[code] ?? code))];
     return { key: candidate.archiveId, name: `${candidate.supplier} · ${candidate.offer.name || candidate.offer.code}`, reasons };
   });
+  const rows = [...evaluated, ...unlisted];
   return <details className="quote-cost-detail"><summary>{shown.length ? `CTE non utilizzabili per questa bolletta (${rows.length})` : `Perché nessuna CTE è utilizzabile (${rows.length})`}</summary><ul>{rows.map((row) => <li key={row.key}><strong>{row.name}</strong>: {row.reasons.join("; ")}</li>)}</ul></details>;
 }
 
@@ -569,12 +574,12 @@ export default function QuickQuoteFlow({ readonly }: { readonly readonly: boolea
     setPending("offers"); setError(undefined); setQuote(null); setProposal(null); setStep("offers");
     try {
       const bill = (await requestJson<{ readonly document: BillDocumentModel }>(`/api/bills/${encodeURIComponent(billId)}?view=approved`)).document;
-      const prepared = await requestJson<{ readonly context: Context; readonly candidates: readonly Candidate[] }>(`/api/simulation/context?billId=${encodeURIComponent(billId)}&taxTreatment=EXCLUDED`);
+      const prepared = await requestJson<{ readonly context: Context; readonly candidates: readonly Candidate[]; readonly unlisted?: readonly Unlisted[] }>(`/api/simulation/context?billId=${encodeURIComponent(billId)}&taxTreatment=EXCLUDED`);
       const anchor = prepared.candidates.find((item) => item.finalStatus === "ELIGIBLE" && item.calculationReadiness === "READY" && item.cteVersionId);
-      if (!anchor) { setQuote({ bill, context: prepared.context, comparison: { comparisonId: "", fingerprint: "", tenantId: "", vector: prepared.context.vector, results: [], excludedOffers: [], ranking: [], warnings: [] }, offers: [], candidates: prepared.candidates }); return; }
+      if (!anchor) { setQuote({ bill, context: prepared.context, comparison: { comparisonId: "", fingerprint: "", tenantId: "", vector: prepared.context.vector, results: [], excludedOffers: [], ranking: [], warnings: [] }, offers: [], candidates: prepared.candidates, unlisted: prepared.unlisted ?? [] }); return; }
       const comparison = (await requestJson<{ readonly result: ComparisonModel }>("/api/comparison", { method: "POST", body: JSON.stringify({ sourceBill: { billId, version: prepared.context.billVersionId }, cteId: anchor.archiveId, cteVersionId: anchor.cteVersionId }) })).result;
       const offers = offersFrom(bill, prepared.context, prepared.candidates, comparison);
-      setQuote({ bill, context: prepared.context, comparison, offers, candidates: prepared.candidates });
+      setQuote({ bill, context: prepared.context, comparison, offers, candidates: prepared.candidates, unlisted: prepared.unlisted ?? [] });
       setSelectedId(offers[0]?.calculation.calculationId ?? null);
     } catch (cause) { setError(cause instanceof Error && cause.message.startsWith("Dalla bolletta") ? cause.message : message(cause)); } finally { setPending(undefined); }
   };

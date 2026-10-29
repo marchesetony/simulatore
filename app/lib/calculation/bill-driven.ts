@@ -152,9 +152,18 @@ export interface CteEligibilityCandidate {
   readonly overrideRequestable?: boolean;
 }
 
+// A CTE of the bill's commodity that is in the archive but cannot be offered to this operator, and why.
+export interface UnlistedCte {
+  readonly archiveId: string;
+  readonly supplier: string;
+  readonly offer: { readonly name: string; readonly code: string };
+  readonly reason: "NOT_APPROVED" | "NOT_ASSIGNED" | "ASSIGNMENT_EXPIRED" | "ASSIGNMENT_NOT_YET_VALID" | "EXCLUDED_BY_LIMITS";
+}
+
 export interface BillDrivenPreparation {
   readonly context: BillDrivenSimulationContext;
   readonly candidates: readonly CteEligibilityCandidate[];
+  readonly unlisted?: readonly UnlistedCte[];
 }
 
 export interface BillDrivenExecutionInput {
@@ -514,14 +523,25 @@ export async function prepareBillDrivenSimulation(principal: AuthenticatedPrinci
   if (hierarchy) assertSimulationWithinLimits(hierarchy, context.vector, context.customerType);
   await ensureOfficialIndexes(repositories, context);
   const candidates: CteEligibilityCandidate[] = [];
+  const unlisted: UnlistedCte[] = [];
+  // Tony (29/10, "la BE SMILE non la propone, ed è presente in archivio"): a CTE of the bill's commodity that is in the
+  // archive but not offered still says why (not approved, not assigned, assignment expired), so the operator knows what to fix.
+  // A CTE assigned to someone else stays hidden from the operator.
+  const unlist = (record: CteArchiveRecord, reason: UnlistedCte["reason"]) => {
+    if (record.vector !== context.vector || commercialStatusOf(record) === "DELETED") return;
+    if (reason === "NOT_ASSIGNED") return;
+    const contract = (currentApprovedCteVersion(record) ?? record.versions.find((item) => item.versionId === record.currentWorkingVersionId) ?? record.versions.at(-1))?.contract;
+    unlisted.push({ archiveId: record.archiveId, supplier: contract?.supplier.name ?? "", offer: { name: contract?.offer.name ?? "", code: contract?.offer.code ?? record.cteId }, reason });
+  };
   for (const record of records) {
     // CTEs outside the operator's assignment or validity window are not offered at all.
-    if (hierarchy && cteUsability(hierarchy, record.archiveId) !== "USABLE") continue;
+    const usability = hierarchy ? cteUsability(hierarchy, record.archiveId) : "USABLE";
+    if (usability !== "USABLE") { unlist(record, usability === "EXPIRED" ? "ASSIGNMENT_EXPIRED" : usability === "NOT_YET_VALID" ? "ASSIGNMENT_NOT_YET_VALID" : usability); continue; }
     const current = currentApprovedCteVersion(record);
-    if (!current) continue;
+    if (!current) { unlist(record, "NOT_APPROVED"); continue; }
     candidates.push(await applyAuthorizedOverride(principal, repositories, context, await evaluateCte(repositories.marketArchiveRepository, context, record, current, taxTreatment, asOf)));
   }
-  return { context, candidates };
+  return { context, candidates, ...(unlisted.length ? { unlisted } : {}) };
 }
 
 export async function listBillDrivenSources(principal: AuthenticatedPrincipal, repositories: Pick<RuntimeRepositories, "billRepository" | "foundationMemberships"> & { readonly orgChain?: RuntimeRepositories["orgChain"] }): Promise<readonly Record<string, unknown>[]> {
