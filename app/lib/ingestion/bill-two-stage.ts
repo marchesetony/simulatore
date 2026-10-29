@@ -16,6 +16,8 @@ import { BILL_ANALYST_ITEM_CODES, BILL_ECONOMIC_CHARGE_CODES, normalizeAnalystIt
 // @ts-expect-error Node's strip-only test runner requires the explicit extension.
 import { normalizeBillEconomicComponent } from "../foundation/bill-economic-analysis.ts";
 // @ts-expect-error Node's strip-only test runner requires the explicit extension.
+import { normativeGuidance } from "../normative/archive.ts";
+// @ts-expect-error Node's strip-only test runner requires the explicit extension.
 import { MONTHLY_BANDS_WIRE_SCHEMA, monthlyBandsEqual, normalizeMonthlyBands, type StructuredBillMonthlyBand } from "./monthly-bands.ts";
 
 export const BILL_CORE_TOOL_NAME = "extract_bill_core";
@@ -115,6 +117,8 @@ export const ANALYST_STAGE_PROMPT = [
   "I valori del Box dell'offerta ('Valori assunti da ciascun elemento della formula', es. 'Dispacciamento: 0,010501 €/kWh') sono prezzi unitari, non importi: restituiscili con unitPrice e unità, amount vuoto e quantity vuota; non copiarli mai in amount.",
   "Se la bolletta riporta solo il quadro sintetico, restituisci le righe 'di cui spesa per la rete e gli oneri generali di sistema' di quota per consumi, quota fissa e quota potenza così come sono, con la quota nella descrizione, e le singole componenti ASOS e ARIM della pagina oneri con la loro quota.",
   "Le righe sotto 'Conguaglio dei mesi precedenti', 'Ricalcoli' o con un periodo precedente a quello fatturato vanno restituite con il loro periodo raw e con 'Conguaglio' all'inizio della descrizione, mantenendo il segno meno degli importi negativi.",
+  // Archivio normativo (Tony, 29/10): the AI reads the bill with the ARERA rules for households and business.
+  normativeGuidance("BILL"),
   "Usa FOUND solo con evidenza esplicita, NEEDS_REVIEW quando l'evidenza è ambigua e UNKNOWN o INVALID quando il dato non è classificabile o è presente ma inutilizzabile.",
 ].join(" ");
 

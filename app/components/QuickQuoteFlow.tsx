@@ -487,10 +487,12 @@ function Receipt({ offer: quoted, today, business, context, bill }: { readonly o
       <strong>{euro(Math.abs(saving))}{receipt.savingsPercent !== null ? ` (${PERCENT.format(Math.abs(receipt.savingsPercent))}%)` : ""}</strong>
     </div> : null}
     {annualSaving !== null && basis ? <div className={annualSaving >= 0 ? "quote-saving annual" : "quote-saving annual negative"}>
-      <span>{annualSaving >= 0 ? "Risparmio annuo previsto" : "Costo in più annuo previsto"}<small>Simulato su 12 mesi con {amount(basis.annual, unit)} di consumo annuo{basis.estimated ? " stimato dal periodo della bolletta" : " letto in bolletta"}</small></span>
+      <span>{annualSaving >= 0 ? "Risparmio annuo previsto" : "Costo in più annuo previsto"}<small>Simulato su 12 mesi con {amount(basis.annual, unit)} di consumo annuo{basis.estimated ? " stimato dal periodo della bolletta" : " letto in bolletta"}</small>
+        {/* Annual saving in euro and in percent with both annual costs, as the scheda sintetica's spesa annua (Codice art. 19; Tony, 29/10). */}
+        {annualCurrent ? <small>Spesa annua attuale {euro(annualCurrent)} · con la nuova offerta {euro(annualCurrent - annualSaving)}{receipt.taxesIncluded ? " (imposte comprese)" : " (imposte escluse)"}</small> : null}</span>
       <strong>{euro(Math.abs(annualSaving))}{annualCurrent ? ` (${PERCENT.format(Math.abs(annualSaving / annualCurrent * 100))}%)` : ""}</strong>
     </div> : null}
-    {receipt.status === "COMPLETE" ? null : <p className="inline-warning" role="status">La bolletta non riporta la spesa per la materia energia: mostriamo solo il costo della nuova offerta.</p>}
+    {receipt.status === "COMPLETE" ? null : <p className="inline-warning" role="status">La bolletta non riporta la spesa per la vendita di energia: mostriamo solo il costo della nuova offerta.</p>}
     {/* Scontrino (Tony, 26/10): materia energia, trasporto e gestione del contatore, oneri di sistema, imposte e accise aggregated first,
         then every charge they contain (energia, dispacciamento, capacity, sbilanciamento, PCV, Flex, accise, IVA…) on its own line. */}
     <div className="responsive-table"><table className="quote-scontrino">
@@ -528,7 +530,7 @@ function Receipt({ offer: quoted, today, business, context, bill }: { readonly o
       <small>{left === null ? "Verifica la scadenza sulla CTE prima di firmare." : left < 0 ? "Offerta scaduta: non può più essere firmata." : `Il cliente deve firmare il contratto entro questa data${left <= 7 ? ` (mancano ${left} giorni)` : ""}.`}</small>
     </div>
     <CostDetail offer={offer} open={business} />
-    <p className="muted quote-note">Calcolo sugli stessi consumi e sullo stesso periodo della bolletta. Trasporto, oneri di sistema e accise non dipendono dal fornitore e restano quelli della bolletta{receipt.vatRate !== null ? `; IVA della nuova offerta al ${PERCENT.format(receipt.vatRate * 100)}%${receipt.vatRateEstimated ? " stimata" : ""}${offerVatRate !== null && receipt.billVatRate != null && Math.abs(offerVatRate - receipt.billVatRate) > 0.0001 ? ` (in bolletta ${PERCENT.format(receipt.billVatRate * 100)}%)` : ""}` : ""}.</p>
+    <p className="muted quote-note">Calcolo sugli stessi consumi e sullo stesso periodo della bolletta, con le voci di spesa della delibera ARERA 386/2025. Tariffa per l'uso della rete, oneri generali di sistema e accise non dipendono dal fornitore e restano quelli della bolletta{receipt.vatRate !== null ? `; IVA della nuova offerta al ${PERCENT.format(receipt.vatRate * 100)}%${receipt.vatRateEstimated ? " stimata" : ""}${offerVatRate !== null && receipt.billVatRate != null && Math.abs(offerVatRate - receipt.billVatRate) > 0.0001 ? ` (in bolletta ${PERCENT.format(receipt.billVatRate * 100)}%)` : ""}` : ""}.</p>
   </section>;
 }
 

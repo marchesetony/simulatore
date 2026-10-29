@@ -6,6 +6,8 @@ import { buildCteDiagnosticCapture, type CteDiagnosticCapture } from "../diagnos
 import type { CteProviderPayloadCapture } from "./provider-diagnostics.ts";
 // @ts-expect-error Node's strip-only test runner requires the explicit extension.
 import { assertPassThroughComponents } from "./validation.ts";
+// @ts-expect-error Node's strip-only test runner requires the explicit extension.
+import { normativeGuidance } from "../normative/archive.ts";
 
 export const ANTHROPIC_VERSION = "2023-06-01";
 export const ANTHROPIC_TOOL_NAME = "extract_cte";
@@ -49,6 +51,8 @@ export const ANTHROPIC_CTE_SYSTEM_PROMPT = [
   "Per commercialTerms.economicDuration usa valueKind JSON con valuePayload {\"value\":<mesi interi>,\"unit\":\"MONTHS\",\"sourceText\":\"<testo>\"}; per commercialTerms.exitFee usa JSON {\"amount\":<euro>,\"currency\":\"EUR\",\"condition\":\"EARLY_EXIT_BEFORE_DURATION\",\"durationReference\":<stesso oggetto della durata>,\"sourceText\":\"<testo>\"}; per commercialTerms.lossSemantics usa JSON {\"present\":true,\"rawText\":\"<testo>\",\"appliesTo\":\"SPREAD|ENERGY_PRICE|NETWORK_LOSSES|UNSPECIFIED\",\"provenance\":\"<pagina o sezione>\"}.",
   "Per le condizioni contrattuali di dispacciamento e capacità usa esclusivamente passThroughComponents strutturati dentro valuePayload JSON: non dedurre il kind da label, feeId o testo libero; se la dichiarazione è ambigua usa NOT_DECLARED.",
   "Nel sourceText di commercialTerms.passThroughComponents copia parola per parola, senza riassumere né tagliare, tutti i paragrafi che parlano di dispacciamento, mercato della capacità o Capacity Market, perdite di rete (Tabella 4 colonna A del TIS) e corrispettivi Terna, con tutti i valori \"attualmente pari a\"; se sono in sezioni diverse unisci i paragrafi separandoli con una riga vuota.",
+  // Archivio normativo (Tony, 29/10): the AI reads the CTE with the ARERA rules for households and business.
+  normativeGuidance("CTE"),
 ].join(" ");
 
 export const CTE_EXTRACTION_PATHS = [

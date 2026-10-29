@@ -180,7 +180,7 @@ const isReactive = (line: BillLine): boolean => line.classification !== "RICALCO
 const DETAIL_LABEL: Readonly<Record<string, string>> = {
   ENERGY: "Prezzo energia (indice + spread o prezzo fisso)", LOSSES: "Perdite di rete", COMMERCIALIZATION: "Commercializzazione", DISPATCHING: "Dispacciamento",
   CAPACITY: "Mercato della capacità (capacity market)", CAPACITY_CTE: "Capacity market libero (da CTE)", IMBALANCE: "Sbilanciamento", SELLER_OTHER: "Altri corrispettivi di vendita", PCV: "Quota fissa di vendita (PCV)",
-  OPTIONS: "Opzioni e servizi a pagamento (es. Flex)", ONE_OFF: "Corrispettivi una tantum", REACTIVE: "Energia reattiva", NETWORK: "Trasporto e gestione del contatore", SYSTEM: "Oneri di sistema",
+  OPTIONS: "Opzioni e servizi a pagamento (es. Flex)", ONE_OFF: "Corrispettivi una tantum", REACTIVE: "Energia reattiva", NETWORK: "Tariffa per l'uso della rete (trasporto e gestione del contatore)", SYSTEM: "Oneri generali di sistema",
 };
 const DETAIL_ORDER = Object.keys(DETAIL_LABEL);
 function billDetail(line: { readonly classification: string; readonly group?: string; readonly description: string }): string {
@@ -384,9 +384,10 @@ export function buildQuoteReceipt(input: QuoteReceiptInput): QuoteReceipt {
     ? cents(currentTaxes + supplyDelta * vatRate)
     : cents(excise + (offerEnergy + (offerNetwork ?? 0) + (offerSystem ?? 0) + excise) * chosenRate);
   const rows: QuoteReceiptRow[] = [
-    { key: "ENERGY", label: input.vector === "EE" ? "Spesa per la materia energia" : "Spesa per la materia gas naturale", current: currentEnergy, offer: offerEnergy },
-    { key: "NETWORK", label: "Trasporto e gestione del contatore", current: network, offer: offerNetwork },
-    { key: "SYSTEM", label: "Oneri di sistema", current: system, offer: offerSystem },
+    // Voci di spesa as the bill names them from 1/4/2026 (delibera 386/2025 art. 4.1.b, 315/2024; Tony, 29/10).
+    { key: "ENERGY", label: input.vector === "EE" ? "Spesa per la vendita di energia elettrica" : "Spesa per la vendita di gas naturale", current: currentEnergy, offer: offerEnergy },
+    { key: "NETWORK", label: input.vector === "EE" ? "Spesa per la tariffa per l'uso della rete elettrica" : "Spesa per la tariffa per l'uso della rete del gas naturale", current: network, offer: offerNetwork },
+    { key: "SYSTEM", label: "Spesa per gli oneri generali di sistema", current: system, offer: offerSystem },
     { key: "TAXES", label: "Imposte (accise e IVA)", current: taxesIncluded ? currentTaxes : null, offer: offerTaxes },
   ];
   if (currentEnergy === null) {

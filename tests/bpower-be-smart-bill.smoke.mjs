@@ -157,7 +157,7 @@ assert.doesNotMatch(withKwhDetails.IMBALANCE.currentNote, /0\.01/, "a price roun
 // the CTE prints 0,002 and 0,005 net of losses: "derivano da un arrotondamento di decimali sulla cte ... la consideriamo
 // corretta". The -5,35 € on the energy price and the -1,18 € of IVA on it are accepted; a larger gap is still a difference.
 const sameCte = (energyGap, vatGap) => sameOfferDifferences({ rows: [
-  { key: "ENERGY", label: "Spesa per la materia energia", current: 978.56, offer: 978.56 + energyGap, details: [{ key: "ENERGY", label: "Prezzo energia, in bolletta comprende anche commercializzazione, sbilanciamento", current: 963.56, offer: 963.56 + energyGap, difference: energyGap }, { key: "PCV", label: "Quota fissa di vendita (PCV)", current: 15, offer: 15, difference: 0 }] },
+  { key: "ENERGY", label: "Spesa per la vendita di energia elettrica" /* delibera 386/2025 naming (Tony, 29/10) */, current: 978.56, offer: 978.56 + energyGap, details: [{ key: "ENERGY", label: "Prezzo energia, in bolletta comprende anche commercializzazione, sbilanciamento", current: 963.56, offer: 963.56 + energyGap, difference: energyGap }, { key: "PCV", label: "Quota fissa di vendita (PCV)", current: 15, offer: 15, difference: 0 }] },
   { key: "TAX", label: "Imposte (accise e IVA)", current: 322.29, offer: 322.29 + vatGap, details: [{ key: "EXCISE", label: "Accise", current: 43.9, offer: 43.9, difference: 0 }, { key: "VAT", label: "IVA", current: 278.39, offer: 278.39 + vatGap, difference: vatGap }] },
 ] });
 assert.ok(sameCte(-5.35, -1.18).every((item) => item.accepted === true), JSON.stringify(sameCte(-5.35, -1.18)));
