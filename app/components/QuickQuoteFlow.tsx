@@ -21,10 +21,10 @@ type Context = {
   readonly economicReconciled?: boolean;
 };
 type Unlisted = { readonly archiveId: string; readonly supplier: string; readonly offer: { readonly name: string; readonly code: string }; readonly reason: string };
-type Candidate = { readonly archiveId: string; readonly cteVersionId: string | null; readonly supplier: string; readonly offer: { readonly name: string; readonly code: string }; readonly validity: { readonly periodStart: string; readonly periodEnd: string }; readonly finalStatus?: string; readonly calculationReadiness: string; readonly compatibilityReason?: string; readonly reasonCodes?: readonly string[]; readonly scope?: { readonly customer: string; readonly voltage: readonly string[]; readonly consumption: string | null; readonly uses: readonly string[] }; readonly pricingType?: "INDEXED" | "FIXED" | null; readonly pricingReference?: string | null; readonly terms?: Terms };
+type Candidate = { readonly archiveId: string; readonly cteVersionId: string | null; readonly supplier: string; readonly offer: { readonly name: string; readonly code: string }; readonly validity: { readonly periodStart: string; readonly periodEnd: string }; readonly finalStatus?: string; readonly calculationReadiness: string; readonly compatibilityReason?: string; readonly reasonCodes?: readonly string[]; readonly overrideRequestable?: boolean; readonly eligibilityOverrideId?: string; readonly scope?: { readonly customer: string; readonly voltage: readonly string[]; readonly consumption: string | null; readonly uses: readonly string[] }; readonly pricingType?: "INDEXED" | "FIXED" | null; readonly pricingReference?: string | null; readonly terms?: Terms };
 type Terms = { readonly fixedPrice: number | null; readonly spread: number | null; readonly priceUnit: "EUR_PER_KWH" | "EUR_PER_SMC"; readonly monthlyFixedFee: number | null };
 type Offer = { readonly rank: number; readonly calculation: CalculationModel; readonly supplier: string; readonly offerName: string; readonly receipt: QuoteReceipt; readonly candidate: Candidate };
-type Quote = { readonly bill: BillDocumentModel; readonly context: Context; readonly comparison: ComparisonModel; readonly offers: readonly Offer[]; readonly candidates?: readonly Candidate[]; readonly unlisted?: readonly Unlisted[] };
+type Quote = { readonly bill: BillDocumentModel; readonly context: Context; readonly comparison: ComparisonModel; readonly offers: readonly Offer[]; readonly candidates?: readonly Candidate[]; readonly unlisted?: readonly Unlisted[]; readonly canAuthorizeCte?: boolean };
 
 // The seven fields the server needs confirmed before a bill can be used.
 const FIELDS: readonly { readonly name: string; readonly label: string }[] = [
@@ -312,21 +312,32 @@ const UNLISTED_LABEL: Readonly<Record<string, string>> = { NOT_APPROVED: "CTE no
 // With no offer to show, each assigned CTE says why it was left out: the agent knows what to fix or ask for.
 // Tony (29/10, "la cte di questa è la BE SMILE ma non la vedo"): the CTEs left out are listed with their reason also when
 // other offers are shown.
-function NoOfferReasons({ quote, shown = [] }: { readonly quote: Quote; readonly shown?: readonly string[] }): ReactNode {
+// Tony (29/10): whoever holds the permission authorizes, for this bill, a CTE the rules leave out, giving a reason.
+function AuthorizeCte({ onAuthorize }: { readonly onAuthorize: (reason: string) => Promise<void> }): ReactNode {
+  const [open, setOpen] = useState(false); const [reason, setReason] = useState(""); const [busy, setBusy] = useState(false); const [failure, setFailure] = useState<string>();
+  if (!open) return <button className="button secondary compact" type="button" onClick={() => setOpen(true)}>Autorizza per questa bolletta</button>;
+  return <span className="quote-authorize"><input aria-label="Motivo dell'autorizzazione" placeholder="Motivo (es. contratto già firmato con questa offerta)" value={reason} maxLength={500} onChange={(event) => setReason(event.target.value)} disabled={busy} /><button className="button primary compact" type="button" disabled={busy || !reason.trim()} onClick={() => { setBusy(true); setFailure(undefined); void onAuthorize(reason.trim()).catch((cause) => { setFailure(message(cause)); setBusy(false); }); }}>{busy ? "Autorizzazione" : "Conferma"}</button><button className="button secondary compact" type="button" disabled={busy} onClick={() => setOpen(false)}>Annulla</button>{failure ? <small className="negative">{failure}</small> : null}</span>;
+}
+
+function NoOfferReasons({ quote, shown = [], onAuthorize }: { readonly quote: Quote; readonly shown?: readonly string[]; readonly onAuthorize?: (archiveId: string, reason: string) => Promise<void> }): ReactNode {
   // Only CTEs of the bill's commodity are worth explaining; a CTE of the other commodity never applies to this bill.
   const candidates = (quote.candidates ?? []).filter((candidate) => !shown.includes(candidate.archiveId) && ![...(candidate.reasonCodes ?? []), candidate.compatibilityReason ?? ""].some((code) => /VECTOR_MISMATCH/.test(code)));
-  const unlisted = (quote.unlisted ?? []).map((item) => ({ key: item.archiveId, name: `${item.supplier} · ${item.offer.name || item.offer.code}`, reasons: [UNLISTED_LABEL[item.reason] ?? item.reason] }));
+  const unlisted = (quote.unlisted ?? []).map((item) => ({ key: item.archiveId, name: `${item.supplier} · ${item.offer.name || item.offer.code}`, reasons: [UNLISTED_LABEL[item.reason] ?? item.reason], authorizable: false }));
   if (!candidates.length && !unlisted.length) return null;
   const evaluated = candidates.map((candidate) => {
     const excluded = quote.comparison.excludedOffers.find((item) => item.archiveId === candidate.archiveId);
     const eligible = candidate.finalStatus === "ELIGIBLE" || candidate.finalStatus === "ELIGIBLE_BY_OVERRIDE";
+    const annual = quote.context.consumption?.annual ?? null;
+    const threshold = (candidate.reasonCodes ?? []).includes("CONSUMPTION_THRESHOLD_MISMATCH") || candidate.compatibilityReason === "CONSUMPTION_NOT_ELIGIBLE"
+      ? ` (consumo annuo della bolletta ${annual === null ? "non letto" : `${QUANTITY.format(annual)} ${quote.context.vector === "EE" ? "kWh" : "Smc"}`}${candidate.scope?.consumption ? `, la CTE richiede ${candidate.scope.consumption}` : ""})` : "";
     const reasons = eligible
       ? excluded ? [`calcolo non riuscito: ${EXCLUSION_LABEL[excluded.code] ?? excluded.code}${/\(([^)]+)\)$/.exec(excluded.message)?.[1] ? ` (${/\(([^)]+)\)$/.exec(excluded.message)?.[1]})` : ""}`] : candidate.calculationReadiness !== "READY" ? [REASON_LABEL[candidate.calculationReadiness] ?? candidate.calculationReadiness] : ["calcolo non eseguito"]
-      : [...new Set([...(candidate.reasonCodes ?? []), candidate.compatibilityReason].filter((code): code is string => Boolean(code)).map((code) => REASON_LABEL[code] ?? code))];
-    return { key: candidate.archiveId, name: `${candidate.supplier} · ${candidate.offer.name || candidate.offer.code}`, reasons };
+      : [...new Set([...(candidate.reasonCodes ?? []), candidate.compatibilityReason].filter((code): code is string => Boolean(code)).map((code) => REASON_LABEL[code] ?? code))].map((label) => label === REASON_LABEL.CONSUMPTION_NOT_ELIGIBLE ? `${label}${threshold}` : label);
+    const authorizable = Boolean(quote.canAuthorizeCte && onAuthorize && candidate.finalStatus === "NOT_ELIGIBLE" && candidate.overrideRequestable);
+    return { key: candidate.archiveId, name: `${candidate.supplier} · ${candidate.offer.name || candidate.offer.code}`, reasons, authorizable };
   });
   const rows = [...evaluated, ...unlisted];
-  return <details className="quote-cost-detail"><summary>{shown.length ? `CTE non utilizzabili per questa bolletta (${rows.length})` : `Perché nessuna CTE è utilizzabile (${rows.length})`}</summary><ul>{rows.map((row) => <li key={row.key}><strong>{row.name}</strong>: {row.reasons.join("; ")}</li>)}</ul></details>;
+  return <details className="quote-cost-detail"><summary>{shown.length ? `CTE non utilizzabili per questa bolletta (${rows.length})` : `Perché nessuna CTE è utilizzabile (${rows.length})`}</summary><ul>{rows.map((row) => <li key={row.key}><strong>{row.name}</strong>: {row.reasons.join("; ")}{row.authorizable && onAuthorize ? <> <AuthorizeCte onAuthorize={(reason) => onAuthorize(row.key, reason)} /></> : null}</li>)}</ul></details>;
 }
 
 function Steps({ step }: { readonly step: Step }): ReactNode {
@@ -574,14 +585,22 @@ export default function QuickQuoteFlow({ readonly }: { readonly readonly: boolea
     setPending("offers"); setError(undefined); setQuote(null); setProposal(null); setStep("offers");
     try {
       const bill = (await requestJson<{ readonly document: BillDocumentModel }>(`/api/bills/${encodeURIComponent(billId)}?view=approved`)).document;
-      const prepared = await requestJson<{ readonly context: Context; readonly candidates: readonly Candidate[]; readonly unlisted?: readonly Unlisted[] }>(`/api/simulation/context?billId=${encodeURIComponent(billId)}&taxTreatment=EXCLUDED`);
-      const anchor = prepared.candidates.find((item) => item.finalStatus === "ELIGIBLE" && item.calculationReadiness === "READY" && item.cteVersionId);
-      if (!anchor) { setQuote({ bill, context: prepared.context, comparison: { comparisonId: "", fingerprint: "", tenantId: "", vector: prepared.context.vector, results: [], excludedOffers: [], ranking: [], warnings: [] }, offers: [], candidates: prepared.candidates, unlisted: prepared.unlisted ?? [] }); return; }
-      const comparison = (await requestJson<{ readonly result: ComparisonModel }>("/api/comparison", { method: "POST", body: JSON.stringify({ sourceBill: { billId, version: prepared.context.billVersionId }, cteId: anchor.archiveId, cteVersionId: anchor.cteVersionId }) })).result;
+      const prepared = await requestJson<{ readonly context: Context; readonly candidates: readonly Candidate[]; readonly unlisted?: readonly Unlisted[]; readonly canAuthorizeCte?: boolean }>(`/api/simulation/context?billId=${encodeURIComponent(billId)}&taxTreatment=EXCLUDED`);
+      // A CTE authorized for this bill can anchor the comparison when no other CTE fits.
+      const ready = (item: Candidate) => item.calculationReadiness === "READY" && Boolean(item.cteVersionId);
+      const anchor = prepared.candidates.find((item) => item.finalStatus === "ELIGIBLE" && ready(item)) ?? prepared.candidates.find((item) => item.finalStatus === "ELIGIBLE_BY_OVERRIDE" && item.eligibilityOverrideId && ready(item));
+      if (!anchor) { setQuote({ bill, context: prepared.context, comparison: { comparisonId: "", fingerprint: "", tenantId: "", vector: prepared.context.vector, results: [], excludedOffers: [], ranking: [], warnings: [] }, offers: [], candidates: prepared.candidates, unlisted: prepared.unlisted ?? [], canAuthorizeCte: prepared.canAuthorizeCte === true }); return; }
+      const comparison = (await requestJson<{ readonly result: ComparisonModel }>("/api/comparison", { method: "POST", body: JSON.stringify({ sourceBill: { billId, version: prepared.context.billVersionId }, cteId: anchor.archiveId, cteVersionId: anchor.cteVersionId, ...(anchor.finalStatus === "ELIGIBLE_BY_OVERRIDE" && anchor.eligibilityOverrideId ? { eligibilityOverrideId: anchor.eligibilityOverrideId } : {}) }) })).result;
       const offers = offersFrom(bill, prepared.context, prepared.candidates, comparison);
-      setQuote({ bill, context: prepared.context, comparison, offers, candidates: prepared.candidates, unlisted: prepared.unlisted ?? [] });
+      setQuote({ bill, context: prepared.context, comparison, offers, candidates: prepared.candidates, unlisted: prepared.unlisted ?? [], canAuthorizeCte: prepared.canAuthorizeCte === true });
       setSelectedId(offers[0]?.calculation.calculationId ?? null);
     } catch (cause) { setError(cause instanceof Error && cause.message.startsWith("Dalla bolletta") ? cause.message : message(cause)); } finally { setPending(undefined); }
+  };
+
+  const authorizeCte = async (archiveId: string, reason: string) => {
+    if (!quote) return;
+    await requestJson("/api/eligibility/override", { method: "POST", body: JSON.stringify({ action: "grant", billId: quote.context.billId, billVersionId: quote.context.billVersionId, cteId: archiveId, reason }) });
+    await loadOffers(quote.context.billId);
   };
 
   const upload = async (event: ChangeEvent<HTMLInputElement>) => {
@@ -680,6 +699,7 @@ export default function QuickQuoteFlow({ readonly }: { readonly readonly: boolea
       <section className="ui-card"><h3>Offerte utilizzabili per {quote.context.vector === "EE" ? "questa fornitura di luce" : "questa fornitura di gas"}</h3>
         {quote.offers.length ? <div className="quote-offers">{quote.offers.map((offer, index) => <button key={offer.calculation.calculationId} type="button" className={`quote-offer${offer.calculation.calculationId === selectedId ? " selected" : ""}${index === 0 ? " best" : ""}`} onClick={() => { setSelectedId(offer.calculation.calculationId); setProposal(null); }} aria-pressed={offer.calculation.calculationId === selectedId}>
           {index === 0 ? <span className="status-badge positive">La più conveniente</span> : null}
+          {offer.candidate.finalStatus === "ELIGIBLE_BY_OVERRIDE" ? <span className="status-badge">Autorizzata per questa bolletta</span> : null}
           <strong>{offer.supplier}</strong><span>{offer.offerName}</span>
           {termLines(offer.candidate).map((line) => <span key={line} className="quote-offer-term">{line}</span>)}
           {offer.candidate.scope ? <small className="quote-offer-scope">Per {offer.candidate.scope.customer}{offer.candidate.scope.voltage.length ? ` · ${offer.candidate.scope.voltage.map((level) => level === "LV" ? "BT" : level === "MV" ? "MT" : level === "HV" ? "AT" : level).join("/")}` : ""}{offer.candidate.scope.consumption ? ` · consumo ${offer.candidate.scope.consumption}` : ""}</small> : null}
@@ -688,8 +708,8 @@ export default function QuickQuoteFlow({ readonly }: { readonly readonly: boolea
           {(() => { const projection = annualProjection(offer, quote.context, quote.bill); return projection ? <small className={projection.saving >= 0 ? "positive" : "negative"}>{projection.saving >= 0 ? "Risparmio annuo previsto" : "Costo in più annuo"} {euro(Math.abs(projection.saving))}</small> : null; })()}
           <small>Valida fino al {date(offer.receipt.validUntil)}</small>
         </button>)}</div> : null}
-        {quote.offers.length ? <NoOfferReasons quote={quote} shown={quote.offers.map((offer) => offer.candidate.archiveId)} /> : null}
-        {quote.offers.length ? null : <><EmptyState title="Nessuna offerta utilizzabile" detail="Nessuna CTE a te assegnata è adatta a questa bolletta. Chiedi all'amministratore di assegnartene una." /><NoOfferReasons quote={quote} /></>}
+        {quote.offers.length ? <NoOfferReasons quote={quote} shown={quote.offers.map((offer) => offer.candidate.archiveId)} onAuthorize={readonly ? undefined : authorizeCte} /> : null}
+        {quote.offers.length ? null : <><EmptyState title="Nessuna offerta utilizzabile" detail="Nessuna CTE a te assegnata è adatta a questa bolletta. Chiedi all'amministratore di assegnartene una." /><NoOfferReasons quote={quote} onAuthorize={readonly ? undefined : authorizeCte} /></>}
       </section>
       {selected ? <><Receipt offer={selected} today={today} business={quote.context.customerType === "NON_RESIDENTIAL"} context={quote.context} bill={quote.bill} /><div className="button-row"><button className="button primary" type="button" onClick={() => void saveProposal()} disabled={readonly || Boolean(pending)}>{pending === "proposal" ? "Preparazione" : "Scarica la proposta in PDF"}</button>{proposal ? <span className="muted" role="status">Proposta salvata in Proposte.</span> : null}</div></> : null}
     </> : null : null}

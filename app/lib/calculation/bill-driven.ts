@@ -1,7 +1,7 @@
 // @ts-expect-error Node's strip-only test runner requires the explicit extension.
 import { completeSupplyProfile } from "../ingestion/supply-profile-completion.ts";
 // @ts-expect-error Node's strip-only test runner requires the explicit extension.
-import { assertSimulationWithinLimits, cteUsability, loadHierarchyAccess } from "../hierarchy/service.ts";
+import { assertSimulationWithinLimits, canAuthorizeCte, cteUsability, loadHierarchyAccess } from "../hierarchy/service.ts";
 // @ts-expect-error Node's strip-only test runner requires the explicit extension.
 import { quoteWindowStart, supplyPeriodTooOld } from "./quote-window.ts";
 import type { BillDocument, BillVersion } from "../foundation/real-bill";
@@ -164,6 +164,8 @@ export interface BillDrivenPreparation {
   readonly context: BillDrivenSimulationContext;
   readonly candidates: readonly CteEligibilityCandidate[];
   readonly unlisted?: readonly UnlistedCte[];
+  /** The operator may authorize, for this bill, a CTE the rules leave out. */
+  readonly canAuthorizeCte?: boolean;
 }
 
 export interface BillDrivenExecutionInput {
@@ -465,19 +467,26 @@ async function evaluateCte(repository: BillDrivenRepositories["marketArchiveRepo
   // The competitor bill is only the consumption basis: the CTE must be subscribable today, not during the past bill period.
   if (offer.validity.periodStart > asOf) return offerMetadata(record, version, offer, "NOT_COMPATIBLE", "CTE_VALIDITY_MISMATCH", "READY", ["VALIDITY_MISMATCH"]);
   // Candidate rule for a competitor bill: first Consumer or Business, then the annual consumption band, then the voltage.
-  if (!version.contract.eligibility.customerTypes.includes(context.customerType)) return offerMetadata(record, version, offer, "NOT_COMPATIBLE", "CUSTOMER_NOT_ELIGIBLE", "READY", ["CUSTOMER_LEGAL_TYPE_MISMATCH"]);
+  // Tony (29/10): the commercial conditions below can be authorized for one bill by whoever holds the permission, so each one
+  // is collected instead of stopping here; the checks that make the calculation impossible still run after them.
+  const mismatches: { readonly reason: string; readonly code: EligibilityReasonCode }[] = [];
+  const mismatch = (reason: string, code: EligibilityReasonCode) => { if (!mismatches.some((item) => item.code === code)) mismatches.push({ reason, code }); };
+  if (!version.contract.eligibility.customerTypes.includes(context.customerType)) mismatch("CUSTOMER_NOT_ELIGIBLE", "CUSTOMER_LEGAL_TYPE_MISMATCH");
   // Offers named for one kind of supply only fit that supply: "per MT" needs medium voltage, "Condomini" a condominium holder.
   const offerName = version.contract.offer.name ?? "";
-  if (context.vector === "EE" && /\bMT\b/.test(offerName) && context.supply.voltageLevel !== "MV") return offerMetadata(record, version, offer, "NOT_COMPATIBLE", "VOLTAGE_NOT_ELIGIBLE", "READY", ["VOLTAGE_MISMATCH"]);
-  if (context.vector === "EE" && /\bBT\b/.test(offerName) && context.supply.voltageLevel !== "LV") return offerMetadata(record, version, offer, "NOT_COMPATIBLE", "VOLTAGE_NOT_ELIGIBLE", "READY", ["VOLTAGE_MISMATCH"]);
-  if (/condomin/i.test(offerName) && !/condomin|\bcond\.?\s/i.test(context.customerName ?? "")) return offerMetadata(record, version, offer, "NOT_COMPATIBLE", "CONDOMINIUM_ONLY");
+  if (context.vector === "EE" && context.supply.voltageLevel && /\bMT\b/.test(offerName) && context.supply.voltageLevel !== "MV") mismatch("VOLTAGE_NOT_ELIGIBLE", "VOLTAGE_MISMATCH");
+  if (context.vector === "EE" && context.supply.voltageLevel && /\bBT\b/.test(offerName) && context.supply.voltageLevel !== "LV") mismatch("VOLTAGE_NOT_ELIGIBLE", "VOLTAGE_MISMATCH");
+  if (/condomin/i.test(offerName) && !/condomin|\bcond\.?\s/i.test(context.customerName ?? "")) mismatch("CONDOMINIUM_ONLY", "CONDOMINIUM_ONLY");
   const annual = annualConsumptionOf(context);
-  if (annualConsumptionRulesOf(version.contract).some((rule) => !annualConsumptionWithin(rule, annual))) return offerMetadata(record, version, offer, "NOT_COMPATIBLE", "CONSUMPTION_NOT_ELIGIBLE");
-  if (context.vector === "EE" && version.contract.vector === "EE" && (!context.supply.voltageLevel || !version.contract.eligibility.voltageLevels.includes(context.supply.voltageLevel))) return offerMetadata(record, version, offer, "NOT_COMPATIBLE", "VOLTAGE_NOT_ELIGIBLE", "READY", ["VOLTAGE_MISMATCH"]);
+  if (annual !== null && annualConsumptionRulesOf(version.contract).some((rule) => !annualConsumptionWithin(rule, annual))) mismatch("CONSUMPTION_NOT_ELIGIBLE", "CONSUMPTION_THRESHOLD_MISMATCH");
+  if (annual === null && annualConsumptionRulesOf(version.contract).length) return offerMetadata(record, version, offer, "NOT_COMPATIBLE", "CONSUMPTION_NOT_ELIGIBLE");
+  if (context.vector === "EE" && version.contract.vector === "EE" && !context.supply.voltageLevel) return offerMetadata(record, version, offer, "NOT_COMPATIBLE", "VOLTAGE_NOT_ELIGIBLE", "READY", ["VOLTAGE_MISMATCH"]);
+  if (context.vector === "EE" && version.contract.vector === "EE" && context.supply.voltageLevel && !version.contract.eligibility.voltageLevels.includes(context.supply.voltageLevel)) mismatch("VOLTAGE_NOT_ELIGIBLE", "VOLTAGE_MISMATCH");
   if (taxTreatment !== undefined && offer.taxTreatment !== taxTreatment) return offerMetadata(record, version, offer, "NOT_COMPATIBLE", "TAX_TREATMENT_INCOMPATIBLE");
   const feeUnits = [...offer.fixedFees, ...offer.variableFees, ...offer.oneOffFees, ...offer.commercialDiscounts, ...(offer.imbalance.status === "DECLARED" ? [offer.imbalance.component] : [])].map((fee) => fee.unit);
   if (feeUnits.some((unit) => context.vector === "EE" ? unit === "EUR_PER_SMC" : unit === "EUR_PER_KWH")) return offerMetadata(record, version, offer, "NOT_COMPATIBLE", "FEE_UNIT_MISMATCH");
   if (context.missingRequiredData.length > 0) return offerMetadata(record, version, offer, "NOT_COMPATIBLE", "BILL_DATA_INSUFFICIENT", "NOT_READY", ["CALCULATION_NOT_READY"]);
+  if (mismatches.length) return offerMetadata(record, version, offer, "NOT_COMPATIBLE", mismatches[0].reason, "READY", mismatches.map((item) => item.code));
   const indexed = offer.pricing.mode === "INDEXED";
   if (indexed && monthsInSimulationPeriod(simulationPeriodOf(context.billingPeriod)).length > 1 && !context.consumption.monthlyProfile) return offerMetadata(record, version, offer, "NOT_COMPATIBLE", "MONTHLY_PROFILE_REQUIRED");
   if (indexed) {
@@ -541,7 +550,7 @@ export async function prepareBillDrivenSimulation(principal: AuthenticatedPrinci
     if (!current) { unlist(record, "NOT_APPROVED"); continue; }
     candidates.push(await applyAuthorizedOverride(principal, repositories, context, await evaluateCte(repositories.marketArchiveRepository, context, record, current, taxTreatment, asOf)));
   }
-  return { context, candidates, ...(unlisted.length ? { unlisted } : {}) };
+  return { context, candidates, ...(unlisted.length ? { unlisted } : {}), canAuthorizeCte: hierarchy ? canAuthorizeCte(hierarchy) : false };
 }
 
 export async function listBillDrivenSources(principal: AuthenticatedPrincipal, repositories: Pick<RuntimeRepositories, "billRepository" | "foundationMemberships"> & { readonly orgChain?: RuntimeRepositories["orgChain"] }): Promise<readonly Record<string, unknown>[]> {

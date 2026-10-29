@@ -1,4 +1,6 @@
 // @ts-expect-error Node's strip-only test runner requires the explicit extension.
+import { authorizedOverrideCteIds } from "../eligibility/override.ts";
+// @ts-expect-error Node's strip-only test runner requires the explicit extension.
 import { cteUsability } from "../hierarchy/service.ts";
 import type { HierarchyAccess } from "../hierarchy/service";
 import type { CalculationResult } from "../calculation/types";
@@ -66,7 +68,7 @@ export async function rebuildAuthoritativeCalculation(repositories: RuntimeRepos
   const stored = await repositories.calculationResults.get(tenantId, calculationId);
   const calculation = assertStoredCalculation(stored, calculationId, expectedFingerprint, tenantId);
   const request = parseSimulationRequest(calculation.normalizedInput, tenantId);
-  const rebuilt = await calculateApprovedOffer(repositories.cteArchiveRepository, repositories.marketArchiveRepository, request, calculation.sourceCte.archiveId, await dependenciesFor(repositories, tenantId, request));
+  const rebuilt = await calculateApprovedOffer(repositories.cteArchiveRepository, repositories.marketArchiveRepository, request, calculation.sourceCte.archiveId, { ...(await dependenciesFor(repositories, tenantId, request) ?? {}), eligibilityOverriddenCteIds: await authorizedOverrideCteIds(repositories, tenantId, request.sourceBill) });
   if (rebuilt.calculationId !== calculation.calculationId || rebuilt.fingerprint !== calculation.fingerprint) throw new Error("PROPOSAL_CALCULATION_STALE");
   return rebuilt;
 }
@@ -75,7 +77,7 @@ export async function rebuildAuthoritativeComparison(repositories: RuntimeReposi
   const stored = await repositories.comparisonResults.get(tenantId, comparisonId);
   const comparison = assertStoredComparison(stored, comparisonId, expectedFingerprint, tenantId);
   const request = parseSimulationRequest(comparison.normalizedInput, tenantId);
-  const dependencies = await dependenciesFor(repositories, tenantId, request);
+  const dependencies = { ...(await dependenciesFor(repositories, tenantId, request) ?? {}), eligibilityOverriddenCteIds: await authorizedOverrideCteIds(repositories, tenantId, request.sourceBill) };
   const rebuilt = await compareApprovedOffers(repositories.cteArchiveRepository, repositories.marketArchiveRepository, request, hierarchy ? { ...(dependencies ?? {}), cteUsable: (archiveId) => cteUsability(hierarchy, archiveId) === "USABLE" } : dependencies);
   if (rebuilt.comparisonId !== comparison.comparisonId || rebuilt.fingerprint !== comparison.fingerprint) throw new Error("PROPOSAL_COMPARISON_STALE");
   return rebuilt;

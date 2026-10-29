@@ -298,6 +298,8 @@ export interface CalculationDependencies {
   readonly regulatedUnavailableReason?: string;
   /** The supplier and offer of the source bill, and whether it charges a one-off fee. */
   readonly currentOffer?: CurrentSupplyOffer;
+  /** CTEs (archive or CTE id) authorized for the source bill although the customer or voltage rules leave them out. */
+  readonly eligibilityOverriddenCteIds?: ReadonlySet<string>;
 }
 
 export interface CurrentSupplyOffer { readonly supplier: string | null; readonly offer: string | null; readonly oneOffBilled: boolean; readonly indexStructure?: "MONO" | "BANDS" | "HOURLY" | null }
@@ -407,7 +409,7 @@ export interface EligibleOffer {
   readonly markets: readonly MarketArchiveRecord[];
 }
 
-export async function prepareApprovedOffer(cteRepository: CteArchiveRepository, marketRepository: MarketArchiveRepository, request: SimulationRequest, archiveId: string): Promise<EligibleOffer> {
+export async function prepareApprovedOffer(cteRepository: CteArchiveRepository, marketRepository: MarketArchiveRepository, request: SimulationRequest, archiveId: string, overridden?: ReadonlySet<string>): Promise<EligibleOffer> {
   assertEeNetTaxPolicy(request);
   const record = await cteRepository.get(request.tenantId, archiveId);
   if (record === null) return fail("CTE_NOT_FOUND");
@@ -415,10 +417,10 @@ export async function prepareApprovedOffer(cteRepository: CteArchiveRepository, 
   const version = readyVersion(record);
   const offer: CalculationReadyOffer = (() => { try { const result = toCalculationReadyOffer(version.contract); assertCalculationReadyFees([...result.fixedFees, ...result.variableFees, ...result.oneOffFees, ...(result.imbalance.status === "DECLARED" ? [result.imbalance.component] : []), ...result.commercialDiscounts, ...(result.passThroughComponents ?? []).flatMap((component) => component.declarationState === "EXPLICIT_COMPONENT" ? [component.fee] : [])]); return result; } catch { return fail("CALCULATION_READY_INVALID"); } })();
   assertPriceCurrency(offer, request);
-  return prepareAdjustedOffer(record, version, offer, request, marketRepository);
+  return prepareAdjustedOffer(record, version, offer, request, marketRepository, overridden?.has(record.archiveId) === true || overridden?.has(record.cteId) === true);
 }
 
-async function prepareAdjustedOffer(record: CteArchiveRecord, version: CteArchiveVersion, baseOffer: CalculationReadyOffer, request: SimulationRequest, marketRepository: MarketArchiveRepository): Promise<EligibleOffer> {
+async function prepareAdjustedOffer(record: CteArchiveRecord, version: CteArchiveVersion, baseOffer: CalculationReadyOffer, request: SimulationRequest, marketRepository: MarketArchiveRepository, authorized = false): Promise<EligibleOffer> {
   // Company correttivi are part of the offer the customer is quoted, in every calculation path.
   const offer = applyCommercialAdjustment(baseOffer, record.commercialAdjustment);
   // The bill period is only the consumption basis: the offer must be subscribable on the calculation date.
@@ -427,8 +429,9 @@ async function prepareAdjustedOffer(record: CteArchiveRecord, version: CteArchiv
   if (!offer.vector || offer.vector !== request.vector) fail("VECTOR_MISMATCH");
   if (!offer.vector || !record.versions.some((candidate) => candidate.versionId === version.versionId && candidate.status === "APPROVED")) fail("CTE_NOT_APPROVED");
   const contract = version.contract;
-  if (!contract.eligibility.customerTypes.includes(request.customerCategory)) fail("CUSTOMER_NOT_ELIGIBLE");
-  if (request.vector === "EE" && contract.vector === "EE" && !contract.eligibility.voltageLevels.includes(request.voltageLevel)) fail("VOLTAGE_NOT_ELIGIBLE");
+  // A CTE authorized for this bill (Tony 29/10) is calculated although its customer or voltage rule leaves the bill out.
+  if (!authorized && !contract.eligibility.customerTypes.includes(request.customerCategory)) fail("CUSTOMER_NOT_ELIGIBLE");
+  if (!authorized && request.vector === "EE" && contract.vector === "EE" && !contract.eligibility.voltageLevels.includes(request.voltageLevel)) fail("VOLTAGE_NOT_ELIGIBLE");
   if (offer.commercialDiscounts.some((fee) => fee.unit === "EUR_PER_SMC" && request.vector === "EE" || fee.unit === "EUR_PER_KWH" && request.vector === "GAS")) fail("FEE_UNIT_MISMATCH");
   const indexed = offer.pricing.mode === "INDEXED"; const markets = await marketForMonths(marketRepository, request, indexed);
   return { record, version, offer, markets };
@@ -549,6 +552,6 @@ export async function calculatePreparedOffer(request: SimulationRequest, prepare
   return { ...payload, calculationId: `calc_${resultFingerprint.slice(0, 32)}`, fingerprint: resultFingerprint, calculatedAt: `${request.calculationDate}T00:00:00.000Z`, tenantId: request.tenantId, vector: request.vector, customerCategory: request.customerCategory, ...(request.vector === "EE" ? { voltageLevel: request.voltageLevel } : {}), calculationDate: request.calculationDate, supplyPeriod: request.supplyPeriod, currency: "EUR", taxTreatment: request.taxTreatment, savingsVsBaseline: comparableSavings, warnings: [...componentWarning(request), ...(regulated === null || netOfTaxComplete ? [] : [regulated.partialWarning]), ...(request.baseline !== undefined && baselineScope !== costScope ? ["BASELINE_COST_SCOPE_MISMATCH"] : []), ...missingOfficial.map((item) => `OFFICIAL_VALUE_MISSING:${item}`)] };
 }
 
-export async function calculateApprovedOffer(cteRepository: CteArchiveRepository, marketRepository: MarketArchiveRepository, request: SimulationRequest, archiveId: string, dependencies: CalculationDependencies = {}): Promise<CalculationResult> { const prepared = await prepareApprovedOffer(cteRepository, marketRepository, request, archiveId); return calculatePreparedOffer(request, prepared, dependencies); }
+export async function calculateApprovedOffer(cteRepository: CteArchiveRepository, marketRepository: MarketArchiveRepository, request: SimulationRequest, archiveId: string, dependencies: CalculationDependencies = {}): Promise<CalculationResult> { const prepared = await prepareApprovedOffer(cteRepository, marketRepository, request, archiveId, dependencies.eligibilityOverriddenCteIds); return calculatePreparedOffer(request, prepared, dependencies); }
 
 export function exclusionFor(record: CteArchiveRecord, code: CalculationExclusionCode, message: string): CalculationExclusion { const version = record.currentApprovedVersionId ? record.versions.find((candidate) => candidate.versionId === record.currentApprovedVersionId) : null; const contract = version?.contract ?? record.versions[0]?.contract; return { archiveId: record.archiveId, cteId: record.cteId, vector: record.vector, supplier: contract?.supplier.name ?? "", offerCode: contract?.offer.code ?? "", cteVersion: version?.contract.version ?? null, code, message }; }

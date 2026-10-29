@@ -119,7 +119,7 @@ export async function compareApprovedOffers(cteRepository: CteArchiveRepository,
   const excludedOffers = [] as ReturnType<typeof exclusionFor>[];
   for (const record of records) {
     try {
-      const prepared = await prepareApprovedOffer(cteRepository, marketRepository, request, record.archiveId);
+      const prepared = await prepareApprovedOffer(cteRepository, marketRepository, request, record.archiveId, dependencies.eligibilityOverriddenCteIds);
       const result = await calculatePreparedOffer(request, prepared, dependencies);
       const selection = comparisonCostOf(result);
       if (selection === null || (results.length > 0 && comparisonCompletenessKey(result) !== comparisonCompletenessKey(results[0]))) {

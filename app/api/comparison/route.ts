@@ -8,7 +8,7 @@ import { compareApprovedOffers } from "../../lib/comparison/service";
 import { runtimeRepositories } from "../../lib/persistence/adapter";
 import { recordRuntimeAudit } from "../../lib/persistence/audit";
 import { prepareBillDrivenSimulation, resolveBillDrivenExecution } from "../../lib/calculation/bill-driven";
-import { markEligibilityOverrideUsed } from "../../lib/eligibility/override";
+import { authorizedOverrideCteIds, markEligibilityOverrideUsed } from "../../lib/eligibility/override";
 import { cteUsability, loadHierarchyAccess } from "../../lib/hierarchy/service";
 
 export const runtime = "nodejs";
@@ -40,7 +40,8 @@ export async function POST(request: Request): Promise<Response> {
       dependencies = { ...(trustedElectricityContext ? { trustedElectricityContext } : {}), ...(reason ? { regulatedUnavailableReason: reason } : {}), ...(currentOffer ? { currentOffer } : {}), regulatoryBridge, regulatoryRuntimeResolver: new ProductionCteRegulatoryRuntimeResolver(regulatoryBridge), regulatoryRefreshState: repositories.regulatoryRefreshState };
     }
     const hierarchy = await loadHierarchyAccess(principal, repositories, resolved.simulation.calculationDate);
-    const result = await compareApprovedOffers(repositories.cteArchiveRepository, repositories.marketArchiveRepository, parsedSimulation, { ...(dependencies ?? {}), cteUsable: (archiveId) => cteUsability(hierarchy, archiveId) === "USABLE" });
+    const eligibilityOverriddenCteIds = await authorizedOverrideCteIds(repositories, tenantId, parsedSimulation.sourceBill);
+    const result = await compareApprovedOffers(repositories.cteArchiveRepository, repositories.marketArchiveRepository, parsedSimulation, { ...(dependencies ?? {}), eligibilityOverriddenCteIds, cteUsable: (archiveId) => cteUsability(hierarchy, archiveId) === "USABLE" });
     await repositories.comparisonResults.put({ tenantId, recordId: result.comparisonId, payload: { comparisonId: result.comparisonId, fingerprint: result.fingerprint, result }, idempotencyKey: result.fingerprint });
     if (resolved.binding.eligibilityOverride) await markEligibilityOverrideUsed(principal, repositories, resolved.binding.eligibilityOverride.overrideId, new Date().toISOString().slice(0, 10));
     await recordRuntimeAudit({ principal, action: "COMPARISON", resourceType: "COMPARISON", resourceId: result.comparisonId, outcome: "ALLOWED", correlationId: "comparison-v1", metadata: { fingerprint: result.fingerprint } });
