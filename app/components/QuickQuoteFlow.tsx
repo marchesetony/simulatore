@@ -5,6 +5,7 @@ import { EmptyState, ErrorState, LoadingState } from "./UiStates";
 import { downloadExport, requestForm, requestJson, toUiError } from "../lib/ui/client";
 import { buildQuoteReceipt, effectiveBillSpread, isSameOffer, regulatedVerification, sameOfferDifferences, type QuoteReceipt, type RegulatedDomain } from "../lib/quote/receipt";
 import { customerTypeOf } from "../lib/ingestion/customer-type";
+import { estimatedAnnualConsumption } from "../lib/calculation/annual-consumption";
 import type { ApprovedBillSummaryModel, BillDocumentModel, CalculationModel, ComparisonModel, ProposalModel } from "../lib/ui/models";
 
 type Step = "bill" | "review" | "offers";
@@ -12,7 +13,7 @@ type Pending = "upload" | "open" | "confirm" | "offers" | "proposal";
 type Context = {
   readonly billId: string; readonly billVersionId: string; readonly vector: "EE" | "GAS"; readonly customerType: "RESIDENTIAL" | "NON_RESIDENTIAL";
   readonly supply: { readonly pod: string | null; readonly pdr: string | null; readonly voltageLevel: "LV" | "MV" | "HV" | "EHV" | null; readonly contractedPowerKw?: number | null };
-  readonly consumption?: { readonly annual: number | null; readonly period: { readonly f1: number | null; readonly f2: number | null; readonly f3: number | null; readonly smc: number | null } };
+  readonly consumption?: { readonly annual: number | null; readonly period: { readonly f1: number | null; readonly f2: number | null; readonly f3: number | null; readonly smc: number | null }; readonly monthlyProfile?: readonly { readonly f1: number; readonly f2: number; readonly f3: number }[] | null };
   readonly currentOffer?: { readonly name: string | null; readonly code: string | null };
   readonly billingPeriod: { readonly periodStart: string; readonly periodEnd: string };
   readonly currentSupplier: string;
@@ -70,8 +71,8 @@ function estimatedAnnual(document: BillDocumentModel): string | null {
   const billed = Number(document.fields.billedConsumption?.value);
   const dates = /(\d{4}-\d{2}-\d{2}).*?(\d{4}-\d{2}-\d{2})/.exec(document.fields.billingPeriod?.value ?? "");
   if (!Number.isFinite(billed) || billed <= 0 || !dates) return null;
-  const days = (Date.parse(`${dates[2]}T00:00:00Z`) - Date.parse(`${dates[1]}T00:00:00Z`)) / 86_400_000 + 1;
-  return days >= 20 ? String(Math.round(billed / days * 365)) : null;
+  const annual = estimatedAnnualConsumption({ billed, periodStart: dates[1], periodEnd: dates[2] });
+  return annual === null ? null : String(annual);
 }
 function readValues(document: BillDocumentModel): Record<string, string> {
   const values = Object.fromEntries(FIELDS.map((field) => [field.name, toDisplay(field.name, document.fields[field.name]?.value)]));
@@ -255,12 +256,13 @@ function annualBasis(context: Context): AnnualBasis | null {
   if (billed <= 0) return null;
   const printed = context.consumption?.annual;
   if (printed != null && printed > 0) return { billed, annual: printed, estimated: false };
-  const days = (Date.parse(`${context.billingPeriod.periodEnd}T00:00:00Z`) - Date.parse(`${context.billingPeriod.periodStart}T00:00:00Z`)) / 86_400_000 + 1;
-  return days >= 20 ? { billed, annual: Math.round(billed / days * 365), estimated: true } : null;
+  const monthTotals = context.vector === "EE" ? context.consumption?.monthlyProfile?.map((month) => month.f1 + month.f2 + month.f3) ?? null : null;
+  const annual = estimatedAnnualConsumption({ billed, periodStart: context.billingPeriod.periodStart, periodEnd: context.billingPeriod.periodEnd, monthTotals });
+  return annual === null ? null : { billed, annual, estimated: true };
 }
 function estimatedFromPeriod(context: Context, ee: boolean): string {
   const basis = annualBasis(context);
-  return basis?.estimated ? `${amount(basis.annual, ee ? "kWh" : "Smc")} (stimato dal periodo)` : "—";
+  return basis?.estimated ? `${amount(basis.annual, ee ? "kWh" : "Smc")} (media mensile × 12)` : "—";
 }
 
 // How far the read lines are from the bill total, so a wrong reading is visible at once.
@@ -519,7 +521,7 @@ function Receipt({ offer: quoted, today, business, context, bill }: { readonly o
       <strong>{euro(Math.abs(saving))}{receipt.savingsPercent !== null ? ` (${PERCENT.format(Math.abs(receipt.savingsPercent))}%)` : ""}</strong>
     </div> : null}
     {annualSaving !== null && basis ? <div className={annualSaving >= 0 ? "quote-saving annual" : "quote-saving annual negative"}>
-      <span>{annualSaving >= 0 ? "Risparmio annuo previsto" : "Costo in più annuo previsto"}<small>Simulato su 12 mesi con {amount(basis.annual, unit)} di consumo annuo{basis.estimated ? " stimato dal periodo della bolletta" : " letto in bolletta"}</small>
+      <span>{annualSaving >= 0 ? "Risparmio annuo previsto" : "Costo in più annuo previsto"}<small>Simulato su 12 mesi con {amount(basis.annual, unit)} di consumo annuo{basis.estimated ? " stimato: media mensile della bolletta × 12" : " letto in bolletta"}</small>
         {/* Annual saving in euro and in percent with both annual costs, as the scheda sintetica's spesa annua (Codice art. 19; Tony, 29/10). */}
         {annualCurrent ? <small>Spesa annua attuale {euro(annualCurrent)} · con la nuova offerta {euro(annualCurrent - annualSaving)}{receipt.taxesIncluded ? " (imposte comprese)" : " (imposte escluse)"}</small> : null}</span>
       <strong>{euro(Math.abs(annualSaving))}{annualCurrent ? ` (${PERCENT.format(Math.abs(annualSaving / annualCurrent * 100))}%)` : ""}</strong>
@@ -691,7 +693,7 @@ export default function QuickQuoteFlow({ readonly }: { readonly readonly: boolea
     {step === "review" && draft ? <section className="ui-card">
       <h3>Dati letti dalla bolletta</h3><p className="muted">Li usiamo per trovare le CTE adatte. Se vedi un errore evidente puoi correggerlo, altrimenti prosegui.</p>
       <BillContractFacts bill={draft} />
-      <div className="form-grid">{FIELDS.map((field) => <label className="form-field" key={field.name}><span className="form-label">{field.label}{unitOf(field.name, draft.resolvedVector)}{field.name === "annualConsumption" && !draft.fields.annualConsumption?.value && values.annualConsumption ? " · stimato dal periodo" : ""}</span><input value={values[field.name] ?? ""} onChange={(event) => setValues((current) => ({ ...current, [field.name]: event.target.value }))} disabled={Boolean(pending)} /></label>)}</div>
+      <div className="form-grid">{FIELDS.map((field) => <label className="form-field" key={field.name}><span className="form-label">{field.label}{unitOf(field.name, draft.resolvedVector)}{field.name === "annualConsumption" && !draft.fields.annualConsumption?.value && values.annualConsumption ? " · media mensile × 12" : ""}</span><input value={values[field.name] ?? ""} onChange={(event) => setValues((current) => ({ ...current, [field.name]: event.target.value }))} disabled={Boolean(pending)} /></label>)}</div>
       <div className="button-row"><button className="button primary" type="button" onClick={() => void confirm()} disabled={readonly || Boolean(pending)}>{pending === "confirm" ? "Ricerca in corso" : "Cerca le CTE utilizzabili"}</button></div>
     </section> : null}
     {step === "offers" ? pending === "offers" ? <LoadingState label="Calcolo delle offerte per questa bolletta" /> : quote ? <>

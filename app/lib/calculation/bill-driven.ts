@@ -1,6 +1,8 @@
 // @ts-expect-error Node's strip-only test runner requires the explicit extension.
 import { completeSupplyProfile } from "../ingestion/supply-profile-completion.ts";
 // @ts-expect-error Node's strip-only test runner requires the explicit extension.
+import { estimatedAnnualConsumption } from "./annual-consumption.ts";
+// @ts-expect-error Node's strip-only test runner requires the explicit extension.
 import { assertSimulationWithinLimits, canAuthorizeCte, cteUsability, loadHierarchyAccess } from "../hierarchy/service.ts";
 // @ts-expect-error Node's strip-only test runner requires the explicit extension.
 import { quoteWindowStart, supplyPeriodTooOld } from "./quote-window.ts";
@@ -445,13 +447,13 @@ function annualConsumptionWithin(rule: AnnualRule, annual: number | null): boole
     case "=": return annual === rule.value;
   }
 }
-/** Annual consumption from the bill, or the billed period averaged over a year when the bill does not print it. */
+/** Annual consumption from the bill, or the bill's average monthly consumption times 12 when it does not print it (Tony 29/10). */
 export function annualConsumptionOf(context: Pick<BillDrivenSimulationContext, "vector" | "consumption" | "billingPeriod">): number | null {
   if (context.consumption.annual !== null) return context.consumption.annual;
   const period = context.consumption.period;
   const billed = context.vector === "EE" ? (period.f1 ?? 0) + (period.f2 ?? 0) + (period.f3 ?? 0) : period.smc ?? 0;
-  const days = (Date.parse(`${context.billingPeriod.periodEnd}T00:00:00Z`) - Date.parse(`${context.billingPeriod.periodStart}T00:00:00Z`)) / 86_400_000 + 1;
-  return billed > 0 && days >= 20 ? Math.round(billed / days * 365) : null;
+  const monthTotals = context.vector === "EE" ? context.consumption.monthlyProfile?.map((month) => month.f1 + month.f2 + month.f3) ?? null : null;
+  return estimatedAnnualConsumption({ billed, periodStart: context.billingPeriod.periodStart, periodEnd: context.billingPeriod.periodEnd, monthTotals });
 }
 
 async function evaluateCte(repository: BillDrivenRepositories["marketArchiveRepository"], context: BillDrivenSimulationContext, record: CteArchiveRecord, version: CteArchiveVersion, taxTreatment?: TaxInclusionState, asOf = new Date().toISOString().slice(0, 10)): Promise<CteEligibilityCandidate> {
