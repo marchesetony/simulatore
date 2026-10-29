@@ -30,6 +30,23 @@ const residentDomains: readonly RegulatoryRefreshDomain[] = [
   { componentCode: "TRANSMISSION_ENERGY", customerScope: residentScope, normalizedUnit: "EUR/KWH", sourceAdapter: "ARERA_ELECTRICITY" },
 ];
 
+// Tony (29/10, BE FAMILY FAST 26): "ancora esiste dato non letto arera". Non-resident households pay the same TD transport
+// and UC3/UC6 as residents, plus ASOS and ARIM with a quota fissa (€/POD/anno) and a quota energia (ARERA tables, row
+// "domestico non residente"); their CDISPD is the households' one, read from the resident CDISPD records.
+const nonResidentScope = "DOMESTIC_NON_RESIDENT_BT" as const;
+const nonResidentDomains: readonly RegulatoryRefreshDomain[] = [
+  { componentCode: "ASOS", customerScope: nonResidentScope, normalizedUnit: "EUR/KWH", sourceAdapter: "ARERA_ELECTRICITY" },
+  { componentCode: "ASOS", customerScope: nonResidentScope, normalizedUnit: "EUR/POD/YEAR", sourceAdapter: "ARERA_ELECTRICITY" },
+  { componentCode: "ARIM", customerScope: nonResidentScope, normalizedUnit: "EUR/KWH", sourceAdapter: "ARERA_ELECTRICITY" },
+  { componentCode: "ARIM", customerScope: nonResidentScope, normalizedUnit: "EUR/POD/YEAR", sourceAdapter: "ARERA_ELECTRICITY" },
+  { componentCode: "UC3", customerScope: nonResidentScope, normalizedUnit: "EUR/KWH", sourceAdapter: "ARERA_ELECTRICITY" },
+  { componentCode: "UC6", customerScope: nonResidentScope, normalizedUnit: "EUR/KWH", sourceAdapter: "ARERA_ELECTRICITY" },
+  { componentCode: "UC6", customerScope: nonResidentScope, normalizedUnit: "EUR/KW/YEAR", sourceAdapter: "ARERA_ELECTRICITY" },
+  { componentCode: "NETWORK_FIXED", customerScope: nonResidentScope, normalizedUnit: "EUR/POD/YEAR", sourceAdapter: "ARERA_ELECTRICITY" },
+  { componentCode: "NETWORK_POWER", customerScope: nonResidentScope, normalizedUnit: "EUR/KW/YEAR", sourceAdapter: "ARERA_ELECTRICITY" },
+  { componentCode: "TRANSMISSION_ENERGY", customerScope: nonResidentScope, normalizedUnit: "EUR/KWH", sourceAdapter: "ARERA_ELECTRICITY" },
+];
+
 const bta6Domains: readonly RegulatoryRefreshDomain[] = [
   { componentCode: "NETWORK_FIXED", customerScope: bta6Scope, normalizedUnit: "EUR/POD/YEAR", sourceAdapter: "ARERA_ELECTRICITY" },
   { componentCode: "NETWORK_POWER", customerScope: bta6Scope, normalizedUnit: "EUR/KW/YEAR", sourceAdapter: "ARERA_ELECTRICITY" },
@@ -51,7 +68,7 @@ const asosDomains: readonly RegulatoryRefreshDomain[] = asosVariants.flatMap((re
 ]));
 
 /** Single source of truth shared by the economic calculator and refresh service. */
-export const CALCULATED_REGULATORY_DOMAINS: readonly RegulatoryRefreshDomain[] = Object.freeze([...residentDomains, ...bta6Domains, ...asosDomains]);
+export const CALCULATED_REGULATORY_DOMAINS: readonly RegulatoryRefreshDomain[] = Object.freeze([...residentDomains, ...nonResidentDomains, ...bta6Domains, ...asosDomains]);
 export const AUTO_REFRESH_REGISTERED_DOMAINS = CALCULATED_REGULATORY_DOMAINS;
 
 /** Quarterly Terna capacity-market charges that CTEs pass through to the customer. */

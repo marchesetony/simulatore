@@ -31,9 +31,10 @@ console.log("BTA6_168_24_IS_FIXED_POD_RATE=YES");
 console.log("BTA6_UC6_POWER_NOT_REQUESTED=PASS");
 
 const keys = new Set(AUTO_REFRESH_REGISTERED_DOMAINS.map(regulatoryDomainKey));
-assert.equal(CALCULATED_REGULATORY_DOMAINS.length, 32);
-assert.equal(CALCULATED_REGULATORY_DOMAINS.filter((domain) => domain.regulatoryVariant === undefined).length, 20);
-assert.equal(AUTO_REFRESH_REGISTERED_DOMAINS.length, 32);
+// Tony (29/10): "ancora esiste dato non letto arera". The 10 domestic non-resident domains are registered too.
+assert.equal(CALCULATED_REGULATORY_DOMAINS.length, 42);
+assert.equal(CALCULATED_REGULATORY_DOMAINS.filter((domain) => domain.regulatoryVariant === undefined).length, 30);
+assert.equal(AUTO_REFRESH_REGISTERED_DOMAINS.length, 42);
 for (const record of records) assert.equal(keys.has(regulatoryDomainKey({ componentCode: record.componentCode, customerScope: record.customerScope, normalizedUnit: record.normalizedUnit })), true);
 console.log("BTA6_UC3_AUTO_REFRESH=PASS");
 console.log("BTA6_UC6_ENERGY_AUTO_REFRESH=PASS");

@@ -95,15 +95,20 @@ export function createAreraRegulatorySourceReader(input: { readonly fetcher?: Ar
       const residentArim = system.filter((record) => record.componentCode === "ARIM" && record.customerScope === "DOMESTIC_RESIDENT_BT" && record.normalizedUnit === "EUR/KWH").sort((left, right) => Date.parse(left.effectiveFrom) - Date.parse(right.effectiveFrom))[0];
       if (residentAsos && !residentAsos.applicationBasis.includes(DOMESTIC_EQUAL_RATE_APPLICATION_BASIS)) throw new Error("DOMESTIC_ASOS_APPLICATION_BASIS_INVALID");
       if (residentArim && !residentArim.applicationBasis.includes(DOMESTIC_EQUAL_RATE_APPLICATION_BASIS)) throw new Error("DOMESTIC_ARIM_APPLICATION_BASIS_INVALID");
+      // Non-resident households: ASOS and ARIM from their own ARERA row; transport and UC3/UC6 are the domestic TD ones.
+      const nonResident = (componentCode: "ASOS" | "ARIM", normalizedUnit: "EUR/KWH" | "EUR/POD/YEAR") => system.filter((record) => record.componentCode === componentCode && record.customerScope === "DOMESTIC_NON_RESIDENT_BT" && record.normalizedUnit === normalizedUnit).sort((left, right) => componentCode === "ASOS" ? Date.parse(right.effectiveFrom) - Date.parse(left.effectiveFrom) : Date.parse(left.effectiveFrom) - Date.parse(right.effectiveFrom))[0];
+      const nonResidentSource: Record<string, RegulatoryValueRecord | undefined> = { "ASOS|EUR/KWH": nonResident("ASOS", "EUR/KWH"), "ASOS|EUR/POD/YEAR": nonResident("ASOS", "EUR/POD/YEAR"), "ARIM|EUR/KWH": nonResident("ARIM", "EUR/KWH"), "ARIM|EUR/POD/YEAR": nonResident("ARIM", "EUR/POD/YEAR") };
       const bta6Asos = Object.fromEntries(system.filter((record) => record.componentCode === "ASOS" && record.customerScope === "NON_DOMESTIC_BT_BTA6" && record.regulatoryVariant !== undefined).map((record) => [`${record.componentCode}|${record.customerScope}|${record.normalizedUnit}|${record.regulatoryVariant}`, record]));
       const records: RegulatoryValueRecord[] = [...(cdispd?.records ?? [])];
       for (const domain of CALCULATED_REGULATORY_DOMAINS) {
         const source = domain.customerScope === "NON_DOMESTIC_BT_BTA6"
           ? ({ "NETWORK_FIXED|NON_DOMESTIC_BT_BTA6|EUR/POD/YEAR": bta6?.fixed, "NETWORK_POWER|NON_DOMESTIC_BT_BTA6|EUR/KW/YEAR": bta6?.power, "NETWORK_ENERGY|NON_DOMESTIC_BT_BTA6|EUR/KWH": bta6?.energy, "METERING_FIXED|NON_DOMESTIC_BT_BTA6|EUR/POD/YEAR": bta6?.metering, "TRANSMISSION_ENERGY|NON_DOMESTIC_BT_BTA6|EUR/KWH": bta6?.transmission, "UC3|NON_DOMESTIC_BT_BTA6|EUR/KWH": bta6Uc3, "UC6|NON_DOMESTIC_BT_BTA6|EUR/KWH": bta6Uc6Energy, "UC6|NON_DOMESTIC_BT_BTA6|EUR/POD/YEAR": bta6Uc6Fixed, "ARIM|NON_DOMESTIC_BT_BTA6|EUR/POD/YEAR": bta6ArimFixed, "ARIM|NON_DOMESTIC_BT_BTA6|EUR/KW/YEAR": bta6ArimPower, "ARIM|NON_DOMESTIC_BT_BTA6|EUR/KWH": bta6ArimEnergy, ...bta6Asos } as Record<string, RegulatoryValueRecord | undefined>)[regulatoryDomainKey(domain)]
-          : domain.componentCode === "DISPATCHING_TOTAL" ? undefined : domain.componentCode === "ASOS" ? residentAsos : domain.componentCode === "ARIM" ? residentArim : domain.componentCode === "UC6" && domain.normalizedUnit === "EUR/KW/YEAR" ? residentUc6Power : domain.componentCode === "UC6" ? residentUc6Energy : residentSource[domain.componentCode];
+          : domain.componentCode === "DISPATCHING_TOTAL" ? undefined
+          : domain.customerScope === "DOMESTIC_NON_RESIDENT_BT" && (domain.componentCode === "ASOS" || domain.componentCode === "ARIM") ? nonResidentSource[`${domain.componentCode}|${domain.normalizedUnit}`]
+          : domain.componentCode === "ASOS" ? residentAsos : domain.componentCode === "ARIM" ? residentArim : domain.componentCode === "UC6" && domain.normalizedUnit === "EUR/KW/YEAR" ? residentUc6Power : domain.componentCode === "UC6" ? residentUc6Energy : residentSource[domain.componentCode];
         if (domain.componentCode === "DISPATCHING_TOTAL") continue;
         if (!source || source.normalizedUnit !== domain.normalizedUnit) continue;
-        records.push(domain.customerScope === "DOMESTIC_RESIDENT_BT" && source.customerScope !== domain.customerScope ? exactScopeRecord(source, domain.customerScope) : source);
+        records.push((domain.customerScope === "DOMESTIC_RESIDENT_BT" || domain.customerScope === "DOMESTIC_NON_RESIDENT_BT") && source.customerScope !== domain.customerScope ? exactScopeRecord(source, domain.customerScope) : source);
       }
       return records;
     },

@@ -21,6 +21,7 @@ export const BTA6_REGULATED_COMPONENTS_INCLUDED = ["NETWORK_FIXED", "NETWORK_POW
 export const BTA6_REGULATED_SUBSET_PARTIAL_WARNING = "REGULATED_SUBSET_PARTIAL_BTA6_NETWORK_METERING_TRANSMISSION_UC3_UC6_ARIM_ASOS_ONLY" as const;
 export const BTA6_ASOS_EXCLUDED_CLASS_UNKNOWN = "BTA6_ASOS_EXCLUDED_CLASS_UNKNOWN" as const;
 export const DOMESTIC_RESIDENT_REGULATED_SUBSET_PARTIAL_WARNING = "REGULATED_SUBSET_PARTIAL_DOMESTIC_NETWORK_UC3_UC6_ASOS_ARIM_ONLY" as const;
+export const DOMESTIC_NON_RESIDENT_REGULATED_SUBSET_PARTIAL_WARNING = "REGULATED_SUBSET_PARTIAL_DOMESTIC_NON_RESIDENT_NETWORK_UC3_UC6_ASOS_ARIM_ONLY" as const;
 export { CALCULATED_REGULATORY_DOMAINS };
 
 function canonicalComponentSet(values: readonly RegulatedComponentIncluded[]): readonly RegulatedComponentIncluded[] { return [...new Set(values)].sort() as RegulatedComponentIncluded[]; }
@@ -250,11 +251,14 @@ export async function calculateRegulatedEeSubset(
     return { components, references: timelines.flatMap((timeline) => timeline.segments.map(referenceOf)), includedComponents: asosVariant === undefined ? [...BTA6_REGULATED_COMPONENTS_INCLUDED].filter((component) => !component.startsWith("ASOS_")) as typeof BTA6_REGULATED_COMPONENTS_INCLUDED[number][] : [...BTA6_REGULATED_COMPONENTS_INCLUDED], partialWarning: asosVariant === undefined ? BTA6_ASOS_EXCLUDED_CLASS_UNKNOWN : BTA6_REGULATED_SUBSET_PARTIAL_WARNING };
   }
 
-  if (context.regulatoryCustomerScope === "DOMESTIC_RESIDENT_BT") {
+  if (context.regulatoryCustomerScope === "DOMESTIC_RESIDENT_BT" || context.regulatoryCustomerScope === "DOMESTIC_NON_RESIDENT_BT") {
+    // Tony (29/10, BE FAMILY FAST 26): non-resident households are priced on the same ARERA tables, with the oneri quota
+    // fissa ASOS/ARIM of their own row; their CDISPD is charged with the offer's pass-throughs (TIV comma 48.9).
+    const nonResident = context.regulatoryCustomerScope === "DOMESTIC_NON_RESIDENT_BT";
     // Tony (28/10, bolletta Minniti): "voci non verificate su ARERA non deve esistere". CDISPD is published month by month
     // (TIV comma 48.9) while transport and system charges are fixed for the year: a month of CDISPD not yet in the archive
     // leaves only dispatching out, never transport and oneri.
-    const cdispd = await timelineFor(request, context, bridge, "DISPATCHING_TOTAL", "EUR/KWH").catch((error: unknown) => {
+    const cdispd = nonResident ? null : await timelineFor(request, context, bridge, "DISPATCHING_TOTAL", "EUR/KWH").catch((error: unknown) => {
       if (error instanceof Error && error.message.startsWith("REGULATORY_TIMELINE_GAP")) return null;
       throw error;
     });
@@ -266,7 +270,9 @@ export async function calculateRegulatedEeSubset(
     const transmissionEnergy = await timelineFor(request, context, bridge, "TRANSMISSION_ENERGY", "EUR/KWH");
     const asosEnergy = await timelineFor(request, context, bridge, "ASOS", "EUR/KWH");
     const arimEnergy = await timelineFor(request, context, bridge, "ARIM", "EUR/KWH");
-    const timelines = [cdispd, uc3, uc6Energy, uc6Power, networkFixed, networkPower, transmissionEnergy, asosEnergy, arimEnergy].filter((timeline): timeline is RegulatoryTimeline => timeline !== null);
+    const asosFixed = nonResident ? await timelineFor(request, context, bridge, "ASOS", "EUR/POD/YEAR") : null;
+    const arimFixed = nonResident ? await timelineFor(request, context, bridge, "ARIM", "EUR/POD/YEAR") : null;
+    const timelines = [cdispd, uc3, uc6Energy, uc6Power, networkFixed, networkPower, transmissionEnergy, asosEnergy, arimEnergy, asosFixed, arimFixed].filter((timeline): timeline is RegulatoryTimeline => timeline !== null);
     timelines.forEach(assertMonthAligned);
     asosEnergy.segments.forEach(assertDomesticEqualRateSegment);
     arimEnergy.segments.forEach(assertDomesticEqualRateSegment);
@@ -275,13 +281,15 @@ export async function calculateRegulatedEeSubset(
       ...(cdispd === null ? [] : [[cdispd, "regulated:domestic-cdispd", "Dispacciamento e mercato della capacità (CDISPD)", "REGULATED_DOMESTIC_CDISPD_RATE_TIMES_KWH"] as const]),
       [uc3, "regulated:domestic-uc3", "UC3 energia regolata", "REGULATED_UC3_RATE_TIMES_KWH"],
       [uc6Energy, "regulated:domestic-uc6-energy", "UC6 energia regolata", "REGULATED_UC6_ENERGY_RATE_TIMES_KWH"],
-      [asosEnergy, "regulated:domestic-asos-energy", "ASOS energia domestica residente regolata", "REGULATED_DOMESTIC_ASOS_ENERGY_RATE_TIMES_KWH"],
-      [arimEnergy, "regulated:domestic-arim-energy", "ARIM energia domestica residente regolata", "REGULATED_DOMESTIC_ARIM_ENERGY_RATE_TIMES_KWH"],
+      [asosEnergy, "regulated:domestic-asos-energy", `ASOS energia domestica ${nonResident ? "non residente" : "residente"} regolata`, "REGULATED_DOMESTIC_ASOS_ENERGY_RATE_TIMES_KWH"],
+      [arimEnergy, "regulated:domestic-arim-energy", `ARIM energia domestica ${nonResident ? "non residente" : "residente"} regolata`, "REGULATED_DOMESTIC_ARIM_ENERGY_RATE_TIMES_KWH"],
     ] as const) timeline.segments.forEach((segment) => components.push(energyComponent(segment, quantityForSegment(request, segment, timeline.segments.length), `${componentId}:${segment.regulatoryRecordId}`, label, formulaId)));
     uc6Power.segments.forEach((segment) => { const monthsApplied = monthsInSimulationPeriod({ periodStart: segment.segmentStart.slice(0, 10), periodEnd: segment.segmentEnd.slice(0, 10) }).length; components.push(powerComponent(segment, context, `regulated:domestic-uc6-power:${segment.regulatoryRecordId}`, monthsApplied, false)); });
     networkFixed.segments.forEach((segment) => { const monthsApplied = monthsInSimulationPeriod({ periodStart: segment.segmentStart.slice(0, 10), periodEnd: segment.segmentEnd.slice(0, 10) }).length; components.push(fixedComponent(segment, `regulated:domestic-network-fixed:${segment.regulatoryRecordId}`, monthsApplied)); });
     networkPower.segments.forEach((segment) => { const monthsApplied = monthsInSimulationPeriod({ periodStart: segment.segmentStart.slice(0, 10), periodEnd: segment.segmentEnd.slice(0, 10) }).length; components.push(powerComponent(segment, context, `regulated:domestic-network-power:${segment.regulatoryRecordId}`, monthsApplied, false, true)); });
     transmissionEnergy.segments.forEach((segment) => components.push(energyComponent(segment, quantityForSegment(request, segment, transmissionEnergy.segments.length), `regulated:domestic-transmission-energy:${segment.regulatoryRecordId}`, "Trasmissione energia regolata", "REGULATED_TRANSMISSION_RATE_TIMES_KWH")));
+    for (const [timeline, componentId, label, formulaId] of [[asosFixed, "regulated:domestic-asos-fixed", "ASOS quota fissa domestica non residente regolata", "REGULATED_DOMESTIC_ASOS_FIXED_RATE_TIMES_TIME"], [arimFixed, "regulated:domestic-arim-fixed", "ARIM quota fissa domestica non residente regolata", "REGULATED_DOMESTIC_ARIM_FIXED_RATE_TIMES_TIME"]] as const) timeline?.segments.forEach((segment) => { const monthsApplied = monthsInSimulationPeriod({ periodStart: segment.segmentStart.slice(0, 10), periodEnd: segment.segmentEnd.slice(0, 10) }).length; components.push(fixedComponent(segment, `${componentId}:${segment.regulatoryRecordId}`, monthsApplied, label, formulaId)); });
+    if (nonResident) return { components, references: timelines.flatMap((timeline) => timeline.segments.map(referenceOf)), includedComponents: [...REGULATED_COMPONENTS_INCLUDED.filter((component) => component !== "DISPATCHING_TOTAL_ENERGY"), "ASOS_ENERGY", "ARIM_ENERGY", "ASOS_FIXED", "ARIM_FIXED"], partialWarning: DOMESTIC_NON_RESIDENT_REGULATED_SUBSET_PARTIAL_WARNING };
     const included = [...REGULATED_COMPONENTS_INCLUDED, "ASOS_ENERGY", "ARIM_ENERGY"] as RegulatedComponentIncluded[];
     return { components, references: timelines.flatMap((timeline) => timeline.segments.map(referenceOf)), includedComponents: cdispd === null ? included.filter((component) => component !== "DISPATCHING_TOTAL_ENERGY") : included, partialWarning: DOMESTIC_RESIDENT_REGULATED_SUBSET_PARTIAL_WARNING, ...(cdispd === null ? { dispatchingMissing: true } : {}) };
   }

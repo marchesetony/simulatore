@@ -90,8 +90,9 @@ function request(consumption, periodStart = "2026-07-01", periodEnd = "2026-08-0
 const context = { vector: "EE", contractedPowerKw: 3, availablePowerKw: 3.3, supplyUseCategory: "DOMESTIC", domesticResidenceStatus: "RESIDENT", voltageLevel: "LV", regulatoryCustomerScope: scope };
 const bridge = await bridgeWith(baseRecords);
 
-assert.equal(CALCULATED_REGULATORY_DOMAINS.length, 32);
-assert.equal(AUTO_REFRESH_REGISTERED_DOMAINS.length, 32);
+// Tony (29/10): "ancora esiste dato non letto arera". The 10 domestic non-resident domains are registered too.
+assert.equal(CALCULATED_REGULATORY_DOMAINS.length, 42);
+assert.equal(AUTO_REFRESH_REGISTERED_DOMAINS.length, 42);
 assertAutoRefreshCoverage();
 assert.ok(CALCULATED_REGULATORY_DOMAINS.some((domain) => domain.componentCode === "ASOS" && domain.customerScope === scope && domain.normalizedUnit === "EUR/KWH" && domain.regulatoryVariant === undefined));
 assert.ok(CALCULATED_REGULATORY_DOMAINS.some((domain) => domain.componentCode === "ARIM" && domain.customerScope === scope && domain.normalizedUnit === "EUR/KWH" && domain.regulatoryVariant === undefined));
