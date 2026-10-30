@@ -210,7 +210,7 @@ const asRecalculation = (item: BillEconomicComponent): BillEconomicComponent => 
 // section totals ("TOTALE"), summary tables (IMPOSTE, ONERI GENERALI) and the elementi di dettaglio. Only the bill's
 // own total tells which copy is the atomic one, so each family of summary-looking lines is dropped only when that makes
 // the lines add up to the total (or brings them closest to it).
-const SUMMARY_KEYS = new Set(["QUOTA_ENERGIA", "QUOTA_FISSA", "QUOTA_POTENZA", "QUOTA_PER_CONSUMI", "QUOTA_FISSA_E_QUOTA_POTENZA", "ACCISE_E_IVA", "RICALCOLI", "ULTERIORI_VOCI"]);
+const SUMMARY_KEYS = new Set(["QUOTA_ENERGIA", "QUOTA_FISSA", "QUOTA_POTENZA", "QUOTA_PER_CONSUMI", "QUOTA_PER_I_CONSUMI", "QUOTA_FISSA_E_QUOTA_POTENZA", "ACCISE_E_IVA", "RICALCOLI", "ULTERIORI_VOCI"]);
 function summaryFamilies(items: readonly BillEconomicComponent[]): readonly (readonly string[])[] {
   // Lines rebuilt from the quadro sintetico are the bill's own transport: never dropped to make the sum match.
   const atomic = items.filter((item) => item.includedInReconciliation && item.classification !== "BILL_TOTAL" && item.classification !== "AMOUNT_DUE" && item.code !== "NETWORK_FROM_SUMMARY");
@@ -230,7 +230,7 @@ function summaryFamilies(items: readonly BillEconomicComponent[]): readonly (rea
     // The quadro sintetico's "di cui vendita / rete e oneri" and the Box dell'offerta's "di cui quota spesa" are different copies.
     ids((item) => key(item).startsWith("DI_CUI") && /VENDITA|RETE/.test(key(item))),
     ids((item) => key(item).startsWith("DI_CUI") && !/VENDITA|RETE/.test(key(item))),
-    ids((item) => SUMMARY_KEYS.has(key(item)) || key(item).startsWith("SPESA_PER_") || key(item).startsWith("RICALCOLI_") || (key(item).startsWith("ENERGIA_REATTIVA") && !/(^|_)F[1-3](_|$)/.test(key(item)))),
+    ids((item) => SUMMARY_KEYS.has(key(item)) || SUMMARY_KEYS.has(key(item).replace(/(_\d+)+$/, "")) || key(item).startsWith("SPESA_PER_") || key(item).startsWith("RICALCOLI_") || (key(item).startsWith("ENERGIA_REATTIVA") && !/(^|_)F[1-3](_|$)/.test(key(item)))),
     duplicates,
     ids((item) => !priced(item) && atomic.some((other) => other.lineId !== item.lineId && other.classification === item.classification && priced(other)) && item.classification !== "NETWORK_LOSS_CHARGE" && item.classification !== "RICALCOLI"),
   ].filter((family) => family.length > 0);
@@ -283,13 +283,19 @@ function systemChargeViews(items: readonly BillEconomicComponent[]): readonly Bi
 function networkFromSummary(items: readonly BillEconomicComponent[]): readonly BillEconomicComponent[] {
   const live = (item: BillEconomicComponent) => item.includedInReconciliation && numberFrom(item.amount) !== null;
   const summaries = items.filter((item) => live(item) && isNetworkAndSystemSummary(item));
-  const system = items.filter((item) => live(item) && item.classification === "ARERA_SYSTEM_CHARGES" && !isNetworkAndSystemSummary(item) && systemQuota(item) !== null);
+  const oneri = items.filter((item) => live(item) && item.classification === "ARERA_SYSTEM_CHARGES" && !isNetworkAndSystemSummary(item));
+  // Tony (30/10, bolletta Elios CER Smart1 Casa: "mancano i dati"): the oneri page lists ASOS 10,18 and ARIM 0,53 with no
+  // quota. They are then taken from the quota per consumi, where the oneri are billed per kWh: the transport total stays the
+  // bill's rete e oneri less its oneri, 40,55 - 10,71 = 29,84 EUR.
+  const tagged = oneri.filter((item) => systemQuota(item) !== null);
+  const system = tagged.length ? tagged : oneri;
+  const quotaOfSystem = (item: BillEconomicComponent): SummaryQuota | null => tagged.length ? systemQuota(item) : "CONSUMPTION";
   if (!summaries.length || !system.length) return items;
   const replaced = new Map<string, BillEconomicComponent>();
   for (const quota of ["CONSUMPTION", "FIXED", "POWER"] as const) {
     const [first, ...copies] = summaries.filter((item) => summaryQuota(item) === quota);
     if (!first) continue;
-    const systemAmount = round(system.filter((item) => systemQuota(item) === quota).reduce((total, item) => total + (numberFrom(item.amount) ?? 0), 0));
+    const systemAmount = round(system.filter((item) => quotaOfSystem(item) === quota).reduce((total, item) => total + (numberFrom(item.amount) ?? 0), 0));
     const detailed = items.filter((item) => live(item) && item.classification === "ARERA_NETWORK" && !isNetworkAndSystemSummary(item) && summaryQuota(item) === quota);
     if (detailed.length) {
       // The quota is already read line by line: its "rete e oneri" summary is the same money, not a second charge.
@@ -309,7 +315,7 @@ function networkFromSummary(items: readonly BillEconomicComponent[]): readonly B
 // Minniti Casa Protetta: "stai inserendo dei calcoli che già sono presenti in altre voci e li stai conteggiando due volte"
 // (the quota fissa total 14,92 = PCV 13,00 + transport 1,92 was kept as a charge of its own, and the transport lines were
 // dropped to make the sum match). When the reading kept the total and the seller's part only, the rest is rete e oneri.
-const QUOTA_TOTALS: Readonly<Record<string, SummaryQuota>> = { QUOTA_PER_CONSUMI: "CONSUMPTION", QUOTA_ENERGIA: "CONSUMPTION", QUOTA_VARIABILE: "CONSUMPTION", QUOTA_FISSA: "FIXED", QUOTA_FISSA_E_QUOTA_POTENZA: "FIXED", QUOTA_FISSA_TOTALE: "FIXED", QUOTA_POTENZA: "POWER" };
+const QUOTA_TOTALS: Readonly<Record<string, SummaryQuota>> = { QUOTA_PER_CONSUMI: "CONSUMPTION", QUOTA_PER_I_CONSUMI: "CONSUMPTION", QUOTA_ENERGIA: "CONSUMPTION", QUOTA_VARIABILE: "CONSUMPTION", QUOTA_FISSA: "FIXED", QUOTA_FISSA_E_QUOTA_POTENZA: "FIXED", QUOTA_FISSA_TOTALE: "FIXED", QUOTA_POTENZA: "POWER" };
 function quotaTotals(items: readonly BillEconomicComponent[]): readonly BillEconomicComponent[] {
   const live = (item: BillEconomicComponent) => item.includedInReconciliation && numberFrom(item.amount) !== null;
   const totals: { readonly item: BillEconomicComponent; readonly quota: SummaryQuota }[] = [];
@@ -317,7 +323,8 @@ function quotaTotals(items: readonly BillEconomicComponent[]): readonly BillEcon
   let open: { readonly item: BillEconomicComponent; readonly quota: SummaryQuota } | null = null;
   for (const item of items) {
     const label = blockLabel(item.description);
-    const quota = QUOTA_TOTALS[label];
+    // "Quota potenza 6" (Elios, 30/10): the kW printed in the label is still the quota potenza total.
+    const quota = QUOTA_TOTALS[label] ?? QUOTA_TOTALS[label.replace(/(_\d+)+$/, "")];
     if (quota && live(item)) { open = { item, quota }; totals.push(open); parts.set(item.lineId, []); continue; }
     if (!label.startsWith("DI_CUI") || !live(item)) continue;
     const side = /RETE/.test(label) ? "NETWORK_SYSTEM" : /VENDITA/.test(label) ? "SELLER" : null;
