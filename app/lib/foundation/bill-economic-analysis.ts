@@ -79,7 +79,7 @@ export function classifyBillEconomicComponent(code: string | null | undefined, d
   if (["IMBALANCE", "BALANCING_CHARGE"].includes(c) || d.includes("SBILANCIAMENTO") || d.includes("BALANC")) return "BALANCING_CHARGE";
   if (["OTHER_SELLER_ENERGY_CHARGE", "OTHER_SELLER_FIXED_CHARGE"].includes(c)) return c as BillEconomicClassification;
   // Tony (30/10): "Quota variabile smart (CVS) 0,025 €/kWh" and "Quota variabile voci di trasporto 0,01 €/kWh" are the
-  // seller's own per-kWh charges: they belong to the spesa per la vendita, not to the ARERA transport or the other items.
+  // seller's own per-kWh charges ("sono dei costi che il venditore camuffa"): they belong to the spesa per la vendita, not to the ARERA transport or the other items.
   if (/^QUOTA_VARIABILE_.*(SMART|CVS)/.test(d)) return "COMMERCIALIZATION_VARIABLE_FEE";
   if (/^QUOTA_VARIABILE_VOCI_DI_/.test(d)) return "OTHER_SELLER_ENERGY_CHARGE";
   if (["NETWORK_SYSTEM", "NETWORK_FIXED", "POWER_CHARGE", "METERING_FIXED", "NETWORK_ENERGY", "NETWORK_POWER", "TRANSMISSION_ENERGY"].includes(c)) return "ARERA_NETWORK";
