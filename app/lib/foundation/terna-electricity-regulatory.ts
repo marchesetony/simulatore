@@ -221,7 +221,8 @@ export function extractTernaTideTotal(text: string): number {
   // Terna prints the elements with seven decimals; a quarter printed with six or eight is read the same way (2026Q4 was
   // not found, Tony 28/10).
   const values = [7, 6, 8].map(printed).find((found) => found.length >= 2) ?? [];
-  if (values.length < 2) throw new Error("TERNA_TIDE_VALUE_NOT_FOUND");
+  // The numbers the text layer gave, so a layout not read can be seen in the refresh errors (2026Q4, Tony 30/10).
+  if (values.length < 2) throw new Error(`TERNA_TIDE_VALUE_NOT_FOUND:len=${text.length}:${[...text.matchAll(/-?\d+[.,]\d+/g)].slice(0, 12).map((match) => match[0]).join(" ")}`);
   const total = Math.max(...values);
   if (!(total > 0 && total < 10)) throw new Error("TERNA_TIDE_VALUE_IMPLAUSIBLE");
   return total;

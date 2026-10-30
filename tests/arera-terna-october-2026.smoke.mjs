@@ -15,3 +15,7 @@ console.log("ARERA_CAPACITY_ART_4_1_AFTER_PREMISES=PASS");
 assert.equal(extractTernaTideTotal("Uplift 0,412345 Unità essenziali 0,301234 Totale 1,102345 c€/kWh"), 1.102345);
 assert.equal(extractTernaTideTotal("Uplift 0,4123456 Totale 1,0501000"), 1.0501);
 console.log("TERNA_TIDE_SIX_DECIMALS=PASS");
+// Tony (30/10): October 2026 still not found. The text layer may give "c€" as "cEUR" or drop the euro sign.
+assert.deepEqual(parseAreraCapacityText("Ilvaloredelcorrispettivocapacitàèparia:a)0,3423cEUR/kWhperilmesediottobre2026;b)0,3423c/kWhperilmesedinovembre2026").months, [{ month: "2026-10", centsPerKwh: 0.3423 }, { month: "2026-11", centsPerKwh: 0.3423 }]);
+assert.throws(() => extractTernaTideTotal("Documento 2026 con 1,5 e 2,25"), /TERNA_TIDE_VALUE_NOT_FOUND:len=\d+:1,5 2,25/);
+console.log("ARERA_CAPACITY_EURO_SIGN=PASS");

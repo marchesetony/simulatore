@@ -50,7 +50,8 @@ export function parseAreraCapacityText(compact: string): { readonly publicationD
   if (anchors.length === 0) return { publicationDate, months: [] };
   const window = anchors.map((anchor) => compact.slice(anchor, anchor + 1500)).join("|");
   const months = new Map<string, number>();
-  for (const match of window.matchAll(new RegExp(`(\\d{1,2},\\d{2,6})c.{0,2}?/kWhperilmesedi(${MONTHS.join("|")})(20\\d{2})`, "gi"))) {
+  // "c€/kWh" may come out of the text layer as "c€", "cEUR" or "c" alone (338/2026, October 2026 not found, Tony 30/10).
+  for (const match of window.matchAll(new RegExp(`(\\d{1,2},\\d{2,6})c[^/\\d]{0,5}/kWhperilmesedi(${MONTHS.join("|")})(20\\d{2})`, "gi"))) {
     const month = `${match[3]}-${String(MONTHS.indexOf(match[2].toLowerCase() as typeof MONTHS[number]) + 1).padStart(2, "0")}`;
     const value = decimal(match[1]);
     if (Number.isFinite(value) && value >= 0 && !months.has(month)) months.set(month, value);
@@ -59,7 +60,7 @@ export function parseAreraCapacityText(compact: string): { readonly publicationD
 }
 
 export interface AreraCapacitySourceReader {
-  load(input: { readonly retrievedAt: string }): Promise<{ readonly resolutions: readonly AreraCapacityResolution[]; readonly errors: readonly string[] }>;
+  load(input: { readonly retrievedAt: string }): Promise<{ readonly resolutions: readonly AreraCapacityResolution[]; readonly errors: readonly string[]; readonly unread?: readonly string[] }>;
 }
 
 export function createAreraCapacitySourceReader(input: { readonly fetcher?: AreraFetcher } = {}): AreraCapacitySourceReader {
@@ -68,7 +69,7 @@ export function createAreraCapacitySourceReader(input: { readonly fetcher?: Arer
       const page = await fetchOfficialAreraSource(ARERA_TIV_PAGE, input.fetcher);
       const ids = discoverTivResolutions(new TextDecoder().decode(page.bytes), retrievedAt);
       if (ids.length === 0) throw new Error("ARERA_TIV_RESOLUTIONS_NOT_FOUND");
-      const resolutions: AreraCapacityResolution[] = []; const errors: string[] = [];
+      const resolutions: AreraCapacityResolution[] = []; const errors: string[] = []; const unread: string[] = [];
       for (const id of ids) {
         const url = areraResolutionPdfUrl(id);
         try {
@@ -76,13 +77,15 @@ export function createAreraCapacitySourceReader(input: { readonly fetcher?: Arer
           const { text, sourceSha256 } = pdfCompactText(source.bytes);
           const parsed = parseAreraCapacityText(text);
           if (parsed.months.length) resolutions.push({ resolution: resolutionLabel(id), url, publicationDate: parsed.publicationDate, months: parsed.months, sourceSha256 });
+          // What the text layer gave around the charge, so a month not found can be read in the refresh errors.
+          else { const at = text.search(/capacit/i); unread.push(`${resolutionLabel(id)}:len=${text.length}:${text.slice(Math.max(0, at), Math.max(0, at) + 160)}`); }
         } catch (error) {
           // Not every resolution the TIV cites has an R/eel PDF at the usual address (DIME, R/com): only failures count.
           const message = error instanceof Error ? error.message : "ARERA_SOURCE_FAILED";
           if (message !== "ARERA_HTTP_404") errors.push(`${resolutionLabel(id)}:${message}`);
         }
       }
-      return { resolutions, errors };
+      return { resolutions, errors, unread };
     },
   };
 }
@@ -131,7 +134,7 @@ export async function runAreraCapacityRefresh(input: { readonly tenantId: string
       months.push({ month: monthOf(record.effectiveFrom), centsPerKwh: record.originalValue, resolution: record.officialIdentifier.split(":")[0] });
     } catch (error) { errors.push(`${monthOf(record.effectiveFrom)}:${error instanceof Error ? error.message : "ARERA_CAPACITY_SAVE_FAILED"}`); }
   }
-  if (!months.some((item) => item.month === monthOf(now))) errors.push(`${monthOf(now)}:ARERA_CAPACITY_MONTH_NOT_FOUND`);
+  if (!months.some((item) => item.month === monthOf(now))) errors.push(`${monthOf(now)}:ARERA_CAPACITY_MONTH_NOT_FOUND${loaded.unread?.length ? `:${loaded.unread[0]}` : ""}`);
   const status = errors.length === 0 ? "SUCCESS" : months.length ? "PARTIAL_FAILURE" : "FAILED";
   return { status, months, createdCount, unchangedCount, replacedCount, errors };
 }

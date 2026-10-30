@@ -789,13 +789,18 @@ export function parseArera588DomesticNonResidentArimXlsx(input: { readonly body:
 }
 
 /** Whether a decision's text says the values of `previous` are confirmed ("... della deliberazione 227/2026/R/com, sono confermati"). */
+// Why a newer decision was not taken as confirming the one in force, for the refresh errors (Tony 30/10, 343/2026).
+let lastConfirmationCheck = "";
 async function decisionConfirms(html: string, previous: string, fetcher: AreraFetcher): Promise<boolean> {
   const text = discoverAreraAttachments(html).find((item) => item.extension === "PDF" && /-R-com\.pdf$/i.test(item.url)) ?? discoverAreraAttachments(html).find((item) => item.extension === "PDF");
-  if (!text) return false;
+  if (!text) { lastConfirmationCheck = "PDF_NOT_FOUND"; return false; }
   try {
     const compact = pdfCompactText((await fetchOfficialAreraSource(text.url, fetcher)).bytes).text;
-    return /sonoconfermat/i.test(compact) && compact.includes(previous.replace(/\s+/g, ""));
-  } catch { return false; }
+    // 343/2026 art. 1.1: "... di cui alla Tabella 1 allegata alla deliberazione 227/2026/R/com, sono confermati."
+    const confirms = /sonoconfermat/i.test(compact) && compact.includes(previous.replace(/\s+/g, ""));
+    if (!confirms) { const at = Math.max(0, compact.search(/confermat/i)); lastConfirmationCheck = `TEXT_UNREAD:len=${compact.length}:${compact.slice(at, at + 120)}`; }
+    return confirms;
+  } catch (error) { lastConfirmationCheck = `PDF_UNREADABLE:${error instanceof Error ? error.message : "ERROR"}`; return false; }
 }
 
 /** The decisions an ARERA tariff page lists with their start ("dal 01.10.26: delibera 343/2026/R/com"), newest first, up to `retrievedAt`. */
@@ -1434,7 +1439,7 @@ export class AreraElectricityRegulatorySourceAdapter {
         // the values of 227/2026 and 588/2025 "sono confermati" and has no electricity tables of its own (Tony, 28/10).
         for (const newer of unread) {
           const confirms = newer.html !== null && await decisionConfirms(newer.html, candidate.identifier, fetcher);
-          if (confirms) confirmingDecisions.push(newer.identifier); else skippedDecisions.push(`${newer.identifier}:${newer.error}`);
+          if (confirms) confirmingDecisions.push(newer.identifier); else skippedDecisions.push(`${newer.identifier}:${newer.error}${newer.html === null ? "" : `:${lastConfirmationCheck}`}`);
         }
         break;
       } catch (error) {
