@@ -459,6 +459,13 @@ export function structuredBillMonthlyDisplayReconciliation(extraction: Structure
 }
 
 function analyticalElectricityTotal(extraction: StructuredBillExtraction): StructuredBillField<number> {
+  // Tony (30/10, "NON è POSSIBILE, CHE UNA VOLTA FUNZIONA E UN'ALTRA NO"): the simulation runs on F1, F2 and F3, so when all
+  // three are read their sum is the period total. A total read elsewhere on the page (accisa on 323 kWh, a monthly table,
+  // the annual figure) no longer stops the bill when it does not match to the decimal.
+  const read = [extraction.f1Consumption, extraction.f2Consumption, extraction.f3Consumption].map(valueOf);
+  if (read.every((value): value is number => typeof value === "number" && Number.isFinite(value) && value >= 0) && read.some((value) => value > 0)) {
+    return { ...extraction.billedConsumption, status: "FOUND", value: read.reduce((total, value) => total + value, 0) } as StructuredBillField<number>;
+  }
   const monthlyTotal = structuredBillAnalyticalMonthlyTotal(extraction);
   if (monthlyTotal !== null) return { ...extraction.billedConsumption, value: monthlyTotal };
   const bands = [extraction.f1Consumption, extraction.f2Consumption, extraction.f3Consumption].map(valueOf);
@@ -527,10 +534,20 @@ export function structuredBillContractIssue(source: StructuredBillExtraction): s
     const pdr = valueOf(extraction.pdr);
     if (!pdr || !/^\d{14}$/.test(pdr)) return "PDR_MISSING";
   }
-  return "CONSUMPTION_INCONSISTENT";
+  // Tony (30/10): say which check failed instead of always blaming F1, F2 and F3.
+  try { buildStructuredBillContract({ extraction: source, tenantId: "tenant_issue-check", billId: "bill-issue-check", versionId: "bill-issue-check-v1" }); } catch (error) {
+    const code = (error as { readonly code?: unknown }).code;
+    if (code === "CONSUMPTION_TOTAL_MISMATCH") return "CONSUMPTION_INCONSISTENT";
+    if (typeof code === "string" && code) return `CONTRACT_${code}`;
+  }
+  return "CONTEXT_UNAVAILABLE";
 }
 
 export function structuredBillContract(input: { readonly extraction: StructuredBillExtraction; readonly tenantId: string; readonly billId: string; readonly versionId: string }): BillContract | null {
+  try { return buildStructuredBillContract(input); } catch { return null; }
+}
+
+function buildStructuredBillContract(input: { readonly extraction: StructuredBillExtraction; readonly tenantId: string; readonly billId: string; readonly versionId: string }): BillContract | null {
   const extraction = withoutUnreliableMonthlyBands(input.extraction);
   const vector = resolveBillVectorFromEvidence(extraction).vector;
   const supplier = valueOf(extraction.supplier);
@@ -545,10 +562,10 @@ export function structuredBillContract(input: { readonly extraction: StructuredB
     const voltageLevel = billVoltage(extraction);
     if (!pod || !/^IT[A-Z0-9]{6,30}$/i.test(pod) || !voltageLevel) return null;
     const contract: BillContract = { ...base, vector: "EE", supply: { vector: "EE", pod, voltageLevel }, consumption: { vector: "EE", f1: quantity("KWH", extraction.f1Consumption), f2: quantity("KWH", extraction.f2Consumption), f3: quantity("KWH", extraction.f3Consumption), total: quantity("KWH", analyticalElectricityTotal(extraction)) } };
-    try { validateBillContract(contract); return contract; } catch { return null; }
+    validateBillContract(contract); return contract;
   }
   const pdr = valueOf(extraction.pdr);
   if (!pdr || !/^\d{14}$/.test(pdr)) return null;
   const contract: BillContract = { ...base, vector: "GAS", supply: { vector: "GAS", pdr }, consumption: { vector: "GAS", smc: quantity("SMC", extraction.smcConsumption), correctionCoefficient: valueOf(extraction.conversionCoefficient) === null ? { status: "UNAVAILABLE", reason: "NOT_EXTRACTED" } : { status: "KNOWN", value: valueOf(extraction.conversionCoefficient) as number } } };
-  try { validateBillContract(contract); return contract; } catch { return null; }
+  validateBillContract(contract); return contract;
 }

@@ -157,7 +157,10 @@ function safeCorrelation(value: unknown): string | null {
   return typeof value === "string" && SAFE_CORRELATION.test(value) && !/secret|token|cookie|password|bearer|path|stack|trace/i.test(value) ? value : null;
 }
 
-function messageFor(code: string): string { return messages[code] ?? `Operazione non disponibile. Codice ${code}`; }
+function messageFor(code: string): string {
+  if (!messages[code] && code.startsWith("SOURCE_BILL_CONTRACT_")) return `Un dato letto dalla bolletta non è valido (${code.slice("SOURCE_BILL_CONTRACT_".length)}): controllalo in "Dati letti" e riprova.`;
+  return messages[code] ?? `Operazione non disponibile. Codice ${code}`;
+}
 
 function errorFrom(value: unknown, fallback: string): UiApiError {
   if (typeof value !== "object" || value === null) return new UiApiError(fallback, messageFor(fallback));
