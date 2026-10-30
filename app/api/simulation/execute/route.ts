@@ -40,7 +40,7 @@ export async function POST(request: Request): Promise<Response> {
     if (resolved.simulation.vector === "EE") {
       const { context: trustedElectricityContext, reason, currentOffer } = await resolveTrustedElectricityContextWithReason(repositories.billRepository, principal.tenantId, resolved.simulation);
       // Without the bill's technical readings the quote runs on commercial costs only (regulated charges skipped).
-      const regulatoryBridge = new ProductionRegulatoryPersistenceBridge(repositories.regulatoryValues, repositories.approvalDomains);
+      const regulatoryBridge = new ProductionRegulatoryPersistenceBridge(repositories.regulatoryValues, repositories.approvalDomains, { readArchiveOncePerRequest: true });
       dependencies = { ...(trustedElectricityContext ? { trustedElectricityContext } : {}), ...(reason ? { regulatedUnavailableReason: reason } : {}), ...(currentOffer ? { currentOffer } : {}), regulatoryBridge, regulatoryRuntimeResolver: new ProductionCteRegulatoryRuntimeResolver(regulatoryBridge), regulatoryRefreshState: repositories.regulatoryRefreshState };
     }
     const result = await calculateApprovedOffer(repositories.cteArchiveRepository, repositories.marketArchiveRepository, resolved.simulation, resolved.cte.record.archiveId, dependencies);

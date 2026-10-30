@@ -391,13 +391,20 @@ export class AnthropicTwoStageBillSdkAdapter implements BillExtractionProvider {
 
   async extract(input: { readonly bytes: Uint8Array; readonly contentType: string }): Promise<StructuredBillExtraction> {
     const startedAt = Date.now();
-    const coreMessage = await this.#request("CORE", SDK_CORE_TOOL, BILL_CORE_TOOL_NAME, input.bytes, input.contentType);
+    // Tony (30/10): "ho come l'impressione che sia lento nelle elaborazioni ... quando attiviamo agenti e AI". The analyst
+    // reading does not depend on the core one, so both run at the same time instead of one after the other.
+    const corePending = this.#request("CORE", SDK_CORE_TOOL, BILL_CORE_TOOL_NAME, input.bytes, input.contentType);
+    const analystPending: Promise<{ readonly message: Message } | { readonly error: unknown }> = this.#request("ANALYST", SDK_ANALYST_TOOL, BILL_ANALYST_TOOL_NAME, input.bytes, input.contentType).then((message) => ({ message }), (error: unknown) => ({ error }));
+    let coreMessage: Message;
+    try { coreMessage = await corePending; }
+    catch (error) { await analystPending; throw error; }
     this.#capture("CORE", coreMessage, BILL_CORE_TOOL_NAME);
     let core: StructuredBillExtraction;
     try {
       core = parseCoreStageMessage(coreMessage);
       this.#observe?.(stageMessageResult("CORE", coreMessage, BILL_CORE_TOOL_NAME, "OK"));
     } catch (error) {
+      await analystPending;
       this.#observe?.(stageMessageResult("CORE", coreMessage, BILL_CORE_TOOL_NAME, "FAILED", error));
       diagnostic(error instanceof AnthropicBillSdkError ? error.code : "BILL_OCR_RESPONSE_INVALID", "PARSE", error, requestId(coreMessage));
       throw error instanceof AnthropicBillSdkError ? error : new AnthropicBillSdkError("BILL_OCR_RESPONSE_INVALID", requestId(coreMessage));
@@ -405,7 +412,9 @@ export class AnthropicTwoStageBillSdkAdapter implements BillExtractionProvider {
 
     let analystMessage: Message | null = null;
     try {
-      analystMessage = await this.#request("ANALYST", SDK_ANALYST_TOOL, BILL_ANALYST_TOOL_NAME, input.bytes, input.contentType);
+      const settled = await analystPending;
+      if ("error" in settled) throw settled.error;
+      analystMessage = settled.message;
       this.#capture("ANALYST", analystMessage, BILL_ANALYST_TOOL_NAME);
       const analyst = parseAnalystStageMessage(analystMessage);
       this.#observe?.(stageMessageResult("ANALYST", analystMessage, BILL_ANALYST_TOOL_NAME, "OK"));

@@ -139,6 +139,18 @@ assert.match(requests[1].messages[0].content[1].text, /ogni cifra decimale visib
 assert.equal(extracted.analystExtractionStatus, "EXTRACTED");
 
 let failedCalls = 0;
+// Tony (30/10): "ho come l'impressione che sia lento nelle elaborazioni ... quando attiviamo agenti e AI". The core and
+// analyst readings are sent together: the analyst request leaves before the core answer arrives.
+{
+  const started = []; let releaseCore;
+  const coreGate = new Promise((resolve) => { releaseCore = resolve; });
+  const parallelClient = { messages: { async create(params) { started.push(params.tools[0].name); if (params.tools[0].name === BILL_CORE_TOOL_NAME) { await coreGate; return message([tool(BILL_CORE_TOOL_NAME, coreWire())]); } return message([tool(BILL_ANALYST_TOOL_NAME, analyst)]); } } };
+  const pending = new AnthropicTwoStageBillSdkAdapter(parallelClient, "synthetic-model", 8192).extract({ bytes: new Uint8Array(Buffer.from("%PDF-1.4 synthetic", "ascii")), contentType: "application/pdf" });
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  assert.deepEqual(started, [BILL_CORE_TOOL_NAME, BILL_ANALYST_TOOL_NAME]);
+  releaseCore();
+  await pending;
+}
 const coreOnlyAdapter = new AnthropicTwoStageBillSdkAdapter({ messages: { async create() { failedCalls += 1; if (failedCalls === 1) return message([tool(BILL_CORE_TOOL_NAME, coreWire())]); throw new AnthropicBillSdkError("BILL_OCR_PROVIDER_FAILED", "req_b"); } } }, "synthetic-model", 8192);
 const coreOnly = await coreOnlyAdapter.extract({ bytes: new Uint8Array(Buffer.from("%PDF-1.4 synthetic", "ascii")), contentType: "application/pdf" });
 assert.equal(failedCalls, 2);
