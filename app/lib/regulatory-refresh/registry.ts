@@ -67,8 +67,34 @@ const asosDomains: readonly RegulatoryRefreshDomain[] = asosVariants.flatMap((re
   { componentCode: "ASOS" as const, customerScope: bta6Scope, normalizedUnit: "EUR/KWH" as const, regulatoryVariant, sourceAdapter: "ARERA_ELECTRICITY" as const },
 ]));
 
+// Tony (30/10, AZIENDA PROTETTA 3 kW): "credo ci siano errori ancora", rete and oneri not verified on ARERA. BT other uses up
+// to 16,5 kW: distribution per class BTA1-BTA5 (TIT Tabella 3), metering and transmission of the whole BT other-uses
+// category, UC3/UC6 and ARIM of the row "fino a 16,5 kW", ASOS per class of agevolazione.
+const btaUpTo165Scope = "NON_DOMESTIC_BT_BTA1_5" as const;
+const btaUpTo165Classes = ["BTA1", "BTA2", "BTA3", "BTA4", "BTA5"] as const;
+const btaUpTo165Domains: readonly RegulatoryRefreshDomain[] = [
+  ...btaUpTo165Classes.flatMap((regulatoryVariant) => ([
+    { componentCode: "NETWORK_FIXED" as const, customerScope: btaUpTo165Scope, normalizedUnit: "EUR/POD/YEAR" as const, regulatoryVariant, sourceAdapter: "ARERA_ELECTRICITY" as const },
+    { componentCode: "NETWORK_POWER" as const, customerScope: btaUpTo165Scope, normalizedUnit: "EUR/KW/YEAR" as const, regulatoryVariant, sourceAdapter: "ARERA_ELECTRICITY" as const },
+    { componentCode: "NETWORK_ENERGY" as const, customerScope: btaUpTo165Scope, normalizedUnit: "EUR/KWH" as const, regulatoryVariant, sourceAdapter: "ARERA_ELECTRICITY" as const },
+  ])),
+  { componentCode: "METERING_FIXED", customerScope: btaUpTo165Scope, normalizedUnit: "EUR/POD/YEAR", sourceAdapter: "ARERA_ELECTRICITY" },
+  { componentCode: "TRANSMISSION_ENERGY", customerScope: btaUpTo165Scope, normalizedUnit: "EUR/KWH", sourceAdapter: "ARERA_ELECTRICITY" },
+  { componentCode: "UC3", customerScope: btaUpTo165Scope, normalizedUnit: "EUR/KWH", sourceAdapter: "ARERA_ELECTRICITY" },
+  { componentCode: "UC6", customerScope: btaUpTo165Scope, normalizedUnit: "EUR/KWH", sourceAdapter: "ARERA_ELECTRICITY" },
+  { componentCode: "UC6", customerScope: btaUpTo165Scope, normalizedUnit: "EUR/POD/YEAR", sourceAdapter: "ARERA_ELECTRICITY" },
+  { componentCode: "ARIM", customerScope: btaUpTo165Scope, normalizedUnit: "EUR/POD/YEAR", sourceAdapter: "ARERA_ELECTRICITY" },
+  { componentCode: "ARIM", customerScope: btaUpTo165Scope, normalizedUnit: "EUR/KW/YEAR", sourceAdapter: "ARERA_ELECTRICITY" },
+  { componentCode: "ARIM", customerScope: btaUpTo165Scope, normalizedUnit: "EUR/KWH", sourceAdapter: "ARERA_ELECTRICITY" },
+  ...asosVariants.flatMap((regulatoryVariant) => ([
+    { componentCode: "ASOS" as const, customerScope: btaUpTo165Scope, normalizedUnit: "EUR/POD/YEAR" as const, regulatoryVariant, sourceAdapter: "ARERA_ELECTRICITY" as const },
+    { componentCode: "ASOS" as const, customerScope: btaUpTo165Scope, normalizedUnit: "EUR/KW/YEAR" as const, regulatoryVariant, sourceAdapter: "ARERA_ELECTRICITY" as const },
+    { componentCode: "ASOS" as const, customerScope: btaUpTo165Scope, normalizedUnit: "EUR/KWH" as const, regulatoryVariant, sourceAdapter: "ARERA_ELECTRICITY" as const },
+  ])),
+];
+
 /** Single source of truth shared by the economic calculator and refresh service. */
-export const CALCULATED_REGULATORY_DOMAINS: readonly RegulatoryRefreshDomain[] = Object.freeze([...residentDomains, ...nonResidentDomains, ...bta6Domains, ...asosDomains]);
+export const CALCULATED_REGULATORY_DOMAINS: readonly RegulatoryRefreshDomain[] = Object.freeze([...residentDomains, ...nonResidentDomains, ...bta6Domains, ...asosDomains, ...btaUpTo165Domains]);
 export const AUTO_REFRESH_REGISTERED_DOMAINS = CALCULATED_REGULATORY_DOMAINS;
 
 /** Quarterly Terna capacity-market charges that CTEs pass through to the customer. */

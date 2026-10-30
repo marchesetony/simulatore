@@ -1,7 +1,7 @@
 import type { RegulatoryRepository } from "../foundation/regulatory-ports.ts";
 import type { RegulatoryCustomerScope, RegulatoryValueComponentCode, RegulatoryValueRecord } from "../foundation/regulatory-types.ts";
 // @ts-expect-error Node's strip-only test runner requires the explicit extension.
-import { ARERA_SYSTEM_CHARGES_PAGE, createRegulatoryValue, fetchOfficialBta6Sources, AreraElectricityRegulatorySourceAdapter, fetchAreraDomesticCdispdWorkbook, parseAreraDomesticCdispdXlsx, type AreraFetcher, DOMESTIC_EQUAL_RATE_APPLICATION_BASIS } from "../foundation/arera-electricity-regulatory.ts";
+import { ARERA_SYSTEM_CHARGES_PAGE, createRegulatoryValue, fetchOfficialBta6Sources, fetchOfficialBtaUpTo165Sources, AreraElectricityRegulatorySourceAdapter, fetchAreraDomesticCdispdWorkbook, parseAreraDomesticCdispdXlsx, type AreraFetcher, DOMESTIC_EQUAL_RATE_APPLICATION_BASIS } from "../foundation/arera-electricity-regulatory.ts";
 // @ts-expect-error Node's strip-only test runner requires the explicit extension.
 import { CALCULATED_REGULATORY_DOMAINS, regulatoryDomainKey, type RegulatoryRefreshDomain } from "./registry.ts";
 
@@ -60,6 +60,8 @@ export function createAreraRegulatorySourceReader(input: { readonly fetcher?: Ar
     async load({ tenantId, retrievedAt }): Promise<readonly RegulatoryValueRecord[]> {
       errors = [];
       const bta6 = await attempt("ARERA_BTA6", () => fetchOfficialBta6Sources({ tenantId, retrievedAt, fetcher: input.fetcher }));
+      const upTo165 = await attempt("ARERA_BTA1_5", () => fetchOfficialBtaUpTo165Sources({ tenantId, retrievedAt, fetcher: input.fetcher }));
+      upTo165?.errors.forEach((error) => errors.push(error));
       const cdispd = await attempt("ARERA_CDISPD", async () => {
         const workbook = await fetchAreraDomesticCdispdWorkbook(input.fetcher);
         return parseAreraDomesticCdispdXlsx({ body: workbook.bytes, sourceReference: workbook.url, retrievedAt, tenantId, sourceSha256: undefined, discoveryReference: workbook.discoveryUrl });
@@ -74,7 +76,7 @@ export function createAreraRegulatorySourceReader(input: { readonly fetcher?: Ar
         }
       });
       current?.skippedDecisions.forEach((error) => errors.push(`ARERA_TARIFFS:${error}`));
-      if (!bta6 && !cdispd && !current) throw new Error(errors[0] ?? "ARERA_SOURCES_UNREADABLE");
+      if (!bta6 && !upTo165 && !cdispd && !current) throw new Error(errors[0] ?? "ARERA_SOURCES_UNREADABLE");
       const infrastructure = new Map((current?.infrastructure.records ?? []).map((record) => [record.componentCode, record]));
       const system = current?.systemChargeRecords ?? [];
       const bta6Uc3 = system.find((record) => record.componentCode === "UC3" && record.customerScope === "NON_DOMESTIC_BT_BTA6" && record.normalizedUnit === "EUR/KWH");
@@ -99,9 +101,17 @@ export function createAreraRegulatorySourceReader(input: { readonly fetcher?: Ar
       const nonResident = (componentCode: "ASOS" | "ARIM", normalizedUnit: "EUR/KWH" | "EUR/POD/YEAR") => system.filter((record) => record.componentCode === componentCode && record.customerScope === "DOMESTIC_NON_RESIDENT_BT" && record.normalizedUnit === normalizedUnit).sort((left, right) => componentCode === "ASOS" ? Date.parse(right.effectiveFrom) - Date.parse(left.effectiveFrom) : Date.parse(left.effectiveFrom) - Date.parse(right.effectiveFrom))[0];
       const nonResidentSource: Record<string, RegulatoryValueRecord | undefined> = { "ASOS|EUR/KWH": nonResident("ASOS", "EUR/KWH"), "ASOS|EUR/POD/YEAR": nonResident("ASOS", "EUR/POD/YEAR"), "ARIM|EUR/KWH": nonResident("ARIM", "EUR/KWH"), "ARIM|EUR/POD/YEAR": nonResident("ARIM", "EUR/POD/YEAR") };
       const bta6Asos = Object.fromEntries(system.filter((record) => record.componentCode === "ASOS" && record.customerScope === "NON_DOMESTIC_BT_BTA6" && record.regulatoryVariant !== undefined).map((record) => [`${record.componentCode}|${record.customerScope}|${record.normalizedUnit}|${record.regulatoryVariant}`, record]));
+      // BT other uses up to 16,5 kW: metering and transmission are those of the whole BT other-uses category (BTA6 records).
+      const upTo165Records = [...(upTo165?.distribution ?? []), ...(upTo165?.uc ?? []), ...(upTo165?.arim ?? []), ...system.filter((record) => record.customerScope === "NON_DOMESTIC_BT_BTA1_5")];
+      const upTo165Source: Record<string, RegulatoryValueRecord | undefined> = {
+        ...Object.fromEntries(upTo165Records.map((record) => [regulatoryDomainKey(record as Parameters<typeof regulatoryDomainKey>[0]), record])),
+        "METERING_FIXED|NON_DOMESTIC_BT_BTA1_5|EUR/POD/YEAR": bta6?.metering ? exactScopeRecord(bta6.metering, "NON_DOMESTIC_BT_BTA1_5") : undefined,
+        "TRANSMISSION_ENERGY|NON_DOMESTIC_BT_BTA1_5|EUR/KWH": bta6?.transmission ? exactScopeRecord(bta6.transmission, "NON_DOMESTIC_BT_BTA1_5") : undefined,
+      };
       const records: RegulatoryValueRecord[] = [...(cdispd?.records ?? [])];
       for (const domain of CALCULATED_REGULATORY_DOMAINS) {
-        const source = domain.customerScope === "NON_DOMESTIC_BT_BTA6"
+        const source = domain.customerScope === "NON_DOMESTIC_BT_BTA1_5" ? upTo165Source[regulatoryDomainKey(domain)]
+          : domain.customerScope === "NON_DOMESTIC_BT_BTA6"
           ? ({ "NETWORK_FIXED|NON_DOMESTIC_BT_BTA6|EUR/POD/YEAR": bta6?.fixed, "NETWORK_POWER|NON_DOMESTIC_BT_BTA6|EUR/KW/YEAR": bta6?.power, "NETWORK_ENERGY|NON_DOMESTIC_BT_BTA6|EUR/KWH": bta6?.energy, "METERING_FIXED|NON_DOMESTIC_BT_BTA6|EUR/POD/YEAR": bta6?.metering, "TRANSMISSION_ENERGY|NON_DOMESTIC_BT_BTA6|EUR/KWH": bta6?.transmission, "UC3|NON_DOMESTIC_BT_BTA6|EUR/KWH": bta6Uc3, "UC6|NON_DOMESTIC_BT_BTA6|EUR/KWH": bta6Uc6Energy, "UC6|NON_DOMESTIC_BT_BTA6|EUR/POD/YEAR": bta6Uc6Fixed, "ARIM|NON_DOMESTIC_BT_BTA6|EUR/POD/YEAR": bta6ArimFixed, "ARIM|NON_DOMESTIC_BT_BTA6|EUR/KW/YEAR": bta6ArimPower, "ARIM|NON_DOMESTIC_BT_BTA6|EUR/KWH": bta6ArimEnergy, ...bta6Asos } as Record<string, RegulatoryValueRecord | undefined>)[regulatoryDomainKey(domain)]
           : domain.componentCode === "DISPATCHING_TOTAL" ? undefined
           : domain.customerScope === "DOMESTIC_NON_RESIDENT_BT" && (domain.componentCode === "ASOS" || domain.componentCode === "ARIM") ? nonResidentSource[`${domain.componentCode}|${domain.normalizedUnit}`]

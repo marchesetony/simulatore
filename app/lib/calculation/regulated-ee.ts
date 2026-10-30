@@ -2,7 +2,7 @@ import type { ElectricitySupplyContext } from "./trusted-ee-supply-context.ts";
 import type { ElectricitySimulationRequest, CalculationComponent, RegulatoryDataReference, RegulatedComponentIncluded } from "./types.ts";
 // @ts-expect-error Node's strip-only test runner requires the explicit extension.
 import { DOMESTIC_NET_OF_TAX_COMPLETE_COMPONENTS } from "./types.ts";
-import type { RegulatoryVariant } from "../foundation/regulatory-types.ts";
+import type { RegulatoryCustomerScope, RegulatoryVariant } from "../foundation/regulatory-types.ts";
 import type { ProductionRegulatoryPersistenceBridge } from "../regulatory-bridge.ts";
 // @ts-expect-error Node's strip-only test runner requires the explicit extension.
 import { resolveRegulatoryTimeline, type RegulatoryTimeline, type RegulatoryTimelineSegment } from "./regulatory-timeline.ts";
@@ -20,6 +20,7 @@ export const REGULATED_SUBSET_PARTIAL_WARNING = "REGULATED_SUBSET_PARTIAL_NETWOR
 export const BTA6_REGULATED_COMPONENTS_INCLUDED = ["NETWORK_FIXED", "NETWORK_POWER", "NETWORK_ENERGY", "METERING_FIXED", "TRANSMISSION_ENERGY", "UC3_ENERGY", "UC6_ENERGY", "UC6_FIXED", "ARIM_FIXED", "ARIM_POWER", "ARIM_ENERGY", "ASOS_FIXED", "ASOS_POWER", "ASOS_ENERGY"] as const;
 export const BTA6_REGULATED_SUBSET_PARTIAL_WARNING = "REGULATED_SUBSET_PARTIAL_BTA6_NETWORK_METERING_TRANSMISSION_UC3_UC6_ARIM_ASOS_ONLY" as const;
 export const BTA6_ASOS_EXCLUDED_CLASS_UNKNOWN = "BTA6_ASOS_EXCLUDED_CLASS_UNKNOWN" as const;
+export const BTA1_5_REGULATED_SUBSET_PARTIAL_WARNING = "REGULATED_SUBSET_PARTIAL_BTA1_5_NETWORK_METERING_TRANSMISSION_UC3_UC6_ARIM_ASOS_ONLY" as const;
 export const DOMESTIC_RESIDENT_REGULATED_SUBSET_PARTIAL_WARNING = "REGULATED_SUBSET_PARTIAL_DOMESTIC_NETWORK_UC3_UC6_ASOS_ARIM_ONLY" as const;
 export const DOMESTIC_NON_RESIDENT_REGULATED_SUBSET_PARTIAL_WARNING = "REGULATED_SUBSET_PARTIAL_DOMESTIC_NON_RESIDENT_NETWORK_UC3_UC6_ASOS_ARIM_ONLY" as const;
 export { CALCULATED_REGULATORY_DOMAINS };
@@ -117,7 +118,7 @@ function energyComponent(
   };
 }
 
-function powerComponent(segment: RegulatoryTimelineSegment, context: ElectricitySupplyContext, componentId: string, monthsApplied: number, bta6: boolean, network = false): CalculationComponent {
+function powerComponent(segment: RegulatoryTimelineSegment, context: ElectricitySupplyContext, componentId: string, monthsApplied: number, bta6: boolean, network = false, named?: { readonly label: string; readonly formulaId: string }): CalculationComponent {
   if (!Number.isSafeInteger(monthsApplied) || monthsApplied < 1) return fail("REGULATORY_PRORATION_UNSUPPORTED");
   const powerBasisKw = bta6 ? context.regulatoryPowerBasisKw : context.contractedPowerKw;
   const powerBasisKind = bta6 ? context.regulatoryPowerBasisKind : undefined;
@@ -130,10 +131,10 @@ function powerComponent(segment: RegulatoryTimelineSegment, context: Electricity
   return {
     componentId,
     category: "REGULATED_POWER",
-    label: asos ? "BTA6 ASOS quota potenza regolata" : arim ? "BTA6 ARIM quota potenza regolata" : bta6 ? "BTA6 quota potenza regolata" : network ? "Rete quota potenza regolata" : "UC6 potenza regolata",
+    label: named ? named.label : asos ? "BTA6 ASOS quota potenza regolata" : arim ? "BTA6 ARIM quota potenza regolata" : bta6 ? "BTA6 quota potenza regolata" : network ? "Rete quota potenza regolata" : "UC6 potenza regolata",
     sign: "CHARGE",
     amount: money(roundCents(value)),
-    formulaId: asos ? "REGULATED_BTA6_ASOS_POWER_RATE_TIMES_REGULATORY_KW_TIME" : arim ? "REGULATED_BTA6_ARIM_POWER_RATE_TIMES_REGULATORY_KW_TIME" : bta6 ? "REGULATED_BTA6_NETWORK_POWER_RATE_TIMES_ENGAGED_KW_TIME" : network ? "REGULATED_NETWORK_POWER_RATE_TIMES_KW_TIME" : "REGULATED_UC6_POWER_RATE_TIMES_KW_TIME",
+    formulaId: named ? named.formulaId : asos ? "REGULATED_BTA6_ASOS_POWER_RATE_TIMES_REGULATORY_KW_TIME" : arim ? "REGULATED_BTA6_ARIM_POWER_RATE_TIMES_REGULATORY_KW_TIME" : bta6 ? "REGULATED_BTA6_NETWORK_POWER_RATE_TIMES_ENGAGED_KW_TIME" : network ? "REGULATED_NETWORK_POWER_RATE_TIMES_KW_TIME" : "REGULATED_UC6_POWER_RATE_TIMES_KW_TIME",
     formulaInputs: {
       componentCode: segment.componentCode,
       rateEurPerKwYear: segment.normalizedValue,
@@ -182,13 +183,14 @@ function timelineFor(
   componentCode: "UC3" | "UC6" | "ARIM" | "ASOS" | "DISPATCHING_TOTAL" | "NETWORK_FIXED" | "NETWORK_POWER" | "NETWORK_ENERGY" | "METERING_FIXED" | "TRANSMISSION_ENERGY",
   normalizedUnit: "EUR/KWH" | "EUR/KW/YEAR" | "EUR/POD/YEAR",
   regulatoryVariant?: RegulatoryVariant,
+  customerScope: RegulatoryCustomerScope = context.regulatoryCustomerScope,
 ): Promise<RegulatoryTimeline> {
-  assertCalculatedRegulatoryDomain({ componentCode, customerScope: context.regulatoryCustomerScope, normalizedUnit, ...(regulatoryVariant === undefined ? {} : { regulatoryVariant }) });
+  assertCalculatedRegulatoryDomain({ componentCode, customerScope, normalizedUnit, ...(regulatoryVariant === undefined ? {} : { regulatoryVariant }) });
   // Name the component whose official values are missing, so the quote can say which ARERA table to load.
   return resolveRegulatoryTimeline(bridge, {
     tenantId: request.tenantId,
     componentCode,
-    customerScope: context.regulatoryCustomerScope,
+    customerScope,
     normalizedUnit,
     ...(regulatoryVariant === undefined ? {} : { regulatoryVariant }),
     periodStart: request.supplyPeriod.periodStart,
@@ -249,6 +251,55 @@ export async function calculateRegulatedEeSubset(
     asosEnergy?.segments.forEach((segment) => components.push(energyComponent(segment, quantityForSegment(request, segment, asosEnergy.segments.length), `regulated:bta6-asos-energy:${segment.regulatoryRecordId}`, "BTA6 ASOS quota energia regolata", "REGULATED_BTA6_ASOS_ENERGY_RATE_TIMES_KWH")));
     const timelines = [networkFixed, networkPower, networkEnergy, meteringFixed, transmissionEnergy, uc3, uc6Energy, uc6Fixed, arimFixed, arimPower, arimEnergy, asosFixed, asosPower, asosEnergy].filter((timeline): timeline is RegulatoryTimeline => timeline !== null);
     return { components, references: timelines.flatMap((timeline) => timeline.segments.map(referenceOf)), includedComponents: asosVariant === undefined ? [...BTA6_REGULATED_COMPONENTS_INCLUDED].filter((component) => !component.startsWith("ASOS_")) as typeof BTA6_REGULATED_COMPONENTS_INCLUDED[number][] : [...BTA6_REGULATED_COMPONENTS_INCLUDED], partialWarning: asosVariant === undefined ? BTA6_ASOS_EXCLUDED_CLASS_UNKNOWN : BTA6_REGULATED_SUBSET_PARTIAL_WARNING };
+  }
+
+  // Tony (30/10, AZIENDA PROTETTA 3 kW): "credo ci siano errori ancora", rete and oneri "non verificato su ARERA". BT other
+  // uses up to 16,5 kW are priced on the ARERA tables of their class (BTA1-BTA5), the quota potenza on the committed power.
+  if (context.regulatoryCustomerScope === "NON_DOMESTIC_BT" && context.regulatoryTariffClass !== undefined) {
+    const scope = "NON_DOMESTIC_BT_BTA1_5" as const;
+    const tariffClass = context.regulatoryTariffClass;
+    const of = (componentCode: Parameters<typeof timelineFor>[3], normalizedUnit: Parameters<typeof timelineFor>[4], variant?: RegulatoryVariant) => timelineFor(request, context, bridge, componentCode, normalizedUnit, variant, scope);
+    const networkFixed = await of("NETWORK_FIXED", "EUR/POD/YEAR", tariffClass);
+    const networkPower = await of("NETWORK_POWER", "EUR/KW/YEAR", tariffClass);
+    const networkEnergy = await of("NETWORK_ENERGY", "EUR/KWH", tariffClass);
+    const meteringFixed = await of("METERING_FIXED", "EUR/POD/YEAR");
+    const transmissionEnergy = await of("TRANSMISSION_ENERGY", "EUR/KWH");
+    const uc3 = await of("UC3", "EUR/KWH");
+    const uc6Energy = await of("UC6", "EUR/KWH");
+    const uc6Fixed = await of("UC6", "EUR/POD/YEAR");
+    const arimFixed = await of("ARIM", "EUR/POD/YEAR");
+    const arimPower = await of("ARIM", "EUR/KW/YEAR");
+    const arimEnergy = await of("ARIM", "EUR/KWH");
+    // A bill silent on the ASOS class is a customer without agevolazione: classe 0 (Tony 30/10).
+    const asosVariant: RegulatoryVariant = context.asosClassTemporalStatus === "VALID" && context.asosClass !== "UNKNOWN" ? context.asosClass : "ASOS_CLASS_0";
+    const asosFixed = await of("ASOS", "EUR/POD/YEAR", asosVariant);
+    const asosPower = await of("ASOS", "EUR/KW/YEAR", asosVariant);
+    const asosEnergy = await of("ASOS", "EUR/KWH", asosVariant);
+    const timelines = [networkFixed, networkPower, networkEnergy, meteringFixed, transmissionEnergy, uc3, uc6Energy, uc6Fixed, arimFixed, arimPower, arimEnergy, asosFixed, asosPower, asosEnergy];
+    timelines.forEach(assertMonthAligned);
+    const monthsOf = (segment: RegulatoryTimelineSegment) => monthsInSimulationPeriod({ periodStart: segment.segmentStart.slice(0, 10), periodEnd: segment.segmentEnd.slice(0, 10) }).length;
+    const components: CalculationComponent[] = [];
+    for (const [timeline, componentId, label, formulaId] of [
+      [networkFixed, "regulated:bta1-5-network-fixed", `${tariffClass} quota fissa distribuzione regolata`, "REGULATED_BTA1_5_NETWORK_FIXED_RATE_TIMES_TIME"],
+      [meteringFixed, "regulated:bta1-5-metering-fixed", `${tariffClass} quota misura regolata`, "REGULATED_BTA1_5_METERING_FIXED_RATE_TIMES_TIME"],
+      [uc6Fixed, "regulated:bta1-5-uc6-fixed", `${tariffClass} UC6 quota fissa regolata`, "REGULATED_BTA1_5_UC6_FIXED_RATE_TIMES_TIME"],
+      [arimFixed, "regulated:bta1-5-arim-fixed", `${tariffClass} ARIM quota fissa regolata`, "REGULATED_BTA1_5_ARIM_FIXED_RATE_TIMES_TIME"],
+      [asosFixed, "regulated:bta1-5-asos-fixed", `${tariffClass} ASOS quota fissa regolata`, "REGULATED_BTA1_5_ASOS_FIXED_RATE_TIMES_TIME"],
+    ] as const) timeline.segments.forEach((segment) => components.push(fixedComponent(segment, `${componentId}:${segment.regulatoryRecordId}`, monthsOf(segment), label, formulaId)));
+    for (const [timeline, componentId, label, formulaId] of [
+      [networkPower, "regulated:bta1-5-network-power", `${tariffClass} quota potenza distribuzione regolata`, "REGULATED_BTA1_5_NETWORK_POWER_RATE_TIMES_COMMITTED_KW_TIME"],
+      [arimPower, "regulated:bta1-5-arim-power", `${tariffClass} ARIM quota potenza regolata`, "REGULATED_BTA1_5_ARIM_POWER_RATE_TIMES_COMMITTED_KW_TIME"],
+      [asosPower, "regulated:bta1-5-asos-power", `${tariffClass} ASOS quota potenza regolata`, "REGULATED_BTA1_5_ASOS_POWER_RATE_TIMES_COMMITTED_KW_TIME"],
+    ] as const) timeline.segments.forEach((segment) => components.push(powerComponent(segment, context, `${componentId}:${segment.regulatoryRecordId}`, monthsOf(segment), false, true, { label, formulaId })));
+    for (const [timeline, componentId, label, formulaId] of [
+      [networkEnergy, "regulated:bta1-5-network-energy", `${tariffClass} energia distribuzione regolata`, "REGULATED_BTA1_5_NETWORK_ENERGY_RATE_TIMES_KWH"],
+      [transmissionEnergy, "regulated:bta1-5-transmission-energy", `${tariffClass} energia trasmissione regolata`, "REGULATED_TRANSMISSION_RATE_TIMES_KWH"],
+      [uc3, "regulated:bta1-5-uc3", `${tariffClass} UC3 energia regolata`, "REGULATED_UC3_RATE_TIMES_KWH"],
+      [uc6Energy, "regulated:bta1-5-uc6-energy", `${tariffClass} UC6 energia regolata`, "REGULATED_UC6_ENERGY_RATE_TIMES_KWH"],
+      [arimEnergy, "regulated:bta1-5-arim-energy", `${tariffClass} ARIM quota energia regolata`, "REGULATED_BTA1_5_ARIM_ENERGY_RATE_TIMES_KWH"],
+      [asosEnergy, "regulated:bta1-5-asos-energy", `${tariffClass} ASOS quota energia regolata`, "REGULATED_BTA1_5_ASOS_ENERGY_RATE_TIMES_KWH"],
+    ] as const) timeline.segments.forEach((segment) => components.push(energyComponent(segment, quantityForSegment(request, segment, timeline.segments.length), `${componentId}:${segment.regulatoryRecordId}`, label, formulaId)));
+    return { components, references: timelines.flatMap((timeline) => timeline.segments.map(referenceOf)), includedComponents: [...BTA6_REGULATED_COMPONENTS_INCLUDED], partialWarning: BTA1_5_REGULATED_SUBSET_PARTIAL_WARNING };
   }
 
   if (context.regulatoryCustomerScope === "DOMESTIC_RESIDENT_BT" || context.regulatoryCustomerScope === "DOMESTIC_NON_RESIDENT_BT") {

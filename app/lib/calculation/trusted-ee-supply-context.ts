@@ -100,6 +100,8 @@ export interface ElectricitySupplyContext {
   readonly domesticResidenceStatus: DomesticResidenceStatus;
   readonly voltageLevel: VoltageLevel;
   readonly regulatoryCustomerScope: RegulatoryCustomerScope;
+  /** BT other uses up to 16,5 kW: the TIT distribution class by available power (BTA1 fino a 1,5 kW ... BTA5 fino a 16,5 kW). */
+  readonly regulatoryTariffClass?: "BTA1" | "BTA2" | "BTA3" | "BTA4" | "BTA5";
   readonly regulatoryPowerBasisKind?: Exclude<PowerBillingBasis, "UNKNOWN">;
   readonly regulatoryPowerBasisKw?: number;
   readonly asosClass: AsosClass;
@@ -174,6 +176,12 @@ function regulatoryPowerBasis(profile: BillSupplyProfile, scope: RegulatoryCusto
   return fail("BTA6_POWER_BILLING_BASIS_REQUIRED");
 }
 
+// Tony (30/10, AZIENDA PROTETTA 3 kW): TIT Tabella 3 classes of the other BT uses, by available power.
+export function btaTariffClass(availablePowerKw: number): "BTA1" | "BTA2" | "BTA3" | "BTA4" | "BTA5" | null {
+  if (!Number.isFinite(availablePowerKw) || availablePowerKw <= 0 || availablePowerKw > 16.5) return null;
+  return availablePowerKw <= 1.5 ? "BTA1" : availablePowerKw <= 3 ? "BTA2" : availablePowerKw <= 6 ? "BTA3" : availablePowerKw <= 10 ? "BTA4" : "BTA5";
+}
+
 export function buildTrustedElectricitySupplyContext(profile: BillSupplyProfile, options?: TrustedElectricitySupplyContextOptions): ElectricitySupplyContext {
   const voltageLevel = requiredVoltageLevel(profile);
   const supplyUseCategory = requiredSupplyUse(profile);
@@ -182,6 +190,7 @@ export function buildTrustedElectricitySupplyContext(profile: BillSupplyProfile,
   const regulatoryCustomerScope = deriveRegulatoryCustomerScope(profile, voltageLevel, availablePowerKw);
   const basis = regulatoryPowerBasis(profile, regulatoryCustomerScope, contractedPowerKw);
   const asos = selectAsosClass(profile, options);
+  const tariffClass = regulatoryCustomerScope === "NON_DOMESTIC_BT" && supplyUseCategory === "OTHER_USE" && availablePowerKw !== undefined ? btaTariffClass(availablePowerKw) : null;
   return {
     vector: "EE",
     contractedPowerKw,
@@ -190,6 +199,7 @@ export function buildTrustedElectricitySupplyContext(profile: BillSupplyProfile,
     domesticResidenceStatus: profile.domesticResidenceStatus.normalizedValue,
     voltageLevel,
     regulatoryCustomerScope,
+    ...(tariffClass ? { regulatoryTariffClass: tariffClass } : {}),
     ...(basis ?? {}),
     asosClass: asos.asosClass,
     energyIntensiveStatus: energyIntensiveStatus(asos.asosClass),

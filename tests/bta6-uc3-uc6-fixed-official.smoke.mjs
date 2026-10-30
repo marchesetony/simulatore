@@ -32,9 +32,11 @@ console.log("BTA6_UC6_POWER_NOT_REQUESTED=PASS");
 
 const keys = new Set(AUTO_REFRESH_REGISTERED_DOMAINS.map(regulatoryDomainKey));
 // Tony (29/10): "ancora esiste dato non letto arera". The 10 domestic non-resident domains are registered too.
-assert.equal(CALCULATED_REGULATORY_DOMAINS.length, 42);
-assert.equal(CALCULATED_REGULATORY_DOMAINS.filter((domain) => domain.regulatoryVariant === undefined).length, 30);
-assert.equal(AUTO_REFRESH_REGISTERED_DOMAINS.length, 42);
+// Tony (30/10, AZIENDA PROTETTA 3 kW): 35 domains added for BT other uses up to 16,5 kW (BTA1-BTA5), 42 + 35 = 77.
+assert.equal(CALCULATED_REGULATORY_DOMAINS.length, 77);
+// Of those 35, the 8 without a class or ASOS variant: metering, transmission, UC3, UC6 x2, ARIM x3 (Tony 30/10).
+assert.equal(CALCULATED_REGULATORY_DOMAINS.filter((domain) => domain.regulatoryVariant === undefined).length, 38);
+assert.equal(AUTO_REFRESH_REGISTERED_DOMAINS.length, 77);
 for (const record of records) assert.equal(keys.has(regulatoryDomainKey({ componentCode: record.componentCode, customerScope: record.customerScope, normalizedUnit: record.normalizedUnit })), true);
 console.log("BTA6_UC3_AUTO_REFRESH=PASS");
 console.log("BTA6_UC6_ENERGY_AUTO_REFRESH=PASS");
