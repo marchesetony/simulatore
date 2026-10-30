@@ -385,6 +385,16 @@ function costLines(calculation: CalculationModel): readonly CostLine[] {
       case "GAS_SPREAD_TIMES_SMC": return { ...base, label: "Spread", quantity: `${QUANTITY.format(num(inputs.effectiveSmc) ?? 0)} Smc`, rate: `${RATE.format(num(inputs.spreadPerSmc) ?? 0)} €/Smc` };
       case "ONE_OFF_CONTRACT_FEE": return { ...base, label: component.label, quantity: "1", rate: `${EURO.format(num(inputs.feeRate) ?? 0)} una tantum` };
       default: {
+        // Tony (30/10, "credo ci siano errori di calcolo, con altro simulatore risulta diversa"): every ARERA line shows its
+        // official rate, the kW or kWh it applies to and the table class, so it can be checked against the bill.
+        if (component.formulaId.startsWith("REGULATED_")) {
+          const variant = typeof inputs.regulatoryVariant === "string" ? ` · ${String(inputs.regulatoryVariant).replace(/^ASOS_CLASS_(\d)_/, "ASOS classe $1 · ")}` : "";
+          const months = num(inputs.monthsApplied);
+          const kw = num(inputs.powerBasisKw) ?? num(inputs.contractedPowerKw);
+          if (num(inputs.rateEurPerKwh) !== null) return { ...base, label: `${component.label}${variant}`, quantity: kwh(inputs.quantityKwh), rate: `${RATE.format(num(inputs.rateEurPerKwh) ?? 0)} €/kWh` };
+          if (num(inputs.rateEurPerKwYear) !== null) return { ...base, label: `${component.label}${variant}`, quantity: `${kw === null ? "—" : `${QUANTITY.format(kw)} kW`} × ${months === null ? "—" : `${QUANTITY.format(months)} mesi`}`, rate: `${CENTS.format(num(inputs.rateEurPerKwYear) ?? 0)} €/kW all'anno` };
+          if (num(inputs.rateEurPerPodYear) !== null) return { ...base, label: `${component.label}${variant}`, quantity: months === null ? "—" : `${QUANTITY.format(months)} mesi`, rate: `${CENTS.format(num(inputs.rateEurPerPodYear) ?? 0)} €/POD all'anno` };
+        }
         const unit = String(inputs.feeUnit ?? "");
         const quantity = num(inputs.basisQuantity) ?? num(inputs.basisMonths);
         const rate = num(inputs.feeRate);
