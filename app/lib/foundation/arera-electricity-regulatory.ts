@@ -798,10 +798,10 @@ async function decisionConfirms(html: string, previous: string, fetcher: AreraFe
   const text = discoverAreraAttachments(html).find((item) => item.extension === "PDF" && /-R-com\.pdf$/i.test(item.url)) ?? discoverAreraAttachments(html).find((item) => item.extension === "PDF");
   if (!text) { lastConfirmationCheck = "PDF_NOT_FOUND"; return false; }
   try {
-    const compact = pdfCompactText((await fetchOfficialAreraSource(text.url, fetcher)).bytes).text;
+    const { text: compact, status, reason } = pdfCompactText((await fetchOfficialAreraSource(text.url, fetcher)).bytes);
     // 343/2026 art. 1.1: "... di cui alla Tabella 1 allegata alla deliberazione 227/2026/R/com, sono confermati."
     const confirms = /sonoconfermat/i.test(compact) && compact.includes(previous.replace(/\s+/g, ""));
-    if (!confirms) { const at = Math.max(0, compact.search(/confermat/i)); lastConfirmationCheck = `TEXT_UNREAD:len=${compact.length}:${compact.slice(at, at + 120)}`; }
+    if (!confirms) { const at = Math.max(0, compact.search(/confermat/i)); lastConfirmationCheck = `TEXT_UNREAD:len=${compact.length}:${compact ? compact.slice(at, at + 120) : `${status}:${reason ?? ""}`}`; }
     return confirms;
   } catch (error) { lastConfirmationCheck = `PDF_UNREADABLE:${error instanceof Error ? error.message : "ERROR"}`; return false; }
 }

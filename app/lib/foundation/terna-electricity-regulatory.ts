@@ -3,6 +3,8 @@ import { inflateSync } from "node:zlib";
 import type { RegulatoryValueRecord } from "./regulatory-types";
 // @ts-expect-error Node's strip-only test runner requires the explicit extension.
 import { createRegulatoryValue, isAllowedOfficialRegulatoryUrl } from "./arera-electricity-regulatory.ts";
+// @ts-expect-error Node's strip-only test runner requires the explicit extension.
+import { pdfTextLayer } from "../regulatory-refresh/pdf-text.ts";
 
 export const TERNA_CORRISPETTIVI_PAGE = "https://dati.terna.it/corrispettivi";
 export const TERNA_DISPATCHING_DATASOURCE = "E09352AE-CE30-4190-8956-F534D3EC4370";
@@ -81,7 +83,20 @@ const pdfStreams = (body: Uint8Array): readonly string[] => {
   return streams;
 };
 
-const pdfText = (body: Uint8Array): string => pdfStreams(body).map((stream) => [...stream.matchAll(/\(([^()]*)\)/g)].map((match) => match[1]).join("")).join(" ");
+const literalText = (body: Uint8Array): string => pdfStreams(body).map((stream) => [...stream.matchAll(/\(([^()]*)\)/g)].map((match) => match[1]).join("")).join(" ");
+/** The text layer of a Terna PDF (fonts, object streams, encryption: 2026Q4 gave an empty text, Tony 30/10); the bare
+ *  literal strings when the layer has none. `reason` says why both are empty. */
+const pdfTextRead = (body: Uint8Array): { readonly text: string; readonly reason: string } => {
+  const layer = pdfTextLayer(body);
+  const text = layer.text.trim() ? layer.text : literalText(body);
+  return { text, reason: text.trim() ? "" : `${layer.status}:${layer.reason ?? "TEXT_LAYER_EMPTY"}` };
+};
+const pdfText = (body: Uint8Array): string => pdfTextRead(body).text;
+/** Runs a reader on a document's text; when the text is empty the error says why. */
+const readPdf = <T>(body: Uint8Array, read: (text: string) => T): T => {
+  const { text, reason } = pdfTextRead(body);
+  try { return read(text); } catch (error) { throw reason && error instanceof Error ? new Error(`${error.message}:${reason}`) : error; }
+};
 const publishedDecimal = (body: Uint8Array, value: string): number => {
   const text = pdfText(body);
   const candidates = [value, value.replace(".", ",")];
@@ -199,7 +214,7 @@ export async function importTernaCapacityQuarter(input: { readonly tenantId: str
   const item = (listing.Results ?? []).find((result) => ternaTitleMatchesQuarter(String(result.Title ?? ""), input.quarter));
   if (!item || typeof item.Url !== "string" || typeof item.PublicationDate !== "string") throw new Error("TERNA_CAPACITY_DOCUMENT_NOT_PUBLISHED");
   const document = await fetchTerna(absoluteTernaUrl(item.Url), fetcher);
-  const values = extractTernaCapacityValues(pdfText(document.bytes));
+  const values = readPdf(document.bytes, extractTernaCapacityValues);
   const sha = sourceHash(document.bytes);
   const published = publicationDate(item.PublicationDate);
   const label = `${input.quarter.quarter}° trimestre ${input.quarter.year}`;
@@ -244,7 +259,7 @@ export async function importTernaTideQuarter(input: { readonly tenantId: string;
   const item = (listing.Results ?? []).find((result) => ternaTitleMatchesQuarter(String(result.Title ?? ""), input.quarter));
   if (!item || typeof item.Url !== "string" || typeof item.PublicationDate !== "string") throw new Error("TERNA_TIDE_DOCUMENT_NOT_PUBLISHED");
   const document = await fetchTerna(absoluteTernaUrl(item.Url), fetcher);
-  const total = extractTernaTideTotal(pdfText(document.bytes));
+  const total = readPdf(document.bytes, extractTernaTideTotal);
   const sha = sourceHash(document.bytes);
   const published = publicationDate(item.PublicationDate);
   const record = createRegulatoryValue({

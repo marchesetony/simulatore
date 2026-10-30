@@ -74,11 +74,11 @@ export function createAreraCapacitySourceReader(input: { readonly fetcher?: Arer
         const url = areraResolutionPdfUrl(id);
         try {
           const source = await fetchOfficialAreraSource(url, input.fetcher);
-          const { text, sourceSha256 } = pdfCompactText(source.bytes);
+          const { text, sourceSha256, status, reason } = pdfCompactText(source.bytes);
           const parsed = parseAreraCapacityText(text);
           if (parsed.months.length) resolutions.push({ resolution: resolutionLabel(id), url, publicationDate: parsed.publicationDate, months: parsed.months, sourceSha256 });
-          // What the text layer gave around the charge, so a month not found can be read in the refresh errors.
-          else { const at = text.search(/capacit/i); unread.push(`${resolutionLabel(id)}:len=${text.length}:${text.slice(Math.max(0, at), Math.max(0, at) + 160)}`); }
+          // What the text layer gave around the charge, or why it gave nothing, so a month not found can be read in the refresh errors.
+          else { const at = text.search(/capacit/i); unread.push(`${resolutionLabel(id)}:len=${text.length}:${text ? text.slice(Math.max(0, at), Math.max(0, at) + 160) : `${status}:${reason ?? ""}`}`); }
         } catch (error) {
           // Not every resolution the TIV cites has an R/eel PDF at the usual address (DIME, R/com): only failures count.
           const message = error instanceof Error ? error.message : "ARERA_SOURCE_FAILED";
