@@ -29,6 +29,8 @@ import { ARERA_TIV_CAPACITY_MONTHS, areraCapacityForPeriod, mergeAreraCapacityMo
 // @ts-expect-error Node's strip-only test runner requires the explicit extension.
 import { TERNA_TIDE_DISPATCHING_QUARTERS, mergeTernaTideQuarters, ternaTideForPeriod, type TernaTideQuarter } from "../foundation/terna-tide-dispatching.ts";
 // @ts-expect-error Node's strip-only test runner requires the explicit extension.
+import { mergeTernaCapacityQuarters, ternaCapacityForPeriod, ternaCapacityMonthMax, type TernaCapacityQuarter } from "../foundation/terna-capacity-peak.ts";
+// @ts-expect-error Node's strip-only test runner requires the explicit extension.
 import { isSameOffer } from "../quote/same-offer.ts";
 // @ts-expect-error Node's strip-only test runner requires the explicit extension.
 import { BTA6_REGULATED_COMPONENTS_INCLUDED, calculateRegulatedEeSubset, isDomesticNetOfTaxCompleteComponents, type RegulatedEeExecutionContext } from "./regulated-ee.ts";
@@ -183,7 +185,7 @@ function standardLoss(request: ElectricitySimulationRequest, runtime: CteRuntime
   if (request.supplyPeriod.periodStart < "2023-01-01") return null;
   return { ratio: fromNumber(TIS_TABLE_4_COLUMN_A[request.voltageLevel]), source: "TIS_TABELLA_4_COLONNA_A" };
 }
-function addCtePassThroughs(target: ComponentDraft[], request: ElectricitySimulationRequest, offer: CalculationReadyOffer, runtime: CteRuntimeResolution | null, totalQuantity: Rational, context: ElectricitySupplyContext | undefined, missing: string[], capacityMonths: readonly AreraCapacityMonth[] = ARERA_TIV_CAPACITY_MONTHS, tideQuarters: readonly TernaTideQuarter[] = TERNA_TIDE_DISPATCHING_QUARTERS, domesticCdispd: "PRICED" | "MISSING" | null = null, cdispdMonths: readonly AreraCapacityMonth[] | null = null): void {
+function addCtePassThroughs(target: ComponentDraft[], request: ElectricitySimulationRequest, offer: CalculationReadyOffer, runtime: CteRuntimeResolution | null, totalQuantity: Rational, context: ElectricitySupplyContext | undefined, missing: string[], capacityMonths: readonly AreraCapacityMonth[] = ARERA_TIV_CAPACITY_MONTHS, tideQuarters: readonly TernaTideQuarter[] = TERNA_TIDE_DISPATCHING_QUARTERS, domesticCdispd: "PRICED" | "MISSING" | null = null, cdispdMonths: readonly AreraCapacityMonth[] | null = null, ternaCapacity: readonly TernaCapacityQuarter[] = [], peakEnergy: BillPeakEnergy | null = null): void {
   const priced = new Set(target.filter((draft) => draft.formulaId.startsWith("CONTRACTUAL_PASS_THROUGH")).map((draft) => String(draft.formulaInputs.kind ?? "")));
   const standard = standardLoss(request, runtime);
   const loss = standard?.ratio ?? null;
@@ -275,7 +277,7 @@ function addCtePassThroughs(target: ComponentDraft[], request: ElectricitySimula
       const official = runtime?.capacityMarket?.value ?? arera?.eurPerKwh;
       const officialSource = runtime?.capacityMarket?.officialIdentifier ?? (arera ? `ARERA ${arera.months.map((month) => month.resolution).join(", ")}` : "OFFICIAL");
       if (request.voltageLevel === "LV" && powerKw === undefined) missing.push("CAPACITY_MARKET:AVAILABLE_POWER_MISSING");
-      else if (!smallLv) missing.push("CAPACITY_MARKET:PEAK_HOUR_KWH_MISSING");
+      else if (!smallLv) addTernaPeakCapacity(target, request, ternaCapacity, peakEnergy, totalQuantity, grossUp, loss, missing);
       else if (official === undefined || !Number.isFinite(official) || official <= 0) missing.push("CAPACITY_MARKET:OFFICIAL_VALUE_MISSING");
       else {
         const unitRate = grossUp(fromNumber(official));
@@ -284,6 +286,48 @@ function addCtePassThroughs(target: ComponentDraft[], request: ElectricitySimula
     }
   }
   if (!loss) missing.push("LOSSES:OFFICIAL_VALUE_MISSING");
+}
+
+// Tony (30/10): "errore su come calcolare il capacity". BT above 55 kW, MT, AT: the kWh withdrawn in Terna's peak hours x
+// the peak rate + the other kWh x the off-peak rate (TIV comma 34.8 bis), both grossed up for losses. The bill's peak share
+// carries over to the simulated kWh.
+function addTernaPeakCapacity(target: ComponentDraft[], request: ElectricitySimulationRequest, quarters: readonly TernaCapacityQuarter[], peakEnergy: BillPeakEnergy | null, totalQuantity: Rational, grossUp: (rate: Rational) => Rational, loss: Rational | null, missing: string[]): void {
+  const period = request.supplyPeriod;
+  const lossFactor = loss ? toDecimal(loss, 6) : 0;
+  const billed = peakEnergy && Number.isFinite(peakEnergy.peakKwh) && Number.isFinite(peakEnergy.offPeakKwh) && peakEnergy.peakKwh >= 0 && peakEnergy.offPeakKwh >= 0 && peakEnergy.peakKwh + peakEnergy.offPeakKwh > 0 ? peakEnergy : null;
+  if (billed) {
+    const rates = ternaCapacityForPeriod(period.periodStart, period.periodEnd, quarters);
+    if (!rates) { missing.push("CAPACITY_MARKET:OFFICIAL_VALUE_MISSING"); return; }
+    const source = rates.quarters.map((item) => item.reference).join(", ");
+    const peakQuantity = multiply(totalQuantity, divide(fromNumber(billed.peakKwh), fromNumber(billed.peakKwh + billed.offPeakKwh)));
+    const offPeakQuantity = add(totalQuantity, multiply(peakQuantity, fromNumber(-1)));
+    ([["peak", "ore di picco", rates.peakEurPerKwh, peakQuantity], ["off-peak", "fuori picco", rates.offPeakEurPerKwh, offPeakQuantity]] as const).forEach(([id, label, official, quantity]) => {
+      const unitRate = grossUp(fromNumber(official));
+      target.push({ componentId: `cte-pass-through:capacity-${id}`, category: "VARIABLE_FEE", label: `Mercato della capacità · ${label}`, sign: "CHARGE", value: multiply(unitRate, quantity), formulaId: "CTE_PASS_THROUGH_RATE_TIMES_KWH", formulaInputs: { kind: "CAPACITY_MARKET", feeUnit: "EUR_PER_KWH", feeRate: toDecimal(unitRate, 6), officialRate: official, lossFactor, basisQuantity: toDecimal(quantity, 3), source } });
+    });
+    return;
+  }
+  // Tony (30/10): "la regola dovrebbe esssere il prezzo massimo del mese su tutto il mese di riferimento". Without the
+  // peak-hour kWh on the bill, every kWh of a month pays the month's highest Terna rate.
+  const rated = monthlyQuantities(request, totalQuantity).map(({ month, quantity }) => ({ month, quantity, rate: ternaCapacityMonthMax(month, quarters) }));
+  if (!rated.length || rated.some((item) => item.rate === null)) { missing.push("CAPACITY_MARKET:OFFICIAL_VALUE_MISSING"); return; }
+  rated.forEach(({ month, quantity, rate }) => {
+    if (!rate) return;
+    const unitRate = grossUp(fromNumber(rate.eurPerKwh));
+    target.push({ componentId: `cte-pass-through:capacity-month-max:${month}`, category: "VARIABLE_FEE", label: "Mercato della capacità · prezzo massimo del mese (kWh di picco non in bolletta)", sign: "CHARGE", value: multiply(unitRate, quantity), formulaId: "CTE_PASS_THROUGH_RATE_TIMES_KWH", formulaInputs: { kind: "CAPACITY_MARKET", feeUnit: "EUR_PER_KWH", feeRate: toDecimal(unitRate, 6), officialRate: rate.eurPerKwh, lossFactor, basisQuantity: toDecimal(quantity, 3), month, source: rate.quarters.map((item) => item.reference).join(", ") } });
+  });
+}
+
+/** The kWh of each month of the simulation: the monthly profile when there is one, otherwise the total split by days. */
+function monthlyQuantities(request: ElectricitySimulationRequest, totalQuantity: Rational): readonly { readonly month: string; readonly quantity: Rational }[] {
+  const months = monthsInSimulationPeriod(request.supplyPeriod);
+  const profile = request.consumption.monthlyProfile;
+  const byMonth = (month: string) => profile?.find((entry) => entry.month === month);
+  if (months.length && months.every((month) => byMonth(month) !== undefined)) return months.map((month) => { const item = byMonth(month)!; return { month, quantity: add(add(fromNumber(item.f1), fromNumber(item.f2)), fromNumber(item.f3)) }; });
+  if (months.length <= 1) return months.map((month) => ({ month, quantity: totalQuantity }));
+  const days = (month: string) => { const start = Date.parse(`${month}-01T00:00:00Z`); const date = new Date(start); return Math.round((Date.UTC(date.getUTCFullYear(), date.getUTCMonth() + 1, 1) - start) / 86_400_000); };
+  const total = months.reduce((sum, month) => sum + days(month), 0);
+  return months.map((month) => ({ month, quantity: multiply(totalQuantity, divide(fromNumber(days(month)), fromNumber(total))) }));
 }
 
 function isBta6CompleteCandidate(context: ElectricitySupplyContext | undefined, regulated: Awaited<ReturnType<typeof calculateRegulatedEeSubset>> | null, contractual: ContractualPassThroughEvaluation | null, request: SimulationRequest): boolean {
@@ -303,7 +347,12 @@ export interface CalculationDependencies {
   readonly currentOffer?: CurrentSupplyOffer;
   /** CTEs (archive or CTE id) authorized for the source bill although the customer or voltage rules leave them out. */
   readonly eligibilityOverriddenCteIds?: ReadonlySet<string>;
+  /** Peak / off-peak kWh read from the approved source bill, never from the request (Tony 30/10, capacity market). */
+  readonly billPeakEnergy?: BillPeakEnergy;
 }
+
+/** kWh the source bill prints in Terna's peak hours and in the other hours (Riepilogo consumi "Peak" / "Off-Peak"). */
+export interface BillPeakEnergy { readonly peakKwh: number; readonly offPeakKwh: number }
 
 export interface CurrentSupplyOffer { readonly supplier: string | null; readonly offer: string | null; readonly oneOffBilled: boolean; readonly indexStructure?: "MONO" | "BANDS" | "HOURLY" | null }
 
@@ -526,7 +575,10 @@ export async function calculatePreparedOffer(request: SimulationRequest, prepare
         .map((record) => ({ month: record.effectiveFrom.slice(0, 7), centsPerKwh: record.normalizedValue * 100, resolution: `ARERA CDISPD ${record.effectiveFrom.slice(0, 7)}`, url: record.sourceReference }))
         .filter((month, index, all) => all.findLastIndex((other) => other.month === month.month) === index)
       : null;
-    addCtePassThroughs(drafts, request, prepared.offer, cteRuntime, totalQuantity, dependencies.trustedElectricityContext, missingOfficial, mergeAreraCapacityMonths(stored), mergeTernaTideQuarters(tide), regulated === null || scope !== "DOMESTIC_RESIDENT_BT" ? null : regulated.dispatchingMissing ? "MISSING" : "PRICED", cdispdMonths);
+    // Terna's quarterly capacity charges, whatever scope stored them: the same for every customer outside the TIV (Tony 30/10).
+    const bridge = dependencies.regulatoryBridge;
+    const ternaCapacity = bridge ? (await Promise.all((["CAPACITY_MARKET_PEAK", "CAPACITY_MARKET_OFF_PEAK"] as const).map((componentCode) => bridge.list(request.tenantId, { componentCode, normalizedUnit: "EUR/KWH" }).catch(() => [])))).flat() : [];
+    addCtePassThroughs(drafts, request, prepared.offer, cteRuntime, totalQuantity, dependencies.trustedElectricityContext, missingOfficial, mergeAreraCapacityMonths(stored), mergeTernaTideQuarters(tide), regulated === null || scope !== "DOMESTIC_RESIDENT_BT" ? null : regulated.dispatchingMissing ? "MISSING" : "PRICED", cdispdMonths, mergeTernaCapacityQuarters(ternaCapacity), dependencies.billPeakEnergy ?? null);
   }
   // Tony: transport and system charges always come from the ARERA tables; when they can't, the receipt says why.
   if (request.vector === "EE" && request.sourceBill && regulated === null) missingOfficial.push(`REGULATED:${regulatedMissingReason}`);

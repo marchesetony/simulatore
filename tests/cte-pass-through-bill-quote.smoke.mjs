@@ -56,10 +56,12 @@ assert.ok(!noOfficial.warnings.includes("OFFICIAL_VALUE_MISSING:DISPATCHING:OFFI
 // quarterly update: settembre 2026 0,3197 c€/kWh (219/2026/R/eel art. 4.1) x 1,10 x 1.000 kWh = 3,52.
 assert.deepEqual(byKind(noOfficial, "CAPACITY_MARKET"), [5, 3.52]);
 assert.ok(!noOfficial.warnings.includes("OFFICIAL_VALUE_MISSING:CAPACITY_MARKET:OFFICIAL_VALUE_MISSING"));
-// BT above 55 kW: the charge needs the kWh in Terna's peak hours, which the bill quote does not have yet.
+// BT above 55 kW: Terna's peak / off-peak charges (tests/capacity-peak-hours.smoke.mjs). Tony (30/10): "errore su come
+// calcolare il capacity": it is calculated, no longer left out for the peak-hour kWh; this stub archive has no Terna value.
 const large = await calculatePreparedOffer(request(true), prepared, deps(0.0105, 0.004275, 98));
 assert.deepEqual(byKind(large, "CAPACITY_MARKET"), [5]);
-assert.ok(large.warnings.includes("OFFICIAL_VALUE_MISSING:CAPACITY_MARKET:PEAK_HOUR_KWH_MISSING"));
+assert.ok(!large.warnings.includes("OFFICIAL_VALUE_MISSING:CAPACITY_MARKET:PEAK_HOUR_KWH_MISSING"));
+assert.ok(large.warnings.includes("OFFICIAL_VALUE_MISSING:CAPACITY_MARKET:OFFICIAL_VALUE_MISSING"));
 // Unknown available power on a BT supply: the 55 kW rule cannot be applied.
 const unknown = await calculatePreparedOffer(request(true), prepared, deps(0.0105, 0.004275));
 assert.ok(unknown.warnings.includes("OFFICIAL_VALUE_MISSING:CAPACITY_MARKET:AVAILABLE_POWER_MISSING"));

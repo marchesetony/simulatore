@@ -10,7 +10,7 @@ import { validateStructuredBillExtraction } from "../ingestion/structured-bill.t
 import { resolveBillVectorFromEvidence } from "../ingestion/vector-resolution.ts";
 import type { CustomerResidency, CustomerType } from "../energy/types";
 import type { ElectricitySimulationRequest } from "./types";
-import type { CurrentSupplyOffer } from "./engine";
+import type { BillPeakEnergy, CurrentSupplyOffer } from "./engine";
 // @ts-expect-error Node's strip-only test runner requires the explicit extension.
 import { ONE_OFF_BILL_LINE } from "../quote/same-offer.ts";
 // @ts-expect-error Node's strip-only test runner requires the explicit extension.
@@ -120,7 +120,7 @@ export async function resolveTrustedElectricityContextWithReason(
   billRepository: Pick<BillRepository, "get">,
   tenantId: string,
   request: ElectricitySimulationRequest,
-): Promise<{ readonly context: ElectricitySupplyContext | null; readonly reason: string | null; readonly currentOffer?: CurrentSupplyOffer }> {
+): Promise<{ readonly context: ElectricitySupplyContext | null; readonly reason: string | null; readonly currentOffer?: CurrentSupplyOffer; readonly billPeakEnergy?: BillPeakEnergy }> {
   try {
     const resolved = await resolveApprovedSourceBillContext(billRepository, tenantId, request);
     return { context: resolved?.supplyContext ?? null, reason: resolved ? null : "SOURCE_BILL_MISSING", ...await currentOfferOf(billRepository, tenantId, request) };
@@ -132,7 +132,7 @@ export async function resolveTrustedElectricityContextWithReason(
 }
 
 /** The source bill's supplier and offer, and whether it charges a one-off fee (only the first bill of a contract does). */
-async function currentOfferOf(billRepository: Pick<BillRepository, "get">, tenantId: string, request: ElectricitySimulationRequest): Promise<{ readonly currentOffer?: CurrentSupplyOffer }> {
+async function currentOfferOf(billRepository: Pick<BillRepository, "get">, tenantId: string, request: ElectricitySimulationRequest): Promise<{ readonly currentOffer?: CurrentSupplyOffer; readonly billPeakEnergy?: BillPeakEnergy }> {
   if (!request.sourceBill) return {};
   try {
     const document = await billRepository.get(tenantId, request.sourceBill.billId);
@@ -140,7 +140,7 @@ async function currentOfferOf(billRepository: Pick<BillRepository, "get">, tenan
     if (!bill) return {};
     const found = (field: { readonly status: string; readonly value: unknown } | undefined) => field?.status === "FOUND" && typeof field.value === "string" ? field.value : null;
     const offer = [found(bill.offerCode), found(bill.offerName), bill.documentOfferName ?? null].filter((value): value is string => !!value?.trim()).join(" ") || null;
-    return { currentOffer: { supplier: found(bill.supplier), offer, oneOffBilled: bill.economicChargeLines.some((line) => ONE_OFF_BILL_LINE.test(`${line.description} ${line.rawDescription ?? ""}`)), indexStructure: billIndexStructure(bill) } };
+    return { currentOffer: { supplier: found(bill.supplier), offer, oneOffBilled: bill.economicChargeLines.some((line) => ONE_OFF_BILL_LINE.test(`${line.description} ${line.rawDescription ?? ""}`)), indexStructure: billIndexStructure(bill) }, ...peakEnergyOf(bill) };
   } catch { return {}; }
 }
 
@@ -161,4 +161,19 @@ export async function resolveTrustedElectricityFiscalContextFromSourceBill(
       approvedBillBinding: { billId: resolved.billId, approvedVersionId: resolved.approvedVersionId },
     },
   });
+}
+
+const kwhNumber = (value: string): number | null => {
+  const text = value.replace(/kwh/gi, "").replace(/\s/g, "");
+  const normalized = text.includes(",") ? text.replace(/\./g, "").replace(",", ".") : /^\d{1,3}(?:\.\d{3})+$/.test(text) ? text.replace(/\./g, "") : text;
+  const number = /^\d+(?:\.\d+)?$/.test(normalized) ? Number(normalized) : NaN;
+  return Number.isFinite(number) && number >= 0 ? number : null;
+};
+
+/** Tony (30/10): "errore su come calcolare il capacity". The kWh the approved bill prints in Terna's peak hours and in the
+ *  other hours, read only from the bill's documentary facts (never from the request). Both must be there. */
+export function peakEnergyOf(bill: Pick<NonNullable<PublicBillDocument["structuredBill"]>, "extendedFacts">): { readonly billPeakEnergy?: BillPeakEnergy } {
+  const read = (code: string) => { const fact = bill.extendedFacts.find((item) => item.code === code && item.status === "FOUND" && item.value.trim() !== ""); return fact ? kwhNumber(fact.value) : null; };
+  const peakKwh = read("ENERGY_PEAK_KWH"); const offPeakKwh = read("ENERGY_OFF_PEAK_KWH");
+  return peakKwh !== null && offPeakKwh !== null && peakKwh + offPeakKwh > 0 ? { billPeakEnergy: { peakKwh, offPeakKwh } } : {};
 }
