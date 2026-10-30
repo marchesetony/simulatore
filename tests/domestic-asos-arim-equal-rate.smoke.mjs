@@ -92,8 +92,10 @@ const bridge = await bridgeWith(baseRecords);
 
 // Tony (29/10): "ancora esiste dato non letto arera". The 10 domestic non-resident domains are registered too.
 // Tony (30/10, AZIENDA PROTETTA 3 kW): 36 domains added for BT other uses up to 16,5 kW (BTA1-BTA5), 42 + 36 = 78.
-assert.equal(CALCULATED_REGULATORY_DOMAINS.length, 78);
-assert.equal(AUTO_REFRESH_REGISTERED_DOMAINS.length, 78);
+// Tony (30/10, "ancora errori"): the oneri rows up to 16,5 kW are split by BTA class, so that scope now has 112 domains
+// (15 distribution, 2 metering/transmission, 35 UC/ARIM, 60 ASOS): 42 + 112 = 154.
+assert.equal(CALCULATED_REGULATORY_DOMAINS.length, 154);
+assert.equal(AUTO_REFRESH_REGISTERED_DOMAINS.length, 154);
 assertAutoRefreshCoverage();
 assert.ok(CALCULATED_REGULATORY_DOMAINS.some((domain) => domain.componentCode === "ASOS" && domain.customerScope === scope && domain.normalizedUnit === "EUR/KWH" && domain.regulatoryVariant === undefined));
 assert.ok(CALCULATED_REGULATORY_DOMAINS.some((domain) => domain.componentCode === "ARIM" && domain.customerScope === scope && domain.normalizedUnit === "EUR/KWH" && domain.regulatoryVariant === undefined));

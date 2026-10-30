@@ -14,7 +14,7 @@ export type RegulatoryValueSourceType = "OFFICIAL_WEB_PAGE" | "OFFICIAL_PROVVEDI
 export type RegulatoryValueVector = "EE" | "GAS";
 export type RegulatoryReferenceDomain = "NETWORK" | "SYSTEM_CHARGES" | "DISPATCHING" | "CAPACITY_MARKET" | "MARKET_INDEX" | "TAX" | "CONTRACT";
 export type RegulatoryCustomerScope = "DOMESTIC_BT" | "DOMESTIC_RESIDENT_BT" | "DOMESTIC_NON_RESIDENT_BT" | "NON_DOMESTIC_BT" | "NON_DOMESTIC_BT_BTA6" | "NON_DOMESTIC_BT_BTA1_5" | "ALL_ELECTRICITY";
-export type RegulatoryVariant = "ASOS_CLASS_0" | "ASOS_CLASS_1" | "ASOS_CLASS_2" | "ASOS_CLASS_3" | "TIDE" | "LEGACY_111_06" | "BTA1" | "BTA2" | "BTA3" | "BTA4" | "BTA5";
+export type RegulatoryVariant = "ASOS_CLASS_0" | "ASOS_CLASS_1" | "ASOS_CLASS_2" | "ASOS_CLASS_3" | "TIDE" | "LEGACY_111_06" | "BTA1" | "BTA2" | "BTA3" | "BTA4" | "BTA5" | `${"ASOS_CLASS_0" | "ASOS_CLASS_1" | "ASOS_CLASS_2" | "ASOS_CLASS_3"}_${"BTA1" | "BTA2" | "BTA3" | "BTA4" | "BTA5"}`;
 export type RegulatoryValueComponentCode =
   | "S1_TOTAL" | "S1_MEASURE" | "S2_POWER" | "S3_ENERGY_TRANSMISSION"
   | "NETWORK_FIXED" | "METERING_FIXED" | "NETWORK_POWER" | "NETWORK_ENERGY" | "TRANSMISSION_ENERGY"

@@ -258,21 +258,24 @@ export async function calculateRegulatedEeSubset(
   if (context.regulatoryCustomerScope === "NON_DOMESTIC_BT" && context.regulatoryTariffClass !== undefined) {
     const scope = "NON_DOMESTIC_BT_BTA1_5" as const;
     const tariffClass = context.regulatoryTariffClass;
+    const oneriClass = context.regulatoryOneriTariffClass ?? tariffClass;
     const of = (componentCode: Parameters<typeof timelineFor>[3], normalizedUnit: Parameters<typeof timelineFor>[4], variant?: RegulatoryVariant) => timelineFor(request, context, bridge, componentCode, normalizedUnit, variant, scope);
     const networkFixed = await of("NETWORK_FIXED", "EUR/POD/YEAR", tariffClass);
     const networkPower = await of("NETWORK_POWER", "EUR/KW/YEAR", tariffClass);
     const networkEnergy = await of("NETWORK_ENERGY", "EUR/KWH", tariffClass);
     const meteringFixed = await of("METERING_FIXED", "EUR/POD/YEAR");
     const transmissionEnergy = await of("TRANSMISSION_ENERGY", "EUR/KWH");
-    const uc3 = await of("UC3", "EUR/KWH");
-    const uc6Energy = await of("UC6", "EUR/KWH");
-    const uc6Fixed = await of("UC6", "EUR/POD/YEAR");
-    const uc6Power = await of("UC6", "EUR/KW/YEAR");
-    const arimFixed = await of("ARIM", "EUR/POD/YEAR");
-    const arimPower = await of("ARIM", "EUR/KW/YEAR");
-    const arimEnergy = await of("ARIM", "EUR/KWH");
+    const uc3 = await of("UC3", "EUR/KWH", oneriClass);
+    const uc6Energy = await of("UC6", "EUR/KWH", oneriClass);
+    const uc6Fixed = await of("UC6", "EUR/POD/YEAR", oneriClass);
+    const uc6Power = await of("UC6", "EUR/KW/YEAR", oneriClass);
+    const arimFixed = await of("ARIM", "EUR/POD/YEAR", oneriClass);
+    const arimPower = await of("ARIM", "EUR/KW/YEAR", oneriClass);
+    const arimEnergy = await of("ARIM", "EUR/KWH", oneriClass);
     // A bill silent on the ASOS class is a customer without agevolazione: classe 0 (Tony 30/10).
-    const asosVariant: RegulatoryVariant = context.asosClassTemporalStatus === "VALID" && context.asosClass !== "UNKNOWN" ? context.asosClass : "ASOS_CLASS_0";
+    // Tony (30/10, "ancora errori"): UC, ARIM and ASOS rows are split by BTA class too, so the ASOS variant pairs both.
+    const asosClass = (context.asosClassTemporalStatus === "VALID" && context.asosClass !== "UNKNOWN" ? context.asosClass : "ASOS_CLASS_0") as "ASOS_CLASS_0" | "ASOS_CLASS_1" | "ASOS_CLASS_2" | "ASOS_CLASS_3";
+    const asosVariant: RegulatoryVariant = `${asosClass}_${oneriClass}`;
     const asosFixed = await of("ASOS", "EUR/POD/YEAR", asosVariant);
     const asosPower = await of("ASOS", "EUR/KW/YEAR", asosVariant);
     const asosEnergy = await of("ASOS", "EUR/KWH", asosVariant);

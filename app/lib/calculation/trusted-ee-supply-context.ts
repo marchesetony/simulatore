@@ -102,6 +102,8 @@ export interface ElectricitySupplyContext {
   readonly regulatoryCustomerScope: RegulatoryCustomerScope;
   /** BT other uses up to 16,5 kW: the TIT distribution class by available power (BTA1 fino a 1,5 kW ... BTA5 fino a 16,5 kW). */
   readonly regulatoryTariffClass?: "BTA1" | "BTA2" | "BTA3" | "BTA4" | "BTA5";
+  /** Class of the oneri generali rows: the official tables split them by potenza impegnata, not disponibile. */
+  readonly regulatoryOneriTariffClass?: "BTA1" | "BTA2" | "BTA3" | "BTA4" | "BTA5";
   readonly regulatoryPowerBasisKind?: Exclude<PowerBillingBasis, "UNKNOWN">;
   readonly regulatoryPowerBasisKw?: number;
   readonly asosClass: AsosClass;
@@ -191,6 +193,9 @@ export function buildTrustedElectricitySupplyContext(profile: BillSupplyProfile,
   const basis = regulatoryPowerBasis(profile, regulatoryCustomerScope, contractedPowerKw);
   const asos = selectAsosClass(profile, options);
   const tariffClass = regulatoryCustomerScope === "NON_DOMESTIC_BT" && supplyUseCategory === "OTHER_USE" && availablePowerKw !== undefined ? btaTariffClass(availablePowerKw) : null;
+  // Tony (30/10, "ancora errori"): the oneri sub-rows read "per potenze impegnate inferiori o uguali a 1,5 kW" etc.,
+  // so oneri follow the committed power; distribution keeps the TIT class by available power.
+  const oneriTariffClass = tariffClass === null ? null : contractedPowerKw > 0 ? btaTariffClass(Math.min(contractedPowerKw, 16.5)) : tariffClass;
   return {
     vector: "EE",
     contractedPowerKw,
@@ -200,6 +205,7 @@ export function buildTrustedElectricitySupplyContext(profile: BillSupplyProfile,
     voltageLevel,
     regulatoryCustomerScope,
     ...(tariffClass ? { regulatoryTariffClass: tariffClass } : {}),
+    ...(oneriTariffClass ? { regulatoryOneriTariffClass: oneriTariffClass } : {}),
     ...(basis ?? {}),
     asosClass: asos.asosClass,
     energyIntensiveStatus: energyIntensiveStatus(asos.asosClass),

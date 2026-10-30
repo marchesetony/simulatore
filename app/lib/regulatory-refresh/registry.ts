@@ -80,18 +80,25 @@ const btaUpTo165Domains: readonly RegulatoryRefreshDomain[] = [
   ])),
   { componentCode: "METERING_FIXED", customerScope: btaUpTo165Scope, normalizedUnit: "EUR/POD/YEAR", sourceAdapter: "ARERA_ELECTRICITY" },
   { componentCode: "TRANSMISSION_ENERGY", customerScope: btaUpTo165Scope, normalizedUnit: "EUR/KWH", sourceAdapter: "ARERA_ELECTRICITY" },
-  { componentCode: "UC3", customerScope: btaUpTo165Scope, normalizedUnit: "EUR/KWH", sourceAdapter: "ARERA_ELECTRICITY" },
-  { componentCode: "UC6", customerScope: btaUpTo165Scope, normalizedUnit: "EUR/KWH", sourceAdapter: "ARERA_ELECTRICITY" },
-  { componentCode: "UC6", customerScope: btaUpTo165Scope, normalizedUnit: "EUR/POD/YEAR", sourceAdapter: "ARERA_ELECTRICITY" },
-  { componentCode: "UC6", customerScope: btaUpTo165Scope, normalizedUnit: "EUR/KW/YEAR", sourceAdapter: "ARERA_ELECTRICITY" },
-  { componentCode: "ARIM", customerScope: btaUpTo165Scope, normalizedUnit: "EUR/POD/YEAR", sourceAdapter: "ARERA_ELECTRICITY" },
-  { componentCode: "ARIM", customerScope: btaUpTo165Scope, normalizedUnit: "EUR/KW/YEAR", sourceAdapter: "ARERA_ELECTRICITY" },
-  { componentCode: "ARIM", customerScope: btaUpTo165Scope, normalizedUnit: "EUR/KWH", sourceAdapter: "ARERA_ELECTRICITY" },
-  ...asosVariants.flatMap((regulatoryVariant) => ([
-    { componentCode: "ASOS" as const, customerScope: btaUpTo165Scope, normalizedUnit: "EUR/POD/YEAR" as const, regulatoryVariant, sourceAdapter: "ARERA_ELECTRICITY" as const },
-    { componentCode: "ASOS" as const, customerScope: btaUpTo165Scope, normalizedUnit: "EUR/KW/YEAR" as const, regulatoryVariant, sourceAdapter: "ARERA_ELECTRICITY" as const },
-    { componentCode: "ASOS" as const, customerScope: btaUpTo165Scope, normalizedUnit: "EUR/KWH" as const, regulatoryVariant, sourceAdapter: "ARERA_ELECTRICITY" as const },
+  // Tony (30/10, "ancora errori"): ARERA's 588 Tabelle 6-7 and the ASOS tables split the "fino a 16,5 kW" row by
+  // potenza impegnata (≤1,5 / 1,5-3 / 3-6 / 6-10 / >10 kW), so every onere has one domain per BTA class.
+  ...btaUpTo165Classes.flatMap((regulatoryVariant) => ([
+    { componentCode: "UC3" as const, customerScope: btaUpTo165Scope, normalizedUnit: "EUR/KWH" as const, regulatoryVariant, sourceAdapter: "ARERA_ELECTRICITY" as const },
+    { componentCode: "UC6" as const, customerScope: btaUpTo165Scope, normalizedUnit: "EUR/KWH" as const, regulatoryVariant, sourceAdapter: "ARERA_ELECTRICITY" as const },
+    { componentCode: "UC6" as const, customerScope: btaUpTo165Scope, normalizedUnit: "EUR/POD/YEAR" as const, regulatoryVariant, sourceAdapter: "ARERA_ELECTRICITY" as const },
+    { componentCode: "UC6" as const, customerScope: btaUpTo165Scope, normalizedUnit: "EUR/KW/YEAR" as const, regulatoryVariant, sourceAdapter: "ARERA_ELECTRICITY" as const },
+    { componentCode: "ARIM" as const, customerScope: btaUpTo165Scope, normalizedUnit: "EUR/POD/YEAR" as const, regulatoryVariant, sourceAdapter: "ARERA_ELECTRICITY" as const },
+    { componentCode: "ARIM" as const, customerScope: btaUpTo165Scope, normalizedUnit: "EUR/KW/YEAR" as const, regulatoryVariant, sourceAdapter: "ARERA_ELECTRICITY" as const },
+    { componentCode: "ARIM" as const, customerScope: btaUpTo165Scope, normalizedUnit: "EUR/KWH" as const, regulatoryVariant, sourceAdapter: "ARERA_ELECTRICITY" as const },
   ])),
+  ...asosVariants.flatMap((asosVariant) => btaUpTo165Classes.flatMap((tariffClass) => {
+    const regulatoryVariant = `${asosVariant as "ASOS_CLASS_0" | "ASOS_CLASS_1" | "ASOS_CLASS_2" | "ASOS_CLASS_3"}_${tariffClass}` as const;
+    return [
+      { componentCode: "ASOS" as const, customerScope: btaUpTo165Scope, normalizedUnit: "EUR/POD/YEAR" as const, regulatoryVariant, sourceAdapter: "ARERA_ELECTRICITY" as const },
+      { componentCode: "ASOS" as const, customerScope: btaUpTo165Scope, normalizedUnit: "EUR/KW/YEAR" as const, regulatoryVariant, sourceAdapter: "ARERA_ELECTRICITY" as const },
+      { componentCode: "ASOS" as const, customerScope: btaUpTo165Scope, normalizedUnit: "EUR/KWH" as const, regulatoryVariant, sourceAdapter: "ARERA_ELECTRICITY" as const },
+    ];
+  })),
 ];
 
 /** Single source of truth shared by the economic calculator and refresh service. */
