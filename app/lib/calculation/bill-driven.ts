@@ -3,6 +3,8 @@ import { completeSupplyProfile } from "../ingestion/supply-profile-completion.ts
 // @ts-expect-error Node's strip-only test runner requires the explicit extension.
 import { estimatedAnnualConsumption } from "./annual-consumption.ts";
 // @ts-expect-error Node's strip-only test runner requires the explicit extension.
+import { historyMonthTotals } from "../ingestion/consumption-history.ts";
+// @ts-expect-error Node's strip-only test runner requires the explicit extension.
 import { assertSimulationWithinLimits, canAuthorizeCte, cteUsability, loadHierarchyAccess } from "../hierarchy/service.ts";
 // @ts-expect-error Node's strip-only test runner requires the explicit extension.
 import { quoteWindowStart, supplyPeriodTooOld } from "./quote-window.ts";
@@ -108,6 +110,8 @@ export interface BillDrivenSimulationContext {
     readonly annual: number | null;
     readonly period: { readonly f1: number | null; readonly f2: number | null; readonly f3: number | null; readonly smc: number | null };
     readonly monthlyProfile: readonly { readonly month: string; readonly f1: number; readonly f2: number; readonly f3: number }[] | null;
+    /** Consumption history printed on the bill, month by month (Tony 30/10). */
+    readonly history?: readonly { readonly month: string; readonly quantity: number }[];
     readonly correctionCoefficient: number | null;
   };
   readonly currentSupplier: string;
@@ -342,6 +346,7 @@ function buildContext(document: BillDocument, version: BillVersion): BillDrivenS
       annual,
       period: periodConsumption,
       monthlyProfile: structured ? monthlyProfileFor(structured) : null,
+      ...(structured?.consumptionHistory?.length ? { history: structured.consumptionHistory } : {}),
       correctionCoefficient: contract.vector === "GAS" && contract.consumption.correctionCoefficient.status === "KNOWN" ? contract.consumption.correctionCoefficient.value : null,
     },
     currentSupplier: contract.currentSupplier,
@@ -447,12 +452,16 @@ function annualConsumptionWithin(rule: AnnualRule, annual: number | null): boole
     case "=": return annual === rule.value;
   }
 }
-/** Annual consumption from the bill, or the bill's average monthly consumption times 12 when it does not print it (Tony 29/10). */
+/**
+ * Annual consumption from the bill; when it does not print it, the average monthly consumption times 12 (Tony 29/10), on
+ * the bill's consumption history when it shows one (Tony 30/10), else on the months billed.
+ */
 export function annualConsumptionOf(context: Pick<BillDrivenSimulationContext, "vector" | "consumption" | "billingPeriod">): number | null {
   if (context.consumption.annual !== null) return context.consumption.annual;
   const period = context.consumption.period;
   const billed = context.vector === "EE" ? (period.f1 ?? 0) + (period.f2 ?? 0) + (period.f3 ?? 0) : period.smc ?? 0;
-  const monthTotals = context.vector === "EE" ? context.consumption.monthlyProfile?.map((month) => month.f1 + month.f2 + month.f3) ?? null : null;
+  const history = historyMonthTotals(context.consumption.history);
+  const monthTotals = history.length ? history : context.vector === "EE" ? context.consumption.monthlyProfile?.map((month) => month.f1 + month.f2 + month.f3) ?? null : null;
   return estimatedAnnualConsumption({ billed, periodStart: context.billingPeriod.periodStart, periodEnd: context.billingPeriod.periodEnd, monthTotals });
 }
 

@@ -15,3 +15,20 @@ assert.equal(annualConsumptionOf({ vector: "EE", billingPeriod: period, consumpt
 assert.equal(annualConsumptionOf({ vector: "GAS", billingPeriod: { periodStart: "2026-07-01", periodEnd: "2026-08-31" }, consumption: { annual: null, period: { f1: null, f2: null, f3: null, smc: 100 } } }), 600);
 assert.equal(annualConsumptionOf({ vector: "GAS", billingPeriod: { periodStart: "2026-09-01", periodEnd: "2026-09-05" }, consumption: { annual: null, period: { f1: null, f2: null, f3: null, smc: 40 } } }), null);
 console.log("bill-driven annual consumption: ok");
+
+// Tony (30/10): "bisogna usare lo storico consumi". The history printed on the bill (latest 12 months, 40..51 kWh,
+// average 45,5) sets the annual consumption at 546 kWh; the older month (999) is left out.
+const history = [{ month: "2025-09", quantity: 999 }, ...Array.from({ length: 12 }, (_, index) => ({ month: `${index < 3 ? 2025 : 2026}-${String(((index + 9) % 12) + 1).padStart(2, "0")}`, quantity: 40 + index }))];
+assert.equal(annualConsumptionOf({ vector: "EE", billingPeriod: { periodStart: "2026-09-01", periodEnd: "2026-10-01" }, consumption: { annual: null, period: { f1: 21, f2: 15, f3: 16, smc: null }, history } }), 546);
+// A printed annual consumption still comes first.
+assert.equal(annualConsumptionOf({ vector: "EE", billingPeriod: period, consumption: { annual: 17520, period: { f1: 1, f2: 1, f3: 1, smc: null }, history } }), 17520);
+
+const { normalizeConsumptionHistory } = await import("../app/lib/ingestion/consumption-history.ts");
+assert.deepEqual(normalizeConsumptionHistory([{ month: "2026-02", quantity: 10 }, { month: "2026-01", quantity: 5 }, { month: "2026-02", quantity: 99 }]), [{ month: "2026-01", quantity: 5 }, { month: "2026-02", quantity: 10 }]);
+assert.throws(() => normalizeConsumptionHistory([{ month: "2026-13", quantity: 1 }]), /CONSUMPTION_HISTORY_INVALID/);
+
+// The reading asks the AI for the history and keeps it on the bill.
+const { ANALYST_STAGE_PROMPT, ANALYST_WIRE_SCHEMA } = await import("../app/lib/ingestion/bill-two-stage.ts");
+assert.match(ANALYST_STAGE_PROMPT, /storico dei consumi/);
+assert.ok(ANALYST_WIRE_SCHEMA.properties.consumptionHistory);
+console.log("consumption history ok");

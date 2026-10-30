@@ -3,6 +3,8 @@ import type { BillContract, CustomerType, DeclaredText, Quantity, VoltageLevel }
 import { normalizeBillSupplyProfile, type BillSupplyProfile } from "./bill-supply-profile.ts";
 // @ts-expect-error Node's strip-only test runner requires the explicit extension.
 import { validateBillContract } from "../energy/validation.ts";
+// @ts-expect-error Node's strip-only test runner requires the explicit extension.
+import { normalizeConsumptionHistory } from "./consumption-history.ts";
 import type { BillFields } from "../foundation/real-bill";
 import type { BillCalculationCheck, BillEconomicClassification } from "../foundation/bill-economic-analysis.ts";
 import type { BillStageShapeDiagnostic } from "../diagnostics/real-diag-4.ts";
@@ -108,6 +110,8 @@ export interface StructuredBillExtraction {
   readonly economicChargeLines: readonly StructuredBillEconomicChargeLine[];
   /** Optional document-backed month detail; never inferred from the billing period. */
   readonly monthlyBands?: readonly StructuredBillMonthlyBand[];
+  /** Month-by-month consumption history printed on the bill (Tony 30/10), when the bill shows one. */
+  readonly consumptionHistory?: readonly import("./consumption-history").ConsumptionHistoryMonth[];
   /** Optional bounded evidence for the numeric values in monthlyBands. */
   readonly monthlyBandEvidence?: readonly DocumentMonthlyBandEvidence[];
   /** Complete bounded document detection; may include months outside billingPeriod. */
@@ -253,6 +257,9 @@ export function validateStructuredBillExtraction(value: unknown): asserts value 
     validateDocumentEvidenceArray(evidence, "monthlyBandEvidence", bands);
   }
   if (item.detectedMonthlyBandEvidence !== undefined) validateDocumentEvidenceArray(item.detectedMonthlyBandEvidence, "detectedMonthlyBandEvidence");
+  if (item.consumptionHistory !== undefined) {
+    try { normalizeConsumptionHistory(item.consumptionHistory); } catch { throw new StructuredBillExtractionError("BILL_STRUCTURED_FIELD_INVALID:consumptionHistory"); }
+  }
   if (item.analystExtractionStatus !== undefined && !["NOT_RUN", "EXTRACTED", "FAILED"].includes(item.analystExtractionStatus as string)) throw new StructuredBillExtractionError("BILL_STRUCTURED_FIELD_INVALID:analystExtractionStatus");
   if (item.supplyProfile !== undefined) {
     try {

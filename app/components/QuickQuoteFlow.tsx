@@ -6,6 +6,7 @@ import { downloadExport, requestForm, requestJson, toUiError } from "../lib/ui/c
 import { buildQuoteReceipt, effectiveBillSpread, isSameOffer, regulatedVerification, sameOfferDifferences, type QuoteReceipt, type RegulatedDomain } from "../lib/quote/receipt";
 import { customerTypeOf } from "../lib/ingestion/customer-type";
 import { estimatedAnnualConsumption } from "../lib/calculation/annual-consumption";
+import { historyMonthTotals } from "../lib/ingestion/consumption-history";
 import type { ApprovedBillSummaryModel, BillDocumentModel, CalculationModel, ComparisonModel, ProposalModel } from "../lib/ui/models";
 
 type Step = "bill" | "review" | "offers";
@@ -13,7 +14,7 @@ type Pending = "upload" | "open" | "confirm" | "offers" | "proposal";
 type Context = {
   readonly billId: string; readonly billVersionId: string; readonly vector: "EE" | "GAS"; readonly customerType: "RESIDENTIAL" | "NON_RESIDENTIAL";
   readonly supply: { readonly pod: string | null; readonly pdr: string | null; readonly voltageLevel: "LV" | "MV" | "HV" | "EHV" | null; readonly contractedPowerKw?: number | null };
-  readonly consumption?: { readonly annual: number | null; readonly period: { readonly f1: number | null; readonly f2: number | null; readonly f3: number | null; readonly smc: number | null }; readonly monthlyProfile?: readonly { readonly f1: number; readonly f2: number; readonly f3: number }[] | null };
+  readonly consumption?: { readonly annual: number | null; readonly period: { readonly f1: number | null; readonly f2: number | null; readonly f3: number | null; readonly smc: number | null }; readonly monthlyProfile?: readonly { readonly f1: number; readonly f2: number; readonly f3: number }[] | null; readonly history?: readonly { readonly month: string; readonly quantity: number }[] };
   readonly currentOffer?: { readonly name: string | null; readonly code: string | null };
   readonly billingPeriod: { readonly periodStart: string; readonly periodEnd: string };
   readonly currentSupplier: string;
@@ -66,12 +67,14 @@ function unitOf(name: string, vector: string): string {
   if (name === "billedConsumption" || name === "annualConsumption") return vector === "GAS" ? " (Smc)" : " (kWh)";
   return name === "totalAmount" ? " (€)" : "";
 }
-// When the bill does not print the annual consumption, it is estimated from the billed period (kWh/day x 365).
+// When the bill does not print the annual consumption, it is the average monthly consumption on the bill times 12.
 function estimatedAnnual(document: BillDocumentModel): string | null {
   const billed = Number(document.fields.billedConsumption?.value);
   const dates = /(\d{4}-\d{2}-\d{2}).*?(\d{4}-\d{2}-\d{2})/.exec(document.fields.billingPeriod?.value ?? "");
   if (!Number.isFinite(billed) || billed <= 0 || !dates) return null;
-  const annual = estimatedAnnualConsumption({ billed, periodStart: dates[1], periodEnd: dates[2] });
+  // Tony (30/10): the consumption history on the bill, when there is one, is the basis of the monthly average.
+  const history = historyMonthTotals(document.structuredBill?.consumptionHistory);
+  const annual = estimatedAnnualConsumption({ billed, periodStart: dates[1], periodEnd: dates[2], monthTotals: history.length ? history : null });
   return annual === null ? null : String(annual);
 }
 function readValues(document: BillDocumentModel): Record<string, string> {
@@ -256,7 +259,8 @@ function annualBasis(context: Context): AnnualBasis | null {
   if (billed <= 0) return null;
   const printed = context.consumption?.annual;
   if (printed != null && printed > 0) return { billed, annual: printed, estimated: false };
-  const monthTotals = context.vector === "EE" ? context.consumption?.monthlyProfile?.map((month) => month.f1 + month.f2 + month.f3) ?? null : null;
+  const history = historyMonthTotals(context.consumption?.history);
+  const monthTotals = history.length ? history : context.vector === "EE" ? context.consumption?.monthlyProfile?.map((month) => month.f1 + month.f2 + month.f3) ?? null : null;
   const annual = estimatedAnnualConsumption({ billed, periodStart: context.billingPeriod.periodStart, periodEnd: context.billingPeriod.periodEnd, monthTotals });
   return annual === null ? null : { billed, annual, estimated: true };
 }
@@ -693,7 +697,7 @@ export default function QuickQuoteFlow({ readonly }: { readonly readonly: boolea
     {step === "review" && draft ? <section className="ui-card">
       <h3>Dati letti dalla bolletta</h3><p className="muted">Li usiamo per trovare le CTE adatte. Se vedi un errore evidente puoi correggerlo, altrimenti prosegui.</p>
       <BillContractFacts bill={draft} />
-      <div className="form-grid">{FIELDS.map((field) => <label className="form-field" key={field.name}><span className="form-label">{field.label}{unitOf(field.name, draft.resolvedVector)}{field.name === "annualConsumption" && !draft.fields.annualConsumption?.value && values.annualConsumption ? " · media mensile × 12" : ""}</span><input value={values[field.name] ?? ""} onChange={(event) => setValues((current) => ({ ...current, [field.name]: event.target.value }))} disabled={Boolean(pending)} /></label>)}</div>
+      <div className="form-grid">{FIELDS.map((field) => <label className="form-field" key={field.name}><span className="form-label">{field.label}{unitOf(field.name, draft.resolvedVector)}{field.name === "annualConsumption" && !draft.fields.annualConsumption?.value && values.annualConsumption ? historyMonthTotals(draft.structuredBill?.consumptionHistory).length ? " · media dello storico consumi × 12" : " · media mensile × 12" : ""}</span><input value={values[field.name] ?? ""} onChange={(event) => setValues((current) => ({ ...current, [field.name]: event.target.value }))} disabled={Boolean(pending)} /></label>)}</div>
       <div className="button-row"><button className="button primary" type="button" onClick={() => void confirm()} disabled={readonly || Boolean(pending)}>{pending === "confirm" ? "Ricerca in corso" : "Cerca le CTE utilizzabili"}</button></div>
     </section> : null}
     {step === "offers" ? pending === "offers" ? <LoadingState label="Calcolo delle offerte per questa bolletta" /> : quote ? <>

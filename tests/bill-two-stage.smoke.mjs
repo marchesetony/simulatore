@@ -45,7 +45,8 @@ assert.deepEqual(unsupportedOutboundHits, []);
 assert.deepEqual(ANALYST_WIRE_SCHEMA.required, ["schemaVersion", "items"]);
 assert.deepEqual(ANALYST_WIRE_SCHEMA.properties.items.items.required, ["kind", "code", "label", "value", "unit", "quantity", "unitPrice", "amount", "period", "status"]);
 assert.equal(ANALYST_SCHEMA_METRICS.enumValues, 0);
-assert.equal(ANALYST_SCHEMA_METRICS.optional, 1);
+// Tony (30/10, "bisogna usare lo storico consumi"): consumptionHistory is the second optional analyst property.
+assert.equal(ANALYST_SCHEMA_METRICS.optional, 2);
 assert.equal(ANALYST_SCHEMA_METRICS.unions, 0);
 assert.ok(ANALYST_SCHEMA_METRICS.bytes < 7428);
 assert.ok(ANALYST_SCHEMA_METRICS.bytes < CORE_SCHEMA_METRICS.bytes);
