@@ -281,7 +281,10 @@ function auditLine(input: BillAuditChargeLineInput, bill: ElectricityBillAuditIn
     return { ...base, ...sourceFor(sourceRecord), auditStatus: "SCOPE_UNDETERMINED", notComparableReason: "CUSTOMER_SCOPE_UNDETERMINED", messageCode: "DOMESTIC_RESIDENCE_STATUS_UNKNOWN" };
   }
   const sourceUnit = sourceUnitForBill(input.code, input.unit);
-  const record = resolveAreraEffectiveValue(values, bill.billingPeriod.from, input.code as RegulatoryValueRecord["componentCode"], scope, sourceUnit);
+  let record: RegulatoryValueRecord | null;
+  // A line the archive cannot price unambiguously is left unverified; it never stops the bill upload (Tony 30/10).
+  try { record = resolveAreraEffectiveValue(values, bill.billingPeriod.from, input.code as RegulatoryValueRecord["componentCode"], scope, sourceUnit); }
+  catch { return { ...base, auditStatus: "NOT_COMPARABLE", notComparableReason: "REGULATORY_SOURCE_MISSING", messageCode: "ARERA_VALUE_AMBIGUOUS_FOR_SUPPLY_CLASS" }; }
   if (!record) return { ...base, auditStatus: "REGULATORY_SOURCE_MISSING", notComparableReason: "REGULATORY_SOURCE_MISSING", messageCode: "ARERA_COMPONENT_SOURCE_MISSING" };
   if (quantity === null) return { ...base, ...sourceFor(record), auditStatus: "INSUFFICIENT_DOCUMENT_DATA", notComparableReason: "QUANTITY_MISSING", messageCode: "REGULATED_FORMULA_INPUT_MISSING" };
   if (amount === null) return { ...base, ...sourceFor(record), auditStatus: "INSUFFICIENT_DOCUMENT_DATA", notComparableReason: "INSUFFICIENT_DOCUMENT_DATA", messageCode: "REGULATED_FORMULA_INPUT_MISSING" };

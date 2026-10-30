@@ -1386,11 +1386,16 @@ export async function backupRegulatoryArchive(root: string): Promise<{ readonly 
   return { path: backupPath, readable, restoreCheck };
 }
 
-export function resolveAreraEffectiveValue(records: readonly RegulatoryValueRecord[], instant: string, componentCode: RegulatoryValueComponentCode, scope: RegulatoryCustomerScope, normalizedUnit?: string): RegulatoryValueRecord | null {
+// Tony (30/10, upload "Caricamento bolletta non disponibile. (codice ARERA_EFFECTIVE_VALUE_CONFLICT)"): with the tables per
+// BTA class and ASOS class several values share code, scope and unit. The supply's own scope wins over the generic BT and
+// all-electricity records, a value without variant over the per-class ones, and equal values are not a conflict.
+export function resolveAreraEffectiveValue(records: readonly RegulatoryValueRecord[], instant: string, componentCode: RegulatoryValueComponentCode, scope: RegulatoryCustomerScope, normalizedUnit?: string, regulatoryVariant?: string): RegulatoryValueRecord | null {
   const at = Date.parse(instant);
   const matches = records.filter((record) => record.componentCode === componentCode && (record.customerScope === scope || record.customerScope === "DOMESTIC_BT" || record.customerScope === "ALL_ELECTRICITY") && (!normalizedUnit || record.normalizedUnit === normalizedUnit) && Date.parse(record.effectiveFrom) <= at && (record.effectiveTo === null || at < Date.parse(record.effectiveTo)));
-  if (matches.length > 1) throw new Error("ARERA_EFFECTIVE_VALUE_CONFLICT");
-  return matches[0] ?? null;
+  const tier = [scope, "DOMESTIC_BT", "ALL_ELECTRICITY"].map((candidate) => matches.filter((record) => record.customerScope === candidate)).find((group) => group.length > 0) ?? [];
+  const byVariant = regulatoryVariant !== undefined ? tier.filter((record) => record.regulatoryVariant === regulatoryVariant) : tier.some((record) => record.regulatoryVariant === undefined) ? tier.filter((record) => record.regulatoryVariant === undefined) : tier;
+  if (byVariant.length > 1 && !byVariant.every((record) => record.normalizedValue === byVariant[0].normalizedValue && record.normalizedUnit === byVariant[0].normalizedUnit)) throw new Error("ARERA_EFFECTIVE_VALUE_CONFLICT");
+  return byVariant[0] ?? null;
 }
 
 export class AreraElectricityRegulatorySourceAdapter {
