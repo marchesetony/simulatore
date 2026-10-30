@@ -31,8 +31,8 @@ assert.equal(third.status, "SUCCESS");
 assert.equal(third.createdCount, 0);
 assert.equal(third.replacedCount, 0);
 // Tony (29/10): "ancora esiste dato non letto arera". The 10 domestic non-resident domains are registered too.
-// Tony (30/10, AZIENDA PROTETTA 3 kW): 35 domains added for BT other uses up to 16,5 kW, 49 + 35 = 84.
-assert.equal(third.unchangedCount, 84);
+// Tony (30/10, AZIENDA PROTETTA 3 kW): 36 domains added for BT other uses up to 16,5 kW, 49 + 36 = 85.
+assert.equal(third.unchangedCount, 85);
 assert.equal(third.sourceChecks.find((check) => check.domain === regulatoryDomainKey(cdispdDomain))?.status, "PASS");
 console.log("CDISPD_BACKFILL=PASS");
 console.log("CDISPD_REFRESH_IDEMPOTENT=PASS");

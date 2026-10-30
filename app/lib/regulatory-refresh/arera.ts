@@ -1,7 +1,7 @@
 import type { RegulatoryRepository } from "../foundation/regulatory-ports.ts";
 import type { RegulatoryCustomerScope, RegulatoryValueComponentCode, RegulatoryValueRecord } from "../foundation/regulatory-types.ts";
 // @ts-expect-error Node's strip-only test runner requires the explicit extension.
-import { ARERA_SYSTEM_CHARGES_PAGE, createRegulatoryValue, fetchOfficialBta6Sources, fetchOfficialBtaUpTo165Sources, AreraElectricityRegulatorySourceAdapter, fetchAreraDomesticCdispdWorkbook, parseAreraDomesticCdispdXlsx, type AreraFetcher, DOMESTIC_EQUAL_RATE_APPLICATION_BASIS } from "../foundation/arera-electricity-regulatory.ts";
+import { ARERA_SYSTEM_CHARGES_PAGE, createRegulatoryValue, fetchOfficialBta6Sources, fetchOfficialBtaUpTo165Sources, ASOS_BTA1_5_DIAGNOSTICS, AreraElectricityRegulatorySourceAdapter, fetchAreraDomesticCdispdWorkbook, parseAreraDomesticCdispdXlsx, type AreraFetcher, DOMESTIC_EQUAL_RATE_APPLICATION_BASIS } from "../foundation/arera-electricity-regulatory.ts";
 // @ts-expect-error Node's strip-only test runner requires the explicit extension.
 import { CALCULATED_REGULATORY_DOMAINS, regulatoryDomainKey, type RegulatoryRefreshDomain } from "./registry.ts";
 
@@ -59,6 +59,7 @@ export function createAreraRegulatorySourceReader(input: { readonly fetcher?: Ar
     lastErrors: () => errors,
     async load({ tenantId, retrievedAt }): Promise<readonly RegulatoryValueRecord[]> {
       errors = [];
+      ASOS_BTA1_5_DIAGNOSTICS.length = 0;
       const bta6 = await attempt("ARERA_BTA6", () => fetchOfficialBta6Sources({ tenantId, retrievedAt, fetcher: input.fetcher }));
       const upTo165 = await attempt("ARERA_BTA1_5", () => fetchOfficialBtaUpTo165Sources({ tenantId, retrievedAt, fetcher: input.fetcher }));
       upTo165?.errors.forEach((error) => errors.push(error));
@@ -108,6 +109,7 @@ export function createAreraRegulatorySourceReader(input: { readonly fetcher?: Ar
         "METERING_FIXED|NON_DOMESTIC_BT_BTA1_5|EUR/POD/YEAR": bta6?.metering ? exactScopeRecord(bta6.metering, "NON_DOMESTIC_BT_BTA1_5") : undefined,
         "TRANSMISSION_ENERGY|NON_DOMESTIC_BT_BTA1_5|EUR/KWH": bta6?.transmission ? exactScopeRecord(bta6.transmission, "NON_DOMESTIC_BT_BTA1_5") : undefined,
       };
+      if (!upTo165Records.some((record) => record.componentCode === "ASOS")) ASOS_BTA1_5_DIAGNOSTICS.slice(0, 1).forEach((item) => errors.push(`ARERA_ASOS_BTA1_5_ROW_MISSING:${item}`));
       const records: RegulatoryValueRecord[] = [...(cdispd?.records ?? [])];
       for (const domain of CALCULATED_REGULATORY_DOMAINS) {
         const source = domain.customerScope === "NON_DOMESTIC_BT_BTA1_5" ? upTo165Source[regulatoryDomainKey(domain)]

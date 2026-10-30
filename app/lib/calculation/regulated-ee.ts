@@ -267,6 +267,7 @@ export async function calculateRegulatedEeSubset(
     const uc3 = await of("UC3", "EUR/KWH");
     const uc6Energy = await of("UC6", "EUR/KWH");
     const uc6Fixed = await of("UC6", "EUR/POD/YEAR");
+    const uc6Power = await of("UC6", "EUR/KW/YEAR");
     const arimFixed = await of("ARIM", "EUR/POD/YEAR");
     const arimPower = await of("ARIM", "EUR/KW/YEAR");
     const arimEnergy = await of("ARIM", "EUR/KWH");
@@ -275,7 +276,7 @@ export async function calculateRegulatedEeSubset(
     const asosFixed = await of("ASOS", "EUR/POD/YEAR", asosVariant);
     const asosPower = await of("ASOS", "EUR/KW/YEAR", asosVariant);
     const asosEnergy = await of("ASOS", "EUR/KWH", asosVariant);
-    const timelines = [networkFixed, networkPower, networkEnergy, meteringFixed, transmissionEnergy, uc3, uc6Energy, uc6Fixed, arimFixed, arimPower, arimEnergy, asosFixed, asosPower, asosEnergy];
+    const timelines = [networkFixed, networkPower, networkEnergy, meteringFixed, transmissionEnergy, uc3, uc6Energy, uc6Fixed, uc6Power, arimFixed, arimPower, arimEnergy, asosFixed, asosPower, asosEnergy];
     timelines.forEach(assertMonthAligned);
     const monthsOf = (segment: RegulatoryTimelineSegment) => monthsInSimulationPeriod({ periodStart: segment.segmentStart.slice(0, 10), periodEnd: segment.segmentEnd.slice(0, 10) }).length;
     const components: CalculationComponent[] = [];
@@ -288,6 +289,7 @@ export async function calculateRegulatedEeSubset(
     ] as const) timeline.segments.forEach((segment) => components.push(fixedComponent(segment, `${componentId}:${segment.regulatoryRecordId}`, monthsOf(segment), label, formulaId)));
     for (const [timeline, componentId, label, formulaId] of [
       [networkPower, "regulated:bta1-5-network-power", `${tariffClass} quota potenza distribuzione regolata`, "REGULATED_BTA1_5_NETWORK_POWER_RATE_TIMES_COMMITTED_KW_TIME"],
+      [uc6Power, "regulated:bta1-5-uc6-power", `${tariffClass} UC6 quota potenza regolata`, "REGULATED_BTA1_5_UC6_POWER_RATE_TIMES_COMMITTED_KW_TIME"],
       [arimPower, "regulated:bta1-5-arim-power", `${tariffClass} ARIM quota potenza regolata`, "REGULATED_BTA1_5_ARIM_POWER_RATE_TIMES_COMMITTED_KW_TIME"],
       [asosPower, "regulated:bta1-5-asos-power", `${tariffClass} ASOS quota potenza regolata`, "REGULATED_BTA1_5_ASOS_POWER_RATE_TIMES_COMMITTED_KW_TIME"],
     ] as const) timeline.segments.forEach((segment) => components.push(powerComponent(segment, context, `${componentId}:${segment.regulatoryRecordId}`, monthsOf(segment), false, true, { label, formulaId })));
@@ -299,7 +301,7 @@ export async function calculateRegulatedEeSubset(
       [arimEnergy, "regulated:bta1-5-arim-energy", `${tariffClass} ARIM quota energia regolata`, "REGULATED_BTA1_5_ARIM_ENERGY_RATE_TIMES_KWH"],
       [asosEnergy, "regulated:bta1-5-asos-energy", `${tariffClass} ASOS quota energia regolata`, "REGULATED_BTA1_5_ASOS_ENERGY_RATE_TIMES_KWH"],
     ] as const) timeline.segments.forEach((segment) => components.push(energyComponent(segment, quantityForSegment(request, segment, timeline.segments.length), `${componentId}:${segment.regulatoryRecordId}`, label, formulaId)));
-    return { components, references: timelines.flatMap((timeline) => timeline.segments.map(referenceOf)), includedComponents: [...BTA6_REGULATED_COMPONENTS_INCLUDED], partialWarning: BTA1_5_REGULATED_SUBSET_PARTIAL_WARNING };
+    return { components, references: timelines.flatMap((timeline) => timeline.segments.map(referenceOf)), includedComponents: [...BTA6_REGULATED_COMPONENTS_INCLUDED, "UC6_POWER"], partialWarning: BTA1_5_REGULATED_SUBSET_PARTIAL_WARNING };
   }
 
   if (context.regulatoryCustomerScope === "DOMESTIC_RESIDENT_BT" || context.regulatoryCustomerScope === "DOMESTIC_NON_RESIDENT_BT") {

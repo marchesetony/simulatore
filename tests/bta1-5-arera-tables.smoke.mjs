@@ -24,19 +24,22 @@ assert.deepEqual([1.5, 3, 3.3, 6, 10, 16.5, 16.6].map(btaTariffClass), ["BTA1", 
 const tenant = "tenant_bta1-5-arera";
 const scope = "NON_DOMESTIC_BT_BTA1_5";
 for (const variant of ["BTA1", "BTA2", "BTA3", "BTA4", "BTA5"]) for (const [componentCode, normalizedUnit] of [["NETWORK_FIXED", "EUR/POD/YEAR"], ["NETWORK_POWER", "EUR/KW/YEAR"], ["NETWORK_ENERGY", "EUR/KWH"]]) assert.equal(isCalculatedRegulatoryDomain({ componentCode, customerScope: scope, normalizedUnit, regulatoryVariant: variant }), true);
-for (const [componentCode, normalizedUnit] of [["METERING_FIXED", "EUR/POD/YEAR"], ["TRANSMISSION_ENERGY", "EUR/KWH"], ["UC3", "EUR/KWH"], ["UC6", "EUR/KWH"], ["UC6", "EUR/POD/YEAR"], ["ARIM", "EUR/POD/YEAR"], ["ARIM", "EUR/KW/YEAR"], ["ARIM", "EUR/KWH"]]) assert.equal(isCalculatedRegulatoryDomain({ componentCode, customerScope: scope, normalizedUnit }), true);
-assert.equal(CALCULATED_REGULATORY_DOMAINS.filter((domain) => domain.customerScope === scope).length, 35);
+for (const [componentCode, normalizedUnit] of [["METERING_FIXED", "EUR/POD/YEAR"], ["TRANSMISSION_ENERGY", "EUR/KWH"], ["UC3", "EUR/KWH"], ["UC6", "EUR/KWH"], ["UC6", "EUR/POD/YEAR"], ["UC6", "EUR/KW/YEAR"], ["ARIM", "EUR/POD/YEAR"], ["ARIM", "EUR/KW/YEAR"], ["ARIM", "EUR/KWH"]]) assert.equal(isCalculatedRegulatoryDomain({ componentCode, customerScope: scope, normalizedUnit }), true);
+assert.equal(CALCULATED_REGULATORY_DOMAINS.filter((domain) => domain.customerScope === scope).length, 36);
 
-// The 588/2025 rows of the BT other uses up to 16,5 kW, beside the BTA6 row (test values, not ARERA's).
+// The 588/2025 rows of the BT other uses up to 16,5 kW, beside the BTA6 row (test values, not ARERA's). Tony (30/10,
+// refresh "ARERA_588_BTA1_5_UC3_UC6_VALUE_MISSING"): the row may read "non superiore a 16,5 kW" and a title may name the
+// same users without values; an empty column is a quota without aliquota, archived as 0.
 const rows = [
-  ["", "Altre utenze in bassa tensione con potenza disponibile fino a 16,5 kW", "0.100", "200.00", "", "0.010"],
+  ["", "Componenti UC3 e UC6 per altre utenze in bassa tensione fino a 16,5 kW", "", "", "", ""],
+  ["", "Altre utenze in bassa tensione con potenza disponibile non superiore a 16,5 kW", "0.100", "200.00", "", "0.010"],
   ["", "Altre utenze in bassa tensione con potenza disponibile superiore a 16,5 kW", "0.276", "168.24", "", "0.007"],
 ];
 const uc = parseArera588BtaUpTo165Uc3Uc6TableRows({ rows, retrievedAt: "2026-09-04T12:00:00.000Z", sourceSha256: "a".repeat(64) });
-assert.deepEqual(uc.map((record) => [record.componentCode, record.normalizedUnit, record.normalizedValue, record.customerScope]), [["UC3", "EUR/KWH", 0.001, scope], ["UC6", "EUR/KWH", 0.0001, scope], ["UC6", "EUR/POD/YEAR", 2, scope]]);
-const arim = parseArera588BtaUpTo165ArimTableRows({ rows: [["", "Altre utenze in bassa tensione con potenza disponibile superiore a 16,5 kW", "302.76", "345.24", "0.1614"], ["", "Altre utenze in bassa tensione con potenza disponibile fino a 16,5 kW", "1200", "600", "2"]], retrievedAt: "2026-09-04T12:00:00.000Z", sourceSha256: "a".repeat(64) });
-assert.deepEqual(arim.map((record) => [record.normalizedUnit, record.normalizedValue]), [["EUR/POD/YEAR", 12], ["EUR/KW/YEAR", 6], ["EUR/KWH", 0.02]]);
-assert.throws(() => parseArera588BtaUpTo165ArimTableRows({ rows: [rows[1]], retrievedAt: "2026-09-04T12:00:00.000Z", sourceSha256: "a".repeat(64) }), /ARERA_588_BTA1_5_ARIM_ROW_MISSING/);
+assert.deepEqual(uc.map((record) => [record.componentCode, record.normalizedUnit, record.normalizedValue, record.customerScope]), [["UC3", "EUR/KWH", 0.001, scope], ["UC6", "EUR/KWH", 0.0001, scope], ["UC6", "EUR/POD/YEAR", 2, scope], ["UC6", "EUR/KW/YEAR", 0, scope]]);
+const arim = parseArera588BtaUpTo165ArimTableRows({ rows: [["", "Altre utenze in bassa tensione con potenza disponibile superiore a 16,5 kW", "302.76", "345.24", "0.1614"], ["", "Altre utenze in bassa tensione con potenza disponibile fino a 16,5 kW", "1200", "", "2"]], retrievedAt: "2026-09-04T12:00:00.000Z", sourceSha256: "a".repeat(64) });
+assert.deepEqual(arim.map((record) => [record.normalizedUnit, record.normalizedValue]), [["EUR/POD/YEAR", 12], ["EUR/KW/YEAR", 0], ["EUR/KWH", 0.02]]);
+assert.throws(() => parseArera588BtaUpTo165ArimTableRows({ rows: [rows[2]], retrievedAt: "2026-09-04T12:00:00.000Z", sourceSha256: "a".repeat(64) }), /ARERA_588_BTA1_5_ARIM_ROW_MISSING/);
 
 const source = "https://www.arera.it/fileadmin/allegati/docs/25/575-2025-R-eel-TABELLE_TIT.xlsx";
 function value({ componentCode, normalizedUnit, normalizedValue, regulatoryVariant }) {
@@ -60,6 +63,7 @@ const records = [
   value({ componentCode: "UC3", normalizedUnit: "EUR/KWH", normalizedValue: 0.001 }),
   value({ componentCode: "UC6", normalizedUnit: "EUR/KWH", normalizedValue: 0.0001 }),
   value({ componentCode: "UC6", normalizedUnit: "EUR/POD/YEAR", normalizedValue: 2.4 }),
+  value({ componentCode: "UC6", normalizedUnit: "EUR/KW/YEAR", normalizedValue: 4 }),
   value({ componentCode: "ARIM", normalizedUnit: "EUR/POD/YEAR", normalizedValue: 12 }),
   value({ componentCode: "ARIM", normalizedUnit: "EUR/KW/YEAR", normalizedValue: 6 }),
   value({ componentCode: "ARIM", normalizedUnit: "EUR/KWH", normalizedValue: 0.02 }),
@@ -81,11 +85,12 @@ assert.equal(amount("REGULATED_BTA1_5_METERING_FIXED_RATE_TIMES_TIME"), 100);
 assert.equal(amount("REGULATED_TRANSMISSION_RATE_TIMES_KWH"), 100);
 assert.equal(amount("REGULATED_UC3_RATE_TIMES_KWH"), 10);
 assert.equal(amount("REGULATED_BTA1_5_UC6_FIXED_RATE_TIMES_TIME"), 20);
+assert.equal(amount("REGULATED_BTA1_5_UC6_POWER_RATE_TIMES_COMMITTED_KW_TIME"), 100);
 // ARIM 12/12 + 6 x 3 / 12 + 0,02 x 100; ASOS classe 0: 120/12 + 60 x 3 / 12 + 0,03 x 100.
 assert.equal(amount("REGULATED_BTA1_5_ARIM_FIXED_RATE_TIMES_TIME") + amount("REGULATED_BTA1_5_ARIM_POWER_RATE_TIMES_COMMITTED_KW_TIME") + amount("REGULATED_BTA1_5_ARIM_ENERGY_RATE_TIMES_KWH"), 100 + 150 + 200);
 assert.equal(amount("REGULATED_BTA1_5_ASOS_FIXED_RATE_TIMES_TIME") + amount("REGULATED_BTA1_5_ASOS_POWER_RATE_TIMES_COMMITTED_KW_TIME") + amount("REGULATED_BTA1_5_ASOS_ENERGY_RATE_TIMES_KWH"), 1000 + 1500 + 300);
 assert.ok(result.components.every((component) => component.formulaInputs.customerScope === scope));
-assert.equal(result.includedComponents.length, 14);
+assert.equal(result.includedComponents.length, 15);
 // The supply's own ASOS class, when the bill states it.
 const energivoro = await calculateRegulatedEeSubset(request, { trustedElectricityContext: { ...context, asosClass: "ASOS_CLASS_1", asosClassTemporalStatus: "VALID" }, regulatoryBridge: await bridgeWith(records) });
 assert.equal(energivoro.components.filter((component) => component.formulaInputs.componentCode === "ASOS").every((component) => component.formulaInputs.regulatoryVariant === "ASOS_CLASS_1"), true);

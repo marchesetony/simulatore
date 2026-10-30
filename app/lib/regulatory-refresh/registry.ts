@@ -83,6 +83,7 @@ const btaUpTo165Domains: readonly RegulatoryRefreshDomain[] = [
   { componentCode: "UC3", customerScope: btaUpTo165Scope, normalizedUnit: "EUR/KWH", sourceAdapter: "ARERA_ELECTRICITY" },
   { componentCode: "UC6", customerScope: btaUpTo165Scope, normalizedUnit: "EUR/KWH", sourceAdapter: "ARERA_ELECTRICITY" },
   { componentCode: "UC6", customerScope: btaUpTo165Scope, normalizedUnit: "EUR/POD/YEAR", sourceAdapter: "ARERA_ELECTRICITY" },
+  { componentCode: "UC6", customerScope: btaUpTo165Scope, normalizedUnit: "EUR/KW/YEAR", sourceAdapter: "ARERA_ELECTRICITY" },
   { componentCode: "ARIM", customerScope: btaUpTo165Scope, normalizedUnit: "EUR/POD/YEAR", sourceAdapter: "ARERA_ELECTRICITY" },
   { componentCode: "ARIM", customerScope: btaUpTo165Scope, normalizedUnit: "EUR/KW/YEAR", sourceAdapter: "ARERA_ELECTRICITY" },
   { componentCode: "ARIM", customerScope: btaUpTo165Scope, normalizedUnit: "EUR/KWH", sourceAdapter: "ARERA_ELECTRICITY" },

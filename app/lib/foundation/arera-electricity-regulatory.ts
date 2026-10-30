@@ -629,6 +629,9 @@ export function parseAreraAsosBta6ClassesXlsx(input: {
   return records;
 }
 
+/** Labels near the BTA rows of the ASOS class sheets whose row up to 16,5 kW was not found, for the refresh errors. */
+export const ASOS_BTA1_5_DIAGNOSTICS: string[] = [];
+
 /** ASOS of the other BT uses up to 16,5 kW, one row per class sheet, found by its label (Tony 30/10, AZIENDA PROTETTA). */
 export function parseAreraAsosBtaUpTo165ClassesXlsx(input: {
   readonly body: Uint8Array;
@@ -651,13 +654,14 @@ export function parseAreraAsosBtaUpTo165ClassesXlsx(input: {
     }
     const regulatoryVariant = asosVariantFromTitle(`${xlsxCell(cells, 2, "A")} ${xlsxCell(cells, 3, "A")} ${xlsxCell(cells, 6, "C")}`);
     if (regulatoryVariant === null) continue;
-    const row = rowsFromCells(cells).find((rowNumber) => isBtaUpTo165Row(`${xlsxCell(cells, rowNumber, "A")} ${xlsxCell(cells, rowNumber, "B")}`));
-    if (row === undefined) continue;
+    const rowText = (rowNumber: number) => cells.filter((cell) => cell.row === rowNumber && !/^[-\d.,\s]*$/.test(cell.value)).map((cell) => cell.value).join(" ");
+    const row = rowsFromCells(cells).find((rowNumber) => isBtaUpTo165Row(rowText(rowNumber)) && xlsxNumeric(cells, rowNumber, "E") !== null);
+    if (row === undefined) { ASOS_BTA1_5_DIAGNOSTICS.push(`${regulatoryVariant}:${rowsFromCells(cells).filter((rowNumber) => rowNumber >= 12 && rowNumber <= 24).map((rowNumber) => `${rowNumber}=${clean(rowText(rowNumber)).slice(0, 60)}`).join(";")}`.slice(0, 600)); continue; }
     const fixed = xlsxNumeric(cells, row, "C");
     const power = xlsxNumeric(cells, row, "D");
     const energy = xlsxNumeric(cells, row, "E");
     if (fixed === null || power === null || energy === null) throw new Error(`ARERA_ASOS_BTA1_5_CLASS_VALUE_MISSING:${regulatoryVariant}`);
-    const base = { tenantId: input.tenantId ?? "tenant_local-demo", sourceType: "OFFICIAL_ATTACHMENT" as const, sourceReference: input.sourceReference, officialIdentifier: input.officialIdentifier, publicationDate: input.publicationDate, retrievedAt: input.retrievedAt, effectiveFrom: input.effectiveFrom, effectiveTo: null, componentCode: "ASOS" as const, customerScope: "NON_DOMESTIC_BT_BTA1_5" as const, regulatoryVariant, applicationBasis: `Tabella ASOS ufficiale ${sheetNumber}, ${regulatoryVariant}; riga ${clean(`${xlsxCell(cells, row, "A")} ${xlsxCell(cells, row, "B")}`)}`, sourceSha256 };
+    const base = { tenantId: input.tenantId ?? "tenant_local-demo", sourceType: "OFFICIAL_ATTACHMENT" as const, sourceReference: input.sourceReference, officialIdentifier: input.officialIdentifier, publicationDate: input.publicationDate, retrievedAt: input.retrievedAt, effectiveFrom: input.effectiveFrom, effectiveTo: null, componentCode: "ASOS" as const, customerScope: "NON_DOMESTIC_BT_BTA1_5" as const, regulatoryVariant, applicationBasis: `Tabella ASOS ufficiale ${sheetNumber}, ${regulatoryVariant}; riga ${clean(rowText(row))}`, sourceSha256 };
     records.push(createValue({ ...base, originalValue: fixed, originalUnit: "CENT_EUR/POD/YEAR" }));
     records.push(createValue({ ...base, originalValue: power, originalUnit: "CENT_EUR/KW/YEAR" }));
     records.push(createValue({ ...base, originalValue: energy, originalUnit: "CENT_EUR/KWH" }));
@@ -767,6 +771,21 @@ export function parseArera588DomesticAsosArimXlsx(input: {
     effectiveTo: input.effectiveTo,
     confirmationSource: `${ARERA_98_PDF_URL};${ARERA_227_PDF_URL}`,
   });
+}
+
+/** Tony (30/10, refresh errors ARIM|DOMESTIC_NON_RESIDENT_BT): the decision in force confirms ARIM, so the non-resident
+ *  households' ARIM (quota fissa and quota energia) is read from the 588/2025 Tabella B row "non residenti". */
+export function parseArera588DomesticNonResidentArimXlsx(input: { readonly body: Uint8Array; readonly sourceReference?: string; readonly retrievedAt: string; readonly sourceSha256?: string; readonly tenantId?: string }): readonly RegulatoryValueRecord[] {
+  const cells = xlsxSheet(input.body, "xl/worksheets/sheet6.xml", xlsxSharedStrings(input.body));
+  const row = rowsFromCells(cells).find((rowNumber) => /non\s+resident/i.test(`${xlsxCell(cells, rowNumber, "A")} ${xlsxCell(cells, rowNumber, "B")}`) && xlsxNumeric(cells, rowNumber, "E") !== null);
+  if (row === undefined) throw new Error("ARERA_588_NON_RESIDENT_ARIM_ROW_MISSING");
+  const fixed = xlsxNumeric(cells, row, "C");
+  const energy = xlsxNumeric(cells, row, "E") as number;
+  const base = { tenantId: input.tenantId ?? "tenant_local-demo", sourceType: "OFFICIAL_ATTACHMENT" as const, sourceReference: input.sourceReference ?? ARERA_588_TABLES_URL, officialIdentifier: `${ARERA_588_IDENTIFIER}:Tabella B:DOMESTIC_NON_RESIDENT_BT:OPEN_UNTIL_SUPERSEDED`, publicationDate: "2025-12-30", retrievedAt: input.retrievedAt, effectiveFrom: "2026-01-01", effectiveTo: null, componentCode: "ARIM" as const, customerScope: "DOMESTIC_NON_RESIDENT_BT" as const, sourceSha256: input.sourceSha256 ?? sourceHash(input.body), confirmationSource: `${ARERA_98_PDF_URL};${ARERA_227_PDF_URL}`, applicationBasis: `Tabella B ARIM della deliberazione 588/2025/R/com; riga ${clean(`${xlsxCell(cells, row, "A")} ${xlsxCell(cells, row, "B")}`)}; valori dal 01/01/2026 confermati dalle deliberazioni 98/2026/R/com e 227/2026/R/com` };
+  return [
+    ...(fixed === null ? [] : [createValue({ ...base, originalValue: fixed, originalUnit: "CENT_EUR/POD/YEAR" })]),
+    createValue({ ...base, originalValue: energy, originalUnit: "CENT_EUR/KWH" }),
+  ];
 }
 
 /** Whether a decision's text says the values of `previous` are confirmed ("... della deliberazione 227/2026/R/com, sono confermati"). */
@@ -1246,7 +1265,16 @@ export function parseArera588Bta6ArimXlsx(input: { readonly body: Uint8Array; re
 
 // Tony (30/10, AZIENDA PROTETTA 3 kW): oneri "non verificato su ARERA". The 588/2025 tables carry, beside the BTA6 row, the row
 // of the other BT uses up to 16,5 kW, the same for classes BTA1-BTA5.
-const isBtaUpTo165Row = (label: string): boolean => { const text = clean(label); return /altre utenze in bassa tensione/i.test(text) && /16,5/.test(text) && !/superiore a 16,5/i.test(text); };
+// Tony (30/10, refresh errors ARERA_588_BTA1_5_*_VALUE_MISSING): the label may read "non superiore a 16,5 kW", and a table
+// title or note may name the same users: the row is the one that carries the values.
+const isBtaUpTo165Row = (label: string): boolean => { const text = clean(label); return /altre utenze in bassa tensione/i.test(text) && /16,5/.test(text) && !/(?<!non )superiore a 16,5/i.test(text); };
+const btaUpTo165ValueRow = (rows: readonly (readonly string[])[], hasValues: (row: readonly string[]) => boolean, code: string): readonly string[] => {
+  const matches = rows.filter((candidate) => isBtaUpTo165Row(candidate[1] ?? ""));
+  if (!matches.length) throw new Error(`${code}_ROW_MISSING`);
+  const row = matches.find(hasValues);
+  if (!row) throw new Error(`${code}_VALUE_MISSING:${matches.map((candidate) => candidate.map(clean).filter(Boolean).join(" / ")).join(" | ").slice(0, 400)}`);
+  return row;
+};
 const optionalTableNumber = (value: string): number | null => {
   const text = clean(value);
   if (!text || text === "-") return null;
@@ -1256,14 +1284,13 @@ const optionalTableNumber = (value: string): number | null => {
 };
 
 export function parseArera588BtaUpTo165Uc3Uc6TableRows(input: { readonly rows: readonly (readonly string[])[]; readonly sourceReference?: string; readonly publicationDate?: string; readonly retrievedAt: string; readonly sourceSha256: string; readonly tenantId?: string; readonly effectiveFrom?: string; readonly effectiveTo?: string | null }): readonly RegulatoryValueRecord[] {
-  const row = input.rows.find((candidate) => isBtaUpTo165Row(candidate[1] ?? ""));
-  if (!row) throw new Error("ARERA_588_BTA1_5_UC3_UC6_ROW_MISSING");
-  const uc3 = optionalTableNumber(row[2] ?? "");
-  const uc6Fixed = optionalTableNumber(row[3] ?? "");
-  const uc6Power = optionalTableNumber(row[4] ?? "");
-  const uc6Energy = optionalTableNumber(row[5] ?? "");
-  if (uc3 === null || uc6Energy === null || uc6Fixed === null) throw new Error("ARERA_588_BTA1_5_UC3_UC6_VALUE_MISSING");
-  if (uc6Power !== null) throw new Error("ARERA_588_BTA1_5_UC6_POWER_UNEXPECTED");
+  const numeric = (value: string | undefined) => { try { return optionalTableNumber(value ?? ""); } catch { return null; } };
+  const row = btaUpTo165ValueRow(input.rows, (candidate) => numeric(candidate[2]) !== null && numeric(candidate[5]) !== null, "ARERA_588_BTA1_5_UC3_UC6");
+  const uc3 = optionalTableNumber(row[2] ?? "") as number;
+  const uc6Energy = optionalTableNumber(row[5] ?? "") as number;
+  // An empty column is a quota without aliquota for these users: it is archived as 0.
+  const uc6Fixed = optionalTableNumber(row[3] ?? "") ?? 0;
+  const uc6Power = optionalTableNumber(row[4] ?? "") ?? 0;
   const base = {
     tenantId: input.tenantId ?? "tenant_local-demo", sourceType: "OFFICIAL_ATTACHMENT" as const, sourceReference: input.sourceReference ?? ARERA_588_TABLES_URL, officialIdentifier: `${ARERA_588_IDENTIFIER}:Tabella 7:BTA1_5:OPEN_UNTIL_SUPERSEDED`,
     publicationDate: input.publicationDate ?? "2025-12-30", retrievedAt: input.retrievedAt, effectiveFrom: input.effectiveFrom ?? "2026-01-01", effectiveTo: input.effectiveTo === undefined ? null : input.effectiveTo, customerScope: "NON_DOMESTIC_BT_BTA1_5" as const,
@@ -1273,7 +1300,8 @@ export function parseArera588BtaUpTo165Uc3Uc6TableRows(input: { readonly rows: r
   return [
     createValue({ ...base, componentCode: "UC3", originalValue: uc3, originalUnit: "CENT_EUR/KWH", applicationBasis: `${base.applicationBasis}; UC3 quota energia` }),
     createValue({ ...base, componentCode: "UC6", originalValue: uc6Energy, originalUnit: "CENT_EUR/KWH", applicationBasis: `${base.applicationBasis}; UC6 quota energia` }),
-    createValue({ ...base, componentCode: "UC6", originalValue: uc6Fixed, originalUnit: "CENT_EUR/POD/YEAR", applicationBasis: `${base.applicationBasis}; UC6 quota fissa per punto di prelievo/anno` }),
+    createValue({ ...base, componentCode: "UC6", originalValue: uc6Fixed, originalUnit: "CENT_EUR/POD/YEAR", applicationBasis: `${base.applicationBasis}; UC6 quota fissa per punto di prelievo/anno${clean(row[3] ?? "") ? "" : "; colonna priva di aliquota"}` }),
+    createValue({ ...base, componentCode: "UC6", originalValue: uc6Power, originalUnit: "CENT_EUR/KW/YEAR", applicationBasis: `${base.applicationBasis}; UC6 quota potenza per kW/anno${clean(row[4] ?? "") ? "" : "; colonna priva di aliquota"}` }),
   ];
 }
 
@@ -1284,12 +1312,12 @@ export function parseArera588BtaUpTo165Uc3Uc6Xlsx(input: { readonly body: Uint8A
 }
 
 export function parseArera588BtaUpTo165ArimTableRows(input: { readonly rows: readonly (readonly string[])[]; readonly sourceReference?: string; readonly publicationDate?: string; readonly retrievedAt: string; readonly sourceSha256: string; readonly tenantId?: string; readonly effectiveFrom?: string; readonly effectiveTo?: string | null }): readonly RegulatoryValueRecord[] {
-  const row = input.rows.find((candidate) => isBtaUpTo165Row(candidate[1] ?? ""));
-  if (!row) throw new Error("ARERA_588_BTA1_5_ARIM_ROW_MISSING");
-  const fixed = optionalTableNumber(row[2] ?? "");
-  const power = optionalTableNumber(row[3] ?? "");
-  const energy = optionalTableNumber(row[4] ?? "");
-  if (fixed === null || power === null || energy === null) throw new Error("ARERA_588_BTA1_5_ARIM_VALUE_MISSING");
+  const numeric = (value: string | undefined) => { try { return optionalTableNumber(value ?? ""); } catch { return null; } };
+  const row = btaUpTo165ValueRow(input.rows, (candidate) => numeric(candidate[4]) !== null, "ARERA_588_BTA1_5_ARIM");
+  const energy = optionalTableNumber(row[4] ?? "") as number;
+  // An empty column is a quota without aliquota for these users: it is archived as 0.
+  const fixed = optionalTableNumber(row[2] ?? "") ?? 0;
+  const power = optionalTableNumber(row[3] ?? "") ?? 0;
   const base = {
     tenantId: input.tenantId ?? "tenant_local-demo", sourceType: "OFFICIAL_ATTACHMENT" as const, sourceReference: input.sourceReference ?? ARERA_588_TABLES_URL, officialIdentifier: `${ARERA_588_IDENTIFIER}:Tabella B:BTA1_5:OPEN_UNTIL_SUPERSEDED`,
     publicationDate: input.publicationDate ?? "2025-12-30", retrievedAt: input.retrievedAt, effectiveFrom: input.effectiveFrom ?? "2026-01-01", effectiveTo: input.effectiveTo === undefined ? null : input.effectiveTo, customerScope: "NON_DOMESTIC_BT_BTA1_5" as const,
@@ -1447,6 +1475,8 @@ export class AreraElectricityRegulatorySourceAdapter {
         ...parseArera588DomesticAsosArimXlsx({ body: priorPayload.bytes, sourceReference: priorPayload.url, retrievedAt: input.retrievedAt, sourceSha256: sourceHash(priorPayload.bytes), tenantId }),
         ...(this.options.includeBta6Uc ? parseArera588Bta6Uc3Uc6Xlsx({ body: priorPayload.bytes, sourceReference: priorPayload.url, retrievedAt: input.retrievedAt, sourceSha256: sourceHash(priorPayload.bytes), tenantId }) : []),
         ...(this.options.includeBta6Arim ? parseArera588Bta6ArimXlsx({ body: priorPayload.bytes, sourceReference: priorPayload.url, retrievedAt: input.retrievedAt, sourceSha256: sourceHash(priorPayload.bytes), tenantId }) : []),
+        // Only when the decision in force has no non-resident ARIM row of its own; a 588 layout not read never stops the rest.
+        ...(systemChargeRecords.some((record) => record.componentCode === "ARIM" && record.customerScope === "DOMESTIC_NON_RESIDENT_BT") ? [] : (() => { try { return parseArera588DomesticNonResidentArimXlsx({ body: priorPayload.bytes, sourceReference: priorPayload.url, retrievedAt: input.retrievedAt, sourceSha256: sourceHash(priorPayload.bytes), tenantId }); } catch { return []; } })()),
       ];
       systemChargeRecords = [...systemChargeRecords, ...priorRecords];
       if (!initialKnownCodes.has("UC3")) uc3SourceStrategy = "OFFICIAL_CARRY_FORWARD";
