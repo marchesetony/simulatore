@@ -66,6 +66,16 @@ export function classifyBillEconomicComponent(code: string | null | undefined, d
   if (["RICALCOLI", "RECALCULATION"].includes(c) || d.includes("RICALCOL") || d.includes("CONGUAGLIO")) return "RICALCOLI";
   if (["PUN", "PUN_SINGLE", "PUN_F1", "PUN_F2", "PUN_F3", "ENERGY_INDEX", "PUN_APPLICATO"].includes(c) || d.includes("PUN")) return "ENERGY_INDEX";
   if (["SPREAD", "SELLER_SPREAD", "ENERGY_SPREAD"].includes(c) || d.includes("SPREAD")) return "ENERGY_SPREAD";
+  // Tony (30/10, bolletta Plenitude Trend Business Luce Base: "credo che la lettura non è stata fatta"): the elementi di
+  // dettaglio name the seller's charges by contract or resolution, and they were all left out as other items.
+  if (/^PERDITE_(SU|ART|ARTICOLO|DI)_/.test(d)) return "NETWORK_LOSS_CHARGE";
+  if (d.includes("CORRISPETTIVO") && /(^|_)INDEX(_|$)/.test(d)) return "ENERGY_INDEX";
+  if (d.startsWith("CONTRIBUTO_AL_CONSUMO")) return "ENERGY_SPREAD";
+  // Delibera ARG/elt 98/11 is the capacity market; TIDE art. 25 and TIS are dispatching charges passed on by the seller.
+  if (/ARG_ELT_98_11/.test(d)) return "CAPACITY_MARKET_SELLER_CHARGE";
+  if (/(^|_)(TIDE|TIS)(_|$)/.test(d) && /^ART(ICOLO)?_/.test(d)) return "DISPATCHING_SELLER_CHARGE";
+  if (/^SPESA_PER_LA_TARIFFA_PER_L_USO_DELLA_RETE_.+/.test(d)) return "ARERA_NETWORK";
+  if (/^SPESA_PER_GLI_ONERI_GENERALI_DI_SISTEMA_.+/.test(d)) return "ARERA_SYSTEM_CHARGES";
   if (["ENERGY_FIXED_PRICE", "FIXED_PRICE", "PREZZO_FISSO"].includes(c) || d.includes("PREZZO_FISSO")) return "ENERGY_FIXED_PRICE";
   if (c === "PCV" || /^PCV(?:_|$)/.test(d)) return "PCV";
   if (c === "COMMERCIALIZATION" && d.includes("SPESA_PER_LA_VENDITA_DI_ENERGIA_ELETTRICA")) return "SELLER_ENERGY_FEE";
@@ -178,6 +188,9 @@ function unitPriceOnly(amount: string | null, quantity: string | null, unitPrice
     const kwh = /^\d{1,3}(?:\.\d{3})+(?:,\d+)?$/.test(digits) ? numberFrom(digits.replace(/\./g, "")) : numberFrom(digits);
     if (kwh === null || kwh < 10 || !(sellerPrice || priceCode)) return false;
     if (price !== null && Math.abs(value - price) < 0.005) return true;
+    // Quantity x price giving the amount is money billed, however small (Plenitude, 30/10: "Articolo 25.5 TIDE" 0,000652
+    // EUR/kWh x 232 kWh = 0,15 EUR).
+    if (price !== null && price !== 0 && Math.abs(kwh * price - value) <= 0.01) return false;
     return Math.abs(value / kwh) < 0.001;
   }
   // The stored reading keeps the €/kWh of the Box in the unit, not in the amount (Tony, 28/10: still 0,01 € of dispatching).
