@@ -14,7 +14,7 @@ const missing = (field: { readonly status: string }) => field.status !== "FOUND"
  * - a household without an oneri quota fissa is resident (non-residents pay ASOS/ARIM per POD);
  * - the billed power ("Potenza fatturata", quota potenza in kW) is the contracted power;
  * - a household, or a supply up to 30 kW, is in bassa tensione.
- * A value read on the bill is never replaced.
+ * A value read on the bill is never replaced, except the maximum drawn power below.
  */
 export function completeSupplyProfile(profile: BillSupplyProfile, extraction: Evidence): BillSupplyProfile {
   const lines = extraction.economicChargeLines ?? [];
@@ -30,6 +30,17 @@ export function completeSupplyProfile(profile: BillSupplyProfile, extraction: Ev
   }
   const billedPower = extraction.powerKw?.status === "FOUND" && typeof extraction.powerKw.value === "number" && extraction.powerKw.value > 0 ? extraction.powerKw.value : null;
   if (missing(next.powerCommitted) && billedPower !== null) next = { ...next, powerCommitted: found(`${String(billedPower).replace(".", ",")} kW`, `${billedPower} kW`) };
+  // Tony (30/10, Duferco FLEX BUSINESS, 22 kW impegnati: "ecco la bolletta leggi bene"): the network and oneri quota potenza
+  // is billed on 13,4 kW, the power drawn in the month. A supply billed on less kW than its committed power has no limiter, so
+  // by TIT art. 1 its potenza impegnata is the monthly maximum drawn: the kW of the €/kW lines are that measurement, and they
+  // win over a "Massima" column that only repeats the contract.
+  const committedKw = Number.parseFloat((/\d+(?:[.,]\d+)?/.exec(String(next.powerCommitted.normalizedValue ?? next.powerCommitted.rawValue ?? ""))?.[0] ?? "").replace(",", "."));
+  const billedKw = lines.filter((line) => /\bkw\b/i.test(line.unit ?? "") && !/kwh/i.test(line.unit ?? "")).map((line) => Number.parseFloat((/\d+(?:[.,]\d+)?/.exec(line.quantity ?? "")?.[0] ?? "").replace(",", "."))).filter((value) => Number.isFinite(value) && value > 0);
+  const drawnKw = billedKw.length > 0 ? Math.max(...billedKw) : null;
+  if (drawnKw !== null && Number.isFinite(committedKw) && drawnKw < committedKw) {
+    const text = `${String(drawnKw).replace(".", ",")} kW`;
+    next = { ...next, powerMaximumDrawn: found(text, `${drawnKw} kW`), powerBillingBasis: found(`Potenza massima prelevata nel mese (${text} fatturati)`, "MONTHLY_MAX_DRAWN") };
+  }
   if (missing(next.voltageClass) && missing(next.nominalVoltage) && (domestic || (billedPower !== null && billedPower <= 30))) next = { ...next, voltageClass: found("BT (dedotta dalla bolletta)", "LV") };
   return next;
 }
