@@ -77,6 +77,8 @@ assert.deepEqual(capacity(small).map((line) => line.label), ["Mercato della capa
 assert.equal(mergeTernaCapacityQuarters(records).length, 2);
 assert.equal(ternaCapacityMonthMax("2026-10", mergeTernaCapacityQuarters(records))?.eurPerKwh, 0.03);
 assert.equal(ternaCapacityMonthMax("2027-01", mergeTernaCapacityQuarters(records)), null);
+// A quarter whose peak rate was not read: its off-peak rate is not the month's maximum (Tony 30/10, "prezzo massimo del mese").
+assert.equal(ternaCapacityMonthMax("2026-10", mergeTernaCapacityQuarters(records.filter((record) => record.componentCode !== "CAPACITY_MARKET_PEAK"))), null);
 
 // Bill reading: the analyst catalog and prompt name the facts, and only the approved bill's facts are read.
 assert.equal(normalizeAnalystItemCode("ENERGY_PEAK_KWH"), "ENERGY_PEAK_KWH");

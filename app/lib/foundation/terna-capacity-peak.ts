@@ -52,6 +52,8 @@ export function ternaCapacityMonthMax(month: string, quarters: readonly TernaCap
   const used = quarters.filter((item) => Date.parse(item.from) < end && start < Date.parse(item.to));
   // Every day of the month must be covered by a published quarter.
   for (let cursor = start; cursor < end; cursor += DAY) if (!used.some((item) => Date.parse(item.from) <= cursor && cursor < Date.parse(item.to))) return null;
+  // The month's highest rate is the peak one: a quarter whose peak rate was not read never passes its off-peak rate off as it.
+  if (used.some((item) => item.peakEurPerKwh === null)) return null;
   const rates = used.flatMap((item) => [item.peakEurPerKwh, item.offPeakEurPerKwh]).filter((value): value is number => value !== null);
   return rates.length ? { eurPerKwh: Math.max(...rates), quarters: used } : null;
 }
