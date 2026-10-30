@@ -231,7 +231,10 @@ export async function calculateRegulatedEeSubset(
     const arimFixed = await timelineFor(request, context, bridge, "ARIM", "EUR/POD/YEAR");
     const arimPower = await timelineFor(request, context, bridge, "ARIM", "EUR/KW/YEAR");
     const arimEnergy = await timelineFor(request, context, bridge, "ARIM", "EUR/KWH");
-    const asosVariant: RegulatoryVariant | undefined = context.asosClassTemporalStatus === "VALID" && context.asosClass !== "UNKNOWN" ? context.asosClass : undefined;
+    // Tony (30/10, Duferco FLEX BUSINESS BTA6: "secondo me stiamo commettendo errori di applicazione delle tabelle"): oneri
+    // 7,78 € against 46,55 € on the bill because ASOS was left out when the bill names no class. As for BT up to 16,5 kW, a
+    // bill silent on the class is a customer without agevolazione: classe 0.
+    const asosVariant: RegulatoryVariant | undefined = context.asosClassTemporalStatus === "VALID" && context.asosClass !== "UNKNOWN" ? context.asosClass : "ASOS_CLASS_0";
     const asosFixed = asosVariant === undefined ? null : await timelineFor(request, context, bridge, "ASOS", "EUR/POD/YEAR", asosVariant);
     const asosPower = asosVariant === undefined ? null : await timelineFor(request, context, bridge, "ASOS", "EUR/KW/YEAR", asosVariant);
     const asosEnergy = asosVariant === undefined ? null : await timelineFor(request, context, bridge, "ASOS", "EUR/KWH", asosVariant);

@@ -86,8 +86,10 @@ try {
   console.log("BTA6_EXTERNAL_UNRESOLVED_FAILS_COMPLETE=PASS");
 
   const unknownAsos = await calculate("unknown-asos", [pass("DISPATCHING", "INCLUDED_IN_ENERGY_PRICE"), pass("CAPACITY_MARKET", "NOT_APPLICABLE")], context({ asosClass: "UNKNOWN", energyIntensiveStatus: "UNKNOWN" }));
+  // Tony (30/10, Duferco FLEX BUSINESS BTA6): a bill silent on the ASOS class is priced on classe 0. This archive holds only
+  // classe 1, so the regulated part cannot be priced and the quote never shows it as complete.
   assert.equal(unknownAsos.bta6NetOfTaxCompleteCandidate, false);
-  assert.equal(unknownAsos.costScope, "COMMERCIAL_PLUS_REGULATED_PARTIAL");
+  assert.equal(unknownAsos.costScope, "COMMERCIAL_ONLY");
   console.log("BTA6_ASOS_UNKNOWN_STILL_PARTIAL=PASS");
 
   const legacy = await calculate("legacy", undefined);
