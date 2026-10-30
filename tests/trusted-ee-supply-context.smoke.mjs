@@ -51,7 +51,8 @@ assert.equal(bta6MaxDrawn.regulatoryPowerBasisKw, 24);
 assert.equal(buildTrustedElectricitySupplyContext(profile({ supplyUse: "altri usi", committed: "20 kW", available: "30 kW" })).regulatoryPowerBasisKind, "CONTRACTUAL_COMMITTED");
 assertCode(() => buildTrustedElectricitySupplyContext(profile({ supplyUse: "altri usi", committed: "20 kW", available: "30 kW", billingBasis: "Massimo valore della potenza prelevata nel mese" })), "BTA6_MAXIMUM_DRAWN_POWER_REQUIRED");
 assert.equal(buildTrustedElectricitySupplyContext(profile({ supplyUse: "altri usi", committed: "17 kW", available: "16,5 kW" })).regulatoryCustomerScope, "NON_DOMESTIC_BT");
-assertCode(() => buildTrustedElectricitySupplyContext(profile({ supplyUse: "altri usi", committed: "25 kW", available: null })), "AVAILABLE_POWER_REQUIRED_FOR_BT_TARIFF_CLASS");
+// Tony (30/10, "non è possibile vedere ancora mancati controlli"): no available power on the bill no longer fails.
+assert.equal(buildTrustedElectricitySupplyContext(profile({ supplyUse: "altri usi", committed: "25 kW", available: null })).regulatoryCustomerScope, "NON_DOMESTIC_BT_BTA6");
 assert.equal(buildTrustedElectricitySupplyContext(profile({ supplyUse: "pubblica illuminazione", committed: "17 kW", available: "18,7 kW" })).regulatoryCustomerScope, "NON_DOMESTIC_BT");
 assert.equal(buildTrustedElectricitySupplyContext(profile({ supplyUse: "ricarica veicoli elettrici", committed: "17 kW", available: "18,7 kW" })).regulatoryCustomerScope, "NON_DOMESTIC_BT");
 

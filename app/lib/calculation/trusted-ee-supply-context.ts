@@ -189,10 +189,14 @@ export function buildTrustedElectricitySupplyContext(profile: BillSupplyProfile,
   const supplyUseCategory = requiredSupplyUse(profile);
   const contractedPowerKw = parseContractedPowerKw(profile.powerCommitted);
   const availablePowerKw = parseAvailablePowerKw(profile.powerAvailable);
-  const regulatoryCustomerScope = deriveRegulatoryCustomerScope(profile, voltageLevel, availablePowerKw);
+  // Tony (30/10, "non è possibile vedere ancora mancati controlli"): a bill without the available power must not stop the
+  // checks. Only to pick the class, other uses fall back to the TIT rule: with a limiter (up to 30 kW) the available power
+  // is the committed one plus 10%, above that it equals the committed power. The shown available power stays the bill's.
+  const classPowerKw = availablePowerKw ?? (supplyUseCategory === "OTHER_USE" ? (contractedPowerKw > LIMITER_MAX_KW ? contractedPowerKw : Math.round(contractedPowerKw * 1.1 * 100) / 100) : undefined);
+  const regulatoryCustomerScope = deriveRegulatoryCustomerScope(profile, voltageLevel, classPowerKw);
   const basis = regulatoryPowerBasis(profile, regulatoryCustomerScope, contractedPowerKw);
   const asos = selectAsosClass(profile, options);
-  const tariffClass = regulatoryCustomerScope === "NON_DOMESTIC_BT" && supplyUseCategory === "OTHER_USE" && availablePowerKw !== undefined ? btaTariffClass(availablePowerKw) : null;
+  const tariffClass = regulatoryCustomerScope === "NON_DOMESTIC_BT" && supplyUseCategory === "OTHER_USE" && classPowerKw !== undefined ? btaTariffClass(classPowerKw) : null;
   // Tony (30/10, "ancora errori"): the oneri sub-rows read "per potenze impegnate inferiori o uguali a 1,5 kW" etc.,
   // so oneri follow the committed power; distribution keeps the TIT class by available power.
   const oneriTariffClass = tariffClass === null ? null : contractedPowerKw > 0 ? btaTariffClass(Math.min(contractedPowerKw, 16.5)) : tariffClass;
