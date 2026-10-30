@@ -128,3 +128,12 @@ const statedLosses = structuredClone(householdExtras); statedLosses.offer.lossRe
 const statedQuote = await calculatePreparedOffer(request(true), statedLosses, deps(0.0105, 0.004275, 3));
 assert.equal(imbalanceAmount(statedQuote), Math.round(plainImbalance * 1.1 * 100) / 100, "imbalance on kWh with losses when the CTE says so");
 console.log("CTE_PASS_THROUGH_BILL_QUOTE=PASS");
+// Tony (30/10, AZIENDA PROTETTA: "credo ci siano errori ancora"): the CTE fixes only its own Capacity Market libero and
+// says nothing on the regulated charge, so that applies as on a silent CTE: libero 5 + ARERA TIV 219/2026 art. 4.1,
+// settembre 2026 0,3197 c€/kWh x 1,10 x 1.000 kWh = 3,52.
+const ownOnly = structuredClone(prepared);
+ownOnly.offer.capacityMarketSchedule = [prepared.offer.capacityMarketSchedule[2]];
+ownOnly.version.contract.commercialTerms = { dispatchingReference: prepared.offer.dispatchingReference, capacityMarketSchedule: ownOnly.offer.capacityMarketSchedule };
+const ownOnlyQuote = await calculatePreparedOffer(request(true), ownOnly, deps(0.0105, 0.004275, 3));
+assert.deepEqual(byKind(ownOnlyQuote, "CAPACITY_MARKET"), [5, 3.52]);
+assert.ok(!ownOnlyQuote.warnings.some((warning) => /CAPACITY_MARKET:CTE_REFERENCE_MISSING/.test(warning)), ownOnlyQuote.warnings.join(","));

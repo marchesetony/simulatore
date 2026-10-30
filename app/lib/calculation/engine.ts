@@ -263,8 +263,11 @@ function addCtePassThroughs(target: ComponentDraft[], request: ElectricitySimula
     // 55 kW: one monthly value on all kWh. BT above 55 kW, MT, AT: kWh in Terna's 500 peak hours x peak rate + the rest x
     // off-peak rate, which needs the peak-hour kWh of the meter.
     // Households: inside CDISPD, see above.
-    if (!inCdispd && !entries.some((entry) => entry.mode === "OFFICIAL_PASS_THROUGH") && (entries.length > 0 || statedAway("CAPACITY_MARKET"))) missing.push("CAPACITY_MARKET:CTE_REFERENCE_MISSING");
-    else if (!inCdispd) {
+    // Tony (30/10, AZIENDA PROTETTA: "credo ci siano errori ancora"): a CTE that fixes only its own Capacity Market libero is
+    // silent on the regulated charge, which then applies as for any silent CTE (Tony 28/10), beside the CTE's own value.
+    // A CTE stating capacity included in the energy price, or not applicable, adds none (Tony 28/10).
+    if (inCdispd || statedAway("CAPACITY_MARKET")) { /* inside CDISPD or stated away */ }
+    else {
       const powerKw = context?.availablePowerKw ?? context?.contractedPowerKw;
       const smallLv = request.voltageLevel === "LV" && powerKw !== undefined && powerKw <= 55;
       // BT up to 55 kW: the monthly value ARERA fixes in the quarterly TIV update (art. 4.1), when the archive has none.
