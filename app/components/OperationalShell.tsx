@@ -431,16 +431,18 @@ function ArchivePurge() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string>();
   const [done, setDone] = useState<{ readonly bills: number; readonly ctes: number; readonly cteDocuments: number; readonly failed: number } | null>(null);
+  // Written in small letters it is still the confirmation (Tony typed "svuota").
+  const confirmed = text.trim().toUpperCase() === "SVUOTA";
   async function purge() {
-    if (busy || text !== "SVUOTA") return;
+    if (busy || !confirmed) return;
     setBusy(true); setError(undefined);
-    try { setDone(await requestJson("/api/archive/purge", { method: "POST", body: JSON.stringify({ confirmation: text }) })); setOpen(false); setText(""); }
+    try { setDone(await requestJson("/api/archive/purge", { method: "POST", body: JSON.stringify({ confirmation: "SVUOTA" }) })); setOpen(false); setText(""); }
     catch (cause) { setError(uiError(cause)); }
     finally { setBusy(false); }
   }
   return <Card><div className="card-heading"><h3>Svuota archivio bollette e CTE</h3>{open ? null : <button className="button secondary" type="button" onClick={() => { setOpen(true); setDone(null); }}>Svuota archivio</button>}</div>
     <p className="muted">Cancella per sempre tutte le bollette e tutte le CTE della tua azienda, con i loro PDF. Non si possono recuperare. I dati ufficiali GME, ARERA e Terna restano.</p>
-    {open ? <div className="quote-bill-manage"><label>Scrivi SVUOTA per confermare <input value={text} onChange={(event) => setText(event.target.value)} autoComplete="off" /></label> <button className="button primary" type="button" disabled={busy || text !== "SVUOTA"} onClick={() => void purge()}>{busy ? "Cancellazione in corso" : "Cancella tutto"}</button> <button className="button secondary" type="button" disabled={busy} onClick={() => { setOpen(false); setText(""); }}>Annulla</button></div> : null}
+    {open ? <div className="archive-purge-confirm"><label>Scrivi SVUOTA per confermare <input value={text} onChange={(event) => setText(event.target.value)} autoComplete="off" placeholder="SVUOTA" aria-label="Scrivi SVUOTA per confermare" autoFocus /></label> <button className="button primary" type="button" disabled={busy || !confirmed} onClick={() => void purge()}>{busy ? "Cancellazione in corso" : "Cancella tutto"}</button> <button className="button secondary" type="button" disabled={busy} onClick={() => { setOpen(false); setText(""); }}>Annulla</button></div> : null}
     {error ? <ErrorState message={error} /> : null}
     {done ? <p>Cancellate {done.bills} bollette e {done.ctes} CTE ({done.cteDocuments} documenti CTE caricati){done.failed ? `; ${done.failed} non cancellate, riprova` : ""}.</p> : null}
   </Card>;

@@ -549,3 +549,8 @@ button:focus-visible,a:focus-visible,input:focus-visible,select:focus-visible,te
 .quote-bill-manage ul { list-style:none; margin:8px 0 0; padding:0; max-height:320px; overflow:auto; }
 .quote-bill-manage li { display:flex; gap:12px; align-items:center; justify-content:space-between; padding:6px 0; border-bottom:1px solid var(--border, #e2e8f0); }
 .quote-bill-manage li > span:first-child { min-width:0; overflow-wrap:anywhere; }
+/* Tony (31/10): "il riquadro dove scrivere non si vede prima di scrivere". */
+.archive-purge-confirm { display:flex; flex-wrap:wrap; gap:12px; align-items:center; margin-top:12px; }
+.archive-purge-confirm label { display:flex; flex-wrap:wrap; gap:10px; align-items:center; font-weight:600; }
+.archive-purge-confirm input { min-width:180px; min-height:40px; padding:6px 12px; border:2px solid #94a3b8; border-radius:8px; background:#fff; color:var(--ink); font-size:16px; text-transform:uppercase; }
+.archive-purge-confirm input:focus { border-color:#d4a017; outline:none; }
