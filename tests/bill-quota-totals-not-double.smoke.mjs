@@ -35,7 +35,9 @@ for (const withFixedNetwork of [true, false]) {
   assert.ok(!live.some((item) => /^(Quota per consumi|Quota fissa e Quota potenza - Quota fissa|Quota potenza)$/.test(item.description)), "no quota total counted as a charge");
   const receipt = buildQuoteReceipt({ vector: "EE", offerSupplyCost: 133.55, analysis: bill, domestic: true, validUntil: null, offerComponents: [] });
   assert.equal(receipt.rows.find((row) => row.key === "NETWORK").current, 14.43);
-  assert.deepEqual(receipt.excluded.map((item) => item.amount).sort((a, b) => a - b), [-16.8, 9], "only bonus and TV licence left out");
+  // Tony (31/10, "la bolletta che tu segni totale 181,62 non esiste"): the bonus now has its own line, the same on both sides.
+  assert.deepEqual(receipt.excluded.map((item) => item.amount), [9], "only the TV licence left out");
+  assert.equal(receipt.rows.find((row) => row.key === "BONUS").current, -16.8, "bonus on its own line");
 }
 console.log("BILL_QUOTA_TOTALS_NOT_DOUBLE=PASS");
 

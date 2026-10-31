@@ -14,8 +14,12 @@ const analysis = buildCurrentBillEconomicAnalysis([
 const bonus = analysis.components.filter((item) => item.classification === "BONUS");
 assert.equal(bonus.length, 1, "the bonus is read as a bonus");
 const receipt = buildQuoteReceipt({ vector: "EE", offerSupplyCost: 100, analysis, domestic: true, validUntil: null, offerComponents: [] });
+// Tony (31/10, same bill: "la bolletta che tu segni totale 181,62 non esiste"): the bonus stays on its own line, the same
+// with the new offer, and the IVA stays the bill's own: the bill column adds up to the bill's total, the bonus moves nothing.
 const taxes = receipt.rows.find((row) => row.key === "TAXES");
-assert.equal(taxes.current, 19.74, "8,85 + 9,69 + IVA 10% on the 12,00 € bonus");
-assert.equal(receipt.currentTotal, 119.74, "no bonus in the current spend");
+assert.equal(taxes.current, 18.54, "8,85 + 9,69 as printed");
+assert.equal(receipt.rows.find((row) => row.key === "BONUS").current, -12, "bonus on its own line");
+assert.equal(receipt.rows.find((row) => row.key === "BONUS").offer, -12, "the same bonus with the new offer");
+assert.equal(receipt.currentTotal, 106.54, "100,00 - 12,00 + 18,54: the bill's own total");
 assert.equal(receipt.savings, 0, "same supply cost, same total: the bonus moves nothing");
 console.log("bill bonus excluded ok");
