@@ -1,6 +1,7 @@
 "use client";
 
-import { useCallback, useEffect, useState, type ChangeEvent, type ReactNode } from "react";
+import { isValidElement, useCallback, useEffect, useRef, useState, type ChangeEvent, type ReactNode } from "react";
+import type { ProposalPresentation } from "../lib/proposal/presentation";
 import { EmptyState, ErrorState, LoadingState } from "./UiStates";
 import { downloadExport, MAX_UPLOAD_BYTES, requestJson, requestUpload, toUiError } from "../lib/ui/client";
 import { buildQuoteReceipt, effectiveBillSpread, isSameOffer, regulatedVerification, sameOfferDifferences, type QuoteReceipt, type RegulatedDomain } from "../lib/quote/receipt";
@@ -565,7 +566,8 @@ function SameOfferCheck({ offer, bill, context }: { readonly offer: Offer; reado
 }
 
 // Box offerta of the scontrino, side by side: how the bill prices energy and how the simulated CTE would, line by line.
-function OfferBox({ offer, bill, context }: { readonly offer: Offer; readonly bill: BillDocumentModel; readonly context: Context }): ReactNode {
+type OfferBoxRow = readonly [string, ReactNode, ReactNode, string | undefined];
+function offerBoxRows(offer: Offer, bill: BillDocumentModel, context: Context): readonly OfferBoxRow[] {
   const ee = context.vector === "EE";
   const unit = ee ? "€/kWh" : "€/Smc";
   const basis = annualBasis(context);
@@ -582,7 +584,7 @@ function OfferBox({ offer, bill, context }: { readonly offer: Offer; readonly bi
   const billUnit = energyRow?.current != null && basis ? energyRow.current / basis.billed : null;
   const index = offer.candidate.pricingReference === "PSV" || !ee ? "PSV" : "PUN";
   const offerType = offer.candidate.pricingType === "FIXED" ? "Prezzo fisso" : offer.candidate.pricingType === "INDEXED" ? `Indicizzato ${index}` : "Non indicato";
-  const rows: readonly (readonly [string, ReactNode, ReactNode, string | undefined])[] = [
+  const rows: readonly OfferBoxRow[] = [
     ["Offerta", billOfferName(bill, context) ?? "non indicata in bolletta", offer.offerName, undefined],
     ["Tipo di prezzo", priceType(bill), offerType, undefined],
     ...(ee && indexedBill(bill) ? [["Indice nel periodo (GME)", referencePun(bill), "stesso indice e stesso periodo", undefined] as const] : []),
@@ -594,6 +596,10 @@ function OfferBox({ offer, bill, context }: { readonly offer: Offer; readonly bi
     ["Costo medio della materia", billUnit === null ? "—" : `${RATE.format(billUnit)} ${unit}`, `${RATE.format(offer.calculation.unitCost.amount)} ${unit}`, billUnit === null ? undefined : difference(offer.calculation.unitCost.amount - billUnit)],
     ["Spesa per l'offerta (vendita)", euro(energyRow?.current ?? null), euro(energyRow?.offer ?? null), energyRow?.current == null || energyRow.offer === null ? undefined : difference(energyRow.offer - energyRow.current)],
   ];
+  return rows;
+}
+function OfferBox({ offer, bill, context }: { readonly offer: Offer; readonly bill: BillDocumentModel; readonly context: Context }): ReactNode {
+  const rows = offerBoxRows(offer, bill, context);
   return <div className="quote-offer-box">
     <p className="eyebrow">BOX OFFERTA · CONFRONTO BOLLETTA / CTE</p>
     <div className="responsive-table"><table>
@@ -603,9 +609,42 @@ function OfferBox({ offer, bill, context }: { readonly offer: Offer; readonly bi
   </div>;
 }
 
+/** The plain text of a cell of the offer box, for the proposal PDF. */
+function nodeText(node: ReactNode): string {
+  if (node === null || node === undefined || typeof node === "boolean") return "";
+  if (typeof node === "string" || typeof node === "number") return String(node);
+  if (Array.isArray(node)) return node.map(nodeText).join("");
+  if (isValidElement(node)) return nodeText((node.props as { readonly children?: ReactNode }).children);
+  return "";
+}
+
+/**
+ * Tony (31/10): the proposal PDF repeats what the agent sees: scontrino, savings (annual, monthly, on the bill), the CTE's
+ * name and the offer box against the simulated bill.
+ */
+function presentationOf(offer: Offer, receipt: QuoteReceipt, bill: BillDocumentModel, context: Context, annualSaving: number | null, annualCurrent: number | null, basisLabel: string, same: boolean): ProposalPresentation {
+  const period = context.consumption?.period;
+  const unit = context.vector === "EE" ? "kWh" : "Smc";
+  const total = context.vector === "EE" ? (period?.f1 ?? 0) + (period?.f2 ?? 0) + (period?.f3 ?? 0) : period?.smc ?? 0;
+  const bands = context.vector === "EE" && period ? ` (F1 ${NUMBER.format(period.f1 ?? 0)}, F2 ${NUMBER.format(period.f2 ?? 0)}, F3 ${NUMBER.format(period.f3 ?? 0)})` : "";
+  const supply = context.vector === "EE" ? [context.supply.pod ? `POD ${context.supply.pod}` : "", context.supply.voltageLevel ? VOLTAGE[context.supply.voltageLevel] : "", context.supply.contractedPowerKw ? `${QUANTITY.format(context.supply.contractedPowerKw)} kW` : ""] : [context.supply.pdr ? `PDR ${context.supply.pdr}` : ""];
+  return {
+    customerName: bill.fields.customerName?.value?.trim() ?? "", supplyLabel: supply.filter(Boolean).join(" · "),
+    billSupplier: context.currentSupplier, billOfferName: billOfferName(bill, context) ?? "",
+    offerSupplier: offer.supplier, offerName: offer.offerName, offerCode: offer.calculation.sourceCte.offerCode ?? "",
+    periodLabel: `${date(context.billingPeriod.periodStart)} – ${date(context.billingPeriod.periodEnd)}`, consumptionLabel: total > 0 ? `${NUMBER.format(total)} ${unit}${bands}` : "",
+    taxesIncluded: receipt.taxesIncluded, sameOffer: same,
+    currentTotal: receipt.currentTotal, offerTotal: receipt.offerTotal, savings: receipt.savings, savingsPercent: receipt.savingsPercent,
+    annualSaving, annualCurrent, annualBasisLabel: basisLabel, validUntil: receipt.validUntil,
+    rows: receipt.rows.flatMap((row) => [{ label: row.label, current: row.current, offer: row.offer, difference: row.difference ?? null, detail: false }, ...(row.details ?? []).map((item) => ({ label: item.label, current: item.current, offer: item.offer, difference: item.difference, detail: true, ...(item.offer === null && item.missingReason ? { note: `non calcolato: ${item.missingReason}` } : {}) }))]).slice(0, 80),
+    comparison: offerBoxRows(offer, bill, context).map(([label, current, simulated]) => ({ label, bill: nodeText(current), offer: nodeText(simulated) })).slice(0, 20),
+    excluded: (receipt.excluded ?? []).slice(0, 20),
+  };
+}
+
 // VAT rates the agent can apply to the new offer when the company qualifies for a reduced rate (e.g. 10% for some business uses).
 const VAT_CHOICES = [0.22, 0.1, 0.05, 0.04] as const;
-function Receipt({ offer: quoted, today, business, context, bill }: { readonly offer: Offer; readonly today: string; readonly business: boolean; readonly context: Context; readonly bill: BillDocumentModel }): ReactNode {
+function Receipt({ offer: quoted, today, business, context, bill, onPresentation }: { readonly offer: Offer; readonly today: string; readonly business: boolean; readonly context: Context; readonly bill: BillDocumentModel; readonly onPresentation?: (presentation: ProposalPresentation) => void }): ReactNode {
   const [offerVatRate, setOfferVatRate] = useState<number | null>(null);
   const receipt = offerVatRate === null ? quoted.receipt : buildQuoteReceipt({ vector: quoted.calculation.vector, offerSupplyCost: quoted.calculation.totalCommercialCost.amount, analysis: bill.analystReview.economics.economicAnalysis, domestic: context.classification.domestic, validUntil: quoted.candidate.validity.periodEnd, offerComponents: quoted.calculation.components, warnings: quoted.calculation.warnings, offerVatRate, householdSpread: householdSpreadOf(context, quoted.calculation) });
   const offer: Offer = { ...quoted, receipt };
@@ -623,6 +662,10 @@ function Receipt({ offer: quoted, today, business, context, bill }: { readonly o
   // the gap is what the bill charges beyond (or below) its own CTE.
   const same = isSameOffer({ billSupplier: context.currentSupplier, billOffer: currentOffer, offerSupplier: offer.supplier, offerCode: offer.calculation.sourceCte.offerCode, offerName: offer.offerName });
   const headline = same ? (saving >= 0 ? "Stessa CTE della bolletta: la bolletta addebita più di quanto prevede la CTE" : "Stessa CTE della bolletta: la bolletta addebita meno di quanto prevede la CTE") : saving >= 0 ? "Risparmio sulla bolletta caricata" : "Costo in più sulla bolletta caricata";
+  const basisLabel = basis ? `Simulato su 12 mesi con ${amount(basis.annual, unit)} di consumo annuo${basis.estimated ? " stimato dalla bolletta" : " letto in bolletta"}` : "";
+  const presentation = presentationOf(offer, receipt, bill, context, same ? null : annualSaving, annualCurrent, basisLabel, same);
+  const presentationKey = JSON.stringify(presentation);
+  useEffect(() => { onPresentation?.(JSON.parse(presentationKey) as ProposalPresentation); }, [presentationKey, onPresentation]);
   return <section className="ui-card quote-receipt" aria-label="Scontrino dell'energia">
     <p className="eyebrow">SCONTRINO DELL&apos;ENERGIA</p>
     <h3>{offer.supplier} · {offer.offerName}</h3>
@@ -691,6 +734,8 @@ export default function QuickQuoteFlow({ readonly }: { readonly readonly: boolea
   const [quote, setQuote] = useState<Quote | null>(null);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [proposal, setProposal] = useState<ProposalModel | null>(null);
+  const presentationRef = useRef<ProposalPresentation | null>(null);
+  const keepPresentation = useCallback((presentation: ProposalPresentation) => { presentationRef.current = presentation; }, []);
   const today = new Date().toISOString().slice(0, 10);
 
   const loadArchive = useCallback(async () => { try { const result = await requestJson<{ readonly documents: readonly ApprovedBillSummaryModel[] }>("/api/bills?view=approved"); setArchive(result.documents); } catch { setArchive([]); } }, []);
@@ -794,7 +839,7 @@ export default function QuickQuoteFlow({ readonly }: { readonly readonly: boolea
       const created = (await requestJson<{ readonly proposal: ProposalModel }>("/api/proposal/comparison", { method: "POST", body: JSON.stringify(body) })).proposal;
       if (created.selectedResult.calculationId !== result.calculationId || created.selectedResult.rankingPosition !== (ranking?.rank ?? null)) throw new Error("PROPOSAL_RESPONSE_INVALID");
       setProposal(created);
-      await downloadExport("/api/proposal/export/pdf", { proposalId: created.proposalId }, "PDF");
+      await downloadExport("/api/proposal/export/pdf", { proposalId: created.proposalId, ...(presentationRef.current ? { presentation: presentationRef.current } : {}) }, "PDF");
     } catch (cause) { setError(message(cause)); } finally { setPending(undefined); }
   };
 
@@ -841,7 +886,7 @@ export default function QuickQuoteFlow({ readonly }: { readonly readonly: boolea
         {quote.offers.length ? <NoOfferReasons quote={quote} shown={quote.offers.map((offer) => offer.candidate.archiveId)} onAuthorize={readonly ? undefined : authorizeCte} /> : null}
         {quote.offers.length ? null : <><EmptyState title="Nessuna offerta utilizzabile" detail="Nessuna CTE a te assegnata è adatta a questa bolletta. Chiedi all'amministratore di assegnartene una." /><NoOfferReasons quote={quote} onAuthorize={readonly ? undefined : authorizeCte} /></>}
       </section>
-      {selected ? <><Receipt offer={selected} today={today} business={quote.context.customerType === "NON_RESIDENTIAL"} context={quote.context} bill={quote.bill} /><div className="button-row"><button className="button primary" type="button" onClick={() => void saveProposal()} disabled={readonly || Boolean(pending)}>{pending === "proposal" ? "Preparazione" : "Scarica la proposta in PDF"}</button>{proposal ? <span className="muted" role="status">Proposta salvata in Proposte.</span> : null}</div></> : null}
+      {selected ? <><Receipt offer={selected} today={today} business={quote.context.customerType === "NON_RESIDENTIAL"} context={quote.context} bill={quote.bill} onPresentation={keepPresentation} /><div className="button-row"><button className="button primary" type="button" onClick={() => void saveProposal()} disabled={readonly || Boolean(pending)}>{pending === "proposal" ? "Preparazione" : "Scarica la proposta in PDF"}</button>{proposal ? <span className="muted" role="status">Proposta salvata in Proposte.</span> : null}</div></> : null}
     </> : null : null}
     {error ? <ErrorState message={error} /> : null}
   </div>;

@@ -1,6 +1,8 @@
 import type { CteAssignmentRepository, OrgChainRepository } from "../hierarchy/service";
 import type { CteAssignment, OrgNode } from "../hierarchy/types";
 import type { AccessAccount, AccessDirectory, Company } from "../access/types";
+import type { CompanyProfile } from "../company/profile";
+import type { ProposalPresentation } from "../proposal/presentation";
 // @ts-expect-error Node's strip-only test runner requires the explicit extension.
 import { SupabaseAccessDirectory } from "./supabase-directory.ts";
 import { createHash, randomBytes, randomUUID } from "node:crypto";
@@ -350,6 +352,8 @@ export class SupabaseProductionStorageAdapter implements ProductionStorageAdapte
   readonly jobIncidents: TenantRecordRepository<JobIncidentRecord>;
 
   readonly companies: TenantRecordRepository<Company>;
+  readonly companyProfiles: TenantRecordRepository<CompanyProfile>;
+  readonly proposalPresentations: TenantRecordRepository<ProposalPresentation>;
   readonly accessAccounts: TenantRecordRepository<AccessAccount>;
   readonly accessDirectory?: AccessDirectory;
 
@@ -383,6 +387,8 @@ export class SupabaseProductionStorageAdapter implements ProductionStorageAdapte
     this.orgChain = new SupabaseRecordRepository<OrgNode>(client, "org-chain") as SupabaseRecordRepository<OrgNode> & OrgChainRepository;
     this.cteAssignments = new SupabaseRecordRepository<CteAssignment>(client, "cte-assignments");
     this.companies = new SupabaseRecordRepository<Company>(client, "companies");
+    this.companyProfiles = new SupabaseRecordRepository<CompanyProfile>(client, "company-profiles");
+    this.proposalPresentations = new SupabaseRecordRepository<ProposalPresentation>(client, "proposal-presentations");
     this.accessAccounts = new SupabaseRecordRepository<AccessAccount>(client, "access-accounts");
     if (authClient) this.accessDirectory = new SupabaseAccessDirectory(client, authClient);
   }

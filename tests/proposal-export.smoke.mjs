@@ -15,6 +15,9 @@ import { compareApprovedOffers } from "../app/lib/comparison/service.ts";
 import { generateProposal } from "../app/lib/proposal/service.ts";
 import { exportCsv, exportHtml, exportJson } from "../app/lib/export/serialization.ts";
 import { exportPdf } from "../app/lib/export/pdf.ts";
+import { renderReceiptProposal } from "../app/lib/export/receipt-pdf.ts";
+import { fallbackPresentation, parseProposalPresentation, presentationMatches } from "../app/lib/proposal/presentation.ts";
+import { COMPANY_LOGO_MAX_BYTES, jpegSize, parseCompanyProfile } from "../app/lib/company/profile.ts";
 import { EE_FISCAL_EXCLUSION_NOTICE } from "../app/lib/calculation/economic-scope.ts";
 
 const tenant = "tenant_proposal-smoke";
@@ -98,6 +101,37 @@ try {
   assert.ok(normalizedPdfText.includes("confronto"));
   assert.ok(normalizedPdfText.includes("delle offerte."));
   assert.deepEqual(pdf.body, exportPdf(fixedProposal, tenant).body);
+
+  // Tony (31/10): "l'offerta deve essere formulata come una bolletta come lo scontrino elettrico, con logo dell'azienda dati
+  // aziendali percentuale e importo di risparmio annuale e mensile, oltre al nome della cte utilizzata e a uno specchietto che
+  // paragona l'offerta alla bolletta che è stata simulata" + "in lingua italiana".
+  const jpeg = Buffer.from([0xff, 0xd8, 0xff, 0xc0, 0x00, 0x11, 0x08, 0x00, 0x20, 0x00, 0x40, 0x03, 1, 0x22, 0, 2, 0x11, 1, 3, 0x11, 1, 0xff, 0xd9]);
+  assert.deepEqual(jpegSize(jpeg), { width: 64, height: 32, components: 3 });
+  assert.equal(jpegSize(Buffer.from("not a jpeg")), null);
+  const profile = parseCompanyProfile({ name: "  Energia   Demo S.r.l. ", address: "Via Roma 1, Milano", vatNumber: "IT00000000000", phone: "02 000000", email: "info@example.test", website: "example.test", logo: "data:image/jpeg;base64," + jpeg.toString("base64") }, "2026-10-31T00:00:00.000Z");
+  assert.equal(profile.name, "Energia Demo S.r.l.");
+  assert.throws(() => parseCompanyProfile({ logo: "data:image/png;base64,AAAA" }, "x"), /COMPANY_LOGO_INVALID/);
+  assert.throws(() => parseCompanyProfile({ logo: "data:image/jpeg;base64," + Buffer.alloc(COMPANY_LOGO_MAX_BYTES + 10, 0xff).toString("base64") }, "x"), /COMPANY_LOGO_TOO_LARGE/);
+  assert.throws(() => parseCompanyProfile({ name: "x".repeat(500) }, "x"), /COMPANY_PROFILE_TOO_LONG/);
+  const screen = parseProposalPresentation({
+    customerName: "Cliente prova", supplyLabel: "POD IT001E000000", billSupplier: "Fornitore attuale", billOfferName: "Offerta attuale",
+    offerSupplier: fixedProposal.selectedOffer.supplier, offerName: "Offerta Luce Prova", offerCode: fixedProposal.selectedOffer.offerCode,
+    periodLabel: "01/09/2026 - 30/09/2026", consumptionLabel: "1.000 kWh", taxesIncluded: false, sameOffer: false,
+    currentTotal: 250, offerTotal: 200, savings: 50, savingsPercent: 20, annualSaving: 600, annualCurrent: 3000, annualBasisLabel: "12 mesi",
+    validUntil: "2026-12-31", rows: [{ label: "Spesa per la materia energia", current: 180, offer: 130, difference: -50, detail: false }],
+    comparison: [{ label: "Prezzo energia", bill: "0,180 €/kWh", offer: "PUN + 0,020 €/kWh" }], excluded: [],
+  });
+  assert.equal(presentationMatches(screen, fixedProposal), true);
+  assert.equal(presentationMatches({ ...screen, offerSupplier: "Altro fornitore" }, fixedProposal), false);
+  assert.throws(() => parseProposalPresentation({ currentTotal: "tanto" }), /PROPOSAL_PRESENTATION_INVALID/);
+  const receipt = Buffer.from(renderReceiptProposal(fixedProposal, screen, profile)).toString("latin1");
+  assert.ok(receipt.startsWith("%PDF-1.4"));
+  const plain = receipt.replace(/\\([()\\])/g, "$1").toUpperCase();
+  for (const expected of ["PROPOSTA COMMERCIALE", "Energia Demo S.r.l.", "IT00000000000", "Offerta Luce Prova", "Scontrino dell'energia", "Risparmio annuo", "Risparmio mensile", "Confronto tra l'offerta e la bolletta simulata", "Bolletta attuale", "Nuova offerta"]) assert.ok(plain.includes(expected.toUpperCase()), expected);
+  assert.ok(receipt.includes("/Subtype /Image") && receipt.includes("/DCTDecode"), "logo embedded");
+  assert.ok(!/Commercial proposal|Savings|Offer/.test(receipt.replace(/Offerta/g, "")), "only Italian text");
+  const fallback = Buffer.from(renderReceiptProposal(fixedProposal, fallbackPresentation(fixedProposal), null)).toString("latin1");
+  assert.ok(fallback.includes("PROPOSTA COMMERCIALE") && !fallback.includes("/DCTDecode"));
 
   assert.throws(() => generateProposal(proposalRequest({ ...fixedCalculation, fingerprint: "altered" }), tenant), /CALCULATION_FINGERPRINT_MISMATCH/);
   assert.throws(() => generateProposal({ ...proposalRequest(fixedCalculation), selectedOffer: { ...selectedOffer(fixedCalculation), version: "wrong" } }, tenant), /PROPOSAL_OFFER_MISMATCH/);
