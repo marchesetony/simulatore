@@ -676,6 +676,8 @@ export default function QuickQuoteFlow({ readonly }: { readonly readonly: boolea
   const [error, setError] = useState<string>();
   const [archive, setArchive] = useState<readonly ApprovedBillSummaryModel[]>([]);
   const [billQuery, setBillQuery] = useState("");
+  const [deleteId, setDeleteId] = useState<string | null>(null);
+  const [deleting, setDeleting] = useState(false);
   const [draft, setDraft] = useState<BillDocumentModel | null>(null);
   const [values, setValues] = useState<Readonly<Record<string, string>>>({});
   const [quote, setQuote] = useState<Quote | null>(null);
@@ -685,6 +687,13 @@ export default function QuickQuoteFlow({ readonly }: { readonly readonly: boolea
 
   const loadArchive = useCallback(async () => { try { const result = await requestJson<{ readonly documents: readonly ApprovedBillSummaryModel[] }>("/api/bills?view=approved"); setArchive(result.documents); } catch { setArchive([]); } }, []);
   useEffect(() => { void loadArchive(); }, [loadArchive]);
+  // Tony (31/10): "serve un tasto cancella le bollette". Two clicks: Cancella, then Conferma.
+  const deleteBill = async (billId: string) => {
+    setDeleting(true); setError(undefined);
+    try { await requestJson<{ readonly deleted: boolean }>(`/api/bills/${encodeURIComponent(billId)}`, { method: "DELETE" }); setDeleteId(null); await loadArchive(); }
+    catch (cause) { setError(message(cause)); }
+    finally { setDeleting(false); }
+  };
 
   const loadOffers = async (billId: string) => {
     setPending("offers"); setError(undefined); setQuote(null); setProposal(null); setStep("offers");
@@ -793,7 +802,13 @@ export default function QuickQuoteFlow({ readonly }: { readonly readonly: boolea
         {archive.length ? <div className="form-field"><span className="form-label">Oppure usa una bolletta già caricata</span>
           {/* Tony (31/10): "inserire un campo ricerca, e elencare in ordine alfabetico crescente". */}
           <input type="search" value={billQuery} onChange={(event) => setBillQuery(event.target.value)} placeholder="Cerca per intestatario, fornitore o file" aria-label="Cerca bolletta" disabled={Boolean(pending)} />
-          <select value="" onChange={(event) => { if (event.target.value) void openBill(event.target.value); }} disabled={Boolean(pending)} aria-label="Scegli la bolletta"><option value="">Scegli la bolletta</option>{billChoices(archive, billQuery).map((bill) => <option key={bill.id} value={bill.id}>{billLabel(bill)}</option>)}</select></div> : null}
+          <select value="" onChange={(event) => { if (event.target.value) void openBill(event.target.value); }} disabled={Boolean(pending)} aria-label="Scegli la bolletta"><option value="">Scegli la bolletta</option>{billChoices(archive, billQuery).map((bill) => <option key={bill.id} value={bill.id}>{billLabel(bill)}</option>)}</select>
+          <details className="quote-bill-manage"><summary>Cancella bollette caricate</summary>
+            <p className="muted">Le bollette con data di oltre 5 mesi fa vengono eliminate in automatico.</p>
+            <ul>{billChoices(archive, billQuery).map((bill) => <li key={bill.id}><span>{billLabel(bill)}</span>{deleteId === bill.id
+              ? <span className="button-row"><button className="button compact danger" type="button" onClick={() => void deleteBill(bill.id)} disabled={readonly || deleting}>{deleting ? "Cancellazione…" : "Conferma"}</button><button className="button compact secondary" type="button" onClick={() => setDeleteId(null)} disabled={deleting}>Annulla</button></span>
+              : <button className="button compact danger" type="button" onClick={() => setDeleteId(bill.id)} disabled={readonly || deleting}>Cancella</button>}</li>)}</ul>
+          </details></div> : null}
       </>}
     </section> : null}
     {step === "review" && draft ? <section className="ui-card">

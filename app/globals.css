@@ -543,3 +543,9 @@ button:focus-visible,a:focus-visible,input:focus-visible,select:focus-visible,te
 .same-offer-check.differs { background:#fffaeb; border-color:#fedf89; }
 .same-offer-check ul { margin:8px 0; padding-left:20px; }
 .same-offer-check li { margin:4px 0; }
+/* Tony (31/10): list to delete uploaded bills. */
+.quote-bill-manage { margin-top:12px; }
+.quote-bill-manage summary { cursor:pointer; font-weight:600; }
+.quote-bill-manage ul { list-style:none; margin:8px 0 0; padding:0; max-height:320px; overflow:auto; }
+.quote-bill-manage li { display:flex; gap:12px; align-items:center; justify-content:space-between; padding:6px 0; border-bottom:1px solid var(--border, #e2e8f0); }
+.quote-bill-manage li > span:first-child { min-width:0; overflow-wrap:anywhere; }

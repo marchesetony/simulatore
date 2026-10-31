@@ -9,6 +9,7 @@ import { createAnthropicTwoStageBillSdkAdapter } from "../../lib/ingestion/anthr
 import { attachOfficialPun, ensureOfficialPunForBill } from "../../lib/market/pun-reference";
 import { billPunRefresh } from "../../lib/market-refresh/bill-pun";
 import { billInScope, billVisibilityScope } from "../../lib/foundation/bill-visibility";
+import { billTooOld } from "../../lib/foundation/bill-retention";
 import { isBillFeature, resolveBillFeaturePermissions, sanitizeBillForFeatureAccess, type BillFeature } from "../../lib/foundation/bill-feature-permissions";
 
 const CORRELATION_ID = "foundation-bills";
@@ -100,7 +101,9 @@ export async function GET(request: Request): Promise<Response> {
     const access = await resolveBillFeaturePermissions(principal, repositories, scope);
     const requestedFeature = new URL(request.url).searchParams.get("feature");
     if (requestedFeature !== null && (!isBillFeature(requestedFeature) || !access.features[requestedFeature as BillFeature])) return deny("BILL_FEATURE_ACCESS_DENIED", "Funzione tecnica non autorizzata", 403);
-    const documents = (await repositories.billRepository.list(principal.tenantId)).filter((document) => billInScope(document, scope));
+    // Tony (31/10): bills dated more than 5 months ago are no longer offered; the nightly job deletes them.
+    const now = new Date().toISOString();
+    const documents = (await repositories.billRepository.list(principal.tenantId)).filter((document) => billInScope(document, scope) && !billTooOld(document, now));
     if (documents.length > MAX_BILL_LIST_RESULTS) throw new Error("BILL_LIST_TOO_LARGE");
     const approvedView = new URL(request.url).searchParams.get("view") === "approved";
     const publicDocuments = (approvedView ? documents.filter((document) => document.currentApprovedVersionId !== null).map(toPublicBillSummary).filter((document): document is NonNullable<typeof document> => document !== null) : await Promise.all(documents.filter((document) => document.currentApprovedVersionId === null).map(async (document) => sanitizeBillForFeatureAccess(await attachOfficialPun(toPublicDocument(document), repositories.marketArchiveRepository), access))))
