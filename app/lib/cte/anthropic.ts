@@ -482,9 +482,11 @@ function decodeProviderField(value: unknown, index: number): Record<string, unkn
   const structuredPath = value.path === "commercialTerms.passThroughComponents" || CTE_OBJECT_PATHS.includes(value.path as typeof CTE_OBJECT_PATHS[number]);
   if (kind !== "NULL" && (structuredPath ? kind !== "JSON" && !textSemantic : kind === "JSON" && !commercialList && descriptiveList === null)) issues.push(issue(`${prefix}.valueKind`, "PATH_KIND"));
   if (value.path === "commercialTerms.passThroughComponents" && kind !== "NULL" && kind !== "JSON" && (!Array.isArray(rawParsed) || rawParsed.some((item) => !isRecord(item)))) issues.push(issue(`${prefix}.valuePayload`, "PASS_THROUGH_INVALID"));
-  if (kind === "NULL" && value.status !== "NOT_FOUND") issues.push(issue(`${prefix}.status`, "NULL_REQUIRES_NOT_FOUND"));
-  if (value.status === "NOT_FOUND" && (kind !== "NULL" || parsed !== null || value.sourcePage !== 0 || value.sourceText !== "")) issues.push(issue(`${prefix}`, "NOT_FOUND_REQUIRES_SENTINELS"));
-  if (issues.length) fail("CTE_EXTRACTION_SCHEMA_INVALID", issues);
+  // Tony (31/10, BE Family Casa Protetta): "ancora errore, cazzo". One field the reader marks NOT_FOUND but still
+  // fills with a quote or a page (or an empty value marked found) must not throw away the whole CTE: it becomes an
+  // empty field, and a value of the wrong kind becomes a field to fill in review.
+  if (value.status === "NOT_FOUND" || kind === "NULL") return notFoundField(value.path as string);
+  if (issues.length) return { ...notFoundField(value.path as string), unreadable: true };
   if ((semanticPath || value.path === "commercialTerms.passThroughComponents") && kind !== "NULL" && (normalizedParsed === null || Array.isArray(normalizedParsed) && normalizedParsed.length === 0)) return { ...notFoundField(value.path as string), unreadable: true };
   return {
     path: value.path,

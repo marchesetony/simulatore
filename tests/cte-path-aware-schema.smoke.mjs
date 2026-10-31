@@ -30,12 +30,15 @@ assert.deepEqual(envelopeParsed.fields[0].value, [component]);
 assert.deepEqual(envelopeParsed.fields[1].value, { value: 12, unit: "MONTHS", sourceText: "12 mesi" });
 assert.equal(envelopeParsed.fields[0].sourcePage, 1);
 assert.equal(parseAnthropicCteResponse(response([envelopeField("offer.name", null)])).fields[0].sourcePage, null);
-assert.throws(() => parseAnthropicCteResponse(response([{ ...envelopeField("commercialTerms.passThroughComponents", "scalar-bypass"), valueKind: "TEXT" }])), /CTE_EXTRACTION_SCHEMA_INVALID/);
-assert.throws(() => parseAnthropicCteResponse(response([{ ...envelopeField("pricing.reference", ["PUN"]), valueKind: "JSON" }])), /CTE_EXTRACTION_SCHEMA_INVALID/);
-assert.throws(() => parseAnthropicCteResponse(response([{ ...envelopeField("offer.name", null), status: "CONFIRMED" }])), /CTE_EXTRACTION_SCHEMA_INVALID/);
-assert.throws(() => parseAnthropicCteResponse(response([{ ...envelopeField("offer.name", null), status: "UNCERTAIN" }])), /CTE_EXTRACTION_SCHEMA_INVALID/);
-assert.throws(() => parseAnthropicCteResponse(response([{ ...envelopeField("offer.name", null), sourcePage: 1 }])), /CTE_EXTRACTION_SCHEMA_INVALID/);
-assert.throws(() => parseAnthropicCteResponse(response([{ ...envelopeField("offer.name", null), sourceText: "evidence" }])), /CTE_EXTRACTION_SCHEMA_INVALID/);
+// Tony (31/10, BE Family Casa Protetta): "ancora errore, cazzo". One malformed field (wrong kind, or NOT_FOUND still
+// carrying a quote or a page, or an empty value marked found) no longer throws away the whole CTE: it becomes an empty
+// field (to fill in review when its kind was wrong) and the rest of the reading is kept.
+{ const read = parseAnthropicCteResponse(response([{ ...envelopeField("commercialTerms.passThroughComponents", "scalar-bypass"), valueKind: "TEXT" }])); assert.equal(read.fields[0].value, null); assert.equal(read.fields[0].status, "NOT_FOUND"); assert.equal(read.fields[0].sourceText, null); }
+{ const read = parseAnthropicCteResponse(response([{ ...envelopeField("pricing.reference", ["PUN"]), valueKind: "JSON" }])); assert.equal(read.fields[0].value, null); assert.equal(read.fields[0].status, "NOT_FOUND"); assert.equal(read.fields[0].sourceText, null); }
+{ const read = parseAnthropicCteResponse(response([{ ...envelopeField("offer.name", null), status: "CONFIRMED" }])); assert.equal(read.fields[0].value, null); assert.equal(read.fields[0].status, "NOT_FOUND"); assert.equal(read.fields[0].sourceText, null); }
+{ const read = parseAnthropicCteResponse(response([{ ...envelopeField("offer.name", null), status: "UNCERTAIN" }])); assert.equal(read.fields[0].value, null); assert.equal(read.fields[0].status, "NOT_FOUND"); assert.equal(read.fields[0].sourceText, null); }
+{ const read = parseAnthropicCteResponse(response([{ ...envelopeField("offer.name", null), sourcePage: 1 }])); assert.equal(read.fields[0].value, null); assert.equal(read.fields[0].status, "NOT_FOUND"); assert.equal(read.fields[0].sourceText, null); }
+{ const read = parseAnthropicCteResponse(response([{ ...envelopeField("offer.name", null), sourceText: "evidence" }])); assert.equal(read.fields[0].value, null); assert.equal(read.fields[0].status, "NOT_FOUND"); assert.equal(read.fields[0].sourceText, null); }
 assert.throws(() => parseAnthropicCteResponse(response([field("commercialTerms.passThroughComponents", "scalar-bypass")])), /CTE_EXTRACTION_SCHEMA_INVALID/);
 assert.throws(() => parseAnthropicCteResponse(response([field("pricing.reference", ["PUN"])])), (error) => error.code === "CTE_EXTRACTION_SCHEMA_INVALID" && error.issuePaths.includes("fields[0].value"));
 assert.doesNotThrow(() => parseAnthropicCteResponse(response([field("commercialTerms.fixedFees", [component])])));
