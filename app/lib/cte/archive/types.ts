@@ -74,6 +74,8 @@ export interface CteArchiveRepository {
   get(tenantId: string, archiveId: string): Promise<CteArchiveRecord | null>;
   list(tenantId: string): Promise<ReadonlyArray<CteArchiveRecord>>;
   save(record: CteArchiveRecord, capability?: symbol): Promise<void>;
+  /** Removes the CTE for good; only the company archive purge uses it (Tony, 31/10, "pulizia totale"). */
+  remove?(tenantId: string, archiveId: string): Promise<void>;
 }
 
 export interface CreateCteArchiveInput {

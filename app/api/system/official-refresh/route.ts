@@ -1,4 +1,5 @@
 import { requestPrincipal } from "../../../lib/auth/request";
+import { isPlatformOwner } from "../../../lib/access/service";
 import { officialDataTenants } from "../../../lib/automation/official-data-tenants";
 import { configuredMarketRefreshTenants } from "../../../lib/market-refresh/config";
 import { runPsvMarketRefresh } from "../../../lib/market-refresh/psv";
@@ -21,6 +22,9 @@ export async function POST(request: Request): Promise<Response> {
   try { principal = await requestPrincipal(request, "ADMIN"); } catch {
     return Response.json({ error: { code: "AUTHORIZATION_DENIED", message: "Solo gli amministratori" } }, { status: 403, headers: { "cache-control": "no-store" } });
   }
+  // Tony (31/10): "gli archivi arera, terna gme, tutti i dati di mercato li gestisce solo l'azienda, no il cliente che compra
+  // l'app": only the platform owner refreshes them; the nightly job keeps running for every company.
+  if (!isPlatformOwner(principal)) return Response.json({ error: { code: "MARKET_OFFICIAL_DATA_READ_ONLY", message: "I dati ufficiali li aggiorna solo la piattaforma" } }, { status: 403, headers: { "cache-control": "no-store" } });
   const repositories = runtimeRepositories();
   const tenants = [...new Set([principal.tenantId, ...await officialDataTenants(() => configuredMarketRefreshTenants(), repositories.companies)])];
   const results = [];
