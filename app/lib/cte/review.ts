@@ -289,7 +289,11 @@ export function extraFixedFees(primary: CteContract["commercialTerms"]["fixedFee
   const services = feeSegments(servicesRaw).filter((segment) => segment.text.toLocaleLowerCase("it-IT").split(/[^a-zà-ù0-9]+/).some((word) => offerWords.has(word)));
   const fixedLines = feeSegments(fixedRaw);
   let primarySkipped = false;
-  const extra = [...fixedLines, ...services].filter((segment) => {
+  // Tony (31/10, Be Smile 11.25 ESVFL04 in the CCC format: "adesso sarà questo"): the scheda sintetica repeats the offer as
+  // indicators ("Costo fisso anno 181,11 €/anno" = the 15 €/mese plus the one-off, "PUN*(1+λ) + 0,05612") and lists
+  // charges that are not part of the supply (voltura/subentro paperwork, security deposits): none is a fee of its own.
+  const notAFee = /costo\s+fisso\s+anno|costo\s+per\s+(?:consumi|potenza)|spesa\s+annua\s+stimata|deposit[oi]\s+cauzional|voltur|subentr|costo\s+pratica|interessi\s+di\s+mora|sollecit/i;
+  const extra = [...fixedLines, ...services].filter((segment) => !notAFee.test(segment.text)).filter((segment) => {
     const samePrimary = primary !== null && !primarySkipped && Math.abs(segment.amount - primary.amount) < 0.000001 && (segment.unit === "EUR_PER_POD_YEAR" ? primary.unit === "EUR_PER_POD" : segment.unit === primary.unit);
     if (samePrimary) primarySkipped = true;
     return !samePrimary;

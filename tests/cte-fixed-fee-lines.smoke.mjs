@@ -29,3 +29,9 @@ assert.equal(smileFixed.normalizedValue, 15);
 assert.equal(smileFixed.unit, "€/mese");
 assert.deepEqual(extraFixedFees({ ...primary }, smileFields, "Be Smile FLEX 25", "x-fixed", "EXCLUDED").map((fee) => [fee.amount, fee.unit]), [[36, "EUR_PER_YEAR"]]);
 console.log("CTE_FIXED_FEE_BULLET_LIST=PASS");
+// Tony (31/10, Be Smile 11.25 003888ESVFL04…SMIL1125 in the CCC format: "bada bene, adesso sarà questo"): the scheda
+// sintetica's "Costo fisso anno 181,11 €/anno" sums the 15 €/mese already priced, and voltura/subentro paperwork and
+// security deposits are not supply charges: only the 15 €/mese is a fixed fee.
+const smile1125 = new Map([["commercialTerms.fixedFees", { fieldKey: "commercialTerms.fixedFees", normalizedValue: 15, description: "Quota fissa business pari a 15 €/mese; Costo fisso anno 181,11 €/anno; Voltura o Subentro: corrispettivo una tantum pari a € 50,00 + Iva per il costo pratica; deposito cauzionale € 19 per utenze domestiche con SDD" }]]);
+assert.deepEqual(extraFixedFees(primary, smile1125, "Be Smile 11.25", "x-fixed", "EXCLUDED"), []);
+console.log("CTE_SCHEDA_INDICATORS_NOT_FEES=PASS");
