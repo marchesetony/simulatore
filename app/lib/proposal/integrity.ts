@@ -122,15 +122,17 @@ function comparableMinor(result: CalculationResult): number { return (calculatio
 function baselineScope(result: CalculationResult): ComparisonCostBasis { return result.normalizedInput.baseline?.costScope ?? "COMMERCIAL_ONLY"; }
 function baselineComparableMinor(result: CalculationResult): number { const baseline = result.normalizedInput.baseline ?? proposalFail("CALCULATION_SAVINGS_INVALID"); return Math.round((baselineScope(result) === "COMMERCIAL_ONLY" ? baseline.totalCommercialCost : baseline.comparisonCost ?? proposalFail("CALCULATION_SAVINGS_INVALID")) * 100); }
 
-const EXCLUSION_CODES = ["TENANT_MISMATCH", "VECTOR_MISMATCH", "CTE_NOT_APPROVED", "CTE_EXPIRED", "CTE_VALIDITY_MISMATCH", "CUSTOMER_NOT_ELIGIBLE", "VOLTAGE_NOT_ELIGIBLE", "TAX_TREATMENT_INCOMPATIBLE", "CURRENCY_INCOMPATIBLE", "CALCULATION_READY_INVALID", "CALCULATION_INPUT_INVALID", "MONTHLY_PROFILE_REQUIRED", "MARKET_DATA_MISSING", "MARKET_DATA_INVALID", "CORRECTION_COEFFICIENT_REQUIRED", "FEE_UNIT_MISMATCH", "IMBALANCE_UNAVAILABLE", "ONE_OFF_FEE_UNIT_INVALID", "COMPARISON_INCOMPATIBLE"] as const;
+// Every code the engine can return (CalculationExclusionCode): a CTE blocked or deleted by the company's commercial rules
+// made "Scarica la proposta in PDF" fail with COMPARISON_EXCLUSION_INVALID (Tony, 31/10, bolletta MACRI).
+const EXCLUSION_CODES = ["TENANT_MISMATCH", "VECTOR_MISMATCH", "CTE_NOT_APPROVED", "CTE_COMMERCIAL_BLOCKED", "CTE_COMMERCIAL_DELETED", "CTE_EXPIRED", "CTE_VALIDITY_MISMATCH", "CUSTOMER_NOT_ELIGIBLE", "VOLTAGE_NOT_ELIGIBLE", "TAX_TREATMENT_INCOMPATIBLE", "CURRENCY_INCOMPATIBLE", "CALCULATION_READY_INVALID", "CALCULATION_INPUT_INVALID", "MONTHLY_PROFILE_REQUIRED", "MARKET_DATA_MISSING", "MARKET_DATA_INVALID", "CORRECTION_COEFFICIENT_REQUIRED", "FEE_UNIT_MISMATCH", "IMBALANCE_UNAVAILABLE", "ONE_OFF_FEE_UNIT_INVALID", "COMPARISON_INCOMPATIBLE"] as const;
 
 export function assertExclusion(value: unknown, vector?: "EE" | "GAS"): asserts value is CalculationExclusion {
   if (typeof value !== "object" || value === null || Array.isArray(value)) proposalFail("COMPARISON_EXCLUSION_INVALID");
   const item = value as Record<string, unknown>;
   text(item.archiveId, "COMPARISON_EXCLUSION_INVALID", 128);
   text(item.cteId, "COMPARISON_EXCLUSION_INVALID", 128);
-  text(item.supplier, "COMPARISON_EXCLUSION_INVALID", 256);
-  text(item.offerCode, "COMPARISON_EXCLUSION_INVALID", 128);
+  // A CTE left out may lack its supplier name or offer code (that can be why it is left out): only the type and length count.
+  if (typeof item.supplier !== "string" || item.supplier.length > 256 || typeof item.offerCode !== "string" || item.offerCode.length > 128) proposalFail("COMPARISON_EXCLUSION_INVALID");
   if ((item.vector !== "EE" && item.vector !== "GAS") || (vector !== undefined && item.vector !== vector) || (item.cteVersion !== null && typeof item.cteVersion !== "string") || !EXCLUSION_CODES.includes(item.code as typeof EXCLUSION_CODES[number])) proposalFail("COMPARISON_EXCLUSION_INVALID");
   text(item.code, "COMPARISON_EXCLUSION_INVALID", 64);
   text(item.message, "COMPARISON_EXCLUSION_INVALID", 512);
