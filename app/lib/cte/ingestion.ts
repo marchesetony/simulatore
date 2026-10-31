@@ -220,11 +220,13 @@ export function normalizeProviderExtraction(value: unknown, tenantId: string): {
   try { notes = extractionNotes(value.extractionNotes); } catch { failWithDetail("CTE_EXTRACTION_SCHEMA_INVALID", "note di estrazione oltre i limiti"); }
   const allowed = new Set(expectedPaths(vector));
   // An empty field the tool enum offers for the other vector carries no evidence, so it is dropped rather than failing the document.
+  // Tony (31/10, B Relax Gas 003888GSVML03: "errore"): a gas CTE read with "Livelli tensione" filled (e.g. from the
+  // pressure or meter class) must not be thrown away: a field that does not belong to the vector is dropped with a
+  // note, and a field read twice keeps its first reading.
   const foreign = supplied.filter((field) => !allowed.has(field.path) && field.value !== null);
-  if (foreign.length) failWithDetail("CTE_EXTRACTION_SCHEMA_INVALID", `campi non previsti per ${vector}: ${foreign.map((field) => field.path).slice(0, 4).join(", ")}`);
-  const fields = supplied.filter((field) => allowed.has(field.path));
   const seen = new Set<string>();
-  for (const field of fields) { if (seen.has(field.path)) failWithDetail("CTE_EXTRACTION_SCHEMA_INVALID", `campo duplicato: ${field.path}`); seen.add(field.path); }
+  const fields = supplied.filter((field) => { if (!allowed.has(field.path) || seen.has(field.path)) return false; seen.add(field.path); return true; });
+  if (foreign.length) notes = [...notes, `Campi non previsti per ${vector} ignorati: ${foreign.map((field) => field.path).slice(0, 4).join(", ")}`].slice(0, 20);
   const candidate = bindCandidate(value.contractCandidate, tenantId, vector);
   ensureVectorSeparation(vector, fields, candidate);
   const byPath = new Map(fields.map((field) => [field.path, field]));
