@@ -282,6 +282,20 @@ class SupabaseDocumentStorage implements DocumentStoragePort {
     }
     return objectKey;
   }
+  private uploadKey(tenantId: string, uploadId: string): string { assertTenant(tenantId); assertRecordId(uploadId); return `${tenantId}/uploads/${uploadId}`; }
+  async createUploadTarget(tenantId: string, uploadId: string): Promise<{ readonly signedUrl: string }> {
+    const result = await this.client.storage.from(this.bucket).createSignedUploadUrl(this.uploadKey(tenantId, uploadId));
+    if (result.error || !result.data) providerError(result.error, "DOCUMENT_STORAGE_ERROR");
+    return { signedUrl: result.data!.signedUrl };
+  }
+  async takeUpload(tenantId: string, uploadId: string): Promise<Uint8Array> {
+    const key = this.uploadKey(tenantId, uploadId);
+    const result = await this.client.storage.from(this.bucket).download(key);
+    if (result.error || !result.data) providerError(result.error, "UPLOAD_NOT_FOUND");
+    const bytes = new Uint8Array(await result.data!.arrayBuffer());
+    await this.client.storage.from(this.bucket).remove([key]);
+    return bytes;
+  }
   async read(tenantId: string, id: string): Promise<Uint8Array> {
     assertTenant(tenantId);
     assertRecordId(id);

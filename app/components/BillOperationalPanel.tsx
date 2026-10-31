@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState, type ChangeEvent, type ReactNode } from "react";
 import { EmptyState, ErrorState, FormField, LoadingState } from "./UiStates";
-import { requestForm, requestJson, toUiError } from "../lib/ui/client";
+import { MAX_UPLOAD_BYTES, requestJson, requestUpload, toUiError } from "../lib/ui/client";
 import { formatBillDisplayPeriod, formatDisplayDate, formatEuro, formatNumber, statusLabel } from "../lib/ui/format";
 import type { ApprovedBillSummaryModel, BillDocumentModel, SimulationDraft } from "../lib/ui/models";
 import type { BillAnalystReviewDTO, BillAnalystReviewField } from "../lib/foundation/bill-analyst-review";
@@ -571,9 +571,9 @@ export default function BillOperationalPanel({ readonly, onUseInSimulation }: { 
   const upload = async (event: ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0]; event.target.value = "";
     if (!file || readonly || busyRef.current) return;
-    if (file.type !== "application/pdf" || file.size > 10_000_000) { setError("Il file PDF non rispetta i limiti di formato o dimensione."); return; }
+    if (file.type !== "application/pdf" || file.size > MAX_UPLOAD_BYTES) { setError("Il file deve essere un PDF entro 20 MB."); return; }
     busyRef.current = true; setPending("upload"); setError(undefined);
-    try { const result = await requestForm<{ readonly document: BillDocumentModel }>("/api/bills", (() => { const body = new FormData(); body.set("file", file); return body; })()); await load(); await open(result.document.id, false); setMessage("Bolletta caricata: lettura completata."); }
+    try { const result = await requestUpload<{ readonly document: BillDocumentModel }>("/api/bills", file); await load(); await open(result.document.id, false); setMessage("Bolletta caricata: lettura completata."); }
     catch (cause) { setError(errorText(cause)); } finally { busyRef.current = false; setPending(null); }
   };
   const approve = async () => {

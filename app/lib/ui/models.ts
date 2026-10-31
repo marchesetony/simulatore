@@ -51,6 +51,8 @@ export interface CteApprovedArchiveSummaryModel {
   readonly validity: { readonly periodStart: string; readonly periodEnd: string };
   readonly activeUntil?: string;
   readonly segment?: "Consumer" | "Business" | "Consumer e Business" | null;
+  readonly appliedSpread?: number | null;
+  readonly fixedPrice?: number | null;
   readonly status: "APPROVED";
   readonly commercialStatus: "ACTIVE" | "BLOCKED";
   readonly commercialAdjustment?: { readonly energyPriceDelta: number; readonly monthlyFeeDelta: number; readonly updatedAt: string } | null;

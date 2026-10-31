@@ -48,6 +48,11 @@ assert.deepEqual(passThroughReadingGaps(vague.record.fields, vague.contract), ["
 const gate = cteApprovalGate({ ...vague.record, candidate: vague.contract });
 assert.equal(gate.approvalReady, false);
 assert.ok(gate.blockers.some((blocker) => /dispacciamento, il mercato della capacità/.test(blocker.label)));
+// Tony (31/10, CTE BE Family CASA PROTETTA: "continua a non leggere bene e a restituire errori"): the CTE bills the ARERA
+// CDISPD for dispatching and capacity; naming it is enough, the engine applies the official value.
+const cdispd = build(base("Il fornitore fatturerà un ulteriore corrispettivo CDISPD a copertura dei costi del servizio di dispacciamento e del mercato della capacità, espresso in €/kWh, così come determinato e aggiornato dall'Autorità, in base all'articolo 48 del TIV.", "Commercializzazione pari a 0,002 €/kWh"), "cdispd");
+assert.deepEqual(passThroughReadingGaps(cdispd.record.fields, cdispd.contract), []);
+assert.ok(!cteApprovalGate({ ...cdispd.record, candidate: cdispd.contract }).blockers.some((blocker) => /non li ha riconosciuti/.test(blocker.label)), "no reading blocker for a CDISPD CTE");
 // 4. A CTE that includes them in the energy price is not blocked.
 const included = build(base("Il prezzo è comprensivo degli oneri di dispacciamento e del mercato della capacità", "Commercializzazione pari a 0,002 €/kWh"), "included");
 assert.deepEqual(passThroughReadingGaps(included.record.fields, included.contract), []);

@@ -3,6 +3,7 @@ import { recordRuntimeAudit } from "../../../lib/persistence/audit";
 import { runtimeRepositories } from "../../../lib/persistence/adapter";
 import { CTE_MAX_DOCUMENT_BYTES, createCteIngestion, getConfiguredCteOcrProvider, toPublicCteIngestion, type CteIngestionRepository } from "../../../lib/cte/ingestion";
 import { cteError, CTE_INGESTION_HEADERS } from "../../../lib/cte/ingestion-api";
+import { uploadedFile } from "../../../lib/foundation/large-upload";
 
 export const runtime = "nodejs";
 export const maxDuration = 300;
@@ -20,20 +21,19 @@ export async function GET(request: Request): Promise<Response> {
 export async function POST(request: Request): Promise<Response> {
   try {
     const principal = await requestPrincipal(request, "WRITE");
-    const form = await request.formData();
-    const file = form.get("file");
-    if (!(file instanceof File)) return cteError(new Error("CTE_FILE_REQUIRED"));
+    const repositories = runtimeRepositories();
+    const file = await uploadedFile(request, repositories.documentStorage, principal.tenantId);
+    if (!file) return cteError(new Error("CTE_FILE_REQUIRED"));
     let provider;
     let providerErrorCode;
     try { provider = getConfiguredCteOcrProvider(); } catch (error) { provider = undefined; const code = error instanceof Error ? error.message : ""; providerErrorCode = ["CTE_OCR_PROVIDER_NOT_CONFIGURED", "ANTHROPIC_API_KEY_MISSING", "ANTHROPIC_MODEL_MISSING", "ANTHROPIC_CTE_MAX_TOKENS_INVALID", "ANTHROPIC_CTE_TIMEOUT_INVALID"].includes(code) ? code as "CTE_OCR_PROVIDER_NOT_CONFIGURED" | "ANTHROPIC_API_KEY_MISSING" | "ANTHROPIC_MODEL_MISSING" | "ANTHROPIC_CTE_MAX_TOKENS_INVALID" | "ANTHROPIC_CTE_TIMEOUT_INVALID" : "CTE_OCR_PROVIDER_NOT_CONFIGURED"; }
-    const repositories = runtimeRepositories();
     const ingestionRepository = repositories.cteArchives as CteIngestionRepository;
     const ingestion = await createCteIngestion({
       tenantId: principal.tenantId,
-      fileName: file.name,
-      contentType: file.type,
-      bytes: new Uint8Array(await file.arrayBuffer()),
-      maxBytes: (() => { const configured = Number(process.env.CTE_MAX_DOCUMENT_BYTES ?? CTE_MAX_DOCUMENT_BYTES); return Number.isSafeInteger(configured) && configured > 0 && configured <= CTE_MAX_DOCUMENT_BYTES ? configured : CTE_MAX_DOCUMENT_BYTES; })(),
+      fileName: file.fileName,
+      contentType: file.contentType,
+      bytes: file.bytes,
+      maxBytes: CTE_MAX_DOCUMENT_BYTES,
       repository: ingestionRepository,
       storage: repositories.documentStorage,
       provider,

@@ -5,6 +5,7 @@ import { runtimeRepositories } from "../../lib/persistence/adapter";
 import { recordRuntimeAudit } from "../../lib/persistence/audit";
 import { AuthenticationError } from "../../lib/auth/errors";
 import { createAnthropicTwoStageBillSdkAdapter } from "../../lib/ingestion/anthropic-bill-sdk";
+import { MAX_UPLOAD_BYTES, uploadedFile } from "../../lib/foundation/large-upload";
 // createAnthropicBillSdkAdapter remains the legacy compatibility adapter; Bill routes use two-stage.
 import { attachOfficialPun, ensureOfficialPunForBill } from "../../lib/market/pun-reference";
 import { billPunRefresh } from "../../lib/market-refresh/bill-pun";
@@ -120,16 +121,16 @@ export async function POST(request: Request): Promise<Response> {
     const tenantId = principal.tenantId;
     const repositories = runtimeRepositories();
     const audit = { async record(event: { readonly type: string; readonly tenantId: string; readonly documentId: string; readonly outcome: string }) { await recordRuntimeAudit({ principal, action: `BILL_${event.type}`, resourceType: "BILL", resourceId: event.documentId, outcome: event.outcome === "ALLOWED" ? "ALLOWED" : "DENIED", correlationId: CORRELATION_ID }); } };
-    const form = await request.formData();
-    const file = form.get("file");
-    if (!(file instanceof File)) return deny("PDF_REQUIRED", "A PDF file is required", 400);
+    const file = await uploadedFile(request, repositories.documentStorage, tenantId);
+    if (!file) return deny("PDF_REQUIRED", "A PDF file is required", 400);
     const result = await ingestEnergyBill({
       tenantId,
       ownerUserId: principal.userId,
-      fileName: file.name,
-      contentType: file.type,
-      bytes: new Uint8Array(await file.arrayBuffer()),
-      maxBytes: Number(process.env.FOUNDATION_MAX_PDF_BYTES ?? 10_000_000),
+      fileName: file.fileName,
+      contentType: file.contentType,
+      bytes: file.bytes,
+      // Tony (31/10): "IL LIMITE DI 10 MB BISOGNA ALZARLO": 20 MB, whatever an old environment value says.
+      maxBytes: MAX_UPLOAD_BYTES,
       storage: repositories.documentStorage,
       repository: repositories.billRepository,
       authenticated: true,

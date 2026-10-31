@@ -199,6 +199,10 @@ export interface DocumentStoragePort {
   store(tenantId: string, id: string, bytes: Uint8Array): Promise<string>;
   read(tenantId: string, id: string): Promise<Uint8Array>;
   remove(tenantId: string, id: string): Promise<void>;
+  /** Tony (31/10): "IL LIMITE DI 10 MB BISOGNA ALZARLO". The hosting caps a request body at about 4,5 MB, so a larger file
+   *  goes straight from the browser to storage through a signed upload URL, and the server takes it from there. */
+  createUploadTarget?(tenantId: string, uploadId: string): Promise<{ readonly signedUrl: string }>;
+  takeUpload?(tenantId: string, uploadId: string): Promise<Uint8Array>;
 }
 export interface TextExtractionPort {
   extract(bytes: Uint8Array): Promise<{ readonly text: string; readonly pages: number }>;

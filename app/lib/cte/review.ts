@@ -805,6 +805,12 @@ export function passThroughReadingGaps(fields: readonly { readonly sourceText?: 
   const terms = contract.commercialTerms;
   const gaps: string[] = [];
   const included = (word: string) => new RegExp(`${word}[^.;]{0,120}?(?:inclus|compres|comprensiv)|(?:inclus|compres|comprensiv)[^.;]{0,120}?${word}`, "i").test(text);
+  // Tony (31/10, CTE BE Family CASA PROTETTA: "continua a non leggere bene e a restituire errori"): "Il fornitore fatturerà
+  // un ulteriore corrispettivo CDISPD a copertura dei costi del servizio di dispacciamento e del mercato della capacità ...
+  // art. 48 del TIV". The CDISPD is the ARERA value the engine applies to households, and it covers both charges (TIV comma
+  // 48.9): naming it is the reading of dispatching and capacity.
+  const cdispd = /\bCDISPD\b|art(?:icolo|\.)?\s*48\s+(?:del\s+)?TIV/i.test(text);
+  if (cdispd) return /sbilanciament/i.test(text) && !included("sbilanciament") && terms.imbalance.status !== "DECLARED" ? ["lo sbilanciamento"] : [];
   if (/dispacciament/i.test(text) && !included("dispacciament") && !terms.dispatchingReference && !(terms.passThroughComponents ?? []).some((item) => item.kind === "DISPATCHING")) gaps.push("il dispacciamento");
   if (/mercato\s+(?:della\s+)?capacit|capacity\s+market/i.test(text) && !included("capacit") && !(terms.capacityMarketSchedule ?? []).length && !(terms.passThroughComponents ?? []).some((item) => item.kind === "CAPACITY_MARKET")) gaps.push("il mercato della capacità");
   if (/sbilanciament/i.test(text) && !included("sbilanciament") && terms.imbalance.status !== "DECLARED") gaps.push("lo sbilanciamento");

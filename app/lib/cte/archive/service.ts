@@ -26,6 +26,10 @@ export interface PublicCteApprovedArchiveSummary {
   readonly activeUntil: string;
   /** Who the offer is for, as read from the CTE: Consumer (domestic), Business (non-domestic) or both. */
   readonly segment: "Consumer" | "Business" | "Consumer e Business" | null;
+  /** Spread applied (CTE spread plus the company's ricarico on the energy price), €/kWh or €/Smc; null for a fixed price. */
+  readonly appliedSpread: number | null;
+  /** The fixed energy price, for a fixed-price CTE. */
+  readonly fixedPrice: number | null;
 }
 
 export interface PublicCteApprovedArchiveDetail {
@@ -169,7 +173,7 @@ export function toPublicCteApprovedArchiveSummary(record: CteArchiveRecord): Pub
   if (!approved) return null;
   const commercialStatus = commercialStatusOf(record);
   if (commercialStatus === "DELETED") return null;
-  return { archiveId: record.archiveId, vector: record.vector, offerName: approved.contract.offer.name, supplierName: approved.contract.supplier.name, validity: approved.contract.validity, activeUntil: approved.contract.expiry.status === "EXPIRES_ON" ? approved.contract.expiry.date : approved.contract.validity.periodEnd, segment: segmentOf(approved.contract.eligibility.customerTypes), status: "APPROVED", commercialStatus, ...(record.commercialAdjustment ? { commercialAdjustment: record.commercialAdjustment } : {}) };
+  return { archiveId: record.archiveId, vector: record.vector, offerName: approved.contract.offer.name, supplierName: approved.contract.supplier.name, validity: approved.contract.validity, activeUntil: approved.contract.expiry.status === "EXPIRES_ON" ? approved.contract.expiry.date : approved.contract.validity.periodEnd, segment: segmentOf(approved.contract.eligibility.customerTypes), appliedSpread: approved.contract.pricing.mode === "INDEXED" ? Math.round((approved.contract.pricing.spread.amount + (record.commercialAdjustment?.energyPriceDelta ?? 0)) * 1e6) / 1e6 : null, fixedPrice: approved.contract.pricing.mode === "FIXED" ? Math.round((approved.contract.pricing.fixedPrice.amount + (record.commercialAdjustment?.energyPriceDelta ?? 0)) * 1e6) / 1e6 : null, status: "APPROVED", commercialStatus, ...(record.commercialAdjustment ? { commercialAdjustment: record.commercialAdjustment } : {}) };
 }
 
 export function toPublicCteApprovedArchiveDetail(record: CteArchiveRecord, snapshot?: CteApprovedSnapshot): PublicCteApprovedArchiveDetail | null {

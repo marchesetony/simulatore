@@ -48,8 +48,9 @@ assert.match(await read("app/lib/proposal/api.ts"), /body\.proposalId/);
 assert.doesNotMatch(shell, /fingerprint\(/);
 assert.doesNotMatch(shell, /bill\.vector/);
 for (const field of ["documentType", "vector", "supplier.name", "offer.name", "validity.periodStart", "pricing.reference", "pricing.spread.amount", "commercialTerms.fixedFees"]) assert.match(cte, new RegExp(field.replaceAll(".", "\\.")));
-assert.match(cte, /requestForm<\{ readonly ingestion: CteIngestionModel \}>\("\/api\/cte\/ingestion"/);
-assert.match(cte, /FormData/); assert.match(cte, /x-idempotency-key/); assert.match(cte, /pendingRef\.current\.has\("cte:upload"\)/);
+// Tony (31/10): "IL LIMITE DI 10 MB BISOGNA ALZARLO": the CTE upload goes through requestUpload (direct to storage above 4 MB).
+assert.match(cte, /requestUpload<\{ readonly ingestion: CteIngestionModel \}>\("\/api\/cte\/ingestion"/);
+assert.match(cte, /requestUpload/); /* Tony (31/10): "IL LIMITE DI 10 MB BISOGNA ALZARLO": the form is built inside requestUpload */ assert.match(cte, /x-idempotency-key/); assert.match(cte, /pendingRef\.current\.has\("cte:upload"\)/);
 assert.match(cte, /\/review/); assert.match(cte, /\/approve/); assert.match(cte, /await load\(\)/); assert.match(cte, /candidatePreview/);  assert.match(cte, /confidence/);
 assert.doesNotMatch(cte, /textarea/); assert.doesNotMatch(cte, /calculate|savings|fingerprint/i);
 assert.match(shell, /CteIngestionPanel/); assert.doesNotMatch(shell, /section === "cte" \? <CtePanel/);

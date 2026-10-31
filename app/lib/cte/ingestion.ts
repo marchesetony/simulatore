@@ -19,7 +19,8 @@ import type { CteProviderPayloadCapture } from "./provider-diagnostics.ts";
 import { persistCteProviderPayload } from "./provider-diagnostics.ts";
 
 export const CTE_INGESTION_SCHEMA_VERSION = 1 as const;
-export const CTE_MAX_DOCUMENT_BYTES = 10_000_000;
+/** Tony (31/10): "IL LIMITE DI 10 MB BISOGNA ALZARLO". */
+export const CTE_MAX_DOCUMENT_BYTES = 20_000_000;
 export const CTE_ALLOWED_CONTENT_TYPES = ["application/pdf", "image/jpeg", "image/png"] as const;
 export type CteDocumentContentType = typeof CTE_ALLOWED_CONTENT_TYPES[number];
 export type CteIngestionStatus = "UPLOADED" | "OCR_PROCESSING" | "EXTRACTION_PROCESSING" | "REVIEW_REQUIRED" | "PROVIDER_NOT_CONFIGURED" | "FAILED" | "APPROVED";

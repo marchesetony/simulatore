@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useState, type ChangeEvent, type ReactNode } from "react";
 import { EmptyState, ErrorState, LoadingState } from "./UiStates";
-import { downloadExport, requestForm, requestJson, toUiError } from "../lib/ui/client";
+import { downloadExport, MAX_UPLOAD_BYTES, requestJson, requestUpload, toUiError } from "../lib/ui/client";
 import { buildQuoteReceipt, effectiveBillSpread, isSameOffer, regulatedVerification, sameOfferDifferences, type QuoteReceipt, type RegulatedDomain } from "../lib/quote/receipt";
 import { customerTypeOf } from "../lib/ingestion/customer-type";
 import { estimatedAnnualConsumption } from "../lib/calculation/annual-consumption";
@@ -82,7 +82,7 @@ function readValues(document: BillDocumentModel): Record<string, string> {
   if (!values.annualConsumption?.trim()) { const estimate = estimatedAnnual(document); if (estimate) values.annualConsumption = toDisplay("annualConsumption", estimate); }
   return values;
 }
-const MAX_BILL_BYTES = 10 * 1024 * 1024;
+const MAX_BILL_BYTES = MAX_UPLOAD_BYTES;
 const DATE = new Intl.DateTimeFormat("it-IT", { day: "numeric", month: "long", year: "numeric", timeZone: "UTC" });
 const EURO = new Intl.NumberFormat("it-IT", { style: "currency", currency: "EUR" });
 const PERCENT = new Intl.NumberFormat("it-IT", { maximumFractionDigits: 1 });
@@ -728,11 +728,10 @@ export default function QuickQuoteFlow({ readonly }: { readonly readonly: boolea
   const upload = async (event: ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0]; event.target.value = "";
     if (!file || readonly || pending) return;
-    if (file.size > MAX_BILL_BYTES) { setError("Il file supera 10 MB."); return; }
+    if (file.size > MAX_BILL_BYTES) { setError("Il file supera 20 MB."); return; }
     setPending("upload"); setError(undefined);
     try {
-      const body = new FormData(); body.set("file", file);
-      const document = (await requestForm<{ readonly document: BillDocumentModel }>("/api/bills", body)).document;
+      const document = (await requestUpload<{ readonly document: BillDocumentModel }>("/api/bills", file)).document;
       if (document.status === "FAILED" || document.status === "PROVIDER_NOT_CONFIGURED") throw new Error("BILL_READ_FAILED");
       setDraft(document);
       setValues(readValues(document));

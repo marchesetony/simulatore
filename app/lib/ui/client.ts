@@ -196,6 +196,18 @@ export async function requestForm<T>(path: string, form: FormData, signal?: Abor
   return body as T;
 }
 
+/** Tony (31/10): "IL LIMITE DI 10 MB BISOGNA ALZARLO". Files up to 20 MB; above 4 MB the browser sends them straight to storage, because the hosting refuses request bodies over about 4,5 MB. */
+export const MAX_UPLOAD_BYTES = 20_000_000;
+const DIRECT_UPLOAD_THRESHOLD_BYTES = 4_000_000;
+
+export async function requestUpload<T>(path: string, file: File, headers: Record<string, string> = {}): Promise<T> {
+  if (file.size <= DIRECT_UPLOAD_THRESHOLD_BYTES) { const form = new FormData(); form.append("file", file); return requestForm<T>(path, form, undefined, headers); }
+  const target = await requestJson<{ readonly uploadId: string; readonly signedUrl: string }>("/api/uploads/target", { method: "POST", body: "{}" });
+  const sent = await fetch(target.signedUrl, { method: "PUT", body: file, headers: { "content-type": file.type || "application/octet-stream", "x-upsert": "true" } }).catch(() => null);
+  if (!sent?.ok) throw new UiApiError("UPLOAD_TRANSFER_FAILED", "Invio del file non riuscito: riprova");
+  return requestJson<T>(path, { method: "POST", body: JSON.stringify({ uploadId: target.uploadId, fileName: file.name, contentType: file.type }), headers });
+}
+
 function safeFilename(value: string | null, extension: string): string {
   if (value === null || /[\\/\r\n]/.test(value) || !value.toLowerCase().endsWith(extension)) throw new UiApiError("EXPORT_FILENAME_INVALID", "Nome file export non valido");
   return value;
