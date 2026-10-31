@@ -12,7 +12,7 @@ import { validateStructuredBillExtraction } from "./structured-bill.ts";
 // @ts-expect-error Node's strip-only test runner requires the explicit extension.
 import { BILL_WIRE_SCHEMA, BillWireValidationError, mapBillWireToStructuredBill, parseBillWireExtraction, type BillWireExtraction, type BillWireStatus } from "./bill-wire.ts";
 // @ts-expect-error Node's strip-only test runner requires the explicit extension.
-import { BILL_ANALYST_ITEM_CODES, BILL_ECONOMIC_CHARGE_CODES, normalizeAnalystItemCode, type BillEconomicChargeLineCode, type BillAnalystItemCode } from "./bill-extended-contract.ts";
+import { BILL_ANALYST_ITEM_CODES, BILL_ECONOMIC_CHARGE_CODES, analystOfferField, normalizeAnalystFactCode, normalizeAnalystItemCode, type BillEconomicChargeLineCode, type BillAnalystItemCode } from "./bill-extended-contract.ts";
 // @ts-expect-error Node's strip-only test runner requires the explicit extension.
 import { normalizeBillEconomicComponent } from "../foundation/bill-economic-analysis.ts";
 // @ts-expect-error Node's strip-only test runner requires the explicit extension.
@@ -115,6 +115,9 @@ export const ANALYST_STAGE_PROMPT = [
   "Se la bolletta riporta i kWh prelevati nelle ore di picco e fuori picco (colonne 'Peak' e 'Off-Peak' del riepilogo consumi, righe come 'energia ore di picco' / 'energia ore fuori picco' o 'ore diverse dalle ore di picco'), restituiscili come FACT ENERGY_PEAK_KWH e ENERGY_OFF_PEAK_KWH con il totale del periodo fatturato, unit kWh, copiando le cifre come stampate; se non ci sono, non stimarli.",
   "Per ogni CHARGE conserva label originale, value, quantity, unit, unitPrice, amount e periodo raw.",
   "Restituisci ogni voce economica distinta realmente esposta, anche se il code non è nel catalogo: conserva la descrizione originale e usa un code descrittivo; il server classifica gli elementi sconosciuti come UNCLASSIFIED_BILL_CHARGE.",
+  // Tony (31/10, bolletta sintetica BPower "ma che cazzo dici, guarda la bolletta"): the box dell'offerta must always be read.
+  "Per i FACT usa esattamente i code del catalogo (non inventarne altri) e metti nel label il testo dell'etichetta stampata.",
+  "Corrispondenze delle etichette del Box dell'offerta: 'Denominazione commerciale offerta', 'Offerta' o 'LA TUA OFFERTA' → FACT OFFER_NAME; 'Codice offerta' → FACT OFFER_CODE; 'Tipologia Offerta' (es. VARIABILE, FISSO) → PRICE_MECHANISM_RAW; 'Tipologia Prezzo' o 'Tipologia di prezzo' (es. offerta per fasce orarie, monoraria, orario) → PRICE_TIME_STRUCTURE_RAW; 'Indice di riferimento' → INDEX_NAME; 'Data decorrenza condizioni economiche' → ECONOMIC_CONDITIONS_START_DATE; 'Data scadenza condizioni economiche' o 'Scadenza condizioni tecnico economiche' → ECONOMIC_EXPIRY; 'Data scadenza del contratto' (anche 'a tempo indeterminato') → CONTRACT_EXPIRY; 'Formula prevista dal contratto' → PRICE_FORMULA_RAW; 'Spread' nei valori della formula → SPREAD.",
   "Dal box dell'offerta estrai sempre come FACT: CONTRACT_START_DATE (data di attivazione o inizio fornitura), ECONOMIC_CONDITIONS_START_DATE (decorrenza delle condizioni), ECONOMIC_EXPIRY (scadenza delle condizioni economiche), CONTRACT_EXPIRY (scadenza del contratto o testo 'tempo indeterminato'), PRICE_MECHANISM_RAW (testo esatto della tipologia di offerta, es. prezzo fisso o prezzo variabile), INDEX_NAME (es. PUN Index GME, PSV), SPREAD (la maggiorazione applicata all'indice, valore numerico e unità €/kWh o €/Smc, anche se la bolletta la chiama corrispettivo o componente di vendita variabile) e PRICE_TIME_STRUCTURE_RAW (testo esatto di come si applica il prezzo nel tempo: monorario, a fasce F1/F2/F3, biorario F1/F23, peak/off-peak o PUN orario).",
   "La bolletta segue lo schema ARERA (Bolletta 2.0, TIBEG): il quadro sintetico riporta spesa per la vendita di energia elettrica (o materia energia / materia gas naturale), spesa per il trasporto e la gestione del contatore, spesa per oneri di sistema, imposte e IVA; gli elementi di dettaglio, spesso in una pagina successiva, contengono la tabella che spiega come è calcolata ciascuna spesa.",
   "Trova sempre la tabella di dettaglio della spesa per la vendita (vendita di energia elettrica, materia energia, servizi di vendita) e restituisci ogni sua riga come CHARGE con descrizione originale, fascia (F1, F2, F3, F23, monoraria, peak/off-peak) nella descrizione, periodo, quantity in kWh, unit, unitPrice e amount, così come stampati: quota fissa (€/mese), quota energia per fascia (€/kWh), perdite di rete, dispacciamento, mercato della capacità, sbilanciamento e ogni altro corrispettivo.",
@@ -248,7 +251,7 @@ function normalizeAnalystItem(item: BillAnalystWireItem): BillAnalystWireItem & 
   return {
     ...item,
     normalizedKind: normalizeKind(item.kind),
-    normalizedCode: normalizeAnalystItemCode(item.code),
+    normalizedCode: normalizeKind(item.kind) === "FACT" ? normalizeAnalystFactCode(item.code, item.label) : normalizeAnalystItemCode(item.code),
     normalizedStatus: normalizeStatus(item.status),
     normalizedUnit: normalizeAnalystUnit(item.unit),
   };
@@ -351,8 +354,16 @@ export function mergeBillCoreAndAnalyst(core: StructuredBillExtraction, analyst:
     const parsed = parsePeriod(raw.value);
     billingPeriod = parsed ? documentField<StructuredBillPeriod>(parsed, raw.status) : documentField<StructuredBillPeriod>(null, raw.status === "NEEDS_REVIEW" ? "NEEDS_REVIEW" : "INVALID");
   }
+  // Tony (31/10, bolletta sintetica BPower): the box dell'offerta name/code read by the second reading fills an empty core field.
+  const offer = (name: "offerName" | "offerCode"): StructuredBillField<string> => {
+    if (cleanCore[name].status === "FOUND") return cleanCore[name];
+    const item = analyst.items.find((source) => normalizeKind(source.kind) === "FACT" && (analystOfferField(source.code) ?? analystOfferField(source.label)) === name && source.value.trim() && !/^NOT_FOUND$/i.test(source.value.trim()) && ["FOUND", "NEEDS_REVIEW"].includes(normalizeStatus(source.status)));
+    return item ? documentField<string>(item.value.trim().slice(0, 120), normalizeStatus(item.status)) : cleanCore[name];
+  };
   const merged: StructuredBillExtraction = {
     ...cleanCore,
+    offerName: offer("offerName"),
+    offerCode: offer("offerCode"),
     billingPeriod,
     extendedFacts: [...mapped.facts],
     economicChargeLines: [...mapped.charges],

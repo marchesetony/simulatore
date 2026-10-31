@@ -9,7 +9,7 @@ import type { BillContract } from "../energy/types.ts";
 // @ts-expect-error Node's strip-only test runner requires the explicit extension.
 import { billErrorCode, billErrorField, isBillErrorCode, BillIngestionError, type BillErrorCode, type BillExtractionField } from "../ingestion/errors.ts";
 // @ts-expect-error Next runtime resolves explicit TypeScript extensions.
-import { normalizeStoredStructuredBillExtraction, structuredBillContract, structuredBillFields, validateStructuredBillExtraction, type StructuredBillExtraction, type StructuredBillExtractionProvider, type StructuredBillField } from "../ingestion/structured-bill.ts";
+import { normalizeStoredStructuredBillExtraction, structuredBillContract, structuredBillFields, validateStructuredBillExtraction, withDocumentOfferBox, type StructuredBillExtraction, type StructuredBillExtractionProvider, type StructuredBillField } from "../ingestion/structured-bill.ts";
 // @ts-expect-error Next runtime resolves explicit TypeScript extensions.
 import { resolveBillVectorFromEvidence, type ResolvedBillVector } from "../ingestion/vector-resolution.ts";
 import type { OfficialPunModel } from "../market/pun-reference";
@@ -22,7 +22,7 @@ import { mergeBillCoreAndAnalyst, stripBillAnalystData, type BillAnalystWireExtr
 // @ts-expect-error Node's strip-only test runner requires the explicit extension.
 import { buildBillAnalystReview, type BillAnalystReviewDTO } from "./bill-analyst-review.ts";
 // @ts-expect-error Node's strip-only test runner requires the explicit extension.
-import { extractDocumentMonthlyBandEvidence, extractDocumentPriceRows, extractDocumentOfferName, reconcileMonthlyBandsWithDocumentEvidence } from "../ingestion/document-numeric-evidence.ts";
+import { extractDocumentMonthlyBandEvidence, extractDocumentPriceRows, extractDocumentOfferName, extractDocumentOfferBox, reconcileMonthlyBandsWithDocumentEvidence } from "../ingestion/document-numeric-evidence.ts";
 // @ts-expect-error Node's strip-only test runner requires the explicit extension.
 import { selectMonthlyBandsForBillingPeriod, type StructuredBillMonthlyBand } from "../ingestion/monthly-bands.ts";
 
@@ -865,7 +865,8 @@ function applyDocumentGroundedMonthlyEvidence(bytes: Uint8Array, provided: Struc
   const documentPriceRows = (() => { try { return extractDocumentPriceRows(bytes); } catch { return []; } })();
   const documentOfferName = (() => { try { return extractDocumentOfferName(bytes); } catch { return null; } })();
   const withRows: StructuredBillExtraction = documentPriceRows.length ? { ...provided, documentPriceRows } : provided;
-  const extraction: StructuredBillExtraction = { ...withRows, documentOfferName };
+  const documentOfferBox = (() => { try { return extractDocumentOfferBox(bytes); } catch { return null; } })();
+  const extraction: StructuredBillExtraction = withDocumentOfferBox({ ...withRows, documentOfferName }, documentOfferBox);
   const documentEvidence = extractDocumentMonthlyBandEvidence(bytes);
   const hasProviderMonthlyBands = Array.isArray(extraction.monthlyBands) && extraction.monthlyBands.length > 0;
   if (documentEvidence.status !== "AVAILABLE") return hasProviderMonthlyBands ? { ...extraction, monthlyBandDocumentEvidenceStatus: documentEvidence.status } : extraction;

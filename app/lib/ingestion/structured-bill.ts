@@ -123,6 +123,8 @@ export interface StructuredBillExtraction {
   readonly documentPriceRows?: readonly import("./document-numeric-evidence").DocumentPriceRow[];
   /** The current offer's name read straight from the PDF text layer, when the bill labels it. */
   readonly documentOfferName?: string | null;
+  /** The box dell'offerta read from the PDF text; undefined on bills read before it existed. */
+  readonly documentOfferBox?: import("./document-numeric-evidence").DocumentOfferBox | null;
   readonly supplyProfile?: BillSupplyProfile;
   /** Two-stage metadata; absent on legacy/CORE-only fixtures. */
   readonly analystExtractionStatus?: "NOT_RUN" | "EXTRACTED" | "FAILED";
@@ -568,4 +570,17 @@ function buildStructuredBillContract(input: { readonly extraction: StructuredBil
   if (!pdr || !/^\d{14}$/.test(pdr)) return null;
   const contract: BillContract = { ...base, vector: "GAS", supply: { vector: "GAS", pdr }, consumption: { vector: "GAS", smc: quantity("SMC", extraction.smcConsumption), correctionCoefficient: valueOf(extraction.conversionCoefficient) === null ? { status: "UNAVAILABLE", reason: "NOT_EXTRACTED" } : { status: "KNOWN", value: valueOf(extraction.conversionCoefficient) as number } } };
   validateBillContract(contract); return contract;
+}
+
+// Tony (31/10, bolletta sintetica BPower "ma che cazzo dici, guarda la bolletta"): what the PDF prints in the box dell'offerta
+// fills the facts the AI reading left out; a fact the reading found is never replaced.
+const OFFER_BOX_FACT_CODES = [
+  ["offerType", "PRICE_MECHANISM_RAW"], ["priceStructure", "PRICE_TIME_STRUCTURE_RAW"], ["indexName", "INDEX_NAME"],
+  ["economicConditionsStart", "ECONOMIC_CONDITIONS_START_DATE"], ["economicConditionsExpiry", "ECONOMIC_EXPIRY"], ["contractExpiry", "CONTRACT_EXPIRY"],
+] as const;
+export function withDocumentOfferBox(bill: StructuredBillExtraction, box: import("./document-numeric-evidence").DocumentOfferBox | null): StructuredBillExtraction {
+  if (!box) return { ...bill, documentOfferBox: null };
+  const seen = new Set(bill.extendedFacts.filter((fact) => (fact.status === "FOUND" || fact.status === "NEEDS_REVIEW") && fact.value.trim() && !/^NOT_FOUND$/i.test(fact.value.trim())).map((fact) => fact.code));
+  const added = OFFER_BOX_FACT_CODES.flatMap(([key, code]) => box[key] && !seen.has(code) ? [{ code, value: box[key] as string, status: "FOUND" as const }] : []);
+  return { ...bill, documentOfferBox: box, extendedFacts: [...bill.extendedFacts.filter((fact) => !added.some((item) => item.code === fact.code)), ...added] };
 }

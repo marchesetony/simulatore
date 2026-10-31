@@ -1,7 +1,8 @@
 // @ts-expect-error Node's strip-only test runner requires the explicit extension.
-import { extractDocumentOfferName, extractDocumentPriceRows } from "../ingestion/document-numeric-evidence.ts";
+import { extractDocumentOfferBox, extractDocumentOfferName, extractDocumentPriceRows } from "../ingestion/document-numeric-evidence.ts";
 import type { PublicBillDocument } from "../foundation/real-bill";
-import type { StructuredBillExtraction } from "../ingestion/structured-bill";
+// @ts-expect-error Node's strip-only test runner requires the explicit extension.
+import { withDocumentOfferBox, type StructuredBillExtraction } from "../ingestion/structured-bill.ts";
 import type { MarketArchiveRecord, MarketArchiveRepository } from "./types";
 // @ts-expect-error Node's strip-only test runner requires the explicit extension.
 import { compareMarketVersions } from "./service.ts";
@@ -136,13 +137,16 @@ export async function withDocumentPriceRows<T extends Pick<PublicBillDocument, "
   const bill = document.structuredBill;
   if (!bill || !/\.pdf$/i.test(document.fileName)) return document;
   const needRows = document.resolvedVector === "EE" && bill.documentPriceRows === undefined;
-  const needName = bill.documentOfferName === undefined;
-  if (!needRows && !needName) return document;
+  // Bills read before the box dell'offerta was taken from the PDF get it (and the offer name again) now, with no re-upload.
+  const needBox = bill.documentOfferBox === undefined;
+  const needName = bill.documentOfferName === undefined || (needBox && !bill.documentOfferName);
+  if (!needRows && !needName && !needBox) return document;
   try {
     const bytes = await read();
     const documentPriceRows = needRows ? extractDocumentPriceRows(bytes) : [];
     const documentOfferName = needName ? extractDocumentOfferName(bytes) : bill.documentOfferName;
-    return { ...document, structuredBill: { ...bill, ...(documentPriceRows.length ? { documentPriceRows } : {}), documentOfferName } };
+    const withRows = { ...bill, ...(documentPriceRows.length ? { documentPriceRows } : {}), documentOfferName };
+    return { ...document, structuredBill: needBox ? withDocumentOfferBox(withRows, extractDocumentOfferBox(bytes)) : withRows };
   } catch { return document; }
 }
 

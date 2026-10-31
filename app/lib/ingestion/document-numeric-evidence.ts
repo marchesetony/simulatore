@@ -440,10 +440,48 @@ export function extractDocumentPriceRows(bytes: Uint8Array): readonly DocumentPr
   return rows.slice(0, 40);
 }
 
-const OFFER_NAME_LABEL = /^\s*(?:offerta commerciale in vigore|denominazione dell['\u2019]?\s*offerta(?:\s+commerciale)?|nome (?:dell['\u2019]?\s*)?offerta|offerta sottoscritta|offerta attiva|offerta)\s*:\s*(.*)$/i;
+// Approximate advance of each character in em (Helvetica metrics): enough to tell a letter gap from a word gap.
+const NARROW_EM: Readonly<Record<string, number>> = { i: 0.222, j: 0.222, l: 0.222, f: 0.278, t: 0.278, r: 0.333, I: 0.278, J: 0.5, m: 0.833, w: 0.722, M: 0.833, W: 0.944, C: 0.722, D: 0.722, G: 0.778, H: 0.722, N: 0.722, O: 0.778, Q: 0.778, R: 0.722, U: 0.722, F: 0.611, T: 0.611, Z: 0.611, L: 0.556, ".": 0.278, ",": 0.278, ":": 0.278, ";": 0.278, "'": 0.191, "\u2019": 0.222, "/": 0.278, "-": 0.333, "(": 0.333, ")": 0.333, " ": 0.278 };
+const charEm = (char: string) => NARROW_EM[char] ?? (/[A-Z]/.test(char) ? 0.667 : 0.556);
+/**
+ * Tony (31/10, bolletta sintetica BPower "ma che cazzo dici, guarda la bolletta"): some PDFs write one text item per letter,
+ * so no label ("Denominazione commerciale offerta:") is ever a whole item. On such pages the letters are joined back into
+ * words and phrases; a wide gap (another column) starts a new phrase.
+ */
+export function readableTextItems(items: readonly PdfTextItem[]): readonly PdfTextItem[] {
+  const pages = [...new Set(items.map((item) => item.page))];
+  const out: PdfTextItem[] = [];
+  for (const page of pages) {
+    const pageItems = items.filter((item) => item.page === page);
+    const letters = pageItems.filter((item) => item.text.length === 1).length;
+    if (pageItems.length < 20 || letters / pageItems.length < 0.6) { out.push(...pageItems); continue; }
+    const rows: PdfTextItem[][] = [];
+    for (const item of [...pageItems].sort((a, b) => a.y - b.y || a.x - b.x)) {
+      const row = rows.find((candidate) => Math.abs(candidate[0].y - item.y) <= 1.5);
+      if (row) row.push(item); else rows.push([item]);
+    }
+    for (const row of rows) {
+      row.sort((a, b) => a.x - b.x);
+      const ratios = row.slice(1).map((item, index) => (item.x - row[index].x) / charEm(row[index].text.slice(-1))).filter((value) => value > 0).sort((a, b) => a - b);
+      const size = ratios.length ? ratios[Math.floor(ratios.length / 2)] : 10;
+      let current = { ...row[0] } as { text: string; page: number; x: number; y: number };
+      for (let index = 1; index < row.length; index += 1) {
+        const previous = row[index - 1]; const item = row[index];
+        const excess = (item.x - previous.x) / size - (previous.text.length === 1 ? charEm(previous.text) : previous.text.length * 0.556);
+        if (excess > 1.6) { out.push(current); current = { ...item }; continue; }
+        current.text += (excess > 0.17 ? " " : "") + item.text;
+      }
+      out.push(current);
+    }
+  }
+  return out;
+}
+
+const OFFER_NAME_LABEL = /^\s*(?:offerta commerciale in vigore|denominazione commerciale(?: dell['\u2019]?\s*| )?offerta|codice offerta|denominazione dell['\u2019]?\s*offerta(?:\s+commerciale)?|nome (?:dell['\u2019]?\s*)?offerta|offerta sottoscritta|offerta attiva|offerta)\s*:\s*(.*)$/i;
 /** The current offer's name as the bill prints it next to its label ("Offerta commerciale in vigore: PiuContr Actv Lav Luce - V16"). */
 export function extractDocumentOfferName(bytes: Uint8Array): string | null {
-  const { status, items } = documentTextItems(bytes);
+  const read = documentTextItems(bytes);
+  const status = read.status; const items = readableTextItems(read.items);
   if (status !== "AVAILABLE") return null;
   const usable = (text: string) => { const value = text.replace(/\s+/g, " ").trim(); return value.length >= 3 && value.length <= 80 && /[a-z]/i.test(value) && !/^[.\s_-]+$/.test(value) && !/:\s*$/.test(value) ? value : null; };
   for (let index = 0; index < items.length; index += 1) {
@@ -456,4 +494,38 @@ export function extractDocumentOfferName(bytes: Uint8Array): string | null {
     if (next) return boundedText(usable(next.text) ?? "", 80);
   }
   return null;
+}
+
+/** The box dell'offerta as printed, read straight from the PDF text (labels the ARERA bill format fixes). */
+export interface DocumentOfferBox {
+  readonly offerType: string | null;
+  readonly priceStructure: string | null;
+  readonly indexName: string | null;
+  readonly economicConditionsStart: string | null;
+  readonly economicConditionsExpiry: string | null;
+  readonly contractExpiry: string | null;
+  readonly spread: string | null;
+}
+const BOX_LABELS: readonly (readonly [keyof DocumentOfferBox, RegExp])[] = [
+  ["offerType", /^\s*tipologia (?:di |dell['\u2019]\s*)?offerta\s*:\s*(.+)$/i],
+  ["priceStructure", /^\s*tipologia (?:di |del )?prezzo\s*:\s*(.+)$/i],
+  ["indexName", /^\s*indice(?: di riferimento)?\s*:\s*(.+)$/i],
+  ["economicConditionsStart", /^\s*(?:data (?:di )?)?decorrenza (?:delle )?condizioni(?: tecnico)?[- ]?economiche\s*:\s*(.+)$/i],
+  ["economicConditionsExpiry", /^\s*(?:data (?:di )?)?scadenza (?:delle )?condizioni(?: tecnico)?[- ]?economiche\s*:\s*(.+)$/i],
+  ["contractExpiry", /^\s*(?:data (?:di )?)?scadenza del contratto\s*:\s*(.+)$/i],
+  ["spread", /^\s*spread\s*:\s*([-+]?\d+[.,]\d+\s*€?\s*\/\s*(?:kwh|smc))/i],
+];
+/** Tony (31/10, bolletta sintetica BPower "ma che cazzo dici, guarda la bolletta"): the box is read from the PDF too, so it does not depend on the AI alone. */
+export function extractDocumentOfferBox(bytes: Uint8Array): DocumentOfferBox | null {
+  const read = documentTextItems(bytes);
+  if (read.status !== "AVAILABLE") return null;
+  const box: Record<keyof DocumentOfferBox, string | null> = { offerType: null, priceStructure: null, indexName: null, economicConditionsStart: null, economicConditionsExpiry: null, contractExpiry: null, spread: null };
+  for (const item of readableTextItems(read.items)) {
+    for (const [key, label] of BOX_LABELS) {
+      if (box[key]) continue;
+      const value = label.exec(item.text)?.[1]?.replace(/\s+/g, " ").replace(/[;.]\s*$/, "").trim();
+      if (value && value.length <= 80) box[key] = value;
+    }
+  }
+  return Object.values(box).some(Boolean) ? box : null;
 }

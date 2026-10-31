@@ -135,7 +135,7 @@ const SELLER_FIXED_CODES = new Set(["PCV", "COMMERCIALIZATION_FIXED_FEE", "SELLE
 const PER_MONTH = /mese|month|€\/m\b|eur\/m\b/i;
 function factValue(bill: BillDocumentModel, ...codes: readonly string[]): string | null {
   for (const code of codes) {
-    const found = bill.structuredBill?.extendedFacts.find((fact) => fact.code === code && fact.status === "FOUND" && fact.value.trim());
+    const found = bill.structuredBill?.extendedFacts.find((fact) => fact.code === code && fact.status === "FOUND" && fact.value.trim() && !/^NOT_FOUND$/i.test(fact.value.trim()));
     if (found) return found.value.trim();
   }
   return null;
@@ -173,6 +173,21 @@ function monthlyPcv(bill: BillDocumentModel): number | null {
   const months = monthsIn(bill.normalized?.billingPeriod ?? (read?.status === "FOUND" && read.value ? { periodStart: read.value.from, periodEnd: read.value.to } : undefined));
   return months ? total / months : null;
 }
+// A fact the reading found, even if marked to review: enough to say the bill shows it, never to price with it.
+function factSeen(bill: BillDocumentModel, ...codes: readonly string[]): string | null {
+  for (const code of codes) {
+    const seen = bill.structuredBill?.extendedFacts.find((fact) => fact.code === code && (fact.status === "FOUND" || fact.status === "NEEDS_REVIEW") && fact.value.trim() && !/^NOT_FOUND$/i.test(fact.value.trim()));
+    if (seen) return seen.value.trim();
+  }
+  return null;
+}
+// Tony (31/10, bolletta sintetica BPower "ma che cazzo dici, guarda la bolletta"): a box dell'offerta with an index
+// (PUN) and a spread is an indexed offer, whatever words the seller uses for the offer type.
+function indexedFromBox(bill: BillDocumentModel): boolean {
+  const formula = factSeen(bill, "PRICE_FORMULA_RAW") ?? "";
+  return (factSeen(bill, "INDEX_NAME") !== null && factSeen(bill, "SPREAD") !== null) || (/\bspread\b/i.test(formula) && factSeen(bill, "INDEX_NAME") !== null)
+    || (bill.currentSpread?.status === "CALCULATED" && bill.currentSpread.source === "BILL" && factSeen(bill, "INDEX_NAME") !== null);
+}
 // Tony (31/10, fattura di dettaglio BPower "cazzo ancora errori"): a bill whose energy lines are each the official PUN of
 // their band plus the same amount (0,226350 / 0,247576 / 0,217024 €/kWh = PUN F1/F2/F3 + 0,02) is indexed, even when no box
 // dell'offerta says so.
@@ -185,9 +200,11 @@ function indexedFromPrices(bill: BillDocumentModel): boolean {
 // The detailed invoice (fattura di dettaglio) lists only the charges: no offer name, dates or price formula.
 function withoutOfferBox(bill: BillDocumentModel): boolean {
   const receipt = bill.analystReview.receipt;
+  // A failed second reading is not a detailed invoice: the box may be there and simply not read.
+  if (bill.structuredBill?.analystExtractionStatus === "FAILED") return false;
   return !receipt.offerName.value?.trim() && !bill.structuredBill?.documentOfferName?.trim() && !receipt.offerCode.value?.trim()
     && !receipt.contractStartDate.value && !receipt.economicConditionsStartDate.value && !billExpiry(bill)
-    && factValue(bill, "PRICE_MECHANISM_RAW", "PRICE_FORMULA_RAW", "CONTRACT_START_DATE", "ECONOMIC_CONDITIONS_START_DATE") === null;
+    && factSeen(bill, "PRICE_MECHANISM_RAW", "PRICE_FORMULA_RAW", "PRICE_TIME_STRUCTURE_RAW", "CONTRACT_START_DATE", "ECONOMIC_CONDITIONS_START_DATE", "INDEX_NAME", "SPREAD", "ECONOMIC_EXPIRY", "CONTRACT_EXPIRY") === null;
 }
 const NOT_IN_DETAIL = "Non riportata: la fattura di dettaglio non ha il box dell'offerta";
 
@@ -196,7 +213,7 @@ function priceType(bill: BillDocumentModel): string {
   const text = [factValue(bill, "PRICE_MECHANISM_RAW"), factValue(bill, "PRICE_FORMULA_RAW"), factValue(bill, "INDEX_NAME")].filter(Boolean).join(" ");
   const index = /psv/i.test(text) || bill.resolvedVector === "GAS" ? "PSV" : "PUN";
   const fixed = factValue(bill, "FIXED_PRICE", "ENERGY_FIXED_PRICE", "MONORARIO_PRICE");
-  const indexed = /variabil|indicizz|pun|psv|index/i.test(text) || receipt.priceMechanism === "INDEXED_PUN_PLUS_SPREAD";
+  const indexed = /variabil|indicizz|pun|psv|index/i.test(text) || receipt.priceMechanism === "INDEXED_PUN_PLUS_SPREAD" || indexedFromBox(bill);
   if (indexed) return `Indicizzato ${index}`;
   if (/fiss/i.test(text) || receipt.priceMechanism === "FIXED") return `Prezzo fisso${fixed ? ` ${fixed}` : ""}`;
   if (receipt.priceMechanism === "HYBRID") return "Misto (fisso e indicizzato)";
@@ -205,7 +222,7 @@ function priceType(bill: BillDocumentModel): string {
 
 function indexedBill(bill: BillDocumentModel): boolean {
   const text = [factValue(bill, "PRICE_MECHANISM_RAW"), factValue(bill, "PRICE_FORMULA_RAW"), factValue(bill, "INDEX_NAME")].filter(Boolean).join(" ");
-  return /variabil|indicizz|pun|psv|index/i.test(text) || bill.analystReview.receipt.priceMechanism === "INDEXED_PUN_PLUS_SPREAD" || indexedFromPrices(bill);
+  return /variabil|indicizz|pun|psv|index/i.test(text) || bill.analystReview.receipt.priceMechanism === "INDEXED_PUN_PLUS_SPREAD" || indexedFromBox(bill) || indexedFromPrices(bill);
 }
 // The spread is never printed on the bill: the server derives it as applied energy price minus the official GME PUN of the same months.
 function billSpread(bill: BillDocumentModel): ReactNode {
@@ -249,7 +266,8 @@ function punStructure(bill: BillDocumentModel): string {
 // The expiry printed on the bill: the economic conditions' end, else the contract's (Tony, 28/10 and 31/10).
 function billExpiry(bill: BillDocumentModel): string | null {
   const receipt = bill.analystReview.receipt;
-  return italianDate(receipt.economicConditionsExpiryDate.value ?? factValue(bill, "ECONOMIC_EXPIRY")) ?? italianDate(receipt.contractExpiryDate.value ?? factValue(bill, "CONTRACT_EXPIRY"));
+  const shown = (value: string | null | undefined) => value && value.trim() && !/^NOT_FOUND$/i.test(value.trim()) ? value : null;
+  return italianDate(shown(receipt.economicConditionsExpiryDate.value) ?? factValue(bill, "ECONOMIC_EXPIRY")) ?? italianDate(shown(receipt.contractExpiryDate.value) ?? factValue(bill, "CONTRACT_EXPIRY"));
 }
 
 function billLabel(bill: ApprovedBillSummaryModel): string {
