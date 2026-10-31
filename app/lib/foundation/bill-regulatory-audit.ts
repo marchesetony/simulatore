@@ -149,6 +149,8 @@ export function parseBillNumeric(value: string | number | null | undefined): num
 function parseBillQuantity(value: string | number | null | undefined): number | null {
   if (typeof value !== "string") return parseBillNumeric(value);
   const token = value.match(/(?:\d{1,3}(?:\.\d{3})+(?:,\d+)?|\d+(?:[.,]\d+)?)/)?.[0] ?? null;
+  // Italian bills group thousands with a dot: "37.493 kWh" is 37493 kWh, not 37,493.
+  if (token && /^[1-9]\d{0,2}(?:\.\d{3})+$/.test(token)) return Number(token.replace(/\./g, ""));
   return parseBillNumeric(token);
 }
 
@@ -183,7 +185,10 @@ export function amountUnitConsistency(line: BillAuditChargeLineInput): { readonl
   if (amount === null) return { status: "INSUFFICIENT_DOCUMENT_DATA", calculatedAmount: null, displayUnitMismatch: false };
   if (unitPrice !== null && quantity !== null) {
     const calculatedAmount = unit === "%" ? quantity * unitPrice / 100 : quantity * unitPrice;
-    const status = roundMoney(calculatedAmount) === roundMoney(amount) ? "CONSISTENT" : "UNIT_SEMANTICS_INCONSISTENT";
+    // The printed unit price is itself rounded (e.g. 0,011551 €/kWh): allow that rounding on the quantity plus the cent.
+    const decimals = String(line.unitPrice ?? "").match(/[.,](\d+)/)?.[1]?.length ?? 2;
+    const tolerance = 0.005 + Math.abs(unit === "%" ? quantity / 100 : quantity) * 0.5 * 10 ** -decimals + 1e-9;
+    const status = Math.abs(calculatedAmount - amount) <= tolerance ? "CONSISTENT" : "UNIT_SEMANTICS_INCONSISTENT";
     return { status, calculatedAmount, displayUnitMismatch: false };
   }
   const moneyUnit = unit === null || unit === "EUR";
@@ -276,7 +281,10 @@ function auditLine(input: BillAuditChargeLineInput, bill: ElectricityBillAuditIn
     return { ...base, ...sourceFor(sourceRecord), auditStatus: "SCOPE_UNDETERMINED", notComparableReason: "CUSTOMER_SCOPE_UNDETERMINED", messageCode: "DOMESTIC_RESIDENCE_STATUS_UNKNOWN" };
   }
   const sourceUnit = sourceUnitForBill(input.code, input.unit);
-  const record = resolveAreraEffectiveValue(values, bill.billingPeriod.from, input.code as RegulatoryValueRecord["componentCode"], scope, sourceUnit);
+  let record: RegulatoryValueRecord | null;
+  // A line the archive cannot price unambiguously is left unverified; it never stops the bill upload (Tony 30/10).
+  try { record = resolveAreraEffectiveValue(values, bill.billingPeriod.from, input.code as RegulatoryValueRecord["componentCode"], scope, sourceUnit); }
+  catch { return { ...base, auditStatus: "NOT_COMPARABLE", notComparableReason: "REGULATORY_SOURCE_MISSING", messageCode: "ARERA_VALUE_AMBIGUOUS_FOR_SUPPLY_CLASS" }; }
   if (!record) return { ...base, auditStatus: "REGULATORY_SOURCE_MISSING", notComparableReason: "REGULATORY_SOURCE_MISSING", messageCode: "ARERA_COMPONENT_SOURCE_MISSING" };
   if (quantity === null) return { ...base, ...sourceFor(record), auditStatus: "INSUFFICIENT_DOCUMENT_DATA", notComparableReason: "QUANTITY_MISSING", messageCode: "REGULATED_FORMULA_INPUT_MISSING" };
   if (amount === null) return { ...base, ...sourceFor(record), auditStatus: "INSUFFICIENT_DOCUMENT_DATA", notComparableReason: "INSUFFICIENT_DOCUMENT_DATA", messageCode: "REGULATED_FORMULA_INPUT_MISSING" };

@@ -9,7 +9,7 @@ import type { BillContract } from "../energy/types.ts";
 // @ts-expect-error Node's strip-only test runner requires the explicit extension.
 import { billErrorCode, billErrorField, isBillErrorCode, BillIngestionError, type BillErrorCode, type BillExtractionField } from "../ingestion/errors.ts";
 // @ts-expect-error Next runtime resolves explicit TypeScript extensions.
-import { normalizeStoredStructuredBillExtraction, structuredBillContract, structuredBillFields, validateStructuredBillExtraction, type StructuredBillExtraction, type StructuredBillExtractionProvider, type StructuredBillField } from "../ingestion/structured-bill.ts";
+import { normalizeStoredStructuredBillExtraction, structuredBillContract, structuredBillFields, validateStructuredBillExtraction, withDocumentOfferBox, type StructuredBillExtraction, type StructuredBillExtractionProvider, type StructuredBillField } from "../ingestion/structured-bill.ts";
 // @ts-expect-error Next runtime resolves explicit TypeScript extensions.
 import { resolveBillVectorFromEvidence, type ResolvedBillVector } from "../ingestion/vector-resolution.ts";
 import type { OfficialPunModel } from "../market/pun-reference";
@@ -22,7 +22,7 @@ import { mergeBillCoreAndAnalyst, stripBillAnalystData, type BillAnalystWireExtr
 // @ts-expect-error Node's strip-only test runner requires the explicit extension.
 import { buildBillAnalystReview, type BillAnalystReviewDTO } from "./bill-analyst-review.ts";
 // @ts-expect-error Node's strip-only test runner requires the explicit extension.
-import { extractDocumentMonthlyBandEvidence, reconcileMonthlyBandsWithDocumentEvidence } from "../ingestion/document-numeric-evidence.ts";
+import { extractDocumentMonthlyBandEvidence, extractDocumentPriceRows, extractDocumentOfferName, extractDocumentOfferBox, reconcileMonthlyBandsWithDocumentEvidence } from "../ingestion/document-numeric-evidence.ts";
 // @ts-expect-error Node's strip-only test runner requires the explicit extension.
 import { selectMonthlyBandsForBillingPeriod, type StructuredBillMonthlyBand } from "../ingestion/monthly-bands.ts";
 
@@ -166,6 +166,8 @@ export type PublicBillDocument = {
   readonly structuredBill: StructuredBillExtraction | null;
   readonly resolvedVector: ResolvedBillVector;
   readonly invoicePunReferences: OfficialPunModel;
+  /** Spread of the current supplier: applied energy price minus the official PUN (never printed on the bill). */
+  readonly currentSpread?: import("../market/bill-spread").BillCurrentSpread | null;
   readonly regulatoryAudit: BillRegulatoryAuditDTO | null;
   readonly featurePermissions?: BillFeatureAccessSnapshot;
   readonly verificationSummary?: BillVerificationSummary | null;
@@ -197,6 +199,10 @@ export interface DocumentStoragePort {
   store(tenantId: string, id: string, bytes: Uint8Array): Promise<string>;
   read(tenantId: string, id: string): Promise<Uint8Array>;
   remove(tenantId: string, id: string): Promise<void>;
+  /** Tony (31/10): "IL LIMITE DI 10 MB BISOGNA ALZARLO". The hosting caps a request body at about 4,5 MB, so a larger file
+   *  goes straight from the browser to storage through a signed upload URL, and the server takes it from there. */
+  createUploadTarget?(tenantId: string, uploadId: string): Promise<{ readonly signedUrl: string }>;
+  takeUpload?(tenantId: string, uploadId: string): Promise<Uint8Array>;
 }
 export interface TextExtractionPort {
   extract(bytes: Uint8Array): Promise<{ readonly text: string; readonly pages: number }>;
@@ -796,8 +802,16 @@ export function validatePdf(fileName: string, contentType: string, bytes: Uint8A
   if (bytes.length > maxBytes) throw new Error("PDF_TOO_LARGE");
   if (contentType !== "application/pdf") throw new Error("PDF_MIME_INVALID");
   if (new TextDecoder("latin1").decode(bytes.slice(0, 5)) !== "%PDF-") throw new Error("PDF_SIGNATURE_INVALID");
-  if (!/^[\w .-]{1,120}\.pdf$/i.test(fileName)) throw new Error("PDF_FILENAME_INVALID");
-  return fileName.replace(/[^\w .-]/g, "_");
+  return safeUploadName(fileName, /\.pdf$/i);
+}
+
+// Tony (29/10, "Caricamento bolletta non disponibile"): a bill named the way people name files (accents, parentheses,
+// "n°", long names) is still a bill. Only a path is refused; every other name is kept readable and made safe for storage.
+function safeUploadName(fileName: string, extension: RegExp): string {
+  if (/[\\/]/.test(fileName) || fileName.includes("..") || !extension.test(fileName)) throw new Error("PDF_FILENAME_INVALID");
+  const dot = fileName.lastIndexOf(".");
+  const base = fileName.slice(0, dot).normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[^\w .-]/g, "_").trim().slice(0, 120) || "bolletta";
+  return `${base}${fileName.slice(dot).toLowerCase()}`;
 }
 
 export function validateBillDocument(fileName: string, contentType: string, bytes: Uint8Array, maxBytes: number): string {
@@ -808,8 +822,7 @@ export function validateBillDocument(fileName: string, contentType: string, byte
   const signature = contentType === "image/jpeg" ? bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff : contentType === "image/png" ? Buffer.from(bytes.slice(0, 8)).equals(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a])) : false;
   if (!signature) throw new Error("PDF_SIGNATURE_INVALID");
   const extension = contentType === "image/jpeg" ? /\.(?:jpe?g)$/i : /\.png$/i;
-  if (!extension.test(fileName) || !/^[\w .-]{1,120}\.(?:jpe?g|png)$/i.test(fileName)) throw new Error("PDF_FILENAME_INVALID");
-  return fileName.replace(/[^\w .-]/g, "_");
+  return safeUploadName(fileName, extension);
 }
 
 function extracted(value: string | null, confidence: number): ExtractedField {
@@ -851,7 +864,13 @@ export function extractBillFields(text: string): BillFields {
   return result;
 }
 
-function applyDocumentGroundedMonthlyEvidence(bytes: Uint8Array, extraction: StructuredBillExtraction): StructuredBillExtraction {
+function applyDocumentGroundedMonthlyEvidence(bytes: Uint8Array, provided: StructuredBillExtraction): StructuredBillExtraction {
+  // The formula table of the sale-of-energy cost, read straight from the PDF: the spread does not depend on the AI finding it.
+  const documentPriceRows = (() => { try { return extractDocumentPriceRows(bytes); } catch { return []; } })();
+  const documentOfferName = (() => { try { return extractDocumentOfferName(bytes); } catch { return null; } })();
+  const withRows: StructuredBillExtraction = documentPriceRows.length ? { ...provided, documentPriceRows } : provided;
+  const documentOfferBox = (() => { try { return extractDocumentOfferBox(bytes); } catch { return null; } })();
+  const extraction: StructuredBillExtraction = withDocumentOfferBox({ ...withRows, documentOfferName }, documentOfferBox);
   const documentEvidence = extractDocumentMonthlyBandEvidence(bytes);
   const hasProviderMonthlyBands = Array.isArray(extraction.monthlyBands) && extraction.monthlyBands.length > 0;
   if (documentEvidence.status !== "AVAILABLE") return hasProviderMonthlyBands ? { ...extraction, monthlyBandDocumentEvidenceStatus: documentEvidence.status } : extraction;

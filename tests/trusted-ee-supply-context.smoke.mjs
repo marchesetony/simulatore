@@ -47,10 +47,12 @@ assert.equal(bta6.regulatoryPowerBasisKw, 17);
 const bta6MaxDrawn = buildTrustedElectricitySupplyContext(profile({ supplyUse: "altri usi", committed: "20 kW", available: "30 kW", maximumDrawn: "24 kW", billingBasis: "Massimo valore della potenza prelevata nel mese" }));
 assert.equal(bta6MaxDrawn.regulatoryPowerBasisKind, "MONTHLY_MAX_DRAWN");
 assert.equal(bta6MaxDrawn.regulatoryPowerBasisKw, 24);
-assertCode(() => buildTrustedElectricitySupplyContext(profile({ supplyUse: "altri usi", committed: "20 kW", available: "30 kW" })), "BTA6_POWER_BILLING_BASIS_REQUIRED");
+// Tony (27/10): the basis comes from TIT art. 1, not the bill: up to 30 kW the limiter makes it the committed power.
+assert.equal(buildTrustedElectricitySupplyContext(profile({ supplyUse: "altri usi", committed: "20 kW", available: "30 kW" })).regulatoryPowerBasisKind, "CONTRACTUAL_COMMITTED");
 assertCode(() => buildTrustedElectricitySupplyContext(profile({ supplyUse: "altri usi", committed: "20 kW", available: "30 kW", billingBasis: "Massimo valore della potenza prelevata nel mese" })), "BTA6_MAXIMUM_DRAWN_POWER_REQUIRED");
 assert.equal(buildTrustedElectricitySupplyContext(profile({ supplyUse: "altri usi", committed: "17 kW", available: "16,5 kW" })).regulatoryCustomerScope, "NON_DOMESTIC_BT");
-assertCode(() => buildTrustedElectricitySupplyContext(profile({ supplyUse: "altri usi", committed: "25 kW", available: null })), "AVAILABLE_POWER_REQUIRED_FOR_BT_TARIFF_CLASS");
+// Tony (30/10, "non è possibile vedere ancora mancati controlli"): no available power on the bill no longer fails.
+assert.equal(buildTrustedElectricitySupplyContext(profile({ supplyUse: "altri usi", committed: "25 kW", available: null })).regulatoryCustomerScope, "NON_DOMESTIC_BT_BTA6");
 assert.equal(buildTrustedElectricitySupplyContext(profile({ supplyUse: "pubblica illuminazione", committed: "17 kW", available: "18,7 kW" })).regulatoryCustomerScope, "NON_DOMESTIC_BT");
 assert.equal(buildTrustedElectricitySupplyContext(profile({ supplyUse: "ricarica veicoli elettrici", committed: "17 kW", available: "18,7 kW" })).regulatoryCustomerScope, "NON_DOMESTIC_BT");
 

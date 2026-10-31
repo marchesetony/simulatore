@@ -50,7 +50,14 @@ export function parseMaximumDrawnPowerKw(field: BillSupplyProfile["powerMaximumD
 }
 
 function requiredVoltageLevel(profile: BillSupplyProfile): VoltageLevel {
-  if (profile.voltageClass.status !== "FOUND") fail("VOLTAGE_LEVEL_REQUIRED");
+  if (profile.voltageClass.status !== "FOUND") {
+    // Tony (28/10, bolletta BPower Be FIX RELAX): the bill does not print the voltage. A supply of at most 30 kW is connected
+    // in bassa tensione (TIC: BT up to 100 kW), so the BT tables apply; above that the voltage must be read.
+    let power: number | undefined;
+    try { power = parseAvailablePowerKw(profile.powerAvailable) ?? parseContractedPowerKw(profile.powerCommitted); } catch { power = undefined; }
+    if (power !== undefined && power > 0 && power <= 30) return "LV";
+    fail("VOLTAGE_LEVEL_REQUIRED");
+  }
   const value = profile.voltageClass.normalizedValue?.toUpperCase();
   if (!value || !VOLTAGE_LEVELS.includes(value as VoltageLevel)) fail("VOLTAGE_LEVEL_INVALID");
   return value as VoltageLevel;
@@ -93,6 +100,10 @@ export interface ElectricitySupplyContext {
   readonly domesticResidenceStatus: DomesticResidenceStatus;
   readonly voltageLevel: VoltageLevel;
   readonly regulatoryCustomerScope: RegulatoryCustomerScope;
+  /** BT other uses up to 16,5 kW: the TIT distribution class by available power (BTA1 fino a 1,5 kW ... BTA5 fino a 16,5 kW). */
+  readonly regulatoryTariffClass?: "BTA1" | "BTA2" | "BTA3" | "BTA4" | "BTA5";
+  /** Class of the oneri generali rows: the official tables split them by potenza impegnata, not disponibile. */
+  readonly regulatoryOneriTariffClass?: "BTA1" | "BTA2" | "BTA3" | "BTA4" | "BTA5";
   readonly regulatoryPowerBasisKind?: Exclude<PowerBillingBasis, "UNKNOWN">;
   readonly regulatoryPowerBasisKw?: number;
   readonly asosClass: AsosClass;
@@ -153,14 +164,24 @@ function selectAsosClass(profile: BillSupplyProfile, options: TrustedElectricity
   };
 }
 
+const LIMITER_MAX_KW = 30;
+
 function regulatoryPowerBasis(profile: BillSupplyProfile, scope: RegulatoryCustomerScope, contractedPowerKw: number): { readonly regulatoryPowerBasisKind: Exclude<PowerBillingBasis, "UNKNOWN">; readonly regulatoryPowerBasisKw: number } | undefined {
   if (scope !== "NON_DOMESTIC_BT_BTA6") return undefined;
-  if (profile.powerBillingBasis.status !== "FOUND") fail("BTA6_POWER_BILLING_BASIS_REQUIRED");
-  const basis = profile.powerBillingBasis.normalizedValue;
-  if (basis === "UNKNOWN") fail("BTA6_POWER_BILLING_BASIS_REQUIRED");
+  // TIT art. 1, "potenza impegnata" (FAQ TIT 348/07, e-distribuzione BTA6): the contractually committed power where a power
+  // limiter is installed, otherwise the maximum power drawn in the month. Limiters are fitted only up to 30 kW, so above
+  // that the rule alone gives the basis (Tony, 27/10: the criterion comes from the resolutions, never from the bill).
+  const stated = profile.powerBillingBasis.status === "FOUND" ? profile.powerBillingBasis.normalizedValue : "UNKNOWN";
+  const basis = contractedPowerKw > LIMITER_MAX_KW ? "MONTHLY_MAX_DRAWN" : stated === "UNKNOWN" ? "CONTRACTUAL_COMMITTED" : stated;
   if (basis === "CONTRACTUAL_COMMITTED") return { regulatoryPowerBasisKind: basis, regulatoryPowerBasisKw: contractedPowerKw };
   if (basis === "MONTHLY_MAX_DRAWN") return { regulatoryPowerBasisKind: basis, regulatoryPowerBasisKw: parseMaximumDrawnPowerKw(profile.powerMaximumDrawn) };
   return fail("BTA6_POWER_BILLING_BASIS_REQUIRED");
+}
+
+// Tony (30/10, AZIENDA PROTETTA 3 kW): TIT Tabella 3 classes of the other BT uses, by available power.
+export function btaTariffClass(availablePowerKw: number): "BTA1" | "BTA2" | "BTA3" | "BTA4" | "BTA5" | null {
+  if (!Number.isFinite(availablePowerKw) || availablePowerKw <= 0 || availablePowerKw > 16.5) return null;
+  return availablePowerKw <= 1.5 ? "BTA1" : availablePowerKw <= 3 ? "BTA2" : availablePowerKw <= 6 ? "BTA3" : availablePowerKw <= 10 ? "BTA4" : "BTA5";
 }
 
 export function buildTrustedElectricitySupplyContext(profile: BillSupplyProfile, options?: TrustedElectricitySupplyContextOptions): ElectricitySupplyContext {
@@ -168,9 +189,17 @@ export function buildTrustedElectricitySupplyContext(profile: BillSupplyProfile,
   const supplyUseCategory = requiredSupplyUse(profile);
   const contractedPowerKw = parseContractedPowerKw(profile.powerCommitted);
   const availablePowerKw = parseAvailablePowerKw(profile.powerAvailable);
-  const regulatoryCustomerScope = deriveRegulatoryCustomerScope(profile, voltageLevel, availablePowerKw);
+  // Tony (30/10, "non è possibile vedere ancora mancati controlli"): a bill without the available power must not stop the
+  // checks. Only to pick the class, other uses fall back to the TIT rule: with a limiter (up to 30 kW) the available power
+  // is the committed one plus 10%, above that it equals the committed power. The shown available power stays the bill's.
+  const classPowerKw = availablePowerKw ?? (supplyUseCategory === "OTHER_USE" ? (contractedPowerKw > LIMITER_MAX_KW ? contractedPowerKw : Math.round(contractedPowerKw * 1.1 * 100) / 100) : undefined);
+  const regulatoryCustomerScope = deriveRegulatoryCustomerScope(profile, voltageLevel, classPowerKw);
   const basis = regulatoryPowerBasis(profile, regulatoryCustomerScope, contractedPowerKw);
   const asos = selectAsosClass(profile, options);
+  const tariffClass = regulatoryCustomerScope === "NON_DOMESTIC_BT" && supplyUseCategory === "OTHER_USE" && classPowerKw !== undefined ? btaTariffClass(classPowerKw) : null;
+  // Tony (30/10, "ancora errori"): the oneri sub-rows read "per potenze impegnate inferiori o uguali a 1,5 kW" etc.,
+  // so oneri follow the committed power; distribution keeps the TIT class by available power.
+  const oneriTariffClass = tariffClass === null ? null : contractedPowerKw > 0 ? btaTariffClass(Math.min(contractedPowerKw, 16.5)) : tariffClass;
   return {
     vector: "EE",
     contractedPowerKw,
@@ -179,6 +208,8 @@ export function buildTrustedElectricitySupplyContext(profile: BillSupplyProfile,
     domesticResidenceStatus: profile.domesticResidenceStatus.normalizedValue,
     voltageLevel,
     regulatoryCustomerScope,
+    ...(tariffClass ? { regulatoryTariffClass: tariffClass } : {}),
+    ...(oneriTariffClass ? { regulatoryOneriTariffClass: oneriTariffClass } : {}),
     ...(basis ?? {}),
     asosClass: asos.asosClass,
     energyIntensiveStatus: energyIntensiveStatus(asos.asosClass),

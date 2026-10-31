@@ -16,7 +16,7 @@ for (const endpoint of ["/api/foundation/context", "/api/health/readiness", "/ap
 for (const format of ["json", "csv", "html", "pdf"]) assert.equal(await read(`app/api/proposal/export/${format}/route.ts`).then(() => true), true);
 assert.match(await read("app/api/proposal/route.ts"), /export async function GET/);
 assert.match(await read("app/api/proposal/[id]/route.ts"), /export async function GET/);
-for (const label of ["Energia elettrica (EE)", "Gas (GAS)", "F1 (kWh)", "Consumo GAS", "Fingerprint", "Carica CTE", "Seleziona documento", "Provider Anthropic non configurato", "Pagina", "Non trovato", "Salva correzione", "Approva CTE"]) assert.ok((shell + cte).includes(label), `missing UI contract: ${label}`);
+for (const label of ["Energia elettrica (EE)", "Gas (GAS)", "F1 (kWh)", "Consumo GAS", "Fingerprint", "Carica CTE", "Seleziona documento", "Provider Anthropic non configurato", "Non trovato", "Salva correzione", "Approva CTE"]) assert.ok((shell + cte).includes(label), `missing UI contract: ${label}`);
 
 assert.match(page, /OperationalShell/);
 assert.match(page, /get\('demo'\)/);
@@ -48,13 +48,15 @@ assert.match(await read("app/lib/proposal/api.ts"), /body\.proposalId/);
 assert.doesNotMatch(shell, /fingerprint\(/);
 assert.doesNotMatch(shell, /bill\.vector/);
 for (const field of ["documentType", "vector", "supplier.name", "offer.name", "validity.periodStart", "pricing.reference", "pricing.spread.amount", "commercialTerms.fixedFees"]) assert.match(cte, new RegExp(field.replaceAll(".", "\\.")));
-assert.match(cte, /requestForm<\{ readonly ingestion: CteIngestionModel \}>\("\/api\/cte\/ingestion"/);
-assert.match(cte, /FormData/); assert.match(cte, /x-idempotency-key/); assert.match(cte, /pendingRef\.current\.has\("cte:upload"\)/);
-assert.match(cte, /\/review/); assert.match(cte, /\/approve/); assert.match(cte, /await load\(\)/); assert.match(cte, /candidatePreview/); assert.match(cte, /sourcePage/); assert.match(cte, /sourceText/); assert.match(cte, /confidence/);
+// Tony (31/10): "IL LIMITE DI 10 MB BISOGNA ALZARLO": the CTE upload goes through requestUpload (direct to storage above 4 MB).
+assert.match(cte, /requestUpload<\{ readonly ingestion: CteIngestionModel \}>\("\/api\/cte\/ingestion"/);
+assert.match(cte, /requestUpload/); /* Tony (31/10): "IL LIMITE DI 10 MB BISOGNA ALZARLO": the form is built inside requestUpload */ assert.match(cte, /x-idempotency-key/); assert.match(cte, /pendingRef\.current\.has\("cte:upload"\)/);
+assert.match(cte, /\/review/); assert.match(cte, /\/approve/); assert.match(cte, /await load\(\)/); assert.match(cte, /candidatePreview/);  assert.match(cte, /confidence/);
 assert.doesNotMatch(cte, /textarea/); assert.doesNotMatch(cte, /calculate|savings|fingerprint/i);
 assert.match(shell, /CteIngestionPanel/); assert.doesNotMatch(shell, /section === "cte" \? <CtePanel/);
 assert.match(shell, /cte:create/); assert.match(shell, /operationKey\("approve"/); assert.match(shell, /operationKey\("reject"/); assert.match(shell, /operationKey\("correction"/);
-assert.match(shell, /market:create/); assert.match(shell, /operationKey\("approve"/); assert.match(shell, /operationKey\("reject"/);
+// PUN and PSV are official data: the market panel only shows them, it never creates or approves them.
+assert.doesNotMatch(shell, /market:create/); assert.doesNotMatch(shell, /\/api\/market\/archive\/" ?\+/); assert.match(shell, /non si approvano e non si modificano a mano/);
 assert.match(shell, /LoadingState/);
 assert.match(shell, /EmptyState/);
 assert.match(shell, /ErrorState/);
@@ -102,3 +104,5 @@ assert.match(await read("tests/foundation-context.smoke.mjs"), /x-foundation-rol
 assert.doesNotMatch(shell, /localStorage|sessionStorage/);
 
 console.log("phase7 UI/E2E contract smoke: ok (static source/UI-contract smoke; no browser, DOM renderer, duplicate-click runtime, or live API integration exercised)");
+// Tony (31/10): "devono essere ordinati dal piu nuovo al più vecchio": PUN and PSV months, newest first.
+assert.match(shell, /today\.getUTCMonth\(\) - back, 1\)\)\.toISOString\(\)\.slice\(0, 7\)\)\.flatMap\(\(month\) => latest\.get\(month\)/);

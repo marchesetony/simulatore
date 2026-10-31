@@ -39,6 +39,7 @@ const roundedDisplay = extraction({ ...eeBands, pod: found("IT001E12345678"), f1
 const roundedContract = structuredBillContract({ extraction: roundedDisplay, tenantId: "tenant_alpha", billId: "bill-rounded-display", versionId: "v1" });
 assert.equal(roundedContract?.consumption.total.value, 175.32);
 const conflictingDisplay = extraction({ ...eeBands, pod: found("IT001E12345678"), billedConsumption: found(176) });
-assert.equal(structuredBillContract({ extraction: conflictingDisplay, tenantId: "tenant_alpha", billId: "bill-conflicting-display", versionId: "v1" }), null);
+// Tony (30/10, "NON è POSSIBILE, CHE UNA VOLTA FUNZIONA E UN'ALTRA NO"): F1 + F2 + F3 is the period total, a different total read elsewhere no longer stops the bill.
+assert.equal(structuredBillContract({ extraction: conflictingDisplay, tenantId: "tenant_alpha", billId: "bill-conflicting-display", versionId: "v1" })?.consumption.total.value, 175);
 
 console.log("bill vector resolution smoke: ok (hard POD/PDR priority, secondary evidence, advisory model, conflict review and PUN exclusion)");

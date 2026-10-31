@@ -15,6 +15,7 @@ export interface CteCanonicalViewModel {
   readonly notFoundFields: readonly CteReviewFieldModel[];
   readonly sources: readonly CteReviewSourceModel[];
   readonly errorCode: string | null;
+  readonly providerDetail: string | null;
   readonly unavailable: boolean;
   readonly processing: boolean;
   readonly retryable: boolean;
@@ -37,6 +38,7 @@ export function canonicalCteReviewView(ingestion: CteIngestionModel): CteCanonic
     notFoundFields: ingestion.notFoundFields,
     sources: ingestion.sources,
     errorCode: ingestion.errorCode,
+    providerDetail: ingestion.providerDetail ?? null,
     unavailable: ingestion.status === "PROVIDER_NOT_CONFIGURED",
     processing: ingestion.status === "OCR_PROCESSING" || ingestion.status === "EXTRACTION_PROCESSING",
     retryable: ingestion.status === "FAILED" || ingestion.status === "PROVIDER_NOT_CONFIGURED",
@@ -58,6 +60,7 @@ export function canonicalCteApprovedView(detail: CteApprovedArchiveDetailModel):
     notFoundFields: contract.notFoundFields ?? [],
     sources: contract.sources ?? [],
     errorCode: null,
+    providerDetail: null,
     unavailable: false,
     processing: false,
     retryable: false,

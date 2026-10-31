@@ -49,8 +49,13 @@ export interface CteApprovedArchiveSummaryModel {
   readonly offerName: string;
   readonly supplierName: string;
   readonly validity: { readonly periodStart: string; readonly periodEnd: string };
+  readonly activeUntil?: string;
+  readonly segment?: "Consumer" | "Business" | "Consumer e Business" | null;
+  readonly appliedSpread?: number | null;
+  readonly fixedPrice?: number | null;
   readonly status: "APPROVED";
   readonly commercialStatus: "ACTIVE" | "BLOCKED";
+  readonly commercialAdjustment?: { readonly energyPriceDelta: number; readonly monthlyFeeDelta: number; readonly updatedAt: string } | null;
 }
 
 export interface CteApprovedPriceModel {
@@ -165,6 +170,7 @@ export interface CteIngestionModel {
   readonly candidatePreview: Record<string, unknown> | null;
   readonly corrections: readonly { readonly version: number; readonly fieldPath: string; readonly previousValue: string | number | null; readonly nextValue: string | number; readonly actor: string; readonly correctedAt: string }[];
   readonly errorCode: string | null;
+  readonly providerDetail?: string | null;
   readonly approvedArchiveId: string | null;
 }
 
@@ -195,6 +201,7 @@ export interface BillDocumentModel {
   readonly structuredBill: import("../ingestion/structured-bill").StructuredBillExtraction | null;
   readonly resolvedVector: "EE" | "GAS" | "UNKNOWN";
   readonly invoicePunReferences: import("../market/pun-reference").OfficialPunModel;
+  readonly currentSpread?: import("../market/bill-spread").BillCurrentSpread | null;
   readonly regulatoryAudit: import("../foundation/bill-regulatory-audit").BillRegulatoryAuditDTO | null;
   readonly featurePermissions?: import("../foundation/bill-feature-permissions").BillFeatureAccessSnapshot;
   readonly verificationSummary?: import("../foundation/bill-feature-permissions").BillVerificationSummary | null;
@@ -228,7 +235,7 @@ export interface CalculationModel {
   readonly voltageLevel?: "LV" | "MV" | "HV" | "EHV";
   readonly sourceCte: { readonly archiveId: string; readonly cteId: string; readonly versionId: string; readonly version: string; readonly supplier: string; readonly offerCode: string };
   readonly marketData: readonly { readonly recordId: string; readonly version: string; readonly vector: UiVector; readonly index: "PUN" | "PSV"; readonly month: string }[];
-  readonly components: readonly { readonly category: string; readonly label: string; readonly sign: string; readonly amount: CalculationMoneyModel; readonly formulaId: string }[];
+  readonly components: readonly { readonly category: string; readonly label: string; readonly sign: string; readonly amount: CalculationMoneyModel; readonly formulaId: string; readonly formulaInputs?: Readonly<Record<string, string | number | boolean>> }[];
   readonly totalCommercialCost: CalculationMoneyModel;
   readonly unitCost: { readonly amount: number; readonly unit: string; readonly currency: "EUR" };
   readonly savingsVsBaseline: CalculationMoneyModel | null;

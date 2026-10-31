@@ -9,7 +9,9 @@ import {
 import { requestPrincipal } from "../../../lib/auth/request";
 import { runtimeRepositories } from "../../../lib/persistence/adapter";
 import { recordRuntimeAudit } from "../../../lib/persistence/audit";
-import { attachOfficialPun } from "../../../lib/market/pun-reference";
+import { attachOfficialPun, ensureOfficialPunForBill, withDocumentPriceRows } from "../../../lib/market/pun-reference";
+import { billPunRefresh } from "../../../lib/market-refresh/bill-pun";
+import { deleteBillPermanently } from "../../../lib/foundation/bill-retention";
 import { billVisibilityScope, getBillInScope } from "../../../lib/foundation/bill-visibility";
 import { isBillFeature, resolveBillFeaturePermissions, sanitizeBillForFeatureAccess, type BillFeature } from "../../../lib/foundation/bill-feature-permissions";
 import type { AuthenticatedPrincipal } from "../../../lib/auth/types";
@@ -39,7 +41,9 @@ export async function GET(request: Request, context: { params: Promise<{ id: str
     const access = await resolveBillFeaturePermissions(principal, repositories, scope);
     const requestedFeature = new URL(request.url).searchParams.get("feature");
     if (requestedFeature !== null && (!isBillFeature(requestedFeature) || !access.features[requestedFeature as BillFeature])) return deny("BILL_FEATURE_ACCESS_DENIED", "Funzione tecnica non autorizzata", 403);
-    const publicDocument = document ? (approvedView ? toPublicApprovedDocument(document) : toPublicDocument(document)) : null;
+    const shownDocument = document ? (approvedView ? toPublicApprovedDocument(document) : toPublicDocument(document)) : null;
+    const publicDocument = shownDocument && document ? await withDocumentPriceRows(shownDocument, () => repositories.documentStorage.read(document.tenantId, document.id)) : shownDocument;
+    if (publicDocument) await ensureOfficialPunForBill(publicDocument, repositories.marketArchiveRepository, billPunRefresh(repositories, publicDocument.tenantId));
     return publicDocument ? Response.json({ document: sanitizeBillForFeatureAccess(await attachOfficialPun(publicDocument, repositories.marketArchiveRepository), access) }, { headers: NO_STORE_HEADERS }) : deny("DOCUMENT_NOT_FOUND", "Bill document not found", 404);
   } catch (error) {
     const code = publicErrorCode(error);
@@ -116,7 +120,10 @@ export async function DELETE(request: Request, context: { params: Promise<{ id: 
     const document = await getBillInScope(principal, repositories, id);
     if (!document) return Response.json({ deleted: true }, { headers: NO_STORE_HEADERS });
     if (document.lifecycleState === "DELETED") return Response.json({ deleted: true }, { headers: NO_STORE_HEADERS });
-    return deny(document.currentApprovedVersionId !== null ? "BILL_APPROVED_DELETE_FORBIDDEN" : "BILL_RETENTION_NOT_DUE", "Bill deletion is controlled by the retention lifecycle", 409);
+    // Tony (31/10): "serve un tasto cancella le bollette". Any bill the user can see and edit is removed for good.
+    const audit = { async record(event: { readonly type: string; readonly documentId: string; readonly outcome: string }) { await recordRuntimeAudit({ principal, action: "BILL_DELETED_BY_USER", resourceType: "BILL", resourceId: event.documentId, outcome: event.outcome === "ALLOWED" ? "ALLOWED" : "DENIED", correlationId: CORRELATION_ID }); } };
+    await deleteBillPermanently({ tenantId: principal.tenantId, documentId: document.id, repositories: { bills: repositories.billRepository, storage: repositories.documentStorage, audit } });
+    return Response.json({ deleted: true }, { headers: NO_STORE_HEADERS });
   } catch (error) {
     const code = publicErrorCode(error);
     return deny(code, messageFor(code), statusFor(code));
@@ -200,3 +207,5 @@ function messageFor(code: string): string {
       return "Bill operation failed";
   }
 }
+
+export const maxDuration = 120;

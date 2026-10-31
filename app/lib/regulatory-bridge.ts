@@ -75,7 +75,24 @@ export class ProductionRegulatoryPersistenceBridge {
   private readonly repository: RegulatoryValueRepository;
   private readonly approvalDomains: TenantRecordRepository<RegulatoryApprovalDomainState>;
 
-  constructor(repository: RegulatoryValueRepository, approvalDomains: TenantRecordRepository<RegulatoryApprovalDomainState>) { this.repository = repository; this.approvalDomains = approvalDomains; }
+  // Tony (30/10): "ho come l'impressione che sia lento nelle elaborazioni". One quote resolves dozens of timelines: the
+  // archive is read once per calculation request instead of once per timeline (opt-in: only read-only request bridges, since
+  // writers append to the repository directly), and read again after a save.
+  private readonly listed = new Map<string, Promise<readonly TenantRecord<RegulatoryValueRecord>[]>>();
+  private readonly readOnce: boolean;
+
+  constructor(repository: RegulatoryValueRepository, approvalDomains: TenantRecordRepository<RegulatoryApprovalDomainState>, options: { readonly readArchiveOncePerRequest?: boolean } = {}) { this.repository = repository; this.approvalDomains = approvalDomains; this.readOnce = options.readArchiveOncePerRequest === true; }
+
+  private records(tenantId: string): Promise<readonly TenantRecord<RegulatoryValueRecord>[]> {
+    if (!this.readOnce) return this.repository.list(tenantId);
+    let pending = this.listed.get(tenantId);
+    if (!pending) {
+      pending = this.repository.list(tenantId);
+      this.listed.set(tenantId, pending);
+      pending.catch(() => this.listed.delete(tenantId));
+    }
+    return pending;
+  }
 
   async save(tenantId: string, value: RegulatoryValueRecord): Promise<TenantRecord<RegulatoryValueRecord>> {
     assertRecordShape(value, tenantId);
@@ -85,12 +102,14 @@ export class ProductionRegulatoryPersistenceBridge {
       if (existingValue.checksum === value.checksum) return existing;
       fail("REGULATORY_RECORD_CONFLICT");
     }
-    return this.repository.append({ tenantId, recordId: value.id, payload: value, idempotencyKey: value.checksum });
+    const saved = await this.repository.append({ tenantId, recordId: value.id, payload: value, idempotencyKey: value.checksum });
+    this.listed.delete(tenantId);
+    return saved;
   }
 
   async list(tenantId: string, query: RegulatoryValueQuery = {}): Promise<readonly RegulatoryValueRecord[]> {
     validateTenantId(tenantId);
-    const records = await this.repository.list(tenantId);
+    const records = await this.records(tenantId);
     const visible = await Promise.all(records.map(async (record) => {
       const candidate = valueFromRecord(record, tenantId);
       if (query.componentCode !== undefined && candidate.componentCode !== query.componentCode) return [];
@@ -109,7 +128,7 @@ export class ProductionRegulatoryPersistenceBridge {
   }
 
   async resolve(tenantId: string, query: Required<Pick<RegulatoryValueQuery, "componentCode" | "customerScope" | "effectiveAt">> & Pick<RegulatoryValueQuery, "normalizedUnit" | "regulatoryVariant">): Promise<RegulatoryValueRecord | null> {
-    if (query.componentCode === "ASOS" && query.customerScope === "NON_DOMESTIC_BT_BTA6" && typeof query.regulatoryVariant !== "string") fail("REGULATORY_VARIANT_REQUIRED");
+    if (query.componentCode === "ASOS" && (query.customerScope === "NON_DOMESTIC_BT_BTA6" || query.customerScope === "NON_DOMESTIC_BT_BTA1_5") && typeof query.regulatoryVariant !== "string") fail("REGULATORY_VARIANT_REQUIRED");
     const matches = await this.list(tenantId, query);
     if (matches.length > 1) fail("REGULATORY_APPROVED_VALUE_CONFLICT");
     return matches[0] ?? null;

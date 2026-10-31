@@ -1,4 +1,4 @@
-export type OrgLevel = "AZIENDA" | "DIRETTORE" | "AREA_MANAGER" | "AGENTE";
+export type OrgLevel = "AZIENDA" | "DIRETTORE" | "AREA_MANAGER" | "AGENTE" | "SUB_AGENTE";
 export type LimitVector = "EE" | "GAS";
 export type LimitCustomerCategory = "RESIDENTIAL" | "NON_RESIDENTIAL";
 
@@ -15,6 +15,8 @@ export interface OrgNode {
   readonly parentUserId: string | null;
   readonly displayName: string | null;
   readonly limits: CommercialLimits;
+  /** May authorize, for one bill, a CTE the eligibility rules leave out; it holds only while every manager above holds it too. */
+  readonly canAuthorizeCte?: boolean;
   readonly updatedBy: string;
 }
 
@@ -22,6 +24,7 @@ export interface OrgNodeView extends OrgNode {
   readonly version: number;
   readonly updatedAt: string;
   readonly effectiveLimits: CommercialLimits;
+  readonly effectiveCanAuthorizeCte: boolean;
   readonly ancestorUserIds: readonly string[];
 }
 

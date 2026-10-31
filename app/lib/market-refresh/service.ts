@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import type { ElectricityMonthlyPunRecord } from "../energy/market-data.ts";
 // @ts-expect-error Node's strip-only test runner requires the explicit extension.
-import { approveMarketArchive, compareMarketVersions, createMarketArchive } from "../market/service.ts";
+import { approveMarketArchive, compareMarketVersions, createMarketArchive, retireMarketArchive } from "../market/service.ts";
 import type { MarketArchiveRecord, MarketArchiveRepository } from "../market/types.ts";
 // @ts-expect-error Node's strip-only test runner requires the explicit extension.
 import { assertMarketRecord, assertMarketTenantId } from "../market/validation.ts";
@@ -60,6 +60,8 @@ export interface MarketRefreshSummary {
   readonly monthsCreated: number;
   readonly monthsCorrected: number;
   readonly monthsFailed: number;
+  /** Approved PUN months older than the archive window, taken out of the active archive (recoverable). */
+  readonly monthsRetired?: number;
   readonly errors: readonly string[];
 }
 
@@ -125,7 +127,7 @@ function canonicalCandidate(bundle: PunSourceBundle, referenceMonth: string): Pu
 function nextVersion(records: readonly MarketArchiveRecord[]): number { return records.reduce((max, record) => Math.max(max, Number.parseInt(record.record.version, 10) || 0), 0) + 1; }
 function pendingVersion(candidate: ElectricityMonthlyPunRecord, current: MarketArchiveRecord | undefined, all: readonly MarketArchiveRecord[]): ElectricityMonthlyPunRecord {
   if (!current) return { ...candidate, recordId: `gme-pun-${candidate.month}`, version: "1", parentVersionId: null, approval: { status: "NEEDS_REVIEW", reason: "OFFICIAL_SOURCE_RECONCILED" } };
-  const version = nextVersion(all.filter((record) => record.month === candidate.month));
+  const version = nextVersion(all.filter((record) => record.vector === "EE" && record.month === candidate.month));
   return { ...candidate, recordId: `gme-pun-${candidate.month}-v${version}`, version: String(version), parentVersionId: current.archiveId, approval: { status: "NEEDS_REVIEW", reason: "OFFICIAL_SOURCE_CORRECTION" } };
 }
 function initialState(tenantId: string): MarketRefreshState { return { tenantId, status: "NEVER_SUCCESSFUL", lastAttemptAt: null, lastSuccessfulAt: null, nextExpectedCheckAt: null, consecutiveFailures: 0, lastCheckedAtByMonth: {}, errors: [] }; }
@@ -168,7 +170,7 @@ export async function runPunMarketRefresh(input: { readonly tenantId: string } &
     lease = await acquireLease(input, input.tenantId, runId, now);
     if (!lease.acquired) return { runId, tenantId: input.tenantId, status: "ALREADY_RUNNING", dryRun: false, targetMonths, monthsChecked: 0, monthsComplete: 0, monthsUnchanged: 0, monthsCreated: 0, monthsCorrected: 0, monthsFailed: 0, errors: ["PUN_REFRESH_ALREADY_RUNNING"] };
   }
-  let monthsComplete = 0; let monthsUnchanged = 0; let monthsCreated = 0; let monthsCorrected = 0; let monthsFailed = 0; const errors: string[] = [];
+  let monthsComplete = 0; let monthsUnchanged = 0; let monthsCreated = 0; let monthsCorrected = 0; let monthsFailed = 0; let monthsRetired = 0; const errors: string[] = [];
   try {
     for (const referenceMonth of targetMonths) {
       try {
@@ -176,7 +178,7 @@ export async function runPunMarketRefresh(input: { readonly tenantId: string } &
         const candidate = canonicalCandidate(bundle, referenceMonth);
         if (candidate.record.tenantId !== input.tenantId) throw new Error("TENANT_ACCESS_DENIED");
         const existing = await input.repositories.marketArchiveRepository.list(input.tenantId);
-        const sameMonth = existing.filter((record) => record.month === referenceMonth && record.status === "APPROVED").sort(compareMarketVersions);
+        const sameMonth = existing.filter((record) => record.vector === "EE" && record.index === "PUN" && record.month === referenceMonth && record.status === "APPROVED").sort(compareMarketVersions);
         const current = sameMonth[0];
         if (current && valuesEqual(current.record as ElectricityMonthlyPunRecord, candidate.record)) { monthsComplete += 1; monthsUnchanged += 1; continue; }
         monthsComplete += 1;
@@ -188,6 +190,15 @@ export async function runPunMarketRefresh(input: { readonly tenantId: string } &
           if (current) monthsCorrected += 1;
         } else if (current) monthsCorrected += 1; else monthsCreated += 1;
       } catch (error) { monthsFailed += 1; errors.push(`${referenceMonth}:${errorText(error)}`); }
+    }
+    // Retention rule (owner, 2026-10-26): about five closed months are kept; older PUN leaves the active archive.
+    const oldest = targetMonths[targetMonths.length - 1];
+    if (!dryRun && oldest) {
+      const expired = (await input.repositories.marketArchiveRepository.list(input.tenantId)).filter((record) => record.vector === "EE" && record.index === "PUN" && record.status === "APPROVED" && record.month < oldest);
+      for (const record of expired) {
+        try { await retireMarketArchive(input.repositories.marketArchiveRepository, input.tenantId, record.archiveId, actor, `PUN_RETENTION_${MINIMUM_PUN_HISTORY_MONTHS}_MONTHS`, now); monthsRetired += 1; }
+        catch (error) { errors.push(`${record.month}:RETENTION:${errorText(error)}`); }
+      }
     }
   } finally {
     if (!dryRun) await releaseLease(input, input.tenantId, runId, now, lease.version);
@@ -205,7 +216,7 @@ export async function runPunMarketRefresh(input: { readonly tenantId: string } &
     const run: MarketRefreshRun = { runId, tenantId: input.tenantId, startedAt: now, finishedAt: new Date().toISOString(), status, trigger, targetMonths, monthsChecked: targetMonths.length, monthsComplete, monthsUnchanged, monthsCreated, monthsCorrected, monthsFailed, lastSuccessfulAt, consecutiveFailures: currentState.consecutiveFailures, errors };
     await persistRun(input, run);
   }
-  return { runId, tenantId: input.tenantId, status, dryRun, targetMonths, monthsChecked: targetMonths.length, monthsComplete, monthsUnchanged, monthsCreated, monthsCorrected, monthsFailed, errors };
+  return { runId, tenantId: input.tenantId, status, dryRun, targetMonths, monthsChecked: targetMonths.length, monthsComplete, monthsUnchanged, monthsCreated, monthsCorrected, monthsFailed, monthsRetired, errors };
 }
 
 export function punRefreshStateIsStale(state: Pick<MarketRefreshState, "lastSuccessfulAt"> | null, now: string): boolean { return state === null || stale(state.lastSuccessfulAt, validDate(now)); }

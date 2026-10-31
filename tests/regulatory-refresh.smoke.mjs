@@ -67,7 +67,12 @@ assert.equal(failed.status, "FAILED");
 console.log("LAST_GOOD_RATE_PRESERVED=PASS"); console.log("AMBIGUOUS_CHANGE_FAIL_CLOSED=PASS");
 
 const staleState = { lastSuccessfulAt: "2026-07-01T00:00:00.000Z" };
-assert.equal(refreshStateIsStale(staleState, now), true); console.log("SOURCE_FRESHNESS_TRACKED=PASS"); console.log("STALE_THRESHOLD_DAYS=35"); console.log("REGULATORY_REFRESH_STALE=PASS");
+assert.equal(refreshStateIsStale(staleState, now), true);
+// Tony (26/10): ARERA/Terna values refreshed at least every 15 days; 16 days without a successful check is stale, 14 is not.
+const day = 86_400_000;
+assert.equal(refreshStateIsStale({ lastSuccessfulAt: new Date(Date.parse(now) - 16 * day).toISOString() }, now), true);
+assert.equal(refreshStateIsStale({ lastSuccessfulAt: new Date(Date.parse(now) - 14 * day).toISOString() }, now), false);
+console.log("SOURCE_FRESHNESS_TRACKED=PASS"); console.log("STALE_THRESHOLD_DAYS=15"); console.log("REGULATORY_REFRESH_STALE=PASS");
 
 const lockRepos = { ...repositories, regulatoryRefreshState: new MemoryRepository() };
 await lockRepos.regulatoryRefreshState.put({ tenantId: tenant, recordId: deterministicRecordId("regulatory-refresh-state", tenant, "regulatory-refresh"), payload: { tenantId: tenant, status: "RUNNING", lastAttemptAt: now, lastSuccessfulAt: null, nextExpectedCheckAt: null, consecutiveFailures: 0, sourceStatus: {}, lease: { ownerRunId: "refresh_other", acquiredAt: now, expiresAt: "2026-09-04T00:10:00.000Z" } } });

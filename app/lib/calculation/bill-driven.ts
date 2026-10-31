@@ -1,5 +1,13 @@
 // @ts-expect-error Node's strip-only test runner requires the explicit extension.
-import { assertSimulationWithinLimits, cteUsability, loadHierarchyAccess } from "../hierarchy/service.ts";
+import { completeSupplyProfile } from "../ingestion/supply-profile-completion.ts";
+// @ts-expect-error Node's strip-only test runner requires the explicit extension.
+import { estimatedAnnualConsumption } from "./annual-consumption.ts";
+// @ts-expect-error Node's strip-only test runner requires the explicit extension.
+import { historyMonthTotals } from "../ingestion/consumption-history.ts";
+// @ts-expect-error Node's strip-only test runner requires the explicit extension.
+import { assertSimulationWithinLimits, canAuthorizeCte, cteUsability, loadHierarchyAccess } from "../hierarchy/service.ts";
+// @ts-expect-error Node's strip-only test runner requires the explicit extension.
+import { quoteWindowStart, supplyPeriodTooOld } from "./quote-window.ts";
 import type { BillDocument, BillVersion } from "../foundation/real-bill";
 // @ts-expect-error Node's strip-only test runner requires the explicit extension.
 import { getBillInScope } from "../foundation/bill-visibility.ts";
@@ -12,23 +20,24 @@ import { commercialStatusOf, currentApprovedCteVersion } from "../cte/archive/se
 // @ts-expect-error Node's strip-only test runner requires the explicit extension.
 import { toCalculationReadyOffer, assertCalculationReadyFees } from "../cte/calculation-ready.ts";
 import type { CalculationReadyOffer } from "../cte/types";
-import type { CteCommercialCustomerScope } from "../cte/types";
 import type { CustomerLegalType, IdentifierType, SupplyUseScope, EligibilityReasonCode } from "../eligibility/domain";
 // @ts-expect-error Node's strip-only test runner requires the explicit extension.
-import { isCommercialCustomerScopeCompatible } from "../cte/eligibility.ts";
-// @ts-expect-error Node's strip-only test runner requires the explicit extension.
-import { deriveBillEligibilityContext, deriveCteCustomerScope, evaluateCustomerAndSupply } from "../eligibility/domain.ts";
+import { deriveBillEligibilityContext } from "../eligibility/domain.ts";
 // @ts-expect-error Node's strip-only test runner requires the explicit extension.
 import { assertUsableEligibilityOverride, isEligibilityOverrideable, type EligibilityOverrideProvenance, type EligibilityOverride } from "../eligibility/override.ts";
 // @ts-expect-error Node's strip-only test runner requires the explicit extension.
 import { queryApprovedHistoricalMarketData } from "../market/service.ts";
 // @ts-expect-error Node's strip-only test runner requires the explicit extension.
 import { monthsInSimulationPeriod, parseSimulationRequest } from "./input.ts";
+// @ts-expect-error Node's strip-only test runner requires the explicit extension.
+import { runPunMarketRefresh } from "../market-refresh/service.ts";
+// @ts-expect-error Node's strip-only test runner requires the explicit extension.
+import { runPsvMarketRefresh } from "../market-refresh/psv.ts";
 import type { SimulationRequest } from "./types";
 // @ts-expect-error Node's strip-only test runner requires the explicit extension.
 import { buildBillSupplyProfile, validateBillSupplyProfile, type BillSupplyProfile } from "../ingestion/bill-supply-profile.ts";
 // @ts-expect-error Node's strip-only test runner requires the explicit extension.
-import { validateStructuredBillExtraction, type StructuredBillExtraction } from "../ingestion/structured-bill.ts";
+import { structuredBillContract, structuredBillContractIssue, validateStructuredBillExtraction, type StructuredBillExtraction } from "../ingestion/structured-bill.ts";
 // @ts-expect-error Node's strip-only test runner requires the explicit extension.
 import { buildTrustedElectricitySupplyContext, type ElectricitySupplyContext } from "./trusted-ee-supply-context.ts";
 import type { BillEconomicComponentInput } from "../foundation/bill-economic-analysis.ts";
@@ -47,7 +56,7 @@ export class BillDrivenSimulationError extends Error {
 const fail = (code: string): never => { throw new BillDrivenSimulationError(code); };
 const NO_STORE_HEADERS = { "cache-control": "no-store, private", "vary": "Cookie, Authorization", "x-content-type-options": "nosniff" } as const;
 
-export type BillDrivenRepositories = Pick<RuntimeRepositories, "billRepository" | "foundationMemberships" | "cteArchiveRepository" | "marketArchiveRepository"> & { readonly eligibilityOverrides?: RuntimeRepositories["eligibilityOverrides"]; readonly orgChain?: RuntimeRepositories["orgChain"]; readonly cteAssignments?: RuntimeRepositories["cteAssignments"] };
+export type BillDrivenRepositories = Pick<RuntimeRepositories, "billRepository" | "foundationMemberships" | "cteArchiveRepository" | "marketArchiveRepository"> & { readonly marketRefreshState?: RuntimeRepositories["marketRefreshState"]; readonly marketRefreshRuns?: RuntimeRepositories["marketRefreshRuns"]; readonly marketRefreshLocks?: RuntimeRepositories["marketRefreshLocks"]; readonly eligibilityOverrides?: RuntimeRepositories["eligibilityOverrides"]; readonly orgChain?: RuntimeRepositories["orgChain"]; readonly cteAssignments?: RuntimeRepositories["cteAssignments"] };
 
 export interface ContractExpiryStatus {
   readonly status: "KNOWN" | "UNKNOWN";
@@ -101,9 +110,13 @@ export interface BillDrivenSimulationContext {
     readonly annual: number | null;
     readonly period: { readonly f1: number | null; readonly f2: number | null; readonly f3: number | null; readonly smc: number | null };
     readonly monthlyProfile: readonly { readonly month: string; readonly f1: number; readonly f2: number; readonly f3: number }[] | null;
+    /** Consumption history printed on the bill, month by month (Tony 30/10). */
+    readonly history?: readonly { readonly month: string; readonly quantity: number }[];
     readonly correctionCoefficient: number | null;
   };
   readonly currentSupplier: string;
+  /** Account holder as printed on the bill, used to recognise condominium supplies. */
+  readonly customerName: string | null;
   readonly currentOffer: { readonly name: string | null; readonly code: string | null };
   readonly contractExpiry: ContractExpiryStatus;
   readonly economicBaseline: { readonly amount: number; readonly currency: "EUR"; readonly source: "APPROVED_BILL" } | null;
@@ -117,6 +130,8 @@ export interface BillDrivenSimulationContext {
     readonly status: "READY" | "PARTIAL";
   };
   readonly alerts: readonly BillDrivenContextAlert[];
+  /** False when the read bill lines do not add up to the bill total: savings are then indicative. */
+  readonly economicReconciled: boolean;
   readonly missingRequiredData: readonly string[];
 }
 
@@ -130,6 +145,10 @@ export interface CteEligibilityCandidate {
   readonly validity: { readonly periodStart: string; readonly periodEnd: string };
   readonly pricingType: "INDEXED" | "FIXED" | null;
   readonly pricingReference: "PUN" | "PSV" | "NONE" | null;
+  /** What the agent quotes to the customer: energy price or spread on the index, and the monthly fixed fee (PCV). */
+  /** Who the CTE is for, as read from it: shown on the offer so a wrong reading of the CTE is visible. */
+  readonly scope?: { readonly customer: string; readonly voltage: readonly string[]; readonly consumption: string | null; readonly uses: readonly string[] };
+  readonly terms?: { readonly fixedPrice: number | null; readonly spread: number | null; readonly priceUnit: "EUR_PER_KWH" | "EUR_PER_SMC"; readonly monthlyFixedFee: number | null };
   readonly eligibilityStatus: "COMPATIBLE" | "NOT_COMPATIBLE";
   readonly compatibilityReason: string;
   readonly calculationReadiness: "READY" | "MARKET_DATA_MISSING" | "NOT_READY";
@@ -139,9 +158,20 @@ export interface CteEligibilityCandidate {
   readonly overrideRequestable?: boolean;
 }
 
+// A CTE of the bill's commodity that is in the archive but cannot be offered to this operator, and why.
+export interface UnlistedCte {
+  readonly archiveId: string;
+  readonly supplier: string;
+  readonly offer: { readonly name: string; readonly code: string };
+  readonly reason: "NOT_APPROVED" | "NOT_ASSIGNED" | "ASSIGNMENT_EXPIRED" | "ASSIGNMENT_NOT_YET_VALID" | "EXCLUDED_BY_LIMITS";
+}
+
 export interface BillDrivenPreparation {
   readonly context: BillDrivenSimulationContext;
   readonly candidates: readonly CteEligibilityCandidate[];
+  readonly unlisted?: readonly UnlistedCte[];
+  /** The operator may authorize, for this bill, a CTE the rules leave out. */
+  readonly canAuthorizeCte?: boolean;
 }
 
 export interface BillDrivenExecutionInput {
@@ -199,23 +229,27 @@ function approvedVersion(document: BillDocument): BillVersion {
   const versionId = document.currentApprovedVersionId ?? fail("SOURCE_BILL_NOT_APPROVED");
   const versionValue = document.versions.find((candidate) => candidate.versionId === versionId);
   if (!versionValue) fail("SOURCE_BILL_VERSION_NOT_FOUND");
-  const version = versionValue as BillVersion;
+  const stored = versionValue as BillVersion;
+  // Bills read before the reading became tolerant (voltage in volts, unreconciled monthly detail) get their contract rebuilt from the same approved reading.
+  const rebuilt = !stored.energyContract && stored.structuredBill ? structuredBillContract({ extraction: stored.structuredBill, tenantId: document.tenantId, billId: document.id, versionId: stored.versionId }) : null;
+  const version: BillVersion = rebuilt ? { ...stored, energyContract: rebuilt } : stored;
   if (!document.approvals.some((approval) => approval.versionId === versionId) || document.lifecycleState === "DELETED" || document.lifecycleState === "SCHEDULED_DELETION") fail("SOURCE_BILL_NOT_APPROVED");
   const contract = version.energyContract;
-  if (!contract) fail("SOURCE_BILL_CONTEXT_UNAVAILABLE");
+  // Say which reading is missing, so the agent knows what to fix on the bill.
+  if (!contract) fail(version.structuredBill ? `SOURCE_BILL_${structuredBillContractIssue(version.structuredBill) ?? "CONTEXT_UNAVAILABLE"}` : "SOURCE_BILL_CONTEXT_UNAVAILABLE");
   const approvedContract = contract as NonNullable<BillVersion["energyContract"]>;
   if (approvedContract.tenantId !== document.tenantId || approvedContract.billId !== document.id || approvedContract.version !== "1") fail("SOURCE_BILL_CONTEXT_UNAVAILABLE");
-  assertEconomicReconciliation(version);
   return version;
 }
 
-function assertEconomicReconciliation(version: BillVersion): void {
+function economicallyReconciled(version: BillVersion): boolean {
   const extraction = version.structuredBill;
-  if (!extraction || extraction.economicChargeLines.length === 0) return;
+  if (!extraction || extraction.economicChargeLines.length === 0) return true;
   const priorBalance = extraction.extendedFacts.find((fact) => fact.code === "OUTSTANDING_AMOUNT")?.value ?? null;
   const inputs: BillEconomicComponentInput[] = extraction.economicChargeLines.map((line) => ({ code: line.code, description: line.description, quantity: line.quantity, unit: line.unit, unitPrice: line.unitPrice, amount: line.amount, period: line.periodRaw, rawDescription: line.rawDescription, rawValue: line.rawValue, rawUnit: line.rawUnit, rawQuantity: line.rawQuantity, rawUnitPrice: line.rawUnitPrice, rawAmount: line.rawAmount, rawPeriod: line.rawPeriod, documentEvidence: line.documentEvidence, status: line.status }));
-  const analysis = buildCurrentBillEconomicAnalysis(inputs, extraction.totalAmount.value, { priorBalance });
-  if (analysis.totals.reconciliationStatus !== "RECONCILED") fail("SOURCE_BILL_RECONCILIATION_REQUIRED");
+  const analysis = buildCurrentBillEconomicAnalysis(inputs, extraction.totalAmount.value, { priorBalance, billingPeriodStart: extraction.billingPeriod.status === "FOUND" ? extraction.billingPeriod.value?.from ?? null : null });
+  // A competitor bill whose read lines do not add up to its total is still quotable: the agent is told the saving is indicative.
+  return analysis.totals.reconciliationStatus === "RECONCILED";
 }
 
 function profileFor(extraction: StructuredBillExtraction): BillSupplyProfile | null {
@@ -242,35 +276,47 @@ function buildContext(document: BillDocument, version: BillVersion): BillDrivenS
     try { validateStructuredBillExtraction(extraction); } catch { fail("SOURCE_BILL_CONTEXT_UNAVAILABLE"); }
   }
   const structured = extraction ?? null;
-  const profile = structured ? profileFor(structured) : null;
-  const customerType = contract.customer?.customerType;
+  const readProfile = structured ? profileFor(structured) : null;
+  const profile = structured && readProfile ? completeSupplyProfile(readProfile, structured) : readProfile;
+  // Tony (29/10, RESIDENCY_MISMATCH): "Domestico non residente" can come back as NON_RESIDENTIAL, the enum's name; a
+  // domestic supply use is a household whatever that field says, and residency only applies to households.
+  const readType = contract.customer?.customerType;
+  const customerType = readType === "NON_RESIDENTIAL" && profile?.supplyUseCategory.normalizedValue === "DOMESTIC" ? "RESIDENTIAL" : readType;
   const period = contract.billingPeriod;
   const annual = structured ? known(structured.annualConsumption) : null;
   const periodConsumption = contract.vector === "EE"
     ? { f1: contract.consumption.f1.status === "KNOWN" ? contract.consumption.f1.value : null, f2: contract.consumption.f2.status === "KNOWN" ? contract.consumption.f2.value : null, f3: contract.consumption.f3.status === "KNOWN" ? contract.consumption.f3.value : null, smc: null }
     : { f1: null, f2: null, f3: null, smc: contract.consumption.smc.status === "KNOWN" ? contract.consumption.smc.value : null };
-  const residency = profile?.domesticResidenceStatus.normalizedValue === "RESIDENT" || profile?.domesticResidenceStatus.normalizedValue === "NON_RESIDENT" ? profile.domesticResidenceStatus.normalizedValue : null;
+  const residency = customerType === "RESIDENTIAL" && (profile?.domesticResidenceStatus.normalizedValue === "RESIDENT" || profile?.domesticResidenceStatus.normalizedValue === "NON_RESIDENT") ? profile!.domesticResidenceStatus.normalizedValue : null;
   let supplyContext: ElectricitySupplyContext | null = null;
   if (contract.vector === "EE" && profile) {
     try { supplyContext = buildTrustedElectricitySupplyContext(profile, { simulationPeriod: period, sourceBillBinding: { billId: document.id, approvedVersionId: version.versionId } }); } catch { supplyContext = null; }
   }
+  // Tony (29/10, fattura dettagliata BPower senza tensione): a bill that does not print the voltage is in bassa tensione
+  // when it is a household (domestic supplies are BT) or at most 30 kW (TIC: BT up to 100 kW), as for the ARERA tables.
+  const contractedPower = profile ? parsePower(profile.powerCommitted) : null;
+  const availablePower = profile ? parsePower(profile.powerAvailable) : null;
+  const inferredLowVoltage = contract.vector === "EE" && (customerType === "RESIDENTIAL" || profile?.supplyUseCategory.normalizedValue === "DOMESTIC" || ((availablePower ?? contractedPower) !== null && (availablePower ?? contractedPower)! > 0 && (availablePower ?? contractedPower)! <= 30));
+  // Tony (31/10, SOURCE_BILL_VOLTAGE_MISMATCH): the calculation checks the request against the trusted supply context of the
+  // bill, so when that context has a voltage it is the one the offers are chosen and calculated on.
+  const voltageLevel: VoltageLevel | null = contract.vector === "EE" ? supplyContext?.voltageLevel ?? contract.supply.voltageLevel ?? (inferredLowVoltage ? "LV" : null) : null;
   const missing: string[] = [];
   if (!customerType) missing.push("customerType");
   if (!period.periodStart || !period.periodEnd) missing.push("billingPeriod");
   if (contract.vector === "EE") {
     if (!contract.supply.pod) missing.push("POD");
-    if (!contract.supply.voltageLevel) missing.push("voltageLevel");
+    if (!voltageLevel) missing.push("voltageLevel");
     if (periodConsumption.f1 === null) missing.push("F1");
     if (periodConsumption.f2 === null) missing.push("F2");
     if (periodConsumption.f3 === null) missing.push("F3");
-    if (!supplyContext) missing.push("technicalClassification");
+    // The supply use (domestic, altri usi) refines regulated charges when read; it never blocks the CTE choice.
   } else {
     if (!contract.supply.pdr) missing.push("PDR");
     if (periodConsumption.smc === null) missing.push("SMC");
   }
   const baselineAmount = structured ? known(structured.totalAmount) : null;
   const useCategory = profile?.supplyUseCategory.normalizedValue;
-  const domestic = useCategory === "DOMESTIC" || contract.customer?.customerType === "RESIDENTIAL";
+  const domestic = useCategory === "DOMESTIC" || customerType === "RESIDENTIAL";
   const contractedPowerKw = profile ? parsePower(profile.powerCommitted) : null;
   const billEligibility = deriveBillEligibilityContext({
     customerType,
@@ -293,7 +339,7 @@ function buildContext(document: BillDocument, version: BillVersion): BillDrivenS
     supply: {
       pod: contract.vector === "EE" ? contract.supply.pod : null,
       pdr: contract.vector === "GAS" ? contract.supply.pdr : null,
-      voltageLevel: contract.vector === "EE" ? contract.supply.voltageLevel : null,
+      voltageLevel,
       contractedPowerKw,
       availablePowerKw: profile ? parsePower(profile.powerAvailable) : null,
     },
@@ -302,9 +348,11 @@ function buildContext(document: BillDocument, version: BillVersion): BillDrivenS
       annual,
       period: periodConsumption,
       monthlyProfile: structured ? monthlyProfileFor(structured) : null,
+      ...(structured?.consumptionHistory?.length ? { history: structured.consumptionHistory } : {}),
       correctionCoefficient: contract.vector === "GAS" && contract.consumption.correctionCoefficient.status === "KNOWN" ? contract.consumption.correctionCoefficient.value : null,
     },
     currentSupplier: contract.currentSupplier,
+    customerName: contract.customer?.name?.status === "KNOWN" ? contract.customer.name.value : null,
     currentOffer: { name: known(contract.offer.offerName), code: known(contract.offer.offerCode) },
     contractExpiry: structured ? expiryFromFacts(structured) : { status: "UNKNOWN" },
     economicBaseline: baselineAmount === null ? null : { amount: baselineAmount, currency: "EUR", source: "APPROVED_BILL" },
@@ -312,18 +360,19 @@ function buildContext(document: BillDocument, version: BillVersion): BillDrivenS
       domestic,
       nonDomestic: useCategory === "OTHER_USE" || useCategory === "PUBLIC_LIGHTING" || useCategory === "PUBLIC_EV_CHARGING" || contract.customer?.customerType === "NON_RESIDENTIAL",
       resident: residency === null ? null : residency === "RESIDENT",
-      voltageClass: contract.vector === "EE" ? contract.supply.voltageLevel : null,
+      voltageClass: voltageLevel,
       regulatoryCustomerScope: supplyContext?.regulatoryCustomerScope ?? null,
       bta6Eligible: supplyContext ? supplyContext.regulatoryCustomerScope === "NON_DOMESTIC_BT_BTA6" : null,
       status: missing.length === 0 ? "READY" : "PARTIAL",
     },
     alerts: deriveBillDrivenContextAlerts({ vector: contract.vector, domestic, contractedPowerKw }),
+    economicReconciled: economicallyReconciled(version),
     missingRequiredData: missing,
   };
 }
 
 function requestFromContext(context: BillDrivenSimulationContext, taxTreatment: TaxInclusionState, calculationDate: string): unknown {
-  const common = { schemaVersion: 1, tenantId: context.tenantId, calculationDate, supplyPeriod: context.billingPeriod, customerCategory: context.customerType, ...(context.residency ? { residency: context.residency } : {}), currency: "EUR", taxTreatment, sourceBill: { billId: context.billId, version: context.billVersionId } };
+  const common = { schemaVersion: 1, tenantId: context.tenantId, calculationDate, supplyPeriod: simulationPeriodOf(context.billingPeriod), customerCategory: context.customerType, ...(context.residency ? { residency: context.residency } : {}), currency: "EUR", taxTreatment, sourceBill: { billId: context.billId, version: context.billVersionId } };
   if (context.vector === "EE") {
     const { f1, f2, f3 } = context.consumption.period;
     if (f1 === null || f2 === null || f3 === null || !context.supply.voltageLevel) fail("SOURCE_BILL_DATA_INSUFFICIENT");
@@ -334,10 +383,45 @@ function requestFromContext(context: BillDrivenSimulationContext, taxTreatment: 
   return { ...common, vector: "GAS", consumption: { basis: "PERIOD", unit: "SMC", smc, correctionCoefficient: context.consumption.correctionCoefficient === null ? { required: false } : { required: true, value: context.consumption.correctionCoefficient } } };
 }
 
+/** Seller fixed fees as one monthly amount: per month as written, per year divided by twelve. */
+function monthlyFixedFeeOf(fees: readonly { readonly amount: number; readonly unit: string; readonly monthlyEquivalent?: number }[]): number | null {
+  const monthly = fees.map((fee) => fee.monthlyEquivalent ?? (fee.unit === "EUR_PER_MONTH" || fee.unit === "EUR_PER_POD" ? fee.amount : fee.unit === "EUR_PER_YEAR" ? fee.amount / 12 : null));
+  return monthly.length && monthly.every((value) => value !== null) ? Math.round((monthly as number[]).reduce((sum, value) => sum + value, 0) * 100) / 100 : null;
+}
+function scopeOf(contract: CteArchiveVersion["contract"]): CteEligibilityCandidate["scope"] {
+  const eligibility = contract.eligibility;
+  const allowed = eligibility.allowedCustomerTypes ?? [];
+  const customer = allowed.includes("BOTH") || (allowed.includes("CONSUMER") && allowed.includes("BUSINESS")) ? "Consumer e Business" : allowed.includes("BUSINESS") ? "Business" : allowed.includes("CONSUMER") ? "Consumer" : eligibility.customerTypes.length === 2 ? "Consumer e Business" : eligibility.customerTypes.includes("NON_RESIDENTIAL") ? "Business" : eligibility.customerTypes.includes("RESIDENTIAL") ? "Consumer" : "Non indicato";
+  const rule = eligibility.annualConsumptionRule;
+  const unit = rule?.unit === "SMC_PER_YEAR" ? "Smc/anno" : "kWh/anno";
+  return { customer, voltage: "voltageLevels" in eligibility ? [...(eligibility as { voltageLevels: readonly string[] }).voltageLevels] : [], consumption: rule ? `${rule.operator} ${new Intl.NumberFormat("it-IT").format(rule.value)} ${unit}` : null, uses: [...(eligibility.allowedSupplyUses ?? [])] };
+}
+function termsOf(contract: CteArchiveVersion["contract"]): CteEligibilityCandidate["terms"] {
+  const pricing = contract.pricing;
+  const spread = pricing.mode === "INDEXED" ? pricing.spread.amount : pricing.spread.status === "DECLARED" ? pricing.spread.component.amount : null;
+  return { fixedPrice: pricing.mode === "FIXED" ? pricing.fixedPrice.amount : null, spread, priceUnit: contract.vector === "GAS" ? "EUR_PER_SMC" : "EUR_PER_KWH", monthlyFixedFee: monthlyFixedFeeOf(contract.commercialTerms.fixedFees) };
+}
+
+function firstOfMonth(date: Date, offset = 0): string { return new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth() + offset, 1)).toISOString().slice(0, 10); }
+/**
+ * The calculation runs on whole months: a bill dated 1-30 September is September, one dated 1 August - 1 September is August.
+ * The end date is read as the last billed day unless it already falls on the 1st; partial months round to the nearer boundary.
+ */
+export function simulationPeriodOf(period: { readonly periodStart: string; readonly periodEnd: string }): { readonly periodStart: string; readonly periodEnd: string } {
+  const start = new Date(`${period.periodStart}T00:00:00Z`);
+  const end = new Date(`${period.periodEnd}T00:00:00Z`);
+  if (!Number.isFinite(start.getTime()) || !Number.isFinite(end.getTime())) return period;
+  const periodStart = start.getUTCDate() <= 15 ? firstOfMonth(start) : firstOfMonth(start, 1);
+  const exclusive = end.getUTCDate() === 1 ? end : new Date(end.getTime() + 86_400_000);
+  const periodEnd = exclusive.getUTCDate() <= 15 ? firstOfMonth(exclusive) : firstOfMonth(exclusive, 1);
+  // A bill shorter than a month counts as the month it started in.
+  return periodEnd > periodStart ? { periodStart, periodEnd } : { periodStart: firstOfMonth(start), periodEnd: firstOfMonth(start, 1) };
+}
+
 function offerMetadata(record: CteArchiveRecord, version: CteArchiveVersion, offer: CalculationReadyOffer | null, status: CteEligibilityCandidate["eligibilityStatus"], reason: string, calculationReadiness: CteEligibilityCandidate["calculationReadiness"] = "READY", reasonCodes: readonly EligibilityReasonCode[] = []): CteEligibilityCandidate {
   const contract = version.contract;
   const finalStatus = calculationReadiness === "NOT_READY" || reason === "REVIEW_REQUIRED" ? "BLOCKED" : status === "COMPATIBLE" ? "ELIGIBLE" : "NOT_ELIGIBLE";
-  return { cteId: record.cteId, archiveId: record.archiveId, cteVersionId: version.versionId, cteVersion: contract.version, supplier: contract.supplier.name, offer: { name: contract.offer.name, code: contract.offer.code }, validity: contract.validity, pricingType: offer?.pricing.mode ?? null, pricingReference: offer?.pricing.reference ?? null, eligibilityStatus: status, compatibilityReason: reason, calculationReadiness, ...(reasonCodes.length ? { reasonCodes } : {}), finalStatus, overrideRequestable: finalStatus === "NOT_ELIGIBLE" && reasonCodes.length > 0 && reasonCodes.every(isEligibilityOverrideable) };
+  return { cteId: record.cteId, archiveId: record.archiveId, cteVersionId: version.versionId, cteVersion: contract.version, supplier: contract.supplier.name, offer: { name: contract.offer.name, code: contract.offer.code }, validity: contract.validity, pricingType: offer?.pricing.mode ?? null, pricingReference: offer?.pricing.reference ?? null, ...(() => { try { return { terms: termsOf(contract) }; } catch { return {}; } })(), ...(() => { try { return { scope: scopeOf(contract) }; } catch { return {}; } })(), eligibilityStatus: status, compatibilityReason: reason, calculationReadiness, ...(reasonCodes.length ? { reasonCodes } : {}), finalStatus, overrideRequestable: finalStatus === "NOT_ELIGIBLE" && reasonCodes.length > 0 && reasonCodes.every(isEligibilityOverrideable) };
 }
 
 async function applyAuthorizedOverride(principal: AuthenticatedPrincipal, repositories: BillDrivenRepositories, context: BillDrivenSimulationContext, candidate: CteEligibilityCandidate): Promise<CteEligibilityCandidate> {
@@ -352,6 +436,37 @@ async function applyAuthorizedOverride(principal: AuthenticatedPrincipal, reposi
 
 function expired(value: string, asOf: string): boolean { return value <= asOf; }
 
+type AnnualRule = { readonly operator: ">" | ">=" | "<" | "<=" | "="; readonly value: number };
+/** The CTE's annual consumption band: the reviewed rule, or the threshold written in the offer name (Be Strong >80.000 kWh/A). */
+function annualConsumptionRulesOf(contract: CteArchiveVersion["contract"]): readonly AnnualRule[] {
+  const rule = contract.eligibility.annualConsumptionRule;
+  const named = /([<>]=?)\s*(\d{1,3}(?:[.\s]\d{3})+|\d+)\s*(?:kwh|smc)/i.exec(contract.offer.name ?? "");
+  // Both the reviewed band and the threshold in the offer name must hold.
+  return [...(rule ? [{ operator: rule.operator, value: rule.value }] : []), ...(named ? [{ operator: named[1] as AnnualRule["operator"], value: Number(named[2].replace(/[.\s]/g, "")) }] : [])];
+}
+function annualConsumptionWithin(rule: AnnualRule, annual: number | null): boolean {
+  if (annual === null) return false;
+  switch (rule.operator) {
+    case ">": return annual > rule.value;
+    case ">=": return annual >= rule.value;
+    case "<": return annual < rule.value;
+    case "<=": return annual <= rule.value;
+    case "=": return annual === rule.value;
+  }
+}
+/**
+ * Annual consumption from the bill; when it does not print it, the average monthly consumption times 12 (Tony 29/10), on
+ * the bill's consumption history when it shows one (Tony 30/10), else on the months billed.
+ */
+export function annualConsumptionOf(context: Pick<BillDrivenSimulationContext, "vector" | "consumption" | "billingPeriod">): number | null {
+  if (context.consumption.annual !== null) return context.consumption.annual;
+  const period = context.consumption.period;
+  const billed = context.vector === "EE" ? (period.f1 ?? 0) + (period.f2 ?? 0) + (period.f3 ?? 0) : period.smc ?? 0;
+  const history = historyMonthTotals(context.consumption.history);
+  const monthTotals = history.length ? history : context.vector === "EE" ? context.consumption.monthlyProfile?.map((month) => month.f1 + month.f2 + month.f3) ?? null : null;
+  return estimatedAnnualConsumption({ billed, periodStart: context.billingPeriod.periodStart, periodEnd: context.billingPeriod.periodEnd, monthTotals });
+}
+
 async function evaluateCte(repository: BillDrivenRepositories["marketArchiveRepository"], context: BillDrivenSimulationContext, record: CteArchiveRecord, version: CteArchiveVersion, taxTreatment?: TaxInclusionState, asOf = new Date().toISOString().slice(0, 10)): Promise<CteEligibilityCandidate> {
   let offer: CalculationReadyOffer;
   try {
@@ -362,32 +477,58 @@ async function evaluateCte(repository: BillDrivenRepositories["marketArchiveRepo
   if (version.status !== "APPROVED" || version.contract.approval.status !== "APPROVED") return offerMetadata(record, version, offer, "NOT_COMPATIBLE", "REVIEW_REQUIRED", "NOT_READY", ["REVIEW_REQUIRED"]);
   if (expired(offer.validity.periodEnd, asOf) || (offer.expiry.status === "EXPIRES_ON" && expired(offer.expiry.date, asOf))) return offerMetadata(record, version, offer, "NOT_COMPATIBLE", "CTE_EXPIRED", "READY", ["EXPIRED_CTE"]);
   if (offer.vector !== context.vector) return offerMetadata(record, version, offer, "NOT_COMPATIBLE", "VECTOR_MISMATCH");
-  if (offer.validity.periodStart > context.billingPeriod.periodStart || offer.validity.periodEnd < context.billingPeriod.periodEnd) return offerMetadata(record, version, offer, "NOT_COMPATIBLE", "CTE_VALIDITY_MISMATCH", "READY", ["VALIDITY_MISMATCH"]);
-  if (offer.expiry.status === "EXPIRES_ON" && offer.expiry.date < context.billingPeriod.periodEnd) return offerMetadata(record, version, offer, "NOT_COMPATIBLE", "CTE_EXPIRED", "READY", ["EXPIRED_CTE"]);
-  const customerScope: CteCommercialCustomerScope | undefined = context.vector === "EE"
-    ? context.classification.regulatoryCustomerScope as CteCommercialCustomerScope | null ?? undefined
-    : context.customerType === "RESIDENTIAL" ? "DOMESTIC_GAS" : "NON_DOMESTIC_GAS";
-  const commercialReasons = evaluateCustomerAndSupply({
-    bill: { customerLegalType: context.customerLegalType, supplyUseScope: context.supplyUseScope, identifierTypes: context.identifierTypes, legalForms: ["NOT_DECLARED"], evidence: [] },
-    cte: deriveCteCustomerScope(version.contract),
-  });
-  if (commercialReasons.length || !isCommercialCustomerScopeCompatible(version.contract, context.customerType, customerScope)) return offerMetadata(record, version, offer, "NOT_COMPATIBLE", "CUSTOMER_NOT_ELIGIBLE", "READY", commercialReasons.length ? commercialReasons : ["CUSTOMER_LEGAL_TYPE_MISMATCH"]);
-  if (context.vector === "EE" && version.contract.vector === "EE" && (!context.supply.voltageLevel || !version.contract.eligibility.voltageLevels.includes(context.supply.voltageLevel))) return offerMetadata(record, version, offer, "NOT_COMPATIBLE", "VOLTAGE_NOT_ELIGIBLE", "READY", ["VOLTAGE_MISMATCH"]);
+  // The competitor bill is only the consumption basis: the CTE must be subscribable today, not during the past bill period.
+  if (offer.validity.periodStart > asOf) return offerMetadata(record, version, offer, "NOT_COMPATIBLE", "CTE_VALIDITY_MISMATCH", "READY", ["VALIDITY_MISMATCH"]);
+  // Candidate rule for a competitor bill: first Consumer or Business, then the annual consumption band, then the voltage.
+  // Tony (29/10): the commercial conditions below can be authorized for one bill by whoever holds the permission, so each one
+  // is collected instead of stopping here; the checks that make the calculation impossible still run after them.
+  const mismatches: { readonly reason: string; readonly code: EligibilityReasonCode }[] = [];
+  const mismatch = (reason: string, code: EligibilityReasonCode) => { if (!mismatches.some((item) => item.code === code)) mismatches.push({ reason, code }); };
+  if (!version.contract.eligibility.customerTypes.includes(context.customerType)) mismatch("CUSTOMER_NOT_ELIGIBLE", "CUSTOMER_LEGAL_TYPE_MISMATCH");
+  // Offers named for one kind of supply only fit that supply: "per MT" needs medium voltage, "Condomini" a condominium holder.
+  const offerName = version.contract.offer.name ?? "";
+  if (context.vector === "EE" && context.supply.voltageLevel && /\bMT\b/.test(offerName) && context.supply.voltageLevel !== "MV") mismatch("VOLTAGE_NOT_ELIGIBLE", "VOLTAGE_MISMATCH");
+  if (context.vector === "EE" && context.supply.voltageLevel && /\bBT\b/.test(offerName) && context.supply.voltageLevel !== "LV") mismatch("VOLTAGE_NOT_ELIGIBLE", "VOLTAGE_MISMATCH");
+  if (/condomin/i.test(offerName) && !/condomin|\bcond\.?\s/i.test(context.customerName ?? "")) mismatch("CONDOMINIUM_ONLY", "CONDOMINIUM_ONLY");
+  const annual = annualConsumptionOf(context);
+  if (annual !== null && annualConsumptionRulesOf(version.contract).some((rule) => !annualConsumptionWithin(rule, annual))) mismatch("CONSUMPTION_NOT_ELIGIBLE", "CONSUMPTION_THRESHOLD_MISMATCH");
+  if (annual === null && annualConsumptionRulesOf(version.contract).length) return offerMetadata(record, version, offer, "NOT_COMPATIBLE", "CONSUMPTION_NOT_ELIGIBLE");
+  if (context.vector === "EE" && version.contract.vector === "EE" && !context.supply.voltageLevel) return offerMetadata(record, version, offer, "NOT_COMPATIBLE", "VOLTAGE_NOT_ELIGIBLE", "READY", ["VOLTAGE_MISMATCH"]);
+  if (context.vector === "EE" && version.contract.vector === "EE" && context.supply.voltageLevel && !version.contract.eligibility.voltageLevels.includes(context.supply.voltageLevel)) mismatch("VOLTAGE_NOT_ELIGIBLE", "VOLTAGE_MISMATCH");
   if (taxTreatment !== undefined && offer.taxTreatment !== taxTreatment) return offerMetadata(record, version, offer, "NOT_COMPATIBLE", "TAX_TREATMENT_INCOMPATIBLE");
-  if (offer.imbalance.status === "NOT_DECLARED" && offer.imbalance.reason === "NOT_PROVIDED") return offerMetadata(record, version, offer, "NOT_COMPATIBLE", "IMBALANCE_UNAVAILABLE");
   const feeUnits = [...offer.fixedFees, ...offer.variableFees, ...offer.oneOffFees, ...offer.commercialDiscounts, ...(offer.imbalance.status === "DECLARED" ? [offer.imbalance.component] : [])].map((fee) => fee.unit);
   if (feeUnits.some((unit) => context.vector === "EE" ? unit === "EUR_PER_SMC" : unit === "EUR_PER_KWH")) return offerMetadata(record, version, offer, "NOT_COMPATIBLE", "FEE_UNIT_MISMATCH");
   if (context.missingRequiredData.length > 0) return offerMetadata(record, version, offer, "NOT_COMPATIBLE", "BILL_DATA_INSUFFICIENT", "NOT_READY", ["CALCULATION_NOT_READY"]);
+  if (mismatches.length) return offerMetadata(record, version, offer, "NOT_COMPATIBLE", mismatches[0].reason, "READY", mismatches.map((item) => item.code));
   const indexed = offer.pricing.mode === "INDEXED";
-  if (indexed && monthsInSimulationPeriod(context.billingPeriod).length > 1 && !context.consumption.monthlyProfile) return offerMetadata(record, version, offer, "NOT_COMPATIBLE", "MONTHLY_PROFILE_REQUIRED");
+  if (indexed && monthsInSimulationPeriod(simulationPeriodOf(context.billingPeriod)).length > 1 && !context.consumption.monthlyProfile) return offerMetadata(record, version, offer, "NOT_COMPATIBLE", "MONTHLY_PROFILE_REQUIRED");
   if (indexed) {
     const index = offer.pricing.reference;
-    for (const month of monthsInSimulationPeriod(context.billingPeriod)) {
+    for (const month of monthsInSimulationPeriod(simulationPeriodOf(context.billingPeriod))) {
       const market = await queryApprovedHistoricalMarketData(repository, context.tenantId, `${month}-15`, context.vector);
       if (!market.some((candidate) => candidate.month === month && candidate.index === index)) return offerMetadata(record, version, offer, "COMPATIBLE", "COMPATIBLE_MARKET_DATA_UNAVAILABLE", "MARKET_DATA_MISSING");
     }
   }
   return offerMetadata(record, version, offer, "COMPATIBLE", "COMPATIBLE");
+}
+
+/**
+ * The indexes a quote needs come from the official sources (PUN from GME, PSV from ARERA).
+ * When a bill month is not in the archive yet, it is fetched and approved now instead of waiting for the nightly refresh.
+ */
+async function ensureOfficialIndexes(repositories: BillDrivenRepositories, context: BillDrivenSimulationContext): Promise<void> {
+  const months = monthsInSimulationPeriod(simulationPeriodOf(context.billingPeriod));
+  const index = context.vector === "EE" ? "PUN" : "PSV";
+  const stored = await repositories.marketArchiveRepository.list(context.tenantId);
+  if (months.every((month) => stored.some((record) => record.status === "APPROVED" && record.vector === context.vector && record.index === index && record.month === month))) return;
+  // Only the runtime wiring carries the refresh stores; callers without them never reach the network.
+  if (!repositories.marketRefreshState || !repositories.marketRefreshRuns || !repositories.marketRefreshLocks) return;
+  try {
+    if (context.vector === "GAS") { await runPsvMarketRefresh({ tenantId: context.tenantId, repositories }); return; }
+    await runPunMarketRefresh({ tenantId: context.tenantId, repositories: { marketArchiveRepository: repositories.marketArchiveRepository, marketRefreshState: repositories.marketRefreshState, marketRefreshRuns: repositories.marketRefreshRuns, marketRefreshLocks: repositories.marketRefreshLocks }, trigger: "MANUAL" });
+  } catch {
+    // A source outage leaves those CTEs marked as missing the index, as before.
+  }
 }
 
 export async function prepareBillDrivenSimulation(principal: AuthenticatedPrincipal, repositories: BillDrivenRepositories, billId: string, taxTreatment?: TaxInclusionState, asOf = new Date().toISOString().slice(0, 10)): Promise<BillDrivenPreparation> {
@@ -397,18 +538,32 @@ export async function prepareBillDrivenSimulation(principal: AuthenticatedPrinci
   const document = documentValue as BillDocument;
   const version = approvedVersion(document);
   const context = buildContext(document, version);
+  // Bills whose supply period started before the quote window are discarded.
+  if (context.billingPeriod.periodStart && supplyPeriodTooOld(context.billingPeriod, asOf)) fail("SOURCE_BILL_TOO_OLD");
   const records = await repositories.cteArchiveRepository.list(principal.tenantId);
   const hierarchy = repositories.orgChain && repositories.cteAssignments ? await loadHierarchyAccess(principal, { foundationMemberships: repositories.foundationMemberships, orgChain: repositories.orgChain, cteAssignments: repositories.cteAssignments }, asOf) : null;
   if (hierarchy) assertSimulationWithinLimits(hierarchy, context.vector, context.customerType);
+  await ensureOfficialIndexes(repositories, context);
   const candidates: CteEligibilityCandidate[] = [];
+  const unlisted: UnlistedCte[] = [];
+  // Tony (29/10, "la BE SMILE non la propone, ed è presente in archivio"): a CTE of the bill's commodity that is in the
+  // archive but not offered still says why (not approved, not assigned, assignment expired), so the operator knows what to fix.
+  // A CTE assigned to someone else stays hidden from the operator.
+  const unlist = (record: CteArchiveRecord, reason: UnlistedCte["reason"]) => {
+    if (record.vector !== context.vector || commercialStatusOf(record) === "DELETED") return;
+    if (reason === "NOT_ASSIGNED") return;
+    const contract = (currentApprovedCteVersion(record) ?? record.versions.find((item) => item.versionId === record.currentWorkingVersionId) ?? record.versions.at(-1))?.contract;
+    unlisted.push({ archiveId: record.archiveId, supplier: contract?.supplier.name ?? "", offer: { name: contract?.offer.name ?? "", code: contract?.offer.code ?? record.cteId }, reason });
+  };
   for (const record of records) {
     // CTEs outside the operator's assignment or validity window are not offered at all.
-    if (hierarchy && cteUsability(hierarchy, record.archiveId) !== "USABLE") continue;
+    const usability = hierarchy ? cteUsability(hierarchy, record.archiveId) : "USABLE";
+    if (usability !== "USABLE") { unlist(record, usability === "EXPIRED" ? "ASSIGNMENT_EXPIRED" : usability === "NOT_YET_VALID" ? "ASSIGNMENT_NOT_YET_VALID" : usability); continue; }
     const current = currentApprovedCteVersion(record);
-    if (!current) continue;
+    if (!current) { unlist(record, "NOT_APPROVED"); continue; }
     candidates.push(await applyAuthorizedOverride(principal, repositories, context, await evaluateCte(repositories.marketArchiveRepository, context, record, current, taxTreatment, asOf)));
   }
-  return { context, candidates };
+  return { context, candidates, ...(unlisted.length ? { unlisted } : {}), canAuthorizeCte: hierarchy ? canAuthorizeCte(hierarchy) : false };
 }
 
 export async function listBillDrivenSources(principal: AuthenticatedPrincipal, repositories: Pick<RuntimeRepositories, "billRepository" | "foundationMemberships"> & { readonly orgChain?: RuntimeRepositories["orgChain"] }): Promise<readonly Record<string, unknown>[]> {
@@ -420,11 +575,13 @@ export async function listBillDrivenSources(principal: AuthenticatedPrincipal, r
       try { approvedVersion(visible); scoped.push(visible); } catch { /* An approved pointer without an authoritative contract is not a usable source. */ }
     }
   }
+  const today = new Date().toISOString().slice(0, 10);
   return scoped.map((document) => {
     const versionId = document.currentApprovedVersionId as string;
     const version = document.versions.find((candidate) => candidate.versionId === versionId);
     const contract = version?.energyContract;
-    return { billId: document.id, billVersionId: versionId, tenantId: document.tenantId, ownerUserId: document.ownerUserId ?? null, vector: contract?.vector ?? null, supplier: contract?.currentSupplier ?? null, period: contract?.billingPeriod ?? null, status: "APPROVED" };
+    const period = contract?.billingPeriod ?? null;
+    return { billId: document.id, billVersionId: versionId, tenantId: document.tenantId, ownerUserId: document.ownerUserId ?? null, vector: contract?.vector ?? null, supplier: contract?.currentSupplier ?? null, period, status: "APPROVED", tooOld: period?.periodStart ? supplyPeriodTooOld(period, today) : false, quoteWindowStart: quoteWindowStart(today) };
   });
 }
 

@@ -1,5 +1,8 @@
+// @ts-expect-error Node's strip-only test runner requires the explicit extension.
+import { extractDocumentOfferBox, extractDocumentOfferName, extractDocumentPriceRows } from "../ingestion/document-numeric-evidence.ts";
 import type { PublicBillDocument } from "../foundation/real-bill";
-import type { StructuredBillExtraction } from "../ingestion/structured-bill";
+// @ts-expect-error Node's strip-only test runner requires the explicit extension.
+import { withDocumentOfferBox, type StructuredBillExtraction } from "../ingestion/structured-bill.ts";
 import type { MarketArchiveRecord, MarketArchiveRepository } from "./types";
 // @ts-expect-error Node's strip-only test runner requires the explicit extension.
 import { compareMarketVersions } from "./service.ts";
@@ -7,6 +10,8 @@ import { compareMarketVersions } from "./service.ts";
 import { buildBillAnalystReview } from "../foundation/bill-analyst-review.ts";
 // @ts-expect-error Node's strip-only test runner requires the explicit extension.
 import { attachBillRegulatoryAudit } from "../foundation/bill-public-audit.ts";
+// @ts-expect-error Node's strip-only test runner requires the explicit extension.
+import { estimateBillSpread } from "./bill-spread.ts";
 
 export type PunTariffStructure = "MONO" | "F1_F2_F3";
 
@@ -127,9 +132,39 @@ export function officialPunInputFromPublicBill(document: Pick<PublicBillDocument
   return { tenantId: document.tenantId, vector: document.resolvedVector, billingPeriod: structuredPeriod ? { periodStart: structuredPeriod.from, periodEnd: structuredPeriod.to } : profilePeriod, structure: structureFromExtraction(document.structuredBill) };
 }
 
+/** Bills read before the formula table (or the offer name) was taken from the PDF get it now, in memory, so they need no re-upload. */
+export async function withDocumentPriceRows<T extends Pick<PublicBillDocument, "resolvedVector" | "structuredBill" | "fileName">>(document: T, read: () => Promise<Uint8Array>): Promise<T> {
+  const bill = document.structuredBill;
+  if (!bill || !/\.pdf$/i.test(document.fileName)) return document;
+  const needRows = document.resolvedVector === "EE" && bill.documentPriceRows === undefined;
+  // Bills read before the box dell'offerta was taken from the PDF get it (and the offer name again) now, with no re-upload.
+  const needBox = bill.documentOfferBox === undefined;
+  const needName = bill.documentOfferName === undefined || (needBox && !bill.documentOfferName);
+  if (!needRows && !needName && !needBox) return document;
+  try {
+    const bytes = await read();
+    const documentPriceRows = needRows ? extractDocumentPriceRows(bytes) : [];
+    const documentOfferName = needName ? extractDocumentOfferName(bytes) : bill.documentOfferName;
+    const withRows = { ...bill, ...(documentPriceRows.length ? { documentPriceRows } : {}), documentOfferName };
+    return { ...document, structuredBill: needBox ? withDocumentOfferBox(withRows, extractDocumentOfferBox(bytes)) : withRows };
+  } catch { return document; }
+}
+
+/** Fetches the official PUN of the bill months when the archive lacks them (the cron only runs in production). */
+export async function ensureOfficialPunForBill(document: Pick<PublicBillDocument, "tenantId" | "resolvedVector" | "normalized" | "structuredBill">, repository: MarketArchiveRepository, refresh: (() => Promise<unknown>) | null): Promise<void> {
+  const input = officialPunInputFromPublicBill(document);
+  const months = deriveInvoiceReferenceMonths(input.billingPeriod);
+  if (input.vector !== "EE" || months.length === 0 || !refresh) return;
+  const records = await repository.list(input.tenantId);
+  if (months.every((month) => records.some((record) => record.status === "APPROVED" && record.vector === "EE" && record.index === "PUN" && record.month === month && isOfficialPunSource(record)))) return;
+  try { await refresh(); } catch { /* A GME outage leaves the spread marked as not calculable. */ }
+}
+
 export async function attachOfficialPun(document: PublicBillDocument, repository: MarketArchiveRepository): Promise<PublicBillDocument> {
-  const invoicePunReferences = await resolveOfficialPunForBill(repository, officialPunInputFromPublicBill(document));
-  const next = { ...document, invoicePunReferences };
+  const input = officialPunInputFromPublicBill(document);
+  const invoicePunReferences = await resolveOfficialPunForBill(repository, input);
+  const currentSpread = input.vector === "EE" ? estimateBillSpread(document.structuredBill, deriveInvoiceReferenceMonths(input.billingPeriod), await repository.list(input.tenantId), isOfficialPunSource) : null;
+  const next = { ...document, invoicePunReferences, currentSpread };
   const rebuiltReview = buildBillAnalystReview(next);
   const billingAddress = document.analystReview.receipt.billingAddress;
   const reviewed = { ...next, analystReview: { ...rebuiltReview, receipt: { ...rebuiltReview.receipt, billingAddress: billingAddress.status === "FOUND" ? billingAddress : rebuiltReview.receipt.billingAddress } } };

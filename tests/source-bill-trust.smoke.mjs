@@ -187,9 +187,12 @@ try {
   await assertAsyncCode(() => resolveTrustedElectricityContextFromSourceBill(repository, tenantA, request(tenantA, { billId: gas.id, version: gas.currentApprovedVersionId })), "SOURCE_BILL_VECTOR_MISMATCH");
 
   const missingPower = await seed({ repository, storage, tenantId: tenantA, extraction: eeExtraction({}, facts({ committed: null })) });
-  await assertAsyncCode(() => resolveTrustedElectricityContextFromSourceBill(repository, tenantA, request(tenantA, { billId: missingPower.id, version: missingPower.currentApprovedVersionId })), "CONTRACTED_POWER_REQUIRED");
+  // Tony (29/10, fattura dettagliata BPower): the committed power not stated in words is the bill's billed power (powerKw),
+  // so the ARERA tables still apply instead of generic charges.
+  assert.equal((await resolveTrustedElectricityContextFromSourceBill(repository, tenantA, request(tenantA, { billId: missingPower.id, version: missingPower.currentApprovedVersionId })))?.contractedPowerKw, 3);
   const missingBta6AvailablePower = await seed({ repository, storage, tenantId: tenantA, extraction: eeExtraction({}, facts({ supplyUse: "Altri usi", committed: "25 kW", available: null })) });
-  await assertAsyncCode(() => resolveTrustedElectricityContextFromSourceBill(repository, tenantA, request(tenantA, { billId: missingBta6AvailablePower.id, version: missingBta6AvailablePower.currentApprovedVersionId }, { customerCategory: "NON_RESIDENTIAL", residency: undefined })), "AVAILABLE_POWER_REQUIRED_FOR_BT_TARIFF_CLASS");
+  // Tony (30/10, "non è possibile vedere ancora mancati controlli"): no available power on the bill still gives a trusted BTA6 context.
+  assert.equal((await resolveTrustedElectricityContextFromSourceBill(repository, tenantA, request(tenantA, { billId: missingBta6AvailablePower.id, version: missingBta6AvailablePower.currentApprovedVersionId }, { customerCategory: "NON_RESIDENTIAL", residency: undefined })))?.regulatoryCustomerScope, "NON_DOMESTIC_BT_BTA6");
 
   await assertAsyncCode(() => resolveTrustedElectricityContextFromSourceBill(repository, tenantA, request(tenantA, sourceBill, { voltageLevel: "MV" })), "SOURCE_BILL_VOLTAGE_MISMATCH");
   await assertAsyncCode(() => resolveTrustedElectricityContextFromSourceBill(repository, tenantA, request(tenantA, sourceBill, { customerCategory: "NON_RESIDENTIAL", residency: undefined })), "SOURCE_BILL_CUSTOMER_CATEGORY_MISMATCH");

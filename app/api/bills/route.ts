@@ -5,9 +5,12 @@ import { runtimeRepositories } from "../../lib/persistence/adapter";
 import { recordRuntimeAudit } from "../../lib/persistence/audit";
 import { AuthenticationError } from "../../lib/auth/errors";
 import { createAnthropicTwoStageBillSdkAdapter } from "../../lib/ingestion/anthropic-bill-sdk";
+import { MAX_UPLOAD_BYTES, uploadedFile } from "../../lib/foundation/large-upload";
 // createAnthropicBillSdkAdapter remains the legacy compatibility adapter; Bill routes use two-stage.
-import { attachOfficialPun } from "../../lib/market/pun-reference";
+import { attachOfficialPun, ensureOfficialPunForBill } from "../../lib/market/pun-reference";
+import { billPunRefresh } from "../../lib/market-refresh/bill-pun";
 import { billInScope, billVisibilityScope } from "../../lib/foundation/bill-visibility";
+import { billTooOld } from "../../lib/foundation/bill-retention";
 import { isBillFeature, resolveBillFeaturePermissions, sanitizeBillForFeatureAccess, type BillFeature } from "../../lib/foundation/bill-feature-permissions";
 
 const CORRELATION_ID = "foundation-bills";
@@ -53,6 +56,8 @@ const INTERNAL_TO_PUBLIC_CODE: Readonly<Record<string, string>> = {
   PDF_MIME_INVALID: "PDF_MIME_INVALID",
   PDF_SIGNATURE_INVALID: "PDF_SIGNATURE_INVALID",
   PDF_TOO_LARGE: "PDF_TOO_LARGE",
+  PDF_EMPTY: "PDF_EMPTY",
+  PDF_FILENAME_INVALID: "PDF_FILENAME_INVALID",
   EXTRACTION_REQUIRED_FIELD_MISSING: "EXTRACTION_REQUIRED_FIELD_MISSING",
   EXTRACTION_VALUE_INVALID: "EXTRACTION_VALUE_INVALID",
   TENANT_ACCESS_DENIED: "TENANT_ACCESS_DENIED",
@@ -97,7 +102,9 @@ export async function GET(request: Request): Promise<Response> {
     const access = await resolveBillFeaturePermissions(principal, repositories, scope);
     const requestedFeature = new URL(request.url).searchParams.get("feature");
     if (requestedFeature !== null && (!isBillFeature(requestedFeature) || !access.features[requestedFeature as BillFeature])) return deny("BILL_FEATURE_ACCESS_DENIED", "Funzione tecnica non autorizzata", 403);
-    const documents = (await repositories.billRepository.list(principal.tenantId)).filter((document) => billInScope(document, scope));
+    // Tony (31/10): bills dated more than 5 months ago are no longer offered; the nightly job deletes them.
+    const now = new Date().toISOString();
+    const documents = (await repositories.billRepository.list(principal.tenantId)).filter((document) => billInScope(document, scope) && !billTooOld(document, now));
     if (documents.length > MAX_BILL_LIST_RESULTS) throw new Error("BILL_LIST_TOO_LARGE");
     const approvedView = new URL(request.url).searchParams.get("view") === "approved";
     const publicDocuments = (approvedView ? documents.filter((document) => document.currentApprovedVersionId !== null).map(toPublicBillSummary).filter((document): document is NonNullable<typeof document> => document !== null) : await Promise.all(documents.filter((document) => document.currentApprovedVersionId === null).map(async (document) => sanitizeBillForFeatureAccess(await attachOfficialPun(toPublicDocument(document), repositories.marketArchiveRepository), access))))
@@ -114,16 +121,16 @@ export async function POST(request: Request): Promise<Response> {
     const tenantId = principal.tenantId;
     const repositories = runtimeRepositories();
     const audit = { async record(event: { readonly type: string; readonly tenantId: string; readonly documentId: string; readonly outcome: string }) { await recordRuntimeAudit({ principal, action: `BILL_${event.type}`, resourceType: "BILL", resourceId: event.documentId, outcome: event.outcome === "ALLOWED" ? "ALLOWED" : "DENIED", correlationId: CORRELATION_ID }); } };
-    const form = await request.formData();
-    const file = form.get("file");
-    if (!(file instanceof File)) return deny("PDF_REQUIRED", "A PDF file is required", 400);
+    const file = await uploadedFile(request, repositories.documentStorage, tenantId);
+    if (!file) return deny("PDF_REQUIRED", "A PDF file is required", 400);
     const result = await ingestEnergyBill({
       tenantId,
       ownerUserId: principal.userId,
-      fileName: file.name,
-      contentType: file.type,
-      bytes: new Uint8Array(await file.arrayBuffer()),
-      maxBytes: Number(process.env.FOUNDATION_MAX_PDF_BYTES ?? 10_000_000),
+      fileName: file.fileName,
+      contentType: file.contentType,
+      bytes: file.bytes,
+      // Tony (31/10): "IL LIMITE DI 10 MB BISOGNA ALZARLO": 20 MB, whatever an old environment value says.
+      maxBytes: MAX_UPLOAD_BYTES,
       storage: repositories.documentStorage,
       repository: repositories.billRepository,
       authenticated: true,
@@ -135,9 +142,17 @@ export async function POST(request: Request): Promise<Response> {
       const code = boundedPublicCode(result.errorCode, "BILL_OPERATION_FAILED");
       return Response.json({ error: { code, message: messageFor(code), correlationId: CORRELATION_ID }, document: sanitizeBillForFeatureAccess(await attachOfficialPun(toPublicDocument(result.document), repositories.marketArchiveRepository), await resolveBillFeaturePermissions(principal, repositories, await billVisibilityScope(principal, repositories))), status: result.status, errorCode: code }, { status: publicStatus(code), headers: noStoreHeaders });
     }
+    await ensureOfficialPunForBill(toPublicDocument(result.document), repositories.marketArchiveRepository, billPunRefresh(repositories, toPublicDocument(result.document).tenantId));
     return Response.json({ document: sanitizeBillForFeatureAccess(await attachOfficialPun(toPublicDocument(result.document), repositories.marketArchiveRepository), await resolveBillFeaturePermissions(principal, repositories, await billVisibilityScope(principal, repositories))), energyBill: result.contract }, { status: 201, headers: noStoreHeaders });
   } catch (error) {
     const code = publicCode(error, "INGESTION_FAILED");
+    // The cause of an unmapped failure goes to the server log, so it can be found without asking the user again.
+    if (code === "INGESTION_FAILED") {
+      console.error("BILL_INGESTION_FAILED", error instanceof Error ? `${error.name}: ${error.message}` : String(error));
+      // An internal error code (never free text) is shown with the message, so the user can report it.
+      const internal = error instanceof Error && /^[A-Z][A-Z0-9_]{2,80}$/.test(error.message) ? error.message : null;
+      if (internal) return Response.json({ error: { code, message: messageFor(code), correlationId: CORRELATION_ID, detail: internal } }, { status: publicStatus(code), headers: noStoreHeaders });
+    }
     return deny(code, messageFor(code), publicStatus(code));
   }
 }
@@ -162,3 +177,5 @@ function messageFor(code: string): string {
     default: return "Bill ingestion failed";
   }
 }
+
+export const maxDuration = 300;

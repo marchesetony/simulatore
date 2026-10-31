@@ -12,11 +12,15 @@ import { validateStructuredBillExtraction } from "./structured-bill.ts";
 // @ts-expect-error Node's strip-only test runner requires the explicit extension.
 import { BILL_WIRE_SCHEMA, BillWireValidationError, mapBillWireToStructuredBill, parseBillWireExtraction, type BillWireExtraction, type BillWireStatus } from "./bill-wire.ts";
 // @ts-expect-error Node's strip-only test runner requires the explicit extension.
-import { BILL_ANALYST_ITEM_CODES, BILL_ECONOMIC_CHARGE_CODES, normalizeAnalystItemCode, type BillEconomicChargeLineCode, type BillAnalystItemCode } from "./bill-extended-contract.ts";
+import { BILL_ANALYST_ITEM_CODES, BILL_ECONOMIC_CHARGE_CODES, analystOfferField, normalizeAnalystFactCode, normalizeAnalystItemCode, type BillEconomicChargeLineCode, type BillAnalystItemCode } from "./bill-extended-contract.ts";
 // @ts-expect-error Node's strip-only test runner requires the explicit extension.
 import { normalizeBillEconomicComponent } from "../foundation/bill-economic-analysis.ts";
 // @ts-expect-error Node's strip-only test runner requires the explicit extension.
+import { normativeGuidance } from "../normative/archive.ts";
+// @ts-expect-error Node's strip-only test runner requires the explicit extension.
 import { MONTHLY_BANDS_WIRE_SCHEMA, monthlyBandsEqual, normalizeMonthlyBands, type StructuredBillMonthlyBand } from "./monthly-bands.ts";
+// @ts-expect-error Node's strip-only test runner requires the explicit extension.
+import { CONSUMPTION_HISTORY_WIRE_SCHEMA, normalizeConsumptionHistory, type ConsumptionHistoryMonth } from "./consumption-history.ts";
 
 export const BILL_CORE_TOOL_NAME = "extract_bill_core";
 export const BILL_ANALYST_TOOL_NAME = "extract_bill_analyst_items";
@@ -62,6 +66,7 @@ export interface BillAnalystWireExtraction {
   readonly schemaVersion: string;
   readonly items: readonly BillAnalystWireItem[];
   readonly monthlyBands?: readonly StructuredBillMonthlyBand[];
+  readonly consumptionHistory?: readonly ConsumptionHistoryMonth[];
 }
 
 const analystItemProperties = Object.fromEntries(ANALYST_ITEM_PROPERTY_NAMES.map((name) => [name, { type: "string" }])) as Record<AnalystItemPropertyName, { readonly type: "string" }>;
@@ -81,6 +86,7 @@ export const ANALYST_WIRE_SCHEMA = {
       },
     },
     monthlyBands: MONTHLY_BANDS_WIRE_SCHEMA,
+    consumptionHistory: CONSUMPTION_HISTORY_WIRE_SCHEMA,
   },
 } as const;
 
@@ -103,9 +109,26 @@ export const ANALYST_STAGE_PROMPT = [
   `Usa questo catalogo solo come guida di normalizzazione: ${BILL_ANALYST_ITEM_CODES.join(", ")}. Non filtrare né scartare voci economiche perché il codice non è presente; per ogni corrispettivo distinto conserva descrizione e valori originali e assegna un code testuale descrittivo.`,
   "Usa kind FACT per i fatti e kind CHARGE per le righe economiche.",
   "Se il documento espone un dettaglio esplicito per mese con F1/F2/F3, restituiscilo anche in monthlyBands con mese YYYY-MM e numeri kWh. Copia ogni cifra decimale visibile esattamente: non arrotondare, non troncare e non convertire un valore decimale in intero. Se il documento non mostra il dettaglio mensile, ometti monthlyBands e non inferire o distribuire consumi.",
+  "Se la bolletta riporta lo storico dei consumi (tabella o grafico dei consumi degli ultimi mesi, 'andamento dei consumi', 'consumi fatturati negli ultimi 12 mesi'), restituisci in consumptionHistory un elemento per ogni mese leggibile con mese YYYY-MM e consumo totale del mese (kWh per la luce, Smc per il gas). Se lo storico è per periodi di fatturazione, usa il mese di fine periodo. Se lo storico non c'è o i valori non sono leggibili, ometti consumptionHistory e non stimare.",
   "Distingui i prezzi PUN_SINGLE/PUN_F1/PUN_F2/PUN_F3 dai consumi F1/F2/F3, che sono kWh.",
+  // Tony (30/10): "errore su come calcolare il capacity". Above 55 kW the capacity charge splits the kWh by Terna's peak hours.
+  "Se la bolletta riporta i kWh prelevati nelle ore di picco e fuori picco (colonne 'Peak' e 'Off-Peak' del riepilogo consumi, righe come 'energia ore di picco' / 'energia ore fuori picco' o 'ore diverse dalle ore di picco'), restituiscili come FACT ENERGY_PEAK_KWH e ENERGY_OFF_PEAK_KWH con il totale del periodo fatturato, unit kWh, copiando le cifre come stampate; se non ci sono, non stimarli.",
   "Per ogni CHARGE conserva label originale, value, quantity, unit, unitPrice, amount e periodo raw.",
   "Restituisci ogni voce economica distinta realmente esposta, anche se il code non è nel catalogo: conserva la descrizione originale e usa un code descrittivo; il server classifica gli elementi sconosciuti come UNCLASSIFIED_BILL_CHARGE.",
+  // Tony (31/10, bolletta sintetica BPower "ma che cazzo dici, guarda la bolletta"): the box dell'offerta must always be read.
+  "Per i FACT usa esattamente i code del catalogo (non inventarne altri) e metti nel label il testo dell'etichetta stampata.",
+  "Corrispondenze delle etichette del Box dell'offerta: 'Denominazione commerciale offerta', 'Offerta' o 'LA TUA OFFERTA' → FACT OFFER_NAME; 'Codice offerta' → FACT OFFER_CODE; 'Tipologia Offerta' (es. VARIABILE, FISSO) → PRICE_MECHANISM_RAW; 'Tipologia Prezzo' o 'Tipologia di prezzo' (es. offerta per fasce orarie, monoraria, orario) → PRICE_TIME_STRUCTURE_RAW; 'Indice di riferimento' → INDEX_NAME; 'Data decorrenza condizioni economiche' → ECONOMIC_CONDITIONS_START_DATE; 'Data scadenza condizioni economiche' o 'Scadenza condizioni tecnico economiche' → ECONOMIC_EXPIRY; 'Data scadenza del contratto' (anche 'a tempo indeterminato') → CONTRACT_EXPIRY; 'Formula prevista dal contratto' → PRICE_FORMULA_RAW; 'Spread' nei valori della formula → SPREAD.",
+  "Dal box dell'offerta estrai sempre come FACT: CONTRACT_START_DATE (data di attivazione o inizio fornitura), ECONOMIC_CONDITIONS_START_DATE (decorrenza delle condizioni), ECONOMIC_EXPIRY (scadenza delle condizioni economiche), CONTRACT_EXPIRY (scadenza del contratto o testo 'tempo indeterminato'), PRICE_MECHANISM_RAW (testo esatto della tipologia di offerta, es. prezzo fisso o prezzo variabile), INDEX_NAME (es. PUN Index GME, PSV), SPREAD (la maggiorazione applicata all'indice, valore numerico e unità €/kWh o €/Smc, anche se la bolletta la chiama corrispettivo o componente di vendita variabile) e PRICE_TIME_STRUCTURE_RAW (testo esatto di come si applica il prezzo nel tempo: monorario, a fasce F1/F2/F3, biorario F1/F23, peak/off-peak o PUN orario).",
+  "La bolletta segue lo schema ARERA (Bolletta 2.0, TIBEG): il quadro sintetico riporta spesa per la vendita di energia elettrica (o materia energia / materia gas naturale), spesa per il trasporto e la gestione del contatore, spesa per oneri di sistema, imposte e IVA; gli elementi di dettaglio, spesso in una pagina successiva, contengono la tabella che spiega come è calcolata ciascuna spesa.",
+  "Trova sempre la tabella di dettaglio della spesa per la vendita (vendita di energia elettrica, materia energia, servizi di vendita) e restituisci ogni sua riga come CHARGE con descrizione originale, fascia (F1, F2, F3, F23, monoraria, peak/off-peak) nella descrizione, periodo, quantity in kWh, unit, unitPrice e amount, così come stampati: quota fissa (€/mese), quota energia per fascia (€/kWh), perdite di rete, dispacciamento, mercato della capacità, sbilanciamento e ogni altro corrispettivo.",
+  "Per le righe della quota energia usa code PUN_F1, PUN_F2, PUN_F3 o PUN_SINGLE solo se la riga è il solo indice PUN/PUN Index GME; usa SPREAD se la riga è la maggiorazione sull'indice (spread, alfa, corrispettivo commerciale variabile); altrimenti, se la riga è il prezzo dell'energia per fascia comprensivo di indice e maggiorazione, usa un code descrittivo e mantieni la fascia nella descrizione.",
+  "Restituisci inoltre come FACT PRICE_F1, PRICE_F2, PRICE_F3, PRICE_F23 o MONORARIO_PRICE il prezzo complessivo dell'energia per kWh di ciascuna fascia nella spesa per la vendita (indice più eventuale maggiorazione), con unit €/kWh, escludendo perdite, dispacciamento, capacità, rete, oneri e imposte; se le righe sono divise per mese, usa il prezzo medio ponderato sui kWh. Se in tabella è stampato il coefficiente perdite, restituiscilo come FACT LOSS_FACTOR. Se la tabella è introdotta da 'Calcolata tramite la seguente formula' o simili, restituisci ogni riga (es. Prezzo Netto, Contributo sui consumi, Dispacciamento fascia F1/F2/F3, Corrispettivo mercato capacità, Sbilanciamento) come CHARGE con unitPrice e unit €/kWh presa dall'intestazione della colonna, anche se manca la quantità. Nel prezzo dell'energia (PRICE_* o MONORARIO_PRICE) non includere contributi o altri corrispettivi per kWh come 'Contributo sui consumi': restituiscili solo come CHARGE separati; una riga di prezzo senza fascia (es. Prezzo Netto) va in MONORARIO_PRICE, non in PRICE_F23. Se il box dell'offerta indica 'Tipologia di prezzo: Orario' o 'Periodicità di aggiornamento indice: Orario', PRICE_TIME_STRUCTURE_RAW è 'PUN orario' anche se i consumi sono divisi in F1, F2, F3; usa F23 solo se la bolletta stampa F23 o F2+F3 come fascia unica.",
+  "La quota fissa di vendita mensile (PCV, corrispettivo di commercializzazione, 'di cui spesa per la vendita' sotto Quota fissa) va restituita come CHARGE con code PCV, unitPrice in €/mese e unit €/mese, anche quando vale 0,00; non confonderla con la quota fissa di rete o con la quota potenza in €/kW/mese.",
+  "I valori del Box dell'offerta ('Valori assunti da ciascun elemento della formula', es. 'Dispacciamento: 0,010501 €/kWh') sono prezzi unitari, non importi: restituiscili con unitPrice e unità, amount vuoto e quantity vuota; non copiarli mai in amount.",
+  "Se la bolletta riporta solo il quadro sintetico, restituisci le righe 'di cui spesa per la rete e gli oneri generali di sistema' di quota per consumi, quota fissa e quota potenza così come sono, con la quota nella descrizione, e le singole componenti ASOS e ARIM della pagina oneri con la loro quota.",
+  "Le righe sotto 'Conguaglio dei mesi precedenti', 'Ricalcoli' o con un periodo precedente a quello fatturato vanno restituite con il loro periodo raw e con 'Conguaglio' all'inizio della descrizione, mantenendo il segno meno degli importi negativi.",
+  // Archivio normativo (Tony, 29/10): the AI reads the bill with the ARERA rules for households and business.
+  normativeGuidance("BILL"),
   "Usa FOUND solo con evidenza esplicita, NEEDS_REVIEW quando l'evidenza è ambigua e UNKNOWN o INVALID quando il dato non è classificabile o è presente ma inutilizzabile.",
 ].join(" ");
 
@@ -142,7 +165,7 @@ export function parseBillCoreWireExtraction(value: unknown): BillWireExtraction 
 export function validateBillAnalystWireExtraction(value: unknown): asserts value is BillAnalystWireExtraction {
   const root = object(value, "root");
   if (typeof root.schemaVersion !== "string" || !/^1(?:\.0+)?$/.test(root.schemaVersion.trim())) throw new BillAnalystWireValidationError("schemaVersion", "VERSION");
-  for (const key of Object.keys(root)) if (key !== "schemaVersion" && key !== "items" && key !== "monthlyBands") throw new BillAnalystWireValidationError(key, "UNEXPECTED_PROPERTY");
+  for (const key of Object.keys(root)) if (key !== "schemaVersion" && key !== "items" && key !== "monthlyBands" && key !== "consumptionHistory") throw new BillAnalystWireValidationError(key, "UNEXPECTED_PROPERTY");
   if (!Array.isArray(root.items)) throw new BillAnalystWireValidationError("items", "ARRAY_REQUIRED");
   for (const [index, rawItem] of root.items.entries()) {
     const item = object(rawItem, `items.${index}`);
@@ -155,6 +178,10 @@ export function validateBillAnalystWireExtraction(value: unknown): asserts value
   if (root.monthlyBands !== undefined) {
     try { normalizeMonthlyBands(root.monthlyBands, "monthlyBands"); }
     catch { throw new BillAnalystWireValidationError("monthlyBands", "INVALID"); }
+  }
+  if (root.consumptionHistory !== undefined) {
+    try { normalizeConsumptionHistory(root.consumptionHistory); }
+    catch { throw new BillAnalystWireValidationError("consumptionHistory", "INVALID"); }
   }
 }
 
@@ -224,7 +251,7 @@ function normalizeAnalystItem(item: BillAnalystWireItem): BillAnalystWireItem & 
   return {
     ...item,
     normalizedKind: normalizeKind(item.kind),
-    normalizedCode: normalizeAnalystItemCode(item.code),
+    normalizedCode: normalizeKind(item.kind) === "FACT" ? normalizeAnalystFactCode(item.code, item.label) : normalizeAnalystItemCode(item.code),
     normalizedStatus: normalizeStatus(item.status),
     normalizedUnit: normalizeAnalystUnit(item.unit),
   };
@@ -280,7 +307,7 @@ export function mapBillCoreToStructuredBill(core: BillWireExtraction): Structure
   return { ...extraction, analystExtractionStatus: "NOT_RUN" };
 }
 
-export function mapBillAnalystItems(analyst: BillAnalystWireExtraction): { readonly facts: readonly StructuredBillExtendedFact[]; readonly charges: readonly StructuredBillEconomicChargeLine[]; readonly monthlyBands?: readonly StructuredBillMonthlyBand[] } {
+export function mapBillAnalystItems(analyst: BillAnalystWireExtraction): { readonly facts: readonly StructuredBillExtendedFact[]; readonly charges: readonly StructuredBillEconomicChargeLine[]; readonly monthlyBands?: readonly StructuredBillMonthlyBand[]; readonly consumptionHistory?: readonly ConsumptionHistoryMonth[] } {
   validateBillAnalystWireExtraction(analyst);
   const facts: StructuredBillExtendedFact[] = [];
   const charges: StructuredBillEconomicChargeLine[] = [];
@@ -294,15 +321,17 @@ export function mapBillAnalystItems(analyst: BillAnalystWireExtraction): { reado
       facts.push({ code: item.normalizedCode, value: item.value.trim(), ...(item.normalizedUnit ? { unit: item.normalizedUnit } : {}), status: item.normalizedStatus });
     }
   }
-  return { facts, charges, ...(analyst.monthlyBands === undefined ? {} : { monthlyBands: normalizeMonthlyBands(analyst.monthlyBands) }) };
+  const consumptionHistory = analyst.consumptionHistory === undefined ? [] : normalizeConsumptionHistory(analyst.consumptionHistory);
+  return { facts, charges, ...(analyst.monthlyBands === undefined ? {} : { monthlyBands: normalizeMonthlyBands(analyst.monthlyBands) }), ...(consumptionHistory.length ? { consumptionHistory } : {}) };
 }
 
-export const ANALYST_OWNED_PROPERTIES = ["extendedFacts", "economicChargeLines", "supplyProfile", "analystExtractionStatus", "analystDiagnostic"] as const;
+export const ANALYST_OWNED_PROPERTIES = ["extendedFacts", "economicChargeLines", "supplyProfile", "analystExtractionStatus", "analystDiagnostic", "consumptionHistory"] as const;
 
 /** Remove every previous Analyst result while preserving the authoritative CORE fields. */
 export function stripBillAnalystData(extraction: StructuredBillExtraction): StructuredBillExtraction {
   validateStructuredBillExtraction(extraction);
-  const { extendedFacts, economicChargeLines, supplyProfile, analystExtractionStatus, analystDiagnostic, ...core } = extraction;
+  const { extendedFacts, economicChargeLines, supplyProfile, analystExtractionStatus, analystDiagnostic, consumptionHistory, ...core } = extraction;
+  void consumptionHistory;
   void extendedFacts;
   void economicChargeLines;
   void supplyProfile;
@@ -325,12 +354,21 @@ export function mergeBillCoreAndAnalyst(core: StructuredBillExtraction, analyst:
     const parsed = parsePeriod(raw.value);
     billingPeriod = parsed ? documentField<StructuredBillPeriod>(parsed, raw.status) : documentField<StructuredBillPeriod>(null, raw.status === "NEEDS_REVIEW" ? "NEEDS_REVIEW" : "INVALID");
   }
+  // Tony (31/10, bolletta sintetica BPower): the box dell'offerta name/code read by the second reading fills an empty core field.
+  const offer = (name: "offerName" | "offerCode"): StructuredBillField<string> => {
+    if (cleanCore[name].status === "FOUND") return cleanCore[name];
+    const item = analyst.items.find((source) => normalizeKind(source.kind) === "FACT" && (analystOfferField(source.code) ?? analystOfferField(source.label)) === name && source.value.trim() && !/^NOT_FOUND$/i.test(source.value.trim()) && ["FOUND", "NEEDS_REVIEW"].includes(normalizeStatus(source.status)));
+    return item ? documentField<string>(item.value.trim().slice(0, 120), normalizeStatus(item.status)) : cleanCore[name];
+  };
   const merged: StructuredBillExtraction = {
     ...cleanCore,
+    offerName: offer("offerName"),
+    offerCode: offer("offerCode"),
     billingPeriod,
     extendedFacts: [...mapped.facts],
     economicChargeLines: [...mapped.charges],
     ...(monthlyBands === undefined ? {} : { monthlyBands }),
+    ...(mapped.consumptionHistory ? { consumptionHistory: mapped.consumptionHistory } : {}),
     supplyProfile: buildBillSupplyProfile(mapped.facts),
     analystExtractionStatus: options.analystExtractionStatus ?? "EXTRACTED",
     ...(options.diagnostic ? { analystDiagnostic: options.diagnostic } : {}),

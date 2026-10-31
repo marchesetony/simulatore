@@ -1,4 +1,4 @@
-// Commercial chain of command: Azienda > Direttore > Area Manager > Agente.
+// Commercial chain of command: Azienda > Direttore > Area Manager > Agente > Sub-agente.
 // Each level can only narrow what the level above allows; the effective limits
 // of a node are the intersection of every limit on its path from the company.
 import type { AuthenticatedPrincipal, CanonicalProductRole } from "../auth/types";
@@ -12,7 +12,7 @@ import type { CommercialLimits, CteAssignment, CteAssignmentScope, CteAssignment
 export type OrgChainRepository = DeletableTenantRecordRepository<OrgNode>;
 export type CteAssignmentRepository = TenantRecordRepository<CteAssignment>;
 
-export const ORG_LEVELS: readonly OrgLevel[] = ["AZIENDA", "DIRETTORE", "AREA_MANAGER", "AGENTE"];
+export const ORG_LEVELS: readonly OrgLevel[] = ["AZIENDA", "DIRETTORE", "AREA_MANAGER", "AGENTE", "SUB_AGENTE"];
 const VECTORS: readonly LimitVector[] = ["EE", "GAS"];
 const CATEGORIES: readonly LimitCustomerCategory[] = ["RESIDENTIAL", "NON_RESIDENTIAL"];
 const SCOPES: readonly CteAssignmentScope[] = ["ALL", "BRANCHES"];
@@ -61,7 +61,8 @@ export function validateOrgNode(value: unknown): OrgNode {
   const displayName = item.displayName ?? null;
   if (displayName !== null && (typeof displayName !== "string" || displayName.trim().length === 0 || displayName.length > 120 || /[\u0000-\u001f\u007f<>]/.test(displayName))) fail("ORG_DISPLAY_NAME_INVALID");
   assertId(item.updatedBy, "ORG_NODE_INVALID");
-  return { userId: item.userId, level, parentUserId: parentUserId as string | null, displayName: displayName === null ? null : (displayName as string).trim(), limits: validateLimits(item.limits), updatedBy: item.updatedBy };
+  if (item.canAuthorizeCte !== undefined && typeof item.canAuthorizeCte !== "boolean") fail("ORG_NODE_INVALID");
+  return { userId: item.userId, level, parentUserId: parentUserId as string | null, displayName: displayName === null ? null : (displayName as string).trim(), limits: validateLimits(item.limits), ...(item.canAuthorizeCte === true ? { canAuthorizeCte: true } : {}), updatedBy: item.updatedBy };
 }
 
 export function validateCteAssignment(value: unknown): CteAssignment {
@@ -129,6 +130,19 @@ export function combineLimits(outer: CommercialLimits, inner: CommercialLimits):
   return { vectors: intersect(outer.vectors, inner.vectors), customerCategories: intersect(outer.customerCategories, inner.customerCategories), excludedCteArchiveIds: [...new Set([...outer.excludedCteArchiveIds, ...inner.excludedCteArchiveIds])].sort() };
 }
 
+// Tony (29/10): the company administrator may authorize any CTE and decides, down the chain, who else may. Each manager
+// holding the permission may pass it on to their branch; taking it away from a manager takes it away from their branch.
+export function nodeCanAuthorizeCte(index: OrgChainIndex, userId: string): boolean {
+  const node = index.nodes.get(userId)?.payload;
+  if (!node) return false;
+  if (node.level === "AZIENDA") return true;
+  return node.canAuthorizeCte === true && [...ancestorUserIds(index, userId)].every((id) => { const above = index.nodes.get(id)?.payload; return !above || above.level === "AZIENDA" || above.canAuthorizeCte === true; });
+}
+
+export function canAuthorizeCte(access: Pick<HierarchyAccess, "actor" | "index">): boolean {
+  return access.actor.role === "SUPER_ADMIN" || nodeCanAuthorizeCte(access.index, access.actor.userId);
+}
+
 export function effectiveLimits(index: OrgChainIndex, userId: string): CommercialLimits {
   if (!index.nodes.has(userId)) return UNRESTRICTED_LIMITS;
   return [userId, ...ancestorUserIds(index, userId)].reverse().reduce((limits, id) => combineLimits(limits, index.nodes.get(id)?.payload.limits ?? UNRESTRICTED_LIMITS), UNRESTRICTED_LIMITS);
@@ -165,12 +179,12 @@ export function hierarchyActor(principal: Pick<AuthenticatedPrincipal, "userId" 
 
 function membershipFitsLevel(membership: FoundationMembershipRecord, level: OrgLevel): boolean {
   if (level === "AZIENDA") return foundationRoleToCanonical(membership.role) === "SUPER_ADMIN";
-  if (level === "AGENTE") return membership.role === "SALES_OPERATOR";
+  if (level === "AGENTE" || level === "SUB_AGENTE") return membership.role === "SALES_OPERATOR";
   return membership.role === "SALES_MANAGER";
 }
 
 function nodeView(index: OrgChainIndex, record: TenantRecord<OrgNode>): OrgNodeView {
-  return { ...record.payload, version: record.version, updatedAt: record.updatedAt, effectiveLimits: effectiveLimits(index, record.payload.userId), ancestorUserIds: ancestorUserIds(index, record.payload.userId) };
+  return { ...record.payload, version: record.version, updatedAt: record.updatedAt, effectiveLimits: effectiveLimits(index, record.payload.userId), effectiveCanAuthorizeCte: nodeCanAuthorizeCte(index, record.payload.userId), ancestorUserIds: ancestorUserIds(index, record.payload.userId) };
 }
 
 /** Company admins see the whole chain; everybody else sees their own path up and their branch down. */
@@ -195,6 +209,7 @@ export interface SaveOrgNodeInput {
   readonly parentUserId?: unknown;
   readonly displayName?: unknown;
   readonly limits?: unknown;
+  readonly canAuthorizeCte?: unknown;
   readonly expectedVersion?: unknown;
 }
 
@@ -215,7 +230,7 @@ function conflict(error: unknown, code: string): never {
 }
 
 export async function saveOrgNode(stores: HierarchyStores, actor: HierarchyActor, input: SaveOrgNodeInput, now?: string): Promise<OrgNodeView> {
-  const node = validateOrgNode({ userId: input.userId, level: input.level, parentUserId: input.parentUserId ?? null, displayName: input.displayName ?? null, limits: input.limits, updatedBy: actor.userId });
+  const node = validateOrgNode({ userId: input.userId, level: input.level, parentUserId: input.parentUserId ?? null, displayName: input.displayName ?? null, limits: input.limits, canAuthorizeCte: input.canAuthorizeCte ?? false, updatedBy: actor.userId });
   const index = buildOrgChainIndex(await stores.orgChain.list(actor.tenantId));
   const existing = index.nodes.get(node.userId) ?? null;
   const expectedVersion = expectedVersionOf(input.expectedVersion, existing !== null, "ORG");
@@ -239,6 +254,11 @@ export async function saveOrgNode(stores: HierarchyStores, actor: HierarchyActor
     if (rank((index.nodes.get(childId) as TenantRecord<OrgNode>).payload.level) <= rank(node.level)) fail("ORG_CHILD_LEVEL_CONFLICT");
   }
   assertLimitsWithin(node.limits, parentEffective);
+  // Only who may authorize CTEs passes the permission on, and only below a manager who holds it.
+  if (node.canAuthorizeCte === true && existing?.payload.canAuthorizeCte !== true) {
+    if (actor.role !== "SUPER_ADMIN" && !nodeCanAuthorizeCte(index, actor.userId)) fail("ORG_CTE_AUTHORIZATION_GRANT_DENIED");
+    if (node.parentUserId !== null && !nodeCanAuthorizeCte(index, node.parentUserId)) fail("ORG_CTE_AUTHORIZATION_PARENT_MISSING");
+  }
 
   try {
     const saved = await stores.orgChain.put({ tenantId: actor.tenantId, recordId: orgNodeRecordId(actor.tenantId, node.userId), payload: node, expectedVersion, now });

@@ -45,7 +45,8 @@ assert.deepEqual(unsupportedOutboundHits, []);
 assert.deepEqual(ANALYST_WIRE_SCHEMA.required, ["schemaVersion", "items"]);
 assert.deepEqual(ANALYST_WIRE_SCHEMA.properties.items.items.required, ["kind", "code", "label", "value", "unit", "quantity", "unitPrice", "amount", "period", "status"]);
 assert.equal(ANALYST_SCHEMA_METRICS.enumValues, 0);
-assert.equal(ANALYST_SCHEMA_METRICS.optional, 1);
+// Tony (30/10, "bisogna usare lo storico consumi"): consumptionHistory is the second optional analyst property.
+assert.equal(ANALYST_SCHEMA_METRICS.optional, 2);
 assert.equal(ANALYST_SCHEMA_METRICS.unions, 0);
 assert.ok(ANALYST_SCHEMA_METRICS.bytes < 7428);
 assert.ok(ANALYST_SCHEMA_METRICS.bytes < CORE_SCHEMA_METRICS.bytes);
@@ -121,7 +122,9 @@ let requests = [];
 const client = { messages: { async create(params) { requests.push(params); return requests.length === 1 ? message([tool(BILL_CORE_TOOL_NAME, coreWire())]) : message([tool(BILL_ANALYST_TOOL_NAME, analyst)]); } } };
 const adapter = new AnthropicTwoStageBillSdkAdapter(client, "synthetic-model", 8192);
 const extracted = await adapter.extract({ bytes: new Uint8Array(Buffer.from("%PDF-1.4 synthetic", "ascii")), contentType: "application/pdf" });
-assert.equal(requests.length, 2);
+// Tony (28/10): this fixture's lines do not add up to its total, so the AI reviews the reading once more (third request).
+assert.equal(requests.length, 3);
+assert.match(requests[2].messages[0].content[1].text, /REVISIONE DELLA LETTURA/);
 assert.equal(requests[0].tools.length, 1);
 assert.equal(requests[0].tools[0].name, BILL_CORE_TOOL_NAME);
 assert.equal(requests[1].tools.length, 1);
@@ -136,6 +139,18 @@ assert.match(requests[1].messages[0].content[1].text, /ogni cifra decimale visib
 assert.equal(extracted.analystExtractionStatus, "EXTRACTED");
 
 let failedCalls = 0;
+// Tony (30/10): "ho come l'impressione che sia lento nelle elaborazioni ... quando attiviamo agenti e AI". The core and
+// analyst readings are sent together: the analyst request leaves before the core answer arrives.
+{
+  const started = []; let releaseCore;
+  const coreGate = new Promise((resolve) => { releaseCore = resolve; });
+  const parallelClient = { messages: { async create(params) { started.push(params.tools[0].name); if (params.tools[0].name === BILL_CORE_TOOL_NAME) { await coreGate; return message([tool(BILL_CORE_TOOL_NAME, coreWire())]); } return message([tool(BILL_ANALYST_TOOL_NAME, analyst)]); } } };
+  const pending = new AnthropicTwoStageBillSdkAdapter(parallelClient, "synthetic-model", 8192).extract({ bytes: new Uint8Array(Buffer.from("%PDF-1.4 synthetic", "ascii")), contentType: "application/pdf" });
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  assert.deepEqual(started, [BILL_CORE_TOOL_NAME, BILL_ANALYST_TOOL_NAME]);
+  releaseCore();
+  await pending;
+}
 const coreOnlyAdapter = new AnthropicTwoStageBillSdkAdapter({ messages: { async create() { failedCalls += 1; if (failedCalls === 1) return message([tool(BILL_CORE_TOOL_NAME, coreWire())]); throw new AnthropicBillSdkError("BILL_OCR_PROVIDER_FAILED", "req_b"); } } }, "synthetic-model", 8192);
 const coreOnly = await coreOnlyAdapter.extract({ bytes: new Uint8Array(Buffer.from("%PDF-1.4 synthetic", "ascii")), contentType: "application/pdf" });
 assert.equal(failedCalls, 2);
@@ -151,4 +166,23 @@ assert.ok(dto.dates.billingPeriodStart);
 assert.ok(dto.payment);
 assert.ok(dto.economics);
 
+// Tony (28/10): "aggiungere AI con qualche agente che analizza e ricalcola eliminando l'errore". Lines that miss the bill
+// total (80) are read once more with the mismatch in the prompt; the second reading is kept only if it adds up better.
+const charge = (label, amount) => analystItem({ kind: "CHARGE", code: "OTHER_CHARGE", label, value: amount, amount });
+const offBy10 = analystWire([charge("Spesa per la vendita", "50,00"), charge("Spesa per la rete", "30,00"), charge("Altre partite", "10,00")]);
+const exact = analystWire([charge("Spesa per la vendita", "50,00"), charge("Spesa per la rete", "30,00")]);
+const reviewClient = (second) => { const sent = []; return { sent, messages: { async create(params) { sent.push(params); return sent.length === 1 ? message([tool(BILL_CORE_TOOL_NAME, coreWire())]) : message([tool(BILL_ANALYST_TOOL_NAME, sent.length === 2 ? offBy10 : second)]); } } }; };
+const pdf = { bytes: new Uint8Array(Buffer.from("%PDF-1.4 synthetic", "ascii")), contentType: "application/pdf" };
+const fixedClient = reviewClient(exact);
+const fixed = await new AnthropicTwoStageBillSdkAdapter(fixedClient, "synthetic-model", 8192).extract(pdf);
+assert.equal(fixedClient.sent.length, 3);
+assert.match(fixedClient.sent[2].messages[0].content[1].text, /REVISIONE DELLA LETTURA[\s\S]*90,00 €[\s\S]*80,00 €/);
+assert.deepEqual(fixed.economicChargeLines.map((line) => line.amount), ["50,00", "30,00"]);
+const worseClient = reviewClient(analystWire([charge("Spesa per la vendita", "70,00"), charge("Spesa per la rete", "30,00")]));
+const kept = await new AnthropicTwoStageBillSdkAdapter(worseClient, "synthetic-model", 8192).extract(pdf);
+assert.equal(kept.economicChargeLines.length, 3, "a worse second reading is discarded");
+const exactClient = { sent: [], messages: { async create(params) { exactClient.sent.push(params); return exactClient.sent.length === 1 ? message([tool(BILL_CORE_TOOL_NAME, coreWire())]) : message([tool(BILL_ANALYST_TOOL_NAME, exact)]); } } };
+await new AnthropicTwoStageBillSdkAdapter(exactClient, "synthetic-model", 8192).extract(pdf);
+assert.equal(exactClient.sent.length, 2, "a reading that adds up is not reviewed");
+console.log("BILL_READING_REVIEW=PASS");
 console.log("bill two-stage smoke: ok (core/analyst wire parity, complexity, mappers, merge precedence, billing period, voltage, payment, economics, charges, DTO and independent failure policy)");

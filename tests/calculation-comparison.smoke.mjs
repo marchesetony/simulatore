@@ -70,6 +70,7 @@ try {
   const marketRepository = new LocalMarketArchiveRepository(path.join(root, "market"));
   await addMarket(marketRepository, pun("2026-01"));
   await addMarket(marketRepository, pun("2026-02"));
+  await addMarket(marketRepository, { ...pun("2026-03"), monthly: { value: 90, currency: "EUR", unit: "EUR_PER_MWH" } });
   await addMarket(marketRepository, psv("2026-01"));
   await addMarket(marketRepository, psv("2026-02"));
 
@@ -83,11 +84,35 @@ try {
   assert.equal(fixedEeResult.totalCommercialCost.currency, "EUR");
   assert.ok(fixedEeResult.components.some((component) => component.formulaId === "EE_FIXED_PRICE_TIMES_KWH"));
   assert.deepEqual(fixedEeResult, await calculateApprovedOffer(cteRepository, marketRepository, eeRequest(), fixedEe.archiveId), "calculation must be reproducible");
+  // Tony (28/10): "certamente il contributo una tantum solo sulla prima bolletta". A bill already issued with this CTE that
+  // does not charge it is a later bill: no one-off fee. The first bill (it charges it) and a different supplier keep it.
+  const oneOff = (result) => result.components.filter((component) => component.category === "ONE_OFF_FEE").length;
+  const later = await calculateApprovedOffer(cteRepository, marketRepository, eeRequest(), fixedEe.archiveId, { currentOffer: { supplier: "cte-ee-fixed Supplier S.p.A.", offer: "Offerta cte-ee-fixed-CODE", oneOffBilled: false } });
+  assert.equal(oneOff(fixedEeResult), 1); assert.equal(oneOff(later), 0);
+  assert.equal(fixedEeResult.totalCommercialCost.minorUnits - later.totalCommercialCost.minorUnits, 200);
+  assert.equal(oneOff(await calculateApprovedOffer(cteRepository, marketRepository, eeRequest(), fixedEe.archiveId, { currentOffer: { supplier: "cte-ee-fixed Supplier", offer: "cte-ee-fixed-CODE", oneOffBilled: true } })), 1);
+  assert.equal(oneOff(await calculateApprovedOffer(cteRepository, marketRepository, eeRequest(), fixedEe.archiveId, { currentOffer: { supplier: "Altro fornitore", offer: "cte-ee-fixed-CODE", oneOffBilled: false } })), 1);
 
   const indexedEeRequest = eeRequest({ supplyPeriod: { periodStart: "2026-01-01", periodEnd: "2026-03-01" }, consumption: { basis: "PERIOD", unit: "KWH", f1: 300, f2: 100, f3: 100, monthlyProfile: [{ month: "2026-01", f1: 150, f2: 50, f3: 25 }, { month: "2026-02", f1: 150, f2: 50, f3: 75 }] } });
   const indexedEeResult = await calculateApprovedOffer(cteRepository, marketRepository, indexedEeRequest, indexedEe.archiveId);
   assert.equal(indexedEeResult.marketData.length, 2);
   assert.equal(indexedEeResult.components.filter((component) => component.formulaId === "EE_PUN_MWH_TO_KWH_PLUS_SPREAD").length, 6);
+  // Tony (29/10, "stessa cte, stessa bolletta"): a monorario bill simulated with its own CTE takes the month's single PUN on
+  // every kWh, as the bill does; any other CTE, or a bill priced by band, keeps the F1/F2/F3 PUN.
+  const marchRequest = eeRequest({ supplyPeriod: { periodStart: "2026-03-01", periodEnd: "2026-04-01" }, consumption: { basis: "PERIOD", unit: "KWH", f1: 300, f2: 100, f3: 100 } });
+  const sameMono = { supplier: "cte-ee-indexed Supplier", offer: "cte-ee-indexed-CODE", oneOffBilled: false, indexStructure: "MONO" };
+  const monoEnergy = (await calculateApprovedOffer(cteRepository, marketRepository, marchRequest, indexedEe.archiveId, { currentOffer: sameMono })).components.filter((component) => component.formulaId === "EE_PUN_MWH_TO_KWH_PLUS_SPREAD");
+  assert.deepEqual(monoEnergy.map((component) => [component.formulaInputs.band, component.formulaInputs.punEurPerMwh, component.formulaInputs.quantityKwh]), [["F0", 90, 500]]);
+  assert.equal(monoEnergy[0].amount.minorUnits, 5000, "(90/1000 + 0,01) x 500 kWh");
+  const bandEnergy = (await calculateApprovedOffer(cteRepository, marketRepository, marchRequest, indexedEe.archiveId, { currentOffer: { ...sameMono, indexStructure: "BANDS" } })).components.filter((component) => component.formulaId === "EE_PUN_MWH_TO_KWH_PLUS_SPREAD");
+  assert.equal(bandEnergy.length, 3);
+  const otherMono = (await calculateApprovedOffer(cteRepository, marketRepository, marchRequest, indexedEe.archiveId, { currentOffer: { ...sameMono, supplier: "Altro fornitore", offer: "Altra offerta" } })).components.filter((component) => component.formulaId === "EE_PUN_MWH_TO_KWH_PLUS_SPREAD");
+  assert.equal(otherMono.length, 3, "another supplier's monorario bill does not decide this CTE's structure");
+  // Tony (28/10, BPower BE Family Casa Protetta, "PUN Index GME + 0,03 €/kWh ... spread al lordo delle perdite di rete"):
+  // the spread read again as a generic per-kWh fee is not charged twice.
+  const grossSpread = await createCteArchive(cteRepository, { tenantId: tenant, contract: cte("EE", "cte-ee-gross-spread", { pricing: { mode: "INDEXED", reference: "PUN", spread: { ...price(0.01, "EUR_PER_KWH"), lossTreatment: "GROSS_OF_LOSSES" } }, variableFees: [fee("cte-ee-gross-spread-variable", "Quote variabili", 0.01, "EUR_PER_KWH"), fee("cte-ee-gross-spread-comm", "Commercializzazione", 0.01, "EUR_PER_KWH")] }), now: "2026-01-02T00:00:00.000Z", actor: "SMOKE" });
+  const grossResult = await calculateApprovedOffer(cteRepository, marketRepository, indexedEeRequest, grossSpread.archiveId);
+  assert.deepEqual(grossResult.components.filter((component) => component.category === "VARIABLE_FEE" && component.formulaId === "FEE_RATE_TIMES_BASIS").map((component) => component.label), ["Commercializzazione"]);
 
   const fixedGasResult = await calculateApprovedOffer(cteRepository, marketRepository, gasRequest(), fixedGas.archiveId);
   assert.ok(fixedGasResult.components.some((component) => component.formulaId === "GAS_FIXED_PRICE_TIMES_SMC"));

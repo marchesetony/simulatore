@@ -38,20 +38,20 @@ assert.equal(byKey.get("commercialTerms.oneOffFees")?.description, "Gestione ser
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const ui = await readFile(path.join(root, "app/components/CteIngestionPanel.tsx"), "utf8");
 const css = await readFile(path.join(root, "app/globals.css"), "utf8");
-for (const label of ["Fornitore e offerta", "Ambito di applicazione", "Struttura prezzo", "Componenti commerciali", "Trattamento fiscale", "Provenienza documentale", "Non rilevati", "Modifica dati", "Salva modifiche", "Annulla", "Componente", "Importo", "Unità/periodicità", "Condizioni", "Revisione"]) assert.ok(ui.includes(label), `missing compact review label: ${label}`);
+// One "Modifica" button edits the whole review (product decision): no per-field buttons, no "Modifica dati".
+for (const label of ["Fornitore e offerta", "Ambito di applicazione", "Struttura prezzo", "Componenti commerciali", "Trattamento fiscale", "Non rilevati", "Conferma", "Modifica", "Salva modifiche", "Annulla", "Componente", "Importo", "Unità/periodicità", "Condizioni", "Revisione"]) assert.ok(ui.includes(label), `missing compact review label: ${label}`);
 assert.doesNotMatch(ui, /Dettagli tecnici/);
 assert.doesNotMatch(ui, /Voci facoltative non rilevate/);
 assert.doesNotMatch(ui, /<TechnicalDetails/);
 assert.doesNotMatch(ui, /\[Fonte/);
 assert.doesNotMatch(ui, /Fonte\s+\d+/);
 assert.doesNotMatch(ui, /Confidenza:/);
-assert.equal((ui.match(/Provenienza documentale/g) ?? []).length, 1);
+assert.equal((ui.match(/Provenienza documentale/g) ?? []).length, 0);
 assert.equal((ui.match(/Non rilevati/g) ?? []).length, 1);
-assert.match(ui, /Pagina: \{source\.sourcePage/);
-assert.match(ui, /\{source\.sourceText\}/);
+assert.doesNotMatch(ui, /Pagina: \{source\.sourcePage/);
+assert.doesNotMatch(ui, /\{source\.sourceText\}/);
 assert.doesNotMatch(ui, /<textarea/);
-assert.match(ui, /sourceRef/);
-assert.match(ui, /cte-source-\$\{source\.sourceRef\}/);
+assert.doesNotMatch(ui, /cte-source-\$\{source\.sourceRef\}/);
 assert.match(css, /\.cte-review-layout\s*\{/);
 assert.match(css, /\.cte-commercial-table\s*\{/);
 assert.match(css, /@media \(max-width:760px\)/);
@@ -66,7 +66,8 @@ assert.match(css, /color:#0891B2/);
 assert.match(css, /border:1px solid #C7DDE5/);
 assert.match(ui, /summaryDisplayValue/);
 assert.match(ui, /cte-spread-item/);
-assert.match(css, /\.cte-review-layout > \.cte-review-group:nth-child\(3\) \.cte-summary-grid \{ grid-template-columns:repeat\(3/);
+// Price structure is now the second group, next to the offer (product decision: key data first).
+assert.match(css, /\.cte-review-layout > \.cte-review-group:nth-child\(2\) \.cte-summary-grid \{ grid-template-columns:repeat\(3/);
 assert.match(css, /\.cte-spread-item \{ padding:7px 10px; border:1px solid #A5F3FC/);
 assert.match(css, /\.cte-spread-item > strong \{ margin-top:0; color:#0E7490; font-size:1\.2rem; font-weight:800/);
 assert.match(css, /\.cte-summary-meta:empty \{ display:none; \}/);

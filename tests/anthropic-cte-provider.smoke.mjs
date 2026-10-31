@@ -15,7 +15,9 @@ const mockedFetch = async (_url, init) => { lastRequest = { url: String(_url), i
 const provider = getConfiguredCteOcrProvider(env, mockedFetch);
 let observedCteTimeout;
 const originalCteSetTimeout = globalThis.setTimeout;
-globalThis.setTimeout = (callback, delay, ...args) => { observedCteTimeout = delay; return originalCteSetTimeout(callback, delay, ...args); };
+// Tony (31/10, "un'altro agente legga dettagliatamente le cte"): a CTE without a readable text layer is read a second time by
+// the verifier, with the time left; the first reading keeps the configured timeout.
+globalThis.setTimeout = (callback, delay, ...args) => { observedCteTimeout ??= delay; return originalCteSetTimeout(callback, delay, ...args); };
 const extracted = await provider.extract({ bytes: pdf, contentType: "application/pdf", fileName: "contract.pdf" });
 globalThis.setTimeout = originalCteSetTimeout;
 assert.equal(observedCteTimeout, ANTHROPIC_CTE_DEFAULT_TIMEOUT_MS);

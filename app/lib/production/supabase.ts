@@ -1,5 +1,10 @@
 import type { CteAssignmentRepository, OrgChainRepository } from "../hierarchy/service";
 import type { CteAssignment, OrgNode } from "../hierarchy/types";
+import type { AccessAccount, AccessDirectory, Company } from "../access/types";
+import type { CompanyProfile } from "../company/profile";
+import type { ProposalPresentation } from "../proposal/presentation";
+// @ts-expect-error Node's strip-only test runner requires the explicit extension.
+import { SupabaseAccessDirectory } from "./supabase-directory.ts";
 import { createHash, randomBytes, randomUUID } from "node:crypto";
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 import type { ServerSessionAdapter } from "../auth/adapter.ts";
@@ -244,6 +249,7 @@ class SupabaseBillRepository implements BillRepository {
 class SupabaseCteArchiveRepository implements CteArchiveRepository {
   private readonly records: SupabaseRecordRepository<CteArchiveRecord>;
   constructor(client: ProviderClient) { this.records = new SupabaseRecordRepository(client, "cte-archives"); }
+  async remove(tenantId: string, archiveId: string): Promise<void> { const record = await this.records.get(tenantId, archiveId); if (record) await this.records.delete({ tenantId, recordId: archiveId, expectedVersion: record.version }); }
   async get(tenantId: string, archiveId: string): Promise<CteArchiveRecord | null> { const record = await this.records.get(tenantId, archiveId); return record ? validateStoredCteArchive(record.payload) : null; }
   async list(tenantId: string): Promise<ReadonlyArray<CteArchiveRecord>> { const records = await this.records.list(tenantId); return records.map((record) => validateStoredCteArchive(record.payload)); }
   async save(record: CteArchiveRecord, capability?: symbol): Promise<void> { const valid = validateStoredCteArchive(record); const previous = await this.records.get(valid.tenantId, valid.archiveId); const previousArchive = previous ? validateStoredCteArchive(previous.payload) : null; if (valid.currentApprovedVersionId !== (previousArchive?.currentApprovedVersionId ?? null) && capability !== CTE_ARCHIVE_APPROVAL_CAPABILITY) throw new Error("CTE_APPROVAL_WORKFLOW_REQUIRED"); await this.records.put({ tenantId: valid.tenantId, recordId: valid.archiveId, payload: valid, expectedVersion: previous?.version }); }
@@ -277,6 +283,20 @@ class SupabaseDocumentStorage implements DocumentStoragePort {
       throw error;
     }
     return objectKey;
+  }
+  private uploadKey(tenantId: string, uploadId: string): string { assertTenant(tenantId); assertRecordId(uploadId); return `${tenantId}/uploads/${uploadId}`; }
+  async createUploadTarget(tenantId: string, uploadId: string): Promise<{ readonly signedUrl: string }> {
+    const result = await this.client.storage.from(this.bucket).createSignedUploadUrl(this.uploadKey(tenantId, uploadId));
+    if (result.error || !result.data) providerError(result.error, "DOCUMENT_STORAGE_ERROR");
+    return { signedUrl: result.data!.signedUrl };
+  }
+  async takeUpload(tenantId: string, uploadId: string): Promise<Uint8Array> {
+    const key = this.uploadKey(tenantId, uploadId);
+    const result = await this.client.storage.from(this.bucket).download(key);
+    if (result.error || !result.data) providerError(result.error, "UPLOAD_NOT_FOUND");
+    const bytes = new Uint8Array(await result.data!.arrayBuffer());
+    await this.client.storage.from(this.bucket).remove([key]);
+    return bytes;
   }
   async read(tenantId: string, id: string): Promise<Uint8Array> {
     assertTenant(tenantId);
@@ -331,7 +351,13 @@ export class SupabaseProductionStorageAdapter implements ProductionStorageAdapte
   readonly jobRuns: TenantRecordRepository<JobRunRecord>;
   readonly jobIncidents: TenantRecordRepository<JobIncidentRecord>;
 
-  constructor(client: ProviderClient, storageBucket: string) {
+  readonly companies: TenantRecordRepository<Company>;
+  readonly companyProfiles: TenantRecordRepository<CompanyProfile>;
+  readonly proposalPresentations: TenantRecordRepository<ProposalPresentation>;
+  readonly accessAccounts: TenantRecordRepository<AccessAccount>;
+  readonly accessDirectory?: AccessDirectory;
+
+  constructor(client: ProviderClient, storageBucket: string, authClient?: () => ProviderClient) {
     this.cteArchiveRepository = new SupabaseCteArchiveRepository(client);
     this.marketArchiveRepository = new SupabaseMarketArchiveRepository(client);
     this.billRepository = new SupabaseBillRepository(client);
@@ -360,6 +386,11 @@ export class SupabaseProductionStorageAdapter implements ProductionStorageAdapte
     this.jobIncidents = new SupabaseRecordRepository<JobIncidentRecord>(client, "job-incidents");
     this.orgChain = new SupabaseRecordRepository<OrgNode>(client, "org-chain") as SupabaseRecordRepository<OrgNode> & OrgChainRepository;
     this.cteAssignments = new SupabaseRecordRepository<CteAssignment>(client, "cte-assignments");
+    this.companies = new SupabaseRecordRepository<Company>(client, "companies");
+    this.companyProfiles = new SupabaseRecordRepository<CompanyProfile>(client, "company-profiles");
+    this.proposalPresentations = new SupabaseRecordRepository<ProposalPresentation>(client, "proposal-presentations");
+    this.accessAccounts = new SupabaseRecordRepository<AccessAccount>(client, "access-accounts");
+    if (authClient) this.accessDirectory = new SupabaseAccessDirectory(client, authClient);
   }
 }
 
@@ -469,5 +500,5 @@ export async function revokeProductionSession(client: ProviderClient, sessionId:
 
 export function createProductionAdapters(config: ProductionProviderConfig): { readonly client: ProviderClient; readonly auth: ServerSessionAdapter; readonly storage: ProductionStorageAdapter } {
   const client = createSupabaseProviderClient(config);
-  return { client, auth: new SupabaseServerSessionAdapter(client, config.sessionCookieName), storage: new SupabaseProductionStorageAdapter(client, config.storageBucket) };
+  return { client, auth: new SupabaseServerSessionAdapter(client, config.sessionCookieName), storage: new SupabaseProductionStorageAdapter(client, config.storageBucket, () => createSupabaseAuthClient(config)) };
 }

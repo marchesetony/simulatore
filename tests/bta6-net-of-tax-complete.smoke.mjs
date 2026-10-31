@@ -53,7 +53,9 @@ try {
   assert.equal(completeA.bta6NetOfTaxCompleteCandidate, true);
   assert.equal(completeA.costScope, "COMMERCIAL_PLUS_REGULATED_NET_OF_TAX_COMPLETE");
   assert.equal(completeA.contractualPassThroughCompleteness, "COMPLETE");
-  assert.equal(completeA.totalCommercialCost.minorUnits, 21000);
+  // Tony (26/10): "le perdite di rete sono sempre presenti". On a bill quote the energy (1.000 kWh x 0,2 = 200 EUR) also pays
+  // the TIS Tabella 4 BT losses (10% = 20 EUR), on top of dispatching 10 EUR: 230 EUR (was 210 before losses were priced).
+  assert.equal(completeA.totalCommercialCost.minorUnits, 23000);
   assert.equal(completeA.totalRegulatedSubsetCost?.minorUnits, completeA.totalCommercialPlusRegulatedSubsetCost?.minorUnits - completeA.totalCommercialCost.minorUnits);
   assert.equal(completeA.components.filter((component) => component.formulaId === "CONTRACTUAL_PASS_THROUGH_ENERGY_RATE_TIMES_KWH").length, 1);
   assert.equal(completeA.contractualPassThroughStates.find((state) => state.kind === "CAPACITY_MARKET")?.state, "RESOLVED_INCLUDED");
@@ -84,8 +86,10 @@ try {
   console.log("BTA6_EXTERNAL_UNRESOLVED_FAILS_COMPLETE=PASS");
 
   const unknownAsos = await calculate("unknown-asos", [pass("DISPATCHING", "INCLUDED_IN_ENERGY_PRICE"), pass("CAPACITY_MARKET", "NOT_APPLICABLE")], context({ asosClass: "UNKNOWN", energyIntensiveStatus: "UNKNOWN" }));
+  // Tony (30/10, Duferco FLEX BUSINESS BTA6): a bill silent on the ASOS class is priced on classe 0. This archive holds only
+  // classe 1, so the regulated part cannot be priced and the quote never shows it as complete.
   assert.equal(unknownAsos.bta6NetOfTaxCompleteCandidate, false);
-  assert.equal(unknownAsos.costScope, "COMMERCIAL_PLUS_REGULATED_PARTIAL");
+  assert.equal(unknownAsos.costScope, "COMMERCIAL_ONLY");
   console.log("BTA6_ASOS_UNKNOWN_STILL_PARTIAL=PASS");
 
   const legacy = await calculate("legacy", undefined);

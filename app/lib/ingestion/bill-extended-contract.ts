@@ -10,7 +10,7 @@ export const BILL_ANALYST_ITEM_CODES = [
   "VAT_TREATMENT_RAW", "VAT_DECLARATION_REFERENCE", "VAT_EVIDENCE_RAW",
   "FISCAL_EVIDENCE_EFFECTIVE_FROM", "FISCAL_EVIDENCE_EFFECTIVE_TO",
   "MIXED_USE_RAW", "MIXED_USE_PERCENTAGES_RAW", "MIXED_USE_EVIDENCE_RAW",
-  "MONTHLY_PROFILE_RAW",
+  "MONTHLY_PROFILE_RAW", "ENERGY_PEAK_KWH", "ENERGY_OFF_PEAK_KWH",
   "BILLING_PERIOD_RAW", "BILL_ISSUE_DATE", "BILL_DUE_DATE", "CONTRACT_START_DATE", "ECONOMIC_CONDITIONS_START_DATE", "ECONOMIC_EXPIRY", "CONTRACT_EXPIRY", "CONTRACT_INDEFINITE", "EARLY_TERMINATION_FEE_PRESENT", "EARLY_TERMINATION_FEE_VALUE",
   "PAYMENT_METHOD", "PAYMENT_REGULARITY", "OUTSTANDING_AMOUNT", "PREVIOUS_UNPAID_EVIDENCE",
   "PUN_SINGLE", "PUN_F1", "PUN_F2", "PUN_F3", "SPREAD", "INDEX_NAME", "PRICE_MECHANISM_RAW", "PRICE_TIME_STRUCTURE_RAW", "PRICE_FORMULA_RAW", "PRICE_F1", "PRICE_F2", "PRICE_F3", "PRICE_F23", "MONORARIO_PRICE", "FIXED_PRICE", "LOSS_FACTOR", "ENERGY_INDEX", "ENERGY_SPREAD", "ENERGY_FIXED_PRICE",
@@ -70,6 +70,42 @@ export function normalizeAnalystItemCode(value: string): BillAnalystItemCode {
   const key = value.trim().toUpperCase().replace(/[^A-Z0-9]+/g, "_").replace(/^_+|_+$/g, "");
   if (BILL_ANALYST_ITEM_CODES.includes(key as BillAnalystItemCode)) return key as BillAnalystItemCode;
   return BILL_ANALYST_CODE_ALIASES[key] ?? "UNKNOWN";
+}
+
+// Tony (31/10, bolletta sintetica BPower "ma che cazzo dici, guarda la bolletta"): the reader names box-dell'offerta facts
+// in its own words (DATA_DECORRENZA_CONDIZIONI, SCADENZA_CONDIZIONI_TECNICO_ECONOMICHE, TIPOLOGIA_OFFERTA, OFFER_TYPE ...).
+// A fact whose code is not in the catalog is placed by the words in its code, so the box is not thrown away as UNKNOWN.
+const B = (words: string) => `(?:^|_)(?:${words})`;
+const STARTS = B("DECORRENZA|EFFECTIVE|DATA_INIZIO|START|INIZIO|VALIDO_DAL|VALIDITA_DAL|DAL");
+const ENDS = B("SCADENZA|SCADE|EXPIRY|EXPIRATION|EXPIRES|END|FINE|VALIDO_AL|VALIDITA_AL");
+const TERMS = B("CONDIZION|ECONOMIC|PREZZ|PRICE|OFFERT|OFFER");
+const FACT_CODE_RULES: readonly (readonly [RegExp, BillAnalystItemCode])[] = [
+  [new RegExp(`${STARTS}.*${TERMS}|${TERMS}.*${STARTS}`), "ECONOMIC_CONDITIONS_START_DATE"],
+  [new RegExp(`${ENDS}.*${TERMS}|${TERMS}.*${ENDS}`), "ECONOMIC_EXPIRY"],
+  [new RegExp(`${ENDS}.*${B("CONTRATT|CONTRACT")}|${B("CONTRATT|CONTRACT")}.*(?:${ENDS}|${B("DURATA|DURATION")})|${B("DURATA|DURATION")}.*${B("CONTRATT|CONTRACT")}`), "CONTRACT_EXPIRY"],
+  [new RegExp(`${B("ATTIVAZIONE|ACTIVATION")}|${B("INIZIO|START")}_(?:DELLA_)?(?:FORNITURA|SUPPLY|CONTRATTO|CONTRACT)`), "CONTRACT_START_DATE"],
+  [/^(?:TIPOLOGIA_(?:DI_|DELL_)?OFFERTA|TIPO_(?:DI_)?OFFERTA|OFFER_TYPE|PRICE_MECHANISM|MECCANISMO_(?:DI_)?PREZZO|PRICING_TYPE)$/, "PRICE_MECHANISM_RAW"],
+  [/^(?:TIPOLOGIA_(?:DI_|DEL_)?PREZZO|TIPO_(?:DI_)?PREZZO|PRICE_TYPE|PRICE_STRUCTURE|PRICE_TIME_STRUCTURE|STRUTTURA_(?:DEL_)?PREZZO)$/, "PRICE_TIME_STRUCTURE_RAW"],
+  [/(?:^|_)FORMULA(?:_|$)/, "PRICE_FORMULA_RAW"],
+  [/^(?:INDICE(?:_DI)?(?:_RIFERIMENTO)?|REFERENCE_INDEX|INDEX|PRICE_INDEX|INDEX_REFERENCE)$/, "INDEX_NAME"],
+];
+const factKey = (value: string) => value.trim().toUpperCase().normalize("NFD").replace(/[̀-ͯ]/g, "").replace(/[^A-Z0-9]+/g, "_").replace(/^_+|_+$/g, "");
+/** A fact code outside the catalog is placed by the words of its code, then of its printed label. */
+export function normalizeAnalystFactCode(value: string, label = ""): BillAnalystItemCode {
+  const code = normalizeAnalystItemCode(value);
+  if (code !== "UNKNOWN") return code;
+  for (const key of [factKey(value), factKey(label)]) {
+    const rule = key ? FACT_CODE_RULES.find(([pattern]) => pattern.test(key)) : undefined;
+    if (rule) return rule[1];
+  }
+  return "UNKNOWN";
+}
+// Offer name and code are core fields, but the second reading often returns them as facts of the box dell'offerta.
+export function analystOfferField(value: string): "offerName" | "offerCode" | null {
+  const key = factKey(value);
+  if (/^(OFFER_CODE|CODICE_OFFERTA|OFFERTA_CODICE|CODICE_DELL_OFFERTA)$/.test(key)) return "offerCode";
+  if (/^(OFFER_NAME|OFFERTA|NOME_OFFERTA|DENOMINAZIONE_OFFERTA|DENOMINAZIONE_COMMERCIALE|DENOMINAZIONE_COMMERCIALE_OFFERTA|DENOMINAZIONE_COMMERCIALE_DELL_OFFERTA|DENOMINAZIONE_DELL_OFFERTA|COMMERCIAL_OFFER_NAME|OFFER|TUA_OFFERTA|LA_TUA_OFFERTA|NOME_COMMERCIALE_OFFERTA)$/.test(key)) return "offerName";
+  return null;
 }
 
 // Structured extraction uses the same server catalog; no catalog is copied into Anthropic JSON Schema.
