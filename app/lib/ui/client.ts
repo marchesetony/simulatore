@@ -128,6 +128,11 @@ const messages: Readonly<Record<string, string>> = {
   COMPARISON_RESPONSE_INVALID: "Risposta confronto non valida",
   EXPORT_CONTENT_TYPE_INVALID: "Tipo contenuto export non valido",
   EXPORT_FILENAME_INVALID: "Nome file export non valido",
+  SOURCE_BILL_VOLTAGE_MISMATCH: "La tensione della bolletta (BT o MT) non coincide con quella usata per il calcolo: controlla la tensione in \"Dati letti\" e riprova, oppure scegli tu la CTE da usare.",
+  SOURCE_BILL_CUSTOMER_CATEGORY_MISMATCH: "Il tipo di cliente (Consumer o Business) non coincide con quello letto in bolletta: controllalo in \"Dati letti\" e riprova.",
+  SOURCE_BILL_RESIDENCY_MISMATCH: "Residente o non residente non coincide con quanto letto in bolletta: controllalo in \"Dati letti\" e riprova.",
+  SOURCE_BILL_VECTOR_MISMATCH: "La bolletta è di un'altra fornitura (luce o gas) rispetto alla CTE scelta.",
+  SOURCE_BILL_NOT_APPROVED: "La bolletta non è ancora confermata: torna a \"Dati letti\" e premi \"Cerca le CTE utilizzabili\".",
   SOURCE_BILL_TOO_OLD: "La bolletta si riferisce a un periodo di fornitura di oltre 4 mesi fa: carica una bolletta più recente.",
   MARKET_OFFICIAL_DATA_READ_ONLY: "PUN e PSV sono dati ufficiali: arrivano in automatico da GME e ARERA e non si modificano a mano.",
   ACCESS_DENIED: "Non hai i permessi per questa operazione.",
@@ -159,7 +164,8 @@ function safeCorrelation(value: unknown): string | null {
 
 function messageFor(code: string): string {
   if (!messages[code] && code.startsWith("SOURCE_BILL_CONTRACT_")) return `Un dato letto dalla bolletta non è valido (${code.slice("SOURCE_BILL_CONTRACT_".length)}): controllalo in "Dati letti" e riprova.`;
-  return messages[code] ?? `Operazione non disponibile. Codice ${code}`;
+  // Tony (31/10): "deve scrivere in italiano". An unknown code still gets an Italian sentence; the code stays for support.
+  return messages[code] ?? `Operazione non riuscita (codice ${code}): riprova, e se si ripete scegli tu la CTE da usare o segnala il codice.`;
 }
 
 function errorFrom(value: unknown, fallback: string): UiApiError {

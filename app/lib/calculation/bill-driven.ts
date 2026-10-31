@@ -297,7 +297,9 @@ function buildContext(document: BillDocument, version: BillVersion): BillDrivenS
   const contractedPower = profile ? parsePower(profile.powerCommitted) : null;
   const availablePower = profile ? parsePower(profile.powerAvailable) : null;
   const inferredLowVoltage = contract.vector === "EE" && (customerType === "RESIDENTIAL" || profile?.supplyUseCategory.normalizedValue === "DOMESTIC" || ((availablePower ?? contractedPower) !== null && (availablePower ?? contractedPower)! > 0 && (availablePower ?? contractedPower)! <= 30));
-  const voltageLevel: VoltageLevel | null = contract.vector === "EE" ? contract.supply.voltageLevel ?? supplyContext?.voltageLevel ?? (inferredLowVoltage ? "LV" : null) : null;
+  // Tony (31/10, SOURCE_BILL_VOLTAGE_MISMATCH): the calculation checks the request against the trusted supply context of the
+  // bill, so when that context has a voltage it is the one the offers are chosen and calculated on.
+  const voltageLevel: VoltageLevel | null = contract.vector === "EE" ? supplyContext?.voltageLevel ?? contract.supply.voltageLevel ?? (inferredLowVoltage ? "LV" : null) : null;
   const missing: string[] = [];
   if (!customerType) missing.push("customerType");
   if (!period.periodStart || !period.periodEnd) missing.push("billingPeriod");

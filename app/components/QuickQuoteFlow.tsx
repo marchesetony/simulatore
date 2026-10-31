@@ -27,7 +27,7 @@ type Unlisted = { readonly archiveId: string; readonly supplier: string; readonl
 type Candidate = { readonly archiveId: string; readonly cteVersionId: string | null; readonly supplier: string; readonly offer: { readonly name: string; readonly code: string }; readonly validity: { readonly periodStart: string; readonly periodEnd: string }; readonly finalStatus?: string; readonly calculationReadiness: string; readonly compatibilityReason?: string; readonly reasonCodes?: readonly string[]; readonly overrideRequestable?: boolean; readonly eligibilityOverrideId?: string; readonly scope?: { readonly customer: string; readonly voltage: readonly string[]; readonly consumption: string | null; readonly uses: readonly string[] }; readonly pricingType?: "INDEXED" | "FIXED" | null; readonly pricingReference?: string | null; readonly terms?: Terms };
 type Terms = { readonly fixedPrice: number | null; readonly spread: number | null; readonly priceUnit: "EUR_PER_KWH" | "EUR_PER_SMC"; readonly monthlyFixedFee: number | null };
 type Offer = { readonly rank: number; readonly calculation: CalculationModel; readonly supplier: string; readonly offerName: string; readonly receipt: QuoteReceipt; readonly candidate: Candidate };
-type Quote = { readonly bill: BillDocumentModel; readonly context: Context; readonly comparison: ComparisonModel; readonly offers: readonly Offer[]; readonly candidates?: readonly Candidate[]; readonly unlisted?: readonly Unlisted[]; readonly canAuthorizeCte?: boolean };
+type Quote = { readonly bill: BillDocumentModel; readonly context: Context; readonly comparison: ComparisonModel; readonly offers: readonly Offer[]; readonly candidates?: readonly Candidate[]; readonly unlisted?: readonly Unlisted[]; readonly canAuthorizeCte?: boolean; readonly failure?: string };
 
 // The seven fields the server needs confirmed before a bill can be used.
 const FIELDS: readonly { readonly name: string; readonly label: string }[] = [
@@ -382,6 +382,16 @@ function AuthorizeCte({ onAuthorize }: { readonly onAuthorize: (reason: string) 
   const [open, setOpen] = useState(false); const [reason, setReason] = useState(""); const [busy, setBusy] = useState(false); const [failure, setFailure] = useState<string>();
   if (!open) return <button className="button secondary compact" type="button" onClick={() => setOpen(true)}>Autorizza per questa bolletta</button>;
   return <span className="quote-authorize"><input aria-label="Motivo dell'autorizzazione" placeholder="Motivo (es. contratto già firmato con questa offerta)" value={reason} maxLength={500} onChange={(event) => setReason(event.target.value)} disabled={busy} /><button className="button primary compact" type="button" disabled={busy || !reason.trim()} onClick={() => { setBusy(true); setFailure(undefined); void onAuthorize(reason.trim()).catch((cause) => { setFailure(message(cause)); setBusy(false); }); }}>{busy ? "Autorizzazione" : "Conferma"}</button><button className="button secondary compact" type="button" disabled={busy} onClick={() => setOpen(false)}>Annulla</button>{failure ? <small className="negative">{failure}</small> : null}</span>;
+}
+
+/** The CTEs the agent can calculate with when the automatic choice failed, one button each (Tony, 31/10). */
+function CtePicker({ quote, onPick, disabled }: { readonly quote: Quote; readonly onPick: (archiveId: string) => void; readonly disabled: boolean }): ReactNode {
+  const usable = (quote.candidates ?? []).filter((item) => (item.finalStatus === "ELIGIBLE" || item.finalStatus === "ELIGIBLE_BY_OVERRIDE") && item.calculationReadiness === "READY" && Boolean(item.cteVersionId));
+  return <div className="quote-cte-picker" role="alert">
+    <p className="negative">{quote.failure}</p>
+    {usable.length ? <><p className="muted">Scegli quale CTE usare per questa bolletta:</p><div className="button-row">{usable.map((item) => <button key={item.archiveId} className="button secondary" type="button" disabled={disabled} onClick={() => onPick(item.archiveId)}>{item.supplier} · {item.offer.name || item.offer.code}</button>)}</div></> : <p className="muted">Nessuna CTE assegnata è utilizzabile per questa bolletta: chiedi all'amministratore di assegnartene una o di autorizzarla qui sotto.</p>}
+    <NoOfferReasons quote={quote} onAuthorize={undefined} />
+  </div>;
 }
 
 function NoOfferReasons({ quote, shown = [], onAuthorize }: { readonly quote: Quote; readonly shown?: readonly string[]; readonly onAuthorize?: (archiveId: string, reason: string) => Promise<void> }): ReactNode {
@@ -751,6 +761,30 @@ export default function QuickQuoteFlow({ readonly }: { readonly readonly: boolea
     finally { setDeleting(false); }
   };
 
+  type Prepared = { readonly context: Context; readonly candidates: readonly Candidate[]; readonly unlisted?: readonly Unlisted[]; readonly canAuthorizeCte?: boolean };
+  const emptyComparison = (context: Context): ComparisonModel => ({ comparisonId: "", fingerprint: "", tenantId: "", vector: context.vector, results: [], excludedOffers: [], ranking: [], warnings: [] });
+  // Tony (31/10, SOURCE_BILL_VOLTAGE_MISMATCH: "deve scrivere in italiano se non ha la cte adeguata ed eventualmente chiedere
+  // quale usare, aggiungi qualche tasto per selezionare"): a failed calculation keeps the bill and its CTEs on screen, says why
+  // in Italian and lets the agent pick the CTE to calculate with.
+  const compareWith = async (bill: BillDocumentModel, prepared: Prepared, anchor: Candidate | null) => {
+    const base = { bill, context: prepared.context, candidates: prepared.candidates, unlisted: prepared.unlisted ?? [], canAuthorizeCte: prepared.canAuthorizeCte === true };
+    if (!anchor) { setQuote({ ...base, comparison: emptyComparison(prepared.context), offers: [] }); return; }
+    try {
+      const comparison = (await requestJson<{ readonly result: ComparisonModel }>("/api/comparison", { method: "POST", body: JSON.stringify({ sourceBill: { billId: bill.id, version: prepared.context.billVersionId }, cteId: anchor.archiveId, cteVersionId: anchor.cteVersionId, ...(anchor.finalStatus === "ELIGIBLE_BY_OVERRIDE" && anchor.eligibilityOverrideId ? { eligibilityOverrideId: anchor.eligibilityOverrideId } : {}) }) })).result;
+      const offers = offersFrom(bill, prepared.context, prepared.candidates, comparison);
+      setQuote({ ...base, comparison, offers });
+      setSelectedId(offers[0]?.calculation.calculationId ?? null);
+    } catch (cause) {
+      setQuote({ ...base, comparison: emptyComparison(prepared.context), offers: [], failure: `Il calcolo con ${anchor.supplier} · ${anchor.offer.name || anchor.offer.code} non è riuscito. ${message(cause)}` });
+    }
+  };
+  const pickCte = async (archiveId: string) => {
+    if (!quote || pending) return;
+    const anchor = (quote.candidates ?? []).find((item) => item.archiveId === archiveId) ?? null;
+    setPending("offers"); setError(undefined); setProposal(null);
+    try { await compareWith(quote.bill, { context: quote.context, candidates: quote.candidates ?? [], unlisted: quote.unlisted, canAuthorizeCte: quote.canAuthorizeCte }, anchor); } finally { setPending(undefined); }
+  };
+
   const loadOffers = async (billId: string) => {
     setPending("offers"); setError(undefined); setQuote(null); setProposal(null); setStep("offers");
     try {
@@ -759,11 +793,7 @@ export default function QuickQuoteFlow({ readonly }: { readonly readonly: boolea
       // A CTE authorized for this bill can anchor the comparison when no other CTE fits.
       const ready = (item: Candidate) => item.calculationReadiness === "READY" && Boolean(item.cteVersionId);
       const anchor = prepared.candidates.find((item) => item.finalStatus === "ELIGIBLE" && ready(item)) ?? prepared.candidates.find((item) => item.finalStatus === "ELIGIBLE_BY_OVERRIDE" && item.eligibilityOverrideId && ready(item));
-      if (!anchor) { setQuote({ bill, context: prepared.context, comparison: { comparisonId: "", fingerprint: "", tenantId: "", vector: prepared.context.vector, results: [], excludedOffers: [], ranking: [], warnings: [] }, offers: [], candidates: prepared.candidates, unlisted: prepared.unlisted ?? [], canAuthorizeCte: prepared.canAuthorizeCte === true }); return; }
-      const comparison = (await requestJson<{ readonly result: ComparisonModel }>("/api/comparison", { method: "POST", body: JSON.stringify({ sourceBill: { billId, version: prepared.context.billVersionId }, cteId: anchor.archiveId, cteVersionId: anchor.cteVersionId, ...(anchor.finalStatus === "ELIGIBLE_BY_OVERRIDE" && anchor.eligibilityOverrideId ? { eligibilityOverrideId: anchor.eligibilityOverrideId } : {}) }) })).result;
-      const offers = offersFrom(bill, prepared.context, prepared.candidates, comparison);
-      setQuote({ bill, context: prepared.context, comparison, offers, candidates: prepared.candidates, unlisted: prepared.unlisted ?? [], canAuthorizeCte: prepared.canAuthorizeCte === true });
-      setSelectedId(offers[0]?.calculation.calculationId ?? null);
+      await compareWith(bill, prepared, anchor ?? null);
     } catch (cause) { setError(cause instanceof Error && cause.message.startsWith("Dalla bolletta") ? cause.message : message(cause)); } finally { setPending(undefined); }
   };
 
@@ -887,7 +917,8 @@ export default function QuickQuoteFlow({ readonly }: { readonly readonly: boolea
           <small>Valida fino al {date(offer.receipt.validUntil)}</small>
         </button>)}</div> : null}
         {quote.offers.length ? <NoOfferReasons quote={quote} shown={quote.offers.map((offer) => offer.candidate.archiveId)} onAuthorize={readonly ? undefined : authorizeCte} /> : null}
-        {quote.offers.length ? null : <><EmptyState title="Nessuna offerta utilizzabile" detail="Nessuna CTE a te assegnata è adatta a questa bolletta. Chiedi all'amministratore di assegnartene una." /><NoOfferReasons quote={quote} onAuthorize={readonly ? undefined : authorizeCte} /></>}
+        {quote.failure ? <CtePicker quote={quote} onPick={(archiveId) => void pickCte(archiveId)} disabled={readonly || Boolean(pending)} /> : null}
+        {quote.offers.length || quote.failure ? null : <><EmptyState title="Nessuna offerta utilizzabile" detail="Nessuna CTE a te assegnata è adatta a questa bolletta. Chiedi all'amministratore di assegnartene una." /><NoOfferReasons quote={quote} onAuthorize={readonly ? undefined : authorizeCte} /></>}
       </section>
       {selected ? <><Receipt offer={selected} today={today} business={quote.context.customerType === "NON_RESIDENTIAL"} context={quote.context} bill={quote.bill} onPresentation={keepPresentation} /><div className="button-row"><button className="button primary" type="button" onClick={() => void saveProposal()} disabled={readonly || Boolean(pending)}>{pending === "proposal" ? "Preparazione" : "Scarica la proposta in PDF"}</button>{proposal ? <span className="muted" role="status">Proposta salvata in Proposte.</span> : null}</div></> : null}
     </> : null : null}
