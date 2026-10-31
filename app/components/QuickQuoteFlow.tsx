@@ -453,6 +453,9 @@ function costLines(calculation: CalculationModel): readonly CostLine[] {
         const unit = String(inputs.feeUnit ?? "");
         const quantity = num(inputs.basisQuantity) ?? num(inputs.basisMonths);
         const rate = num(inputs.feeRate);
+        // Tony (31/10): "Quote fisse 0,08 mesi · 156,00 €/POD al mese" read as nonsense. A yearly fee per POD is shown as the
+        // months it covers and its monthly amount (156 €/POD/anno = 13,00 €/mese).
+        if (unit === "EUR_PER_POD" && inputs.feePeriod === "YEAR" && quantity !== null && rate !== null) return { ...base, label: component.label, quantity: `${QUANTITY.format(Math.round(quantity * 12 * 100) / 100)} mesi`, rate: `${CENTS.format(rate / 12)} €/mese (${CENTS.format(rate)} €/POD all'anno)` };
         const label = component.formulaId.startsWith("CONTRACTUAL_PASS_THROUGH") ? `${inputs.kind === "DISPATCHING" ? "Dispacciamento" : inputs.kind === "CAPACITY_MARKET" ? "Mercato della capacità" : "Altri corrispettivi"} (da CTE)` : component.formulaId.startsWith("IMBALANCE") ? `Sbilanciamento · ${component.label}` : component.label;
         return { ...base, label, quantity: quantity === null ? "—" : `${QUANTITY.format(quantity)} ${BASIS_UNIT[unit] ?? (component.formulaId.endsWith("MONTHS") ? "mesi" : "")}`.trim(), rate: rate === null ? "—" : `${unit === "EUR_PER_KWH" || unit === "EUR_PER_SMC" ? RATE.format(rate) : CENTS.format(rate)} ${FEE_UNIT[unit] ?? "€"}` };
       }
@@ -496,7 +499,8 @@ function CostDetail({ offer, open }: { readonly offer: Offer; readonly open: boo
         <tr className="quote-cost-group"><th scope="rowgroup" colSpan={3}>{group.title}</th><td>{euro(group.lines.reduce((total, line) => total + line.amount, 0))}</td></tr>
         {group.lines.map((line) => <tr key={line.key}><th scope="row">{line.label}</th><td>{line.quantity}</td><td>{line.rate}</td><td>{euro(line.amount)}</td></tr>)}
       </tbody>)}
-      <tfoot><tr><th scope="row" colSpan={3}>Totale spesa per la materia energia (nuova offerta)</th><td>{euro(offer.calculation.totalCommercialCost.amount)}</td></tr></tfoot>
+      {/* Tony (31/10): the footer said 113,77 € under groups worth 152,11 €; it is the sum of every line above. */}
+      <tfoot><tr><th scope="row" colSpan={3}>Totale nuova offerta (imposte escluse)</th><td>{euro(groups.reduce((total, group) => total + group.lines.reduce((sum, line) => sum + line.amount, 0), 0))}</td></tr></tfoot>
     </table></div>
     <p className="muted quote-note">Costo medio della materia energia: {RATE.format(offer.calculation.unitCost.amount)} {offer.calculation.unitCost.unit === "EUR_PER_SMC" ? "€/Smc" : "€/kWh"}. Imposte escluse.</p>
   </details>;
@@ -615,14 +619,18 @@ function Receipt({ offer: quoted, today, business, context, bill }: { readonly o
   const left = daysUntil(receipt.validUntil, today);
   const saving = receipt.savings ?? 0;
   const currentOffer = billOfferName(bill, context);
+  // Tony (31/10, "come fa a costare meno con la stessa cte?"): with the CTE the bill was issued on there is no saving to sell;
+  // the gap is what the bill charges beyond (or below) its own CTE.
+  const same = isSameOffer({ billSupplier: context.currentSupplier, billOffer: currentOffer, offerSupplier: offer.supplier, offerCode: offer.calculation.sourceCte.offerCode, offerName: offer.offerName });
+  const headline = same ? (saving >= 0 ? "Stessa CTE della bolletta: la bolletta addebita più di quanto prevede la CTE" : "Stessa CTE della bolletta: la bolletta addebita meno di quanto prevede la CTE") : saving >= 0 ? "Risparmio sulla bolletta caricata" : "Costo in più sulla bolletta caricata";
   return <section className="ui-card quote-receipt" aria-label="Scontrino dell'energia">
     <p className="eyebrow">SCONTRINO DELL&apos;ENERGIA</p>
     <h3>{offer.supplier} · {offer.offerName}</h3>
     {receipt.status === "COMPLETE" ? <div className={saving >= 0 ? "quote-saving" : "quote-saving negative"}>
-      <span>{saving >= 0 ? "Risparmio sulla bolletta caricata" : "Costo in più sulla bolletta caricata"}</span>
+      <span>{headline}</span>
       <strong>{euro(Math.abs(saving))}{receipt.savingsPercent !== null ? ` (${PERCENT.format(Math.abs(receipt.savingsPercent))}%)` : ""}</strong>
     </div> : null}
-    {annualSaving !== null && basis ? <div className={annualSaving >= 0 ? "quote-saving annual" : "quote-saving annual negative"}>
+    {annualSaving !== null && basis && !same ? <div className={annualSaving >= 0 ? "quote-saving annual" : "quote-saving annual negative"}>
       <span>{annualSaving >= 0 ? "Risparmio annuo previsto" : "Costo in più annuo previsto"}<small>Simulato su 12 mesi con {amount(basis.annual, unit)} di consumo annuo{basis.estimated ? " stimato: media mensile della bolletta × 12" : " letto in bolletta"}</small>
         {/* Annual saving in euro and in percent with both annual costs, as the scheda sintetica's spesa annua (Codice art. 19; Tony, 29/10). */}
         {annualCurrent ? <small>Spesa annua attuale {euro(annualCurrent)} · con la nuova offerta {euro(annualCurrent - annualSaving)}{receipt.taxesIncluded ? " (imposte comprese)" : " (imposte escluse)"}</small> : null}</span>
@@ -828,7 +836,7 @@ export default function QuickQuoteFlow({ readonly }: { readonly readonly: boolea
           {offer.candidate.scope ? <small className="quote-offer-scope">Per {offer.candidate.scope.customer}{offer.candidate.scope.voltage.length ? ` · ${offer.candidate.scope.voltage.map((level) => level === "LV" ? "BT" : level === "MV" ? "MT" : level === "HV" ? "AT" : level).join("/")}` : ""}{offer.candidate.scope.consumption ? ` · consumo ${offer.candidate.scope.consumption}` : ""}</small> : null}
           <span className="quote-offer-total">{euro(offer.receipt.offerTotal ?? offer.receipt.rows[0].offer)}</span>
           {offer.receipt.savingsPercent !== null ? <small className={offer.receipt.savingsPercent >= 0 ? "positive" : "negative"}>{offer.receipt.savingsPercent >= 0 ? "Risparmio" : "Più cara"} {PERCENT.format(Math.abs(offer.receipt.savingsPercent))}%</small> : null}
-          {(() => { const projection = annualProjection(offer, quote.context, quote.bill); return projection ? <small className={projection.saving >= 0 ? "positive" : "negative"}>{projection.saving >= 0 ? "Risparmio annuo previsto" : "Costo in più annuo"} {euro(Math.abs(projection.saving))}</small> : null; })()}
+          {(() => { if (isSameOffer({ billSupplier: quote.context.currentSupplier, billOffer: billOfferName(quote.bill, quote.context), offerSupplier: offer.supplier, offerCode: offer.calculation.sourceCte.offerCode, offerName: offer.offerName })) return <small>Stessa CTE della bolletta: verifica di fatturazione</small>; const projection = annualProjection(offer, quote.context, quote.bill); return projection ? <small className={projection.saving >= 0 ? "positive" : "negative"}>{projection.saving >= 0 ? "Risparmio annuo previsto" : "Costo in più annuo"} {euro(Math.abs(projection.saving))}</small> : null; })()}
           <small>Valida fino al {date(offer.receipt.validUntil)}</small>
         </button>)}</div> : null}
         {quote.offers.length ? <NoOfferReasons quote={quote} shown={quote.offers.map((offer) => offer.candidate.archiveId)} onAuthorize={readonly ? undefined : authorizeCte} /> : null}
