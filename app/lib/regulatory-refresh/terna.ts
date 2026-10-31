@@ -36,6 +36,12 @@ export interface TernaCapacityRefreshSummary {
 
 const quarterLabel = (quarter: TernaQuarter): string => `${quarter.year}Q${quarter.quarter}`;
 
+// Tony (31/10, "cazzo, non posso non avere il valore in archivio, non esiste"): a bill of the past quarters (bills up to 4
+// months old are simulated) needs that quarter's Terna values, so the refresh also takes the two previous quarters. A past
+// quarter that cannot be read is reported on its line but never fails the refresh of the quarter in force.
+function pastQuarters(now: string): readonly TernaQuarter[] { return [ternaQuarterFor(now, -2), ternaQuarterFor(now, -1)]; }
+function isPast(label: string, past: readonly TernaQuarter[]): boolean { return past.some((quarter) => quarterLabel(quarter) === label); }
+
 /**
  * Keeps Terna's capacity-market charges current: the quarter in force must be
  * published, the next one is taken as soon as Terna publishes it.
@@ -45,9 +51,10 @@ export async function runTernaCapacityRefresh(input: { readonly tenantId: string
   const runId = input.runId ?? `terna_${createHash("sha256").update(`${input.tenantId}|${input.trigger ?? "MANUAL"}|${now}`).digest("hex").slice(0, 40)}`;
   const current = ternaQuarterFor(now);
   const next = ternaQuarterFor(now, 1);
+  const past = pastQuarters(now);
   const reader = input.sourceReader ?? createTernaCapacitySourceReader();
   let loaded: Awaited<ReturnType<TernaCapacitySourceReader["load"]>>;
-  try { loaded = await reader.load({ tenantId: input.tenantId, retrievedAt: now, quarters: [current, next] }); }
+  try { loaded = await reader.load({ tenantId: input.tenantId, retrievedAt: now, quarters: [...past, current, next] }); }
   catch (error) {
     const message = error instanceof Error ? error.message : "TERNA_CAPACITY_SOURCE_FAILED";
     return { status: "FAILED", quarters: [current, next].map((quarter) => ({ quarter: quarterLabel(quarter), status: "FAILED" as const, error: message })), createdCount: 0, unchangedCount: 0, replacedCount: 0, errors: [message] };
@@ -62,7 +69,7 @@ export async function runTernaCapacityRefresh(input: { readonly tenantId: string
       // Terna publishes the next quarter shortly before it starts: its absence is expected, not a failure.
       const notPublished = entry.error === "TERNA_CAPACITY_DOCUMENT_NOT_PUBLISHED";
       quarters.push({ quarter: label, status: notPublished ? "NOT_PUBLISHED" : "FAILED", error: entry.error });
-      if (isCurrent || !notPublished) errors.push(`${label}:${entry.error}`);
+      if (isCurrent || (!notPublished && !isPast(label, past))) errors.push(`${label}:${entry.error}`);
       continue;
     }
     const values: Record<string, number> = {};
@@ -108,9 +115,9 @@ export function createTernaTideSourceReader(input: { readonly fetcher?: TernaFet
 export async function runTernaDispatchingRefresh(input: { readonly tenantId: string; readonly tideSourceReader?: TernaTideSourceReader } & RegulatoryRefreshDependencies): Promise<TernaCapacityRefreshSummary> {
   const now = new Date(input.now ?? new Date().toISOString()).toISOString();
   const runId = input.runId ?? `terna_tide_${createHash("sha256").update(`${input.tenantId}|${input.trigger ?? "MANUAL"}|${now}`).digest("hex").slice(0, 36)}`;
-  const current = ternaQuarterFor(now); const next = ternaQuarterFor(now, 1);
+  const current = ternaQuarterFor(now); const next = ternaQuarterFor(now, 1); const past = pastQuarters(now);
   let loaded: Awaited<ReturnType<TernaTideSourceReader["load"]>>;
-  try { loaded = await (input.tideSourceReader ?? createTernaTideSourceReader()).load({ tenantId: input.tenantId, retrievedAt: now, quarters: [current, next] }); }
+  try { loaded = await (input.tideSourceReader ?? createTernaTideSourceReader()).load({ tenantId: input.tenantId, retrievedAt: now, quarters: [...past, current, next] }); }
   catch (error) {
     const message = error instanceof Error ? error.message : "TERNA_TIDE_SOURCE_FAILED";
     return { status: "FAILED", quarters: [current, next].map((quarter) => ({ quarter: quarterLabel(quarter), status: "FAILED" as const, error: message })), createdCount: 0, unchangedCount: 0, replacedCount: 0, errors: [message] };
@@ -122,7 +129,7 @@ export async function runTernaDispatchingRefresh(input: { readonly tenantId: str
     if ("error" in entry) {
       const notPublished = entry.error === "TERNA_TIDE_DOCUMENT_NOT_PUBLISHED";
       quarters.push({ quarter: label, status: notPublished ? "NOT_PUBLISHED" : "FAILED", error: entry.error });
-      if (label === quarterLabel(current) || !notPublished) errors.push(`${label}:${entry.error}`);
+      if (label === quarterLabel(current) || (!notPublished && !isPast(label, past))) errors.push(`${label}:${entry.error}`);
       continue;
     }
     try {

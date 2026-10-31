@@ -64,8 +64,11 @@ const repositories = { regulatoryValues: new MemoryRepository(), approvalDomains
 const site = ternaSite();
 const first = await runTernaCapacityRefresh({ tenantId, repositories, sourceReader: createTernaCapacitySourceReader({ fetcher: site.fetcher }), now: "2026-10-19T03:15:00.000Z", runId: "terna_first", trigger: "TEST" });
 assert.equal(first.status, "SUCCESS", JSON.stringify(first));
-assert.deepEqual(first.quarters.map((item) => [item.quarter, item.status]), [["2026Q4", "IMPORTED"], ["2027Q1", "NOT_PUBLISHED"]]);
-assert.deepEqual(first.quarters[0].values, { CAPACITY_MARKET_OFF_PEAK: 4.021, CAPACITY_MARKET_PEAK: 18.25 });
+// Tony (31/10, "non posso non avere il valore in archivio"): the two previous quarters are read too, for bills of those
+// months; here 3Q2026 is listed but its PDF is missing and 2Q2026 is not listed: reported on their lines, no failure.
+assert.deepEqual(first.quarters.map((item) => [item.quarter, item.status]), [["2026Q2", "NOT_PUBLISHED"], ["2026Q3", "FAILED"], ["2026Q4", "IMPORTED"], ["2027Q1", "NOT_PUBLISHED"]]);
+const firstCurrent = first.quarters.find((item) => item.quarter === "2026Q4");
+assert.deepEqual(firstCurrent.values, { CAPACITY_MARKET_OFF_PEAK: 4.021, CAPACITY_MARKET_PEAK: 18.25 });
 assert.equal(first.createdCount, 4, "peak and off-peak for resident and BTA6 customers");
 const stored = (await repositories.regulatoryValues.list(tenantId)).map((record) => record.payload);
 const offPeak = stored.find((record) => record.componentCode === "CAPACITY_MARKET_OFF_PEAK" && record.customerScope === "DOMESTIC_RESIDENT_BT");
@@ -82,7 +85,7 @@ assert.equal(again.status, "SUCCESS"); assert.equal(again.createdCount, 0); asse
 
 // 3. Once Terna publishes the next quarter it is taken too.
 const next = await runTernaCapacityRefresh({ tenantId, repositories, sourceReader: createTernaCapacitySourceReader({ fetcher: ternaSite({ publishQ1: true }).fetcher }), now: "2026-12-21T03:15:00.000Z", runId: "terna_next", trigger: "TEST" });
-assert.equal(next.status, "SUCCESS"); assert.deepEqual(next.quarters.map((item) => item.status), ["IMPORTED", "IMPORTED"]);
+assert.equal(next.status, "SUCCESS"); assert.deepEqual(next.quarters.filter((item) => item.quarter >= "2026Q4").map((item) => item.status), ["IMPORTED", "IMPORTED"]);
 assert.ok((await repositories.regulatoryValues.list(tenantId)).some((record) => record.payload.effectiveFrom === "2027-01-01" && record.payload.normalizedValue === 0.0039));
 
 // 4. A document that cannot be read fails loudly and leaves the approved value alone.
