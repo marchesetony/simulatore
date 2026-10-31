@@ -390,9 +390,12 @@ export function buildQuoteReceipt(input: QuoteReceiptInput): QuoteReceipt {
   // taxes are then the excise only, and the bill's IVA is the rate on the same taxable amount, as for the new offer.
   const vatPrinted = (input.analysis?.components ?? []).some((line) => line.classification === "IVA");
   const exciseOnly = !vatPrinted && exciseLines !== null && totals?.taxTotal !== null && totals?.taxTotal !== undefined && Math.abs(totals.taxTotal - exciseLines) < 0.01;
+  // Tony (31/10, bolletta BPower con "Bonus sociale disagio economico -12,00 €"): "il bonus non va considerato". The bonus is
+  // never a cost of the supply; the bill's IVA, charged after the bonus, is brought back to the IVA on the supply alone.
+  const bonusTotal = sumKnown((input.analysis?.components ?? []).filter((line) => line.classification === "BONUS" && !line.aggregate).map((line) => amountOf(line.amount))) ?? 0;
   const currentTaxes = totals?.taxTotal === null || totals?.taxTotal === undefined ? null : exciseOnly && currentEnergy !== null
     ? cents(totals.taxTotal + (currentEnergy + (network ?? 0) + (system ?? 0) + totals.taxTotal) * vatRate)
-    : totals.taxTotal;
+    : vatPrinted ? cents(totals.taxTotal - bonusTotal * vatRate) : totals.taxTotal;
   const taxesIncluded = currentTaxes !== null && currentEnergy !== null;
   // Without excise lines on the bill, excise is what is left of the taxes once VAT at the bill's rate is taken out.
   const excise = !taxesIncluded ? null : exciseLines ?? Math.max(0, cents((currentTaxes - (currentEnergy + (network ?? 0) + (system ?? 0)) * vatRate) / (1 + vatRate)));
