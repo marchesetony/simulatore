@@ -422,15 +422,42 @@ function costLines(calculation: CalculationModel): readonly CostLine[] {
   });
 }
 
+// Tony (31/10): "dovresti raggruppare per fisse e variabili e sotto le voci ARIM, ASOS, UC3, UC6". The ARERA lines are split
+// into fixed quotas (€/POD, €/kW) and variable ones (€/kWh), each with transport first, then UC3, UC6, ARIM and ASOS.
+const REGULATED_ORDER = ["NETWORK", "METERING", "TRANSMISSION", "UC3", "UC6", "ARIM", "ASOS"] as const;
+function regulatedRank(code: string): number {
+  const index = REGULATED_ORDER.findIndex((prefix) => code.startsWith(prefix));
+  return index < 0 ? 0 : index;
+}
+function costGroups(calculation: CalculationModel, lines: readonly CostLine[]): readonly { readonly title: string; readonly lines: readonly CostLine[] }[] {
+  const seller: CostLine[] = []; const fixed: { line: CostLine; rank: number }[] = []; const variable: { line: CostLine; rank: number }[] = [];
+  calculation.components.forEach((component, index) => {
+    const line = lines[index];
+    const code = String(component.formulaInputs?.componentCode ?? "");
+    if (!component.category.startsWith("REGULATED_") || code === "DISPATCHING_TOTAL") { seller.push(line); return; }
+    (component.category === "REGULATED_ENERGY" ? variable : fixed).push({ line, rank: regulatedRank(code) });
+  });
+  const sorted = (items: readonly { line: CostLine; rank: number }[]) => [...items].sort((a, b) => a.rank - b.rank).map((item) => item.line);
+  return [
+    { title: "Spesa per la vendita (CTE)", lines: seller },
+    { title: "Rete e oneri ARERA · quote fisse (€/POD e €/kW)", lines: sorted(fixed) },
+    { title: "Rete e oneri ARERA · quote variabili (€/kWh)", lines: sorted(variable) },
+  ].filter((group) => group.lines.length > 0);
+}
+
 function CostDetail({ offer, open }: { readonly offer: Offer; readonly open: boolean }): ReactNode {
   const lines = costLines(offer.calculation);
   if (!lines.length) return null;
+  const groups = costGroups(offer.calculation, lines);
   return <details className="quote-detail" open={open}>
     <summary>Dettaglio dei costi della nuova offerta</summary>
     <p className="muted">Ogni voce è calcolata sugli stessi consumi e sullo stesso periodo della bolletta, con i prezzi della CTE {offer.offerName}.</p>
     <div className="responsive-table"><table>
       <thead><tr><th scope="col">Voce</th><th scope="col">Quantità</th><th scope="col">Prezzo unitario</th><th scope="col">Importo</th></tr></thead>
-      <tbody>{lines.map((line) => <tr key={line.key}><th scope="row">{line.label}</th><td>{line.quantity}</td><td>{line.rate}</td><td>{euro(line.amount)}</td></tr>)}</tbody>
+      {groups.map((group) => <tbody key={group.title}>
+        <tr className="quote-cost-group"><th scope="rowgroup" colSpan={3}>{group.title}</th><td>{euro(group.lines.reduce((total, line) => total + line.amount, 0))}</td></tr>
+        {group.lines.map((line) => <tr key={line.key}><th scope="row">{line.label}</th><td>{line.quantity}</td><td>{line.rate}</td><td>{euro(line.amount)}</td></tr>)}
+      </tbody>)}
       <tfoot><tr><th scope="row" colSpan={3}>Totale spesa per la materia energia (nuova offerta)</th><td>{euro(offer.calculation.totalCommercialCost.amount)}</td></tr></tfoot>
     </table></div>
     <p className="muted quote-note">Costo medio della materia energia: {RATE.format(offer.calculation.unitCost.amount)} {offer.calculation.unitCost.unit === "EUR_PER_SMC" ? "€/Smc" : "€/kWh"}. Imposte escluse.</p>

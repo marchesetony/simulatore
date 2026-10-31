@@ -12,3 +12,9 @@ assert.match(flow, /Valori ARERA del periodo \{EURO\.format\(arera\)\}: la bolle
 assert.doesNotMatch(flow, /La bolletta non corrisponde ai valori ARERA \(\{EURO/);
 assert.match(flow, /\["Scadenza contratto", billExpiry\(bill\)/);
 console.log("QUICK_QUOTE_BILL_SEARCH_EXPIRY=PASS");
+
+// Tony (31/10): "dovresti raggruppare per fisse e variabili e sotto le voci arin, asos, ac3, ac6".
+assert.match(flow, /Rete e oneri ARERA · quote fisse/);
+assert.match(flow, /Rete e oneri ARERA · quote variabili/);
+assert.match(flow, /\["NETWORK", "METERING", "TRANSMISSION", "UC3", "UC6", "ARIM", "ASOS"\]/);
+console.log("QUICK_QUOTE_COST_GROUPS=PASS");
