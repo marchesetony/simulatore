@@ -348,7 +348,8 @@ function MarketPanel({ admin, platform }: { readonly admin: boolean; readonly pl
   const oldestMonth = new Date(Date.UTC(today.getUTCFullYear(), today.getUTCMonth() - 6, 1)).toISOString().slice(0, 7);
   const latest = new Map<string, MarketArchiveModel>();
   for (const record of records) if (record.month >= oldestMonth && record.vector === vector && record.index === index && record.status === "APPROVED" && (!latest.has(record.month) || version(record) > version(latest.get(record.month)!))) latest.set(record.month, record);
-  const months = [...latest.values()];
+  // Tony (31/10): "devono essere ordinati dal piu nuovo al più vecchio": newest month first.
+  const months = Array.from({ length: 7 }, (_, back) => new Date(Date.UTC(today.getUTCFullYear(), today.getUTCMonth() - back, 1)).toISOString().slice(0, 7)).flatMap((month) => latest.get(month) ?? []);
   const rate = (value: unknown, digits: number) => { const amount = (value as { readonly value?: unknown } | undefined)?.value; return typeof amount === "number" ? amount.toLocaleString("it-IT", { minimumFractionDigits: digits, maximumFractionDigits: digits }) : "Non disponibile"; };
   const values = (record: MarketArchiveModel) => vector === "EE"
     ? "F1 " + rate(record.record.f1, 2) + "  F2 " + rate(record.record.f2, 2) + "  F3 " + rate(record.record.f3, 2) + "  Mono " + rate(record.record.monthly, 2) + " €/MWh"

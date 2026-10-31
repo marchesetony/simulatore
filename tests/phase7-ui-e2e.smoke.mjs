@@ -104,3 +104,5 @@ assert.match(await read("tests/foundation-context.smoke.mjs"), /x-foundation-rol
 assert.doesNotMatch(shell, /localStorage|sessionStorage/);
 
 console.log("phase7 UI/E2E contract smoke: ok (static source/UI-contract smoke; no browser, DOM renderer, duplicate-click runtime, or live API integration exercised)");
+// Tony (31/10): "devono essere ordinati dal piu nuovo al più vecchio": PUN and PSV months, newest first.
+assert.match(shell, /today\.getUTCMonth\(\) - back, 1\)\)\.toISOString\(\)\.slice\(0, 7\)\)\.flatMap\(\(month\) => latest\.get\(month\)/);
