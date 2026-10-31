@@ -227,6 +227,22 @@ function punStructure(bill: BillDocumentModel): string {
   return "Non indicata in bolletta";
 }
 
+// The expiry printed on the bill: the economic conditions' end, else the contract's (Tony, 28/10 and 31/10).
+function billExpiry(bill: BillDocumentModel): string | null {
+  const receipt = bill.analystReview.receipt;
+  return italianDate(receipt.economicConditionsExpiryDate.value ?? factValue(bill, "ECONOMIC_EXPIRY")) ?? italianDate(receipt.contractExpiryDate.value ?? factValue(bill, "CONTRACT_EXPIRY"));
+}
+
+function billLabel(bill: ApprovedBillSummaryModel): string {
+  return `${bill.title}${bill.supplier ? ` · ${bill.supplier}` : ""}${bill.period.periodStart ? ` · ${date(bill.period.periodStart)}` : ""}`;
+}
+// Already uploaded bills, A to Z, narrowed by the words typed in the search field.
+function billChoices(archive: readonly ApprovedBillSummaryModel[], query: string): readonly ApprovedBillSummaryModel[] {
+  const words = query.toLocaleLowerCase("it").split(/\s+/).filter(Boolean);
+  return archive.filter((bill) => { const text = billLabel(bill).toLocaleLowerCase("it"); return words.every((word) => text.includes(word)); })
+    .slice().sort((a, b) => a.title.localeCompare(b.title, "it", { sensitivity: "base" }) || billLabel(a).localeCompare(billLabel(b), "it"));
+}
+
 function BillContractFacts({ bill }: { readonly bill: BillDocumentModel }): ReactNode {
   const receipt = bill.analystReview.receipt;
   // Same reading as the search for CTEs, so "Domestico non residente" shows Consumer here too (Tony, 28/10).
@@ -234,7 +250,6 @@ function BillContractFacts({ bill }: { readonly bill: BillDocumentModel }): Reac
   const offerName = bill.analystReview.receipt.offerName.value?.trim() || bill.structuredBill?.documentOfferName?.trim() || null;
   const offerCode = bill.analystReview.receipt.offerCode.value?.trim() || null;
   const start = italianDate(receipt.contractStartDate.value ?? factValue(bill, "CONTRACT_START_DATE")) ?? italianDate(receipt.economicConditionsStartDate.value ?? factValue(bill, "ECONOMIC_CONDITIONS_START_DATE"));
-  const conditionsEnd = italianDate(receipt.economicConditionsExpiryDate.value ?? factValue(bill, "ECONOMIC_EXPIRY"));
   const pcv = monthlyPcv(bill);
   const rows: readonly (readonly [string, ReactNode])[] = [
     ["Tipo contratto", type === "RESIDENTIAL" ? <span className="cte-segment-consumer">Consumer</span> : type === "NON_RESIDENTIAL" ? <span className="cte-segment-business">Business</span> : "Non indicato"],
@@ -242,7 +257,7 @@ function BillContractFacts({ bill }: { readonly bill: BillDocumentModel }): Reac
     ["Offerta attuale (CTE)", offerName ? (offerCode && offerCode !== offerName ? `${offerName} · codice ${offerCode}` : offerName) : offerCode ?? "Non indicata"],
     ["Attivo dal", start ?? "Non indicato"],
     // Tony (28/10): "nella scadenza mettere solo data e nessun altro testo".
-    ["Scadenza", conditionsEnd ?? italianDate(receipt.contractExpiryDate.value) ?? "Non indicata"],
+    ["Scadenza", billExpiry(bill) ?? "Non indicata"],
     ["Tipo di prezzo", priceType(bill)],
     ...(indexedBill(bill) && bill.resolvedVector !== "GAS" ? [["PUN GME del mese di riferimento", referencePun(bill)] as const] : []),
     ...(indexedBill(bill) ? [[`Spread sul ${bill.resolvedVector === "GAS" ? "PSV" : "PUN"} (calcolato)`, bill.resolvedVector === "GAS" ? "Non calcolato per il gas" : billSpread(bill)] as const, [`Struttura del ${bill.resolvedVector === "GAS" ? "PSV" : "PUN"}`, bill.resolvedVector === "GAS" ? "Mensile" : punStructure(bill)] as const] : []),
@@ -287,6 +302,8 @@ function BillSummary({ context, bill }: { readonly context: Context; readonly bi
     [ee ? "POD" : "PDR", (ee ? context.supply.pod : context.supply.pdr) ?? "—"],
     ...(ee ? [["Tensione", context.supply.voltageLevel ? VOLTAGE[context.supply.voltageLevel] : "—"] as const, ["Potenza impegnata", amount(context.supply.contractedPowerKw, "kW")] as const] : []),
     ["Fornitore attuale", context.currentSupplier || "—"], ["Offerta attuale", billOfferName(bill, context) ?? "Non indicata in bolletta"],
+    // Tony (31/10): "devo vedere anche la data in cui scade il contratto che è scritto in fattura".
+    ["Scadenza contratto", billExpiry(bill) ?? "Non indicata in bolletta"],
     ["Periodo fatturato", `${date(context.billingPeriod.periodStart)} – ${date(context.billingPeriod.periodEnd)}`],
     ["Consumo del periodo", ee ? `F1 ${amount(period?.f1, "kWh")} · F2 ${amount(period?.f2, "kWh")} · F3 ${amount(period?.f3, "kWh")}` : amount(period?.smc, "Smc")],
     ["Consumo annuo", context.consumption?.annual != null ? amount(context.consumption.annual, ee ? "kWh" : "Smc") : estimatedFromPeriod(context, ee)],
@@ -435,7 +452,13 @@ function VerificationNote({ bill, rowKey, receipt }: { readonly bill: BillDocume
   // Transport and system charges: the bill's aggregates against the official ARERA amounts on the same consumption.
   const official = rowKey === "NETWORK" || rowKey === "SYSTEM" ? receipt?.officialCheck?.[rowKey] : undefined;
   if (official?.status === "VERIFIED") return <small className="quote-check ok">✓ Verificato sui valori ARERA del periodo ({EURO.format(official.official ?? 0)})</small>;
-  if (official?.status === "DIFFERENCE" && official.difference !== null) return <small className="quote-check bad">⚠ La bolletta non corrisponde ai valori ARERA ({EURO.format(official.official ?? 0)}): {EURO.format(Math.abs(official.difference))} addebitati {official.difference > 0 ? "in più" : "in meno"}</small>;
+  // Tony (31/10): the note says how the bill and the simulation each stand against ARERA, not the gap between the two columns.
+  if (official?.status === "DIFFERENCE" && official.difference !== null) {
+    const arera = official.official ?? 0;
+    const row = receipt?.rows.find((item) => item.key === rowKey);
+    const apart = row?.current != null ? Math.round((row.current - arera - official.difference) * 100) / 100 : 0;
+    return <small className="quote-check bad">⚠ Valori ARERA del periodo {EURO.format(arera)}: la bolletta addebita {EURO.format(arera + official.difference)}, cioè {EURO.format(Math.abs(official.difference))} {official.difference > 0 ? "in più" : "in meno"} di ARERA; la simulazione applica i valori ARERA ({EURO.format(arera)}){Math.abs(apart) >= 0.01 ? `. Energia reattiva ${EURO.format(apart)} a parte, uguale nelle due colonne` : ""}.</small>;
+  }
   const check = regulatedVerification(bill.regulatoryAudit, domain);
   const source = SOURCE_OF[domain];
   if (check.status === "VERIFIED") return <small className="quote-check ok">✓ Verificato sui valori {source} del periodo ({check.checked} {check.checked === 1 ? "voce" : "voci"})</small>;
@@ -587,6 +610,7 @@ export default function QuickQuoteFlow({ readonly }: { readonly readonly: boolea
   const [pending, setPending] = useState<Pending>();
   const [error, setError] = useState<string>();
   const [archive, setArchive] = useState<readonly ApprovedBillSummaryModel[]>([]);
+  const [billQuery, setBillQuery] = useState("");
   const [draft, setDraft] = useState<BillDocumentModel | null>(null);
   const [values, setValues] = useState<Readonly<Record<string, string>>>({});
   const [quote, setQuote] = useState<Quote | null>(null);
@@ -701,7 +725,10 @@ export default function QuickQuoteFlow({ readonly }: { readonly readonly: boolea
     {step === "bill" ? <section className="ui-card quote-upload">
       {pending === "upload" || pending === "open" ? <LoadingState label={pending === "open" ? "Apertura della bolletta" : "Lettura della bolletta in corso"} /> : <>
         <label className="button primary quote-upload-button">Carica bolletta (PDF)<input className="visually-hidden" type="file" accept="application/pdf" onChange={(event) => void upload(event)} disabled={readonly || Boolean(pending)} /></label>
-        {archive.length ? <label className="form-field"><span className="form-label">Oppure usa una bolletta già caricata</span><select value="" onChange={(event) => { if (event.target.value) void openBill(event.target.value); }} disabled={Boolean(pending)}><option value="">Scegli la bolletta</option>{archive.map((bill) => <option key={bill.id} value={bill.id}>{bill.title}{bill.supplier ? ` · ${bill.supplier}` : ""}{bill.period.periodStart ? ` · ${date(bill.period.periodStart)}` : ""}</option>)}</select></label> : null}
+        {archive.length ? <div className="form-field"><span className="form-label">Oppure usa una bolletta già caricata</span>
+          {/* Tony (31/10): "inserire un campo ricerca, e elencare in ordine alfabetico crescente". */}
+          <input type="search" value={billQuery} onChange={(event) => setBillQuery(event.target.value)} placeholder="Cerca per intestatario, fornitore o file" aria-label="Cerca bolletta" disabled={Boolean(pending)} />
+          <select value="" onChange={(event) => { if (event.target.value) void openBill(event.target.value); }} disabled={Boolean(pending)} aria-label="Scegli la bolletta"><option value="">Scegli la bolletta</option>{billChoices(archive, billQuery).map((bill) => <option key={bill.id} value={bill.id}>{billLabel(bill)}</option>)}</select></div> : null}
       </>}
     </section> : null}
     {step === "review" && draft ? <section className="ui-card">
