@@ -6,13 +6,15 @@ export function isSameOffer(input: { readonly billSupplier: string | null; reado
   const bill = normalizedOffer(input.billOffer);
   if (bill === "") return false;
   if ([input.offerCode, input.offerName].some((value) => { const offer = normalizedOffer(value); return offer.length >= 4 && (bill === offer || bill.includes(offer) || offer.includes(bill)); })) return true;
-  // Tony (31/10, BPower "come fa a costare meno con la stessa cte?"): the bill prints 003888ESVFL01XXXXXXXCASAPROTETTA, the CTE
-  // 003888ESVFL02XXXXXXXCASAPROTETTA "BE Family CASA PROTETTA": the same offer in another version. The offer's own name is the
-  // part of the code after the X padding; it matches the other code's name or the CTE's commercial name.
+  // Tony (31/10, scelta "Versioni diverse"): 003888ESVFL01XXXXXXXCASAPROTETTA and 003888ESVFL02XXXXXXXCASAPROTETTA are two
+  // versions of BE Family CASA PROTETTA with different formulas in the Box dell'offerta (01: PUN + spread + dispacciamento +
+  // capacità + commercializzazione + sbilanciamento; 02: PUN + 0,03 + CDISPD), each bill matching its own. A CTE whose code is
+  // known and differs from the bill's code, even only in the version digits, is another CTE. The commercial name decides only
+  // when the CTE has no code.
   const tail = (value: string | null) => { const code = normalizedOffer(value); const match = /X{3,}([A-Z0-9]{6,})$/.exec(code); return match ? match[1] : null; };
   const billTail = tail(input.billOffer);
-  if (!billTail) return false;
-  return tail(input.offerCode) === billTail || normalizedOffer(input.offerName).endsWith(billTail);
+  if (!billTail || normalizedOffer(input.offerCode).length >= 4) return false;
+  return normalizedOffer(input.offerName).endsWith(billTail);
 }
 
 /** A one-off fee the bill itself charges (first bill of the contract). */
