@@ -13,10 +13,15 @@ assert.doesNotMatch(flow, /La bolletta non corrisponde ai valori ARERA \(\{EURO/
 assert.match(flow, /\["Scadenza contratto", billExpiry\(bill\)/);
 console.log("QUICK_QUOTE_BILL_SEARCH_EXPIRY=PASS");
 
-// Tony (31/10): "dovresti raggruppare per fisse e variabili e sotto le voci arin, asos, ac3, ac6".
-assert.match(flow, /Rete e oneri ARERA · quote fisse/);
-assert.match(flow, /Rete e oneri ARERA · quote variabili/);
-assert.match(flow, /\["NETWORK", "METERING", "TRANSMISSION", "UC3", "UC6", "ARIM", "ASOS"\]/);
+// Tony (31/10): "dovresti raggruppare per fisse e variabili e sotto le voci arin, asos, ac3, ac6", then the same day
+// "avevo detto di accorpare non di espandere": trasporto e gestione del contatore and oneri generali di sistema, each as
+// quota fissa, potenza and energia; the single ARERA lines (ARIM, ASOS, UC3, UC6...) open only on request.
+assert.match(flow, /Spesa per il trasporto e la gestione del contatore \(ARERA\)/);
+assert.match(flow, /Oneri generali di sistema \(ARERA\)/);
+assert.match(flow, /const TRANSPORT = \["NETWORK", "METERING", "TRANSMISSION", "UC3", "UC6", "DISTRIBUTION"\]/);
+assert.match(flow, /FIXED: "Quota fissa", POWER: "Quota potenza", ENERGY: "Quota energia"/);
+assert.match(flow, /"Mostra le voci ARERA"/);
+assert.match(flow, /expanded\[group\.title\] \? group\.detail\.map/);
 console.log("QUICK_QUOTE_COST_GROUPS=PASS");
 
 // Tony (31/10, fattura di dettaglio BPower: "cazzo ancora errori"): band prices equal to the PUN of the band plus one amount

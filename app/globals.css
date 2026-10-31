@@ -563,3 +563,5 @@ button:focus-visible,a:focus-visible,input:focus-visible,select:focus-visible,te
 .market-band-f1 small { color:#1f5fa8; }.market-band-f2 small { color:#8a4fb3; }.market-band-f3 small { color:#b06a12; }
 .market-band-mono { background:var(--teal-soft); }.market-band-mono small { color:var(--teal); }.market-band-mono b { font-size:18px; font-weight:800; color:var(--teal); }
 .market-unit { align-self:center; color:var(--muted); font-size:11px; }
+.quote-detail tr.quote-cost-subline th, .quote-detail tr.quote-cost-subline td { font-size:0.9em; color:var(--text-muted, #5b6472); }
+.quote-detail tr.quote-cost-group .button.compact { margin-left:8px; }

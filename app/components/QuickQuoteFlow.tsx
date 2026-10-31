@@ -477,30 +477,43 @@ function costLines(calculation: CalculationModel): readonly CostLine[] {
   });
 }
 
-// Tony (31/10): "dovresti raggruppare per fisse e variabili e sotto le voci ARIM, ASOS, UC3, UC6". The ARERA lines are split
-// into fixed quotas (€/POD, €/kW) and variable ones (€/kWh), each with transport first, then UC3, UC6, ARIM and ASOS.
-const REGULATED_ORDER = ["NETWORK", "METERING", "TRANSMISSION", "UC3", "UC6", "ARIM", "ASOS"] as const;
-function regulatedRank(code: string): number {
-  const index = REGULATED_ORDER.findIndex((prefix) => code.startsWith(prefix));
-  return index < 0 ? 0 : index;
-}
-function costGroups(calculation: CalculationModel, lines: readonly CostLine[]): readonly { readonly title: string; readonly lines: readonly CostLine[] }[] {
-  const seller: CostLine[] = []; const fixed: { line: CostLine; rank: number }[] = []; const variable: { line: CostLine; rank: number }[] = [];
+type CostGroup = { readonly title: string; readonly lines: readonly CostLine[]; readonly detail: readonly CostLine[] };
+// Tony (31/10, "avevo detto di accorpare non di espandere"; 26/10: "materia energia, trasporto e gestione, oneri di
+// sistema, imposte e accise, anche separate ma prima accorpate"). The ARERA lines are added up as on the bill: trasporto e
+// gestione del contatore (distribuzione, misura, trasmissione, UC3, UC6) and oneri generali di sistema (ARIM, ASOS), each as
+// quota fissa, quota potenza and quota energia. The single ARERA lines open only on request.
+const TRANSPORT = ["NETWORK", "METERING", "TRANSMISSION", "UC3", "UC6", "DISTRIBUTION"] as const;
+function costGroups(calculation: CalculationModel, lines: readonly CostLine[]): readonly CostGroup[] {
+  const seller: CostLine[] = [];
+  const buckets = new Map<string, { group: "TRANSPORT" | "SYSTEM"; quota: "FIXED" | "POWER" | "ENERGY"; amount: number; rate: number; quantity: string; lines: CostLine[] }>();
   calculation.components.forEach((component, index) => {
     const line = lines[index];
     const code = String(component.formulaInputs?.componentCode ?? "");
     if (!component.category.startsWith("REGULATED_") || code === "DISPATCHING_TOTAL") { seller.push(line); return; }
-    (component.category === "REGULATED_ENERGY" ? variable : fixed).push({ line, rank: regulatedRank(code) });
+    const inputs = component.formulaInputs ?? {};
+    const group = TRANSPORT.some((prefix) => code.startsWith(prefix)) ? "TRANSPORT" : "SYSTEM";
+    const quota = num(inputs.rateEurPerKwh) !== null || component.category === "REGULATED_ENERGY" ? "ENERGY" : num(inputs.rateEurPerKwYear) !== null ? "POWER" : "FIXED";
+    const rate = num(inputs.rateEurPerKwh) ?? num(inputs.rateEurPerKwYear) ?? num(inputs.rateEurPerPodYear) ?? 0;
+    const key = `${group}:${quota}`;
+    const bucket = buckets.get(key) ?? { group, quota, amount: 0, rate: 0, quantity: line.quantity, lines: [] };
+    bucket.amount += line.amount; bucket.rate += rate; bucket.lines.push(line);
+    buckets.set(key, bucket);
   });
-  const sorted = (items: readonly { line: CostLine; rank: number }[]) => [...items].sort((a, b) => a.rank - b.rank).map((item) => item.line);
+  const QUOTA_LABEL = { FIXED: "Quota fissa", POWER: "Quota potenza", ENERGY: "Quota energia" } as const;
+  const RATE_UNIT = { FIXED: "€/POD all'anno", POWER: "€/kW all'anno", ENERGY: "€/kWh" } as const;
+  const regulated = (group: "TRANSPORT" | "SYSTEM", title: string): CostGroup => {
+    const items = (["FIXED", "POWER", "ENERGY"] as const).flatMap((quota) => { const bucket = buckets.get(`${group}:${quota}`); return bucket ? [bucket] : []; });
+    return { title, lines: items.map((bucket) => ({ key: `${group}:${bucket.quota}`, label: QUOTA_LABEL[bucket.quota], quantity: bucket.quantity, rate: `${bucket.quota === "ENERGY" ? RATE.format(bucket.rate) : CENTS.format(bucket.rate)} ${RATE_UNIT[bucket.quota]}`, amount: bucket.amount })), detail: items.flatMap((bucket) => bucket.lines) };
+  };
   return [
-    { title: "Spesa per la vendita (CTE)", lines: seller },
-    { title: "Rete e oneri ARERA · quote fisse (€/POD e €/kW)", lines: sorted(fixed) },
-    { title: "Rete e oneri ARERA · quote variabili (€/kWh)", lines: sorted(variable) },
+    { title: "Spesa per la vendita (CTE)", lines: seller, detail: [] },
+    regulated("TRANSPORT", "Spesa per il trasporto e la gestione del contatore (ARERA)"),
+    regulated("SYSTEM", "Oneri generali di sistema (ARERA)"),
   ].filter((group) => group.lines.length > 0);
 }
 
 function CostDetail({ offer, open }: { readonly offer: Offer; readonly open: boolean }): ReactNode {
+  const [expanded, setExpanded] = useState<Readonly<Record<string, boolean>>>({});
   const lines = costLines(offer.calculation);
   if (!lines.length) return null;
   const groups = costGroups(offer.calculation, lines);
@@ -510,8 +523,9 @@ function CostDetail({ offer, open }: { readonly offer: Offer; readonly open: boo
     <div className="responsive-table"><table>
       <thead><tr><th scope="col">Voce</th><th scope="col">Quantità</th><th scope="col">Prezzo unitario</th><th scope="col">Importo</th></tr></thead>
       {groups.map((group) => <tbody key={group.title}>
-        <tr className="quote-cost-group"><th scope="rowgroup" colSpan={3}>{group.title}</th><td>{euro(group.lines.reduce((total, line) => total + line.amount, 0))}</td></tr>
+        <tr className="quote-cost-group"><th scope="rowgroup" colSpan={3}>{group.title}{group.detail.length ? <> <button className="button compact secondary" type="button" aria-expanded={expanded[group.title] === true} onClick={() => setExpanded((current) => ({ ...current, [group.title]: !current[group.title] }))}>{expanded[group.title] ? "Nascondi le voci ARERA" : "Mostra le voci ARERA"}</button></> : null}</th><td>{euro(group.lines.reduce((total, line) => total + line.amount, 0))}</td></tr>
         {group.lines.map((line) => <tr key={line.key}><th scope="row">{line.label}</th><td>{line.quantity}</td><td>{line.rate}</td><td>{euro(line.amount)}</td></tr>)}
+        {expanded[group.title] ? group.detail.map((line) => <tr key={`detail:${line.key}`} className="quote-cost-subline"><th scope="row">· {line.label}</th><td>{line.quantity}</td><td>{line.rate}</td><td>{euro(line.amount)}</td></tr>) : null}
       </tbody>)}
       {/* Tony (31/10): the footer said 113,77 € under groups worth 152,11 €; it is the sum of every line above. */}
       <tfoot><tr><th scope="row" colSpan={3}>Totale nuova offerta (imposte escluse)</th><td>{euro(groups.reduce((total, group) => total + group.lines.reduce((sum, line) => sum + line.amount, 0), 0))}</td></tr></tfoot>
