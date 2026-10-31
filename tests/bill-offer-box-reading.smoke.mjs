@@ -93,4 +93,5 @@ assert.match(flow, /function indexedFromBox\(/);
 assert.match(flow, /\|\| indexedFromBox\(bill\)/);
 assert.match(flow, /analystExtractionStatus === "FAILED"\) return false/);
 assert.match(flow, /!\/\^NOT_FOUND\$\/i\.test\(value\.trim\(\)\)/);
+assert.match(flow, /const text = \[factSeen\(bill, "PRICE_TIME_STRUCTURE_RAW"\)/, "a fasce read even when marked to review");
 console.log("bill offer box reading ok");

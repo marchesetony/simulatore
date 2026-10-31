@@ -252,7 +252,7 @@ function punStructure(bill: BillDocumentModel): string {
   if (bill.currentSpread?.status === "CALCULATED") return STRUCTURE_LABEL[bill.currentSpread.structure];
   const found = (code: string) => factValue(bill, code) !== null;
   const lines = bill.structuredBill?.economicChargeLines ?? [];
-  const text = [factValue(bill, "PRICE_TIME_STRUCTURE_RAW"), factValue(bill, "PRICE_MECHANISM_RAW"), factValue(bill, "PRICE_FORMULA_RAW"), factValue(bill, "INDEX_NAME"), ...lines.map((line) => `${line.description} ${line.rawDescription ?? ""}`)].filter(Boolean).join(" ");
+  const text = [factSeen(bill, "PRICE_TIME_STRUCTURE_RAW"), factValue(bill, "PRICE_MECHANISM_RAW"), factValue(bill, "PRICE_FORMULA_RAW"), factValue(bill, "INDEX_NAME"), ...lines.map((line) => `${line.description} ${line.rawDescription ?? ""}`)].filter(Boolean).join(" ");
   if (/off[\s-]?peak|fuori picco|\bpeak\b|\bpicco\b/i.test(text)) return "Peak / off-peak";
   if (/pun orario|orari[oa] gme|prezzo orario|su base oraria|(tipologia di prezzo|aggiornamento( dell')? indice|indice)\s*:?\s*orari/i.test(text) || /^\s*orari[oa]\s*$/i.test(factValue(bill, "PRICE_TIME_STRUCTURE_RAW") ?? "")) return STRUCTURE_LABEL.HOURLY;
   // Consumption read in three separate bands rules out a biorario reading unless the bill names F23 itself.
