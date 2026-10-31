@@ -173,6 +173,24 @@ function monthlyPcv(bill: BillDocumentModel): number | null {
   const months = monthsIn(bill.normalized?.billingPeriod ?? (read?.status === "FOUND" && read.value ? { periodStart: read.value.from, periodEnd: read.value.to } : undefined));
   return months ? total / months : null;
 }
+// Tony (31/10, fattura di dettaglio BPower "cazzo ancora errori"): a bill whose energy lines are each the official PUN of
+// their band plus the same amount (0,226350 / 0,247576 / 0,217024 €/kWh = PUN F1/F2/F3 + 0,02) is indexed, even when no box
+// dell'offerta says so.
+function indexedFromPrices(bill: BillDocumentModel): boolean {
+  const spread = bill.currentSpread;
+  if (spread?.status !== "CALCULATED" || spread.source !== "CALCULATED" || !spread.lines.length) return false;
+  const values = spread.lines.filter((line) => line.officialPun !== null).map((line) => line.spread);
+  return values.length > 0 && values.length === spread.lines.length && Math.max(...values) - Math.min(...values) <= 0.0005 && values.every((value) => value > -0.01 && value < 0.1);
+}
+// The detailed invoice (fattura di dettaglio) lists only the charges: no offer name, dates or price formula.
+function withoutOfferBox(bill: BillDocumentModel): boolean {
+  const receipt = bill.analystReview.receipt;
+  return !receipt.offerName.value?.trim() && !bill.structuredBill?.documentOfferName?.trim() && !receipt.offerCode.value?.trim()
+    && !receipt.contractStartDate.value && !receipt.economicConditionsStartDate.value && !billExpiry(bill)
+    && factValue(bill, "PRICE_MECHANISM_RAW", "PRICE_FORMULA_RAW", "CONTRACT_START_DATE", "ECONOMIC_CONDITIONS_START_DATE") === null;
+}
+const NOT_IN_DETAIL = "Non riportata: la fattura di dettaglio non ha il box dell'offerta";
+
 function priceType(bill: BillDocumentModel): string {
   const receipt = bill.analystReview.receipt;
   const text = [factValue(bill, "PRICE_MECHANISM_RAW"), factValue(bill, "PRICE_FORMULA_RAW"), factValue(bill, "INDEX_NAME")].filter(Boolean).join(" ");
@@ -181,12 +199,13 @@ function priceType(bill: BillDocumentModel): string {
   const indexed = /variabil|indicizz|pun|psv|index/i.test(text) || receipt.priceMechanism === "INDEXED_PUN_PLUS_SPREAD";
   if (indexed) return `Indicizzato ${index}`;
   if (/fiss/i.test(text) || receipt.priceMechanism === "FIXED") return `Prezzo fisso${fixed ? ` ${fixed}` : ""}`;
-  return receipt.priceMechanism === "HYBRID" ? "Misto (fisso e indicizzato)" : "Non indicato";
+  if (receipt.priceMechanism === "HYBRID") return "Misto (fisso e indicizzato)";
+  return indexedFromPrices(bill) ? `Indicizzato ${index} (ricavato dai prezzi in bolletta)` : "Non indicato";
 }
 
 function indexedBill(bill: BillDocumentModel): boolean {
   const text = [factValue(bill, "PRICE_MECHANISM_RAW"), factValue(bill, "PRICE_FORMULA_RAW"), factValue(bill, "INDEX_NAME")].filter(Boolean).join(" ");
-  return /variabil|indicizz|pun|psv|index/i.test(text) || bill.analystReview.receipt.priceMechanism === "INDEXED_PUN_PLUS_SPREAD";
+  return /variabil|indicizz|pun|psv|index/i.test(text) || bill.analystReview.receipt.priceMechanism === "INDEXED_PUN_PLUS_SPREAD" || indexedFromPrices(bill);
 }
 // The spread is never printed on the bill: the server derives it as applied energy price minus the official GME PUN of the same months.
 function billSpread(bill: BillDocumentModel): ReactNode {
@@ -251,13 +270,14 @@ function BillContractFacts({ bill }: { readonly bill: BillDocumentModel }): Reac
   const offerCode = bill.analystReview.receipt.offerCode.value?.trim() || null;
   const start = italianDate(receipt.contractStartDate.value ?? factValue(bill, "CONTRACT_START_DATE")) ?? italianDate(receipt.economicConditionsStartDate.value ?? factValue(bill, "ECONOMIC_CONDITIONS_START_DATE"));
   const pcv = monthlyPcv(bill);
+  const noBox = withoutOfferBox(bill);
   const rows: readonly (readonly [string, ReactNode])[] = [
     ["Tipo contratto", type === "RESIDENTIAL" ? <span className="cte-segment-consumer">Consumer</span> : type === "NON_RESIDENTIAL" ? <span className="cte-segment-business">Business</span> : "Non indicato"],
     // Tony (28/10): "dovevamo vedere anche il nome della cte utilizzata".
-    ["Offerta attuale (CTE)", offerName ? (offerCode && offerCode !== offerName ? `${offerName} · codice ${offerCode}` : offerName) : offerCode ?? "Non indicata"],
-    ["Attivo dal", start ?? "Non indicato"],
+    ["Offerta attuale (CTE)", offerName ? (offerCode && offerCode !== offerName ? `${offerName} · codice ${offerCode}` : offerName) : offerCode ?? (noBox ? NOT_IN_DETAIL : "Non indicata")],
+    ["Attivo dal", start ?? (noBox ? "Non riportato nella fattura di dettaglio" : "Non indicato")],
     // Tony (28/10): "nella scadenza mettere solo data e nessun altro testo".
-    ["Scadenza", billExpiry(bill) ?? "Non indicata"],
+    ["Scadenza", billExpiry(bill) ?? (noBox ? "Non riportata nella fattura di dettaglio" : "Non indicata")],
     ["Tipo di prezzo", priceType(bill)],
     ...(indexedBill(bill) && bill.resolvedVector !== "GAS" ? [["PUN GME del mese di riferimento", referencePun(bill)] as const] : []),
     ...(indexedBill(bill) ? [[`Spread sul ${bill.resolvedVector === "GAS" ? "PSV" : "PUN"} (calcolato)`, bill.resolvedVector === "GAS" ? "Non calcolato per il gas" : billSpread(bill)] as const, [`Struttura del ${bill.resolvedVector === "GAS" ? "PSV" : "PUN"}`, bill.resolvedVector === "GAS" ? "Mensile" : punStructure(bill)] as const] : []),

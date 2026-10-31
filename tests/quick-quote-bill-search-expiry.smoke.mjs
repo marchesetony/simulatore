@@ -18,3 +18,10 @@ assert.match(flow, /Rete e oneri ARERA · quote fisse/);
 assert.match(flow, /Rete e oneri ARERA · quote variabili/);
 assert.match(flow, /\["NETWORK", "METERING", "TRANSMISSION", "UC3", "UC6", "ARIM", "ASOS"\]/);
 console.log("QUICK_QUOTE_COST_GROUPS=PASS");
+
+// Tony (31/10, fattura di dettaglio BPower: "cazzo ancora errori"): band prices equal to the PUN of the band plus one amount
+// make the bill indexed, and what the detailed invoice does not print is said so, not "Non indicata".
+assert.match(flow, /function indexedFromPrices/);
+assert.match(flow, /Indicizzato \$\{index\} \(ricavato dai prezzi in bolletta\)/);
+assert.match(flow, /la fattura di dettaglio non ha il box dell'offerta/);
+console.log("QUICK_QUOTE_DETAILED_INVOICE=PASS");
