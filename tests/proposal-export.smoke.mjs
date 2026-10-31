@@ -132,6 +132,10 @@ try {
   assert.ok(!/Commercial proposal|Savings|Offer/.test(receipt.replace(/Offerta/g, "")), "only Italian text");
   const fallback = Buffer.from(renderReceiptProposal(fixedProposal, fallbackPresentation(fixedProposal), null)).toString("latin1");
   assert.ok(fallback.includes("PROPOSTA COMMERCIALE") && !fallback.includes("/DCTDecode"));
+  // Tony (31/10): "solitamente la fornitura finisce l'ultimo del mese, come mai metti sempre giorno 1". The period ends on the
+  // last supplied day, never on the first day of the next month.
+  const septemberLabel = fallbackPresentation({ ...fixedProposal, simulationPeriod: { periodStart: "2026-09-01", periodEnd: "2026-10-01" } }).periodLabel;
+  assert.equal(septemberLabel, "01/09/2026 - 30/09/2026");
 
   assert.throws(() => generateProposal(proposalRequest({ ...fixedCalculation, fingerprint: "altered" }), tenant), /CALCULATION_FINGERPRINT_MISMATCH/);
   assert.throws(() => generateProposal({ ...proposalRequest(fixedCalculation), selectedOffer: { ...selectedOffer(fixedCalculation), version: "wrong" } }, tenant), /PROPOSAL_OFFER_MISMATCH/);

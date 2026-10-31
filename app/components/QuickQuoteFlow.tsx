@@ -121,6 +121,9 @@ function italianDate(value: string | null | undefined): string | null {
   const iso = /^(\d{4})-(\d{2})-(\d{2})/.exec(value);
   return iso ? `${iso[3]}/${iso[2]}/${iso[1]}` : value;
 }
+// Tony (31/10, "solitamente la fornitura finisce l'ultimo del mese, come mai metti sempre giorno 1"): the simulation period
+// ends the day after the last supplied day; screen and proposal show the last supplied day (30/09, not 01/10).
+function lastSuppliedDay(periodEnd: string): string { const time = Date.parse(`${periodEnd.slice(0, 10)}T00:00:00Z`); return Number.isFinite(time) ? new Date(time - 86_400_000).toISOString().slice(0, 10) : periodEnd; }
 function monthsIn(period: { readonly periodStart: string | null; readonly periodEnd: string | null } | undefined): number | null {
   if (!period?.periodStart || !period.periodEnd) return null;
   const days = (Date.parse(`${period.periodEnd}T00:00:00Z`) - Date.parse(`${period.periodStart}T00:00:00Z`)) / 86_400_000 + 1;
@@ -343,7 +346,7 @@ function BillSummary({ context, bill }: { readonly context: Context; readonly bi
     ["Fornitore attuale", context.currentSupplier || "—"], ["Offerta attuale", billOfferName(bill, context) ?? "Non indicata in bolletta"],
     // Tony (31/10): "devo vedere anche la data in cui scade il contratto che è scritto in fattura".
     ["Scadenza contratto", billExpiry(bill) ?? "Non indicata in bolletta"],
-    ["Periodo fatturato", `${date(context.billingPeriod.periodStart)} – ${date(context.billingPeriod.periodEnd)}`],
+    ["Periodo fatturato", `${date(context.billingPeriod.periodStart)} – ${date(lastSuppliedDay(context.billingPeriod.periodEnd))}`],
     ["Consumo del periodo", ee ? `F1 ${amount(period?.f1, "kWh")} · F2 ${amount(period?.f2, "kWh")} · F3 ${amount(period?.f3, "kWh")}` : amount(period?.smc, "Smc")],
     ["Consumo annuo", context.consumption?.annual != null ? amount(context.consumption.annual, ee ? "kWh" : "Smc") : estimatedFromPeriod(context, ee)],
   ];
@@ -632,7 +635,7 @@ function presentationOf(offer: Offer, receipt: QuoteReceipt, bill: BillDocumentM
     customerName: bill.fields.customerName?.value?.trim() ?? "", supplyLabel: supply.filter(Boolean).join(" · "),
     billSupplier: context.currentSupplier, billOfferName: billOfferName(bill, context) ?? "",
     offerSupplier: offer.supplier, offerName: offer.offerName, offerCode: offer.calculation.sourceCte.offerCode ?? "",
-    periodLabel: `${date(context.billingPeriod.periodStart)} – ${date(context.billingPeriod.periodEnd)}`, consumptionLabel: total > 0 ? `${NUMBER.format(total)} ${unit}${bands}` : "",
+    periodLabel: `${date(context.billingPeriod.periodStart)} – ${date(lastSuppliedDay(context.billingPeriod.periodEnd))}`, consumptionLabel: total > 0 ? `${NUMBER.format(total)} ${unit}${bands}` : "",
     taxesIncluded: receipt.taxesIncluded, sameOffer: same,
     currentTotal: receipt.currentTotal, offerTotal: receipt.offerTotal, savings: receipt.savings, savingsPercent: receipt.savingsPercent,
     annualSaving, annualCurrent, annualBasisLabel: basisLabel, validUntil: receipt.validUntil,
@@ -683,7 +686,7 @@ function Receipt({ offer: quoted, today, business, context, bill, onPresentation
     {/* Scontrino (Tony, 26/10): materia energia, trasporto e gestione del contatore, oneri di sistema, imposte e accise aggregated first,
         then every charge they contain (energia, dispacciamento, capacity, sbilanciamento, PCV, Flex, accise, IVA…) on its own line. */}
     <div className="responsive-table"><table className="quote-scontrino">
-      <caption>Periodo della bolletta: {date(context.billingPeriod.periodStart)} – {date(context.billingPeriod.periodEnd)} · stessi consumi per entrambe le colonne</caption>
+      <caption>Periodo della bolletta: {date(context.billingPeriod.periodStart)} – {date(lastSuppliedDay(context.billingPeriod.periodEnd))} · stessi consumi per entrambe le colonne</caption>
       <thead><tr><th scope="col">Voce</th><th scope="col">Bolletta attuale{currentOffer ? <small>{context.currentSupplier} · {currentOffer}</small> : null}</th><th scope="col">CTE simulata<small>{offer.supplier} · {offer.offerName}</small></th><th scope="col">Differenza</th></tr></thead>
       <tbody>{receipt.rows.flatMap((row) => [<tr key={row.key} className={`quote-section-row${row.difference != null && Math.abs(row.difference) >= 0.01 ? " changed" : ""}`}>
         <th scope="row">{row.label}<VerificationNote bill={bill} rowKey={row.key} receipt={receipt} /></th><td>{euro(row.current)}</td><td>{euro(row.offer)}</td><td className={difference(row.difference ?? null)}>{signedEuro(row.difference ?? null)}</td>

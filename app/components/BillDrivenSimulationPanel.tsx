@@ -199,7 +199,7 @@ function BillSummary({ bill, draft, context }: { readonly bill: BillDocumentMode
     {supplyAddress ? <div className="data-line"><span>Indirizzo di fornitura</span><strong>{supplyAddress}</strong></div> : null}
     {supplyReference ? <div className="data-line"><span>{supplyReferenceLabel}</span><strong>{supplyReference}</strong></div> : null}
     <div className="data-line"><span>Utenza</span><strong>{energyLabelFor(context.vector)} {UI_SEPARATOR} {classificationLabelFor(context.classification.regulatoryCustomerScope)}</strong></div>
-    <div className="data-line"><span>Periodo bolletta</span><strong>{formatItalianDate(context.billingPeriod.periodStart)} {UI_RANGE_SEPARATOR} {formatItalianDate(context.billingPeriod.periodEnd)}</strong></div>
+    <div className="data-line"><span>Periodo bolletta</span><strong>{formatItalianDate(context.billingPeriod.periodStart)} {UI_RANGE_SEPARATOR} {formatItalianDate(new Date(Date.parse(`${context.billingPeriod.periodEnd.slice(0, 10)}T00:00:00Z`) - 86_400_000).toISOString().slice(0, 10))}</strong></div>
     <div className="data-line"><span>Fornitore</span><strong>{supplier ?? "Non rilevato"}</strong></div>
     {offer ? <div className="data-line"><span>Offerta attuale</span><strong>{offer}</strong></div> : null}
     {pricing ? <div className="data-line"><span>Tipo prezzo</span><strong>{pricing}</strong></div> : null}
