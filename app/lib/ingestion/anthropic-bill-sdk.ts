@@ -13,7 +13,9 @@ import { buildBillStageShapeDiagnostic, realDiag4Enabled, type BillStageShapeDia
 // @ts-expect-error Node's strip-only test runner requires the explicit extension.
 import { BILL_WIRE_TOOL, BILL_WIRE_TOOL_NAME, BillWireValidationError, mapBillWireToStructuredBill, parseBillWireExtraction, type BillWireExtraction } from "./bill-wire.ts";
 // @ts-expect-error Node's strip-only test runner requires the explicit extension.
-import { betterBillReading, billReadingGap, billReadingReviewPrompt, needsBillReadingReview } from "./bill-reading-review.ts";
+import { betterBillCheck, billReadingReviewPrompt, checkBillReading, needsBillVerification } from "./bill-reading-review.ts";
+// @ts-expect-error Node's strip-only test runner requires the explicit extension.
+import { documentNumbers } from "./document-numeric-evidence.ts";
 // @ts-expect-error Node's strip-only test runner requires the explicit extension.
 import { ANALYST_STAGE_PROMPT, ANALYST_WIRE_TOOL, BILL_ANALYST_TOOL_NAME, BILL_CORE_TOOL_NAME, CORE_WIRE_TOOL, mapBillCoreToStructuredBill, mergeBillCoreAndAnalyst, parseBillAnalystWireExtraction, parseBillCoreWireExtraction, type BillAnalystWireExtraction } from "./bill-two-stage.ts";
 
@@ -384,17 +386,20 @@ export class AnthropicTwoStageBillSdkAdapter implements BillExtractionProvider {
     }
   }
 
-  /** A reading whose lines miss the bill's total is read again with the mismatch in hand (see bill-reading-review.ts). */
+  /** The verifier (see bill-reading-review.ts): a reading whose lines miss the bill's total, or that holds values the PDF does
+   *  not print, is read again with the findings in hand; the corrected reading is kept only if it checks out better. */
   async #reviewed(core: StructuredBillExtraction, first: StructuredBillExtraction, input: { readonly bytes: Uint8Array; readonly contentType: string }, startedAt: number): Promise<StructuredBillExtraction> {
-    const gap = billReadingGap(first);
+    let numbers: ReadonlySet<number> | null = null;
+    try { numbers = input.contentType === "application/pdf" ? documentNumbers(input.bytes) : null; } catch { numbers = null; }
+    const check = checkBillReading(first, numbers);
     // The upload route has 300 s: the review runs only while there is still time for a full reading.
-    if (!needsBillReadingReview(gap) || Date.now() - startedAt > BILL_READING_REVIEW_DEADLINE_MS) return first;
+    if (!needsBillVerification(check) || Date.now() - startedAt > BILL_READING_REVIEW_DEADLINE_MS) return first;
     try {
-      const message = await this.#request("ANALYST", SDK_ANALYST_TOOL, BILL_ANALYST_TOOL_NAME, input.bytes, input.contentType, billReadingReviewPrompt(first, gap));
+      const message = await this.#request("ANALYST", SDK_ANALYST_TOOL, BILL_ANALYST_TOOL_NAME, input.bytes, input.contentType, billReadingReviewPrompt(first, check.gap, check.unprinted));
       const second = mergeBillCoreAndAnalyst(core, parseAnalystStageMessage(message), { analystExtractionStatus: "EXTRACTED" });
-      const secondGap = billReadingGap(second);
-      const kept = betterBillReading(gap, secondGap);
-      console.info(`[BILL_READING_REVIEW] difference_before=${gap.difference} difference_after=${secondGap?.difference ?? "none"} kept=${kept ? "REVIEWED" : "FIRST"}`);
+      const secondCheck = checkBillReading(second, numbers);
+      const kept = betterBillCheck(check, secondCheck);
+      console.info(`[BILL_READING_REVIEW] difference_before=${check.gap?.difference ?? "none"} difference_after=${secondCheck.gap?.difference ?? "none"} unprinted_before=${check.unprinted.length} unprinted_after=${secondCheck.unprinted.length} kept=${kept ? "REVIEWED" : "FIRST"}`);
       return kept ? keepOfferBox(second, first) : first;
     } catch (error) {
       console.error(`[BILL_READING_REVIEW_FAILURE] message=${sanitizeAnthropicTechnicalError(error)}`);

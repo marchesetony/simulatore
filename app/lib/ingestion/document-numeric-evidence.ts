@@ -529,3 +529,30 @@ export function extractDocumentOfferBox(bytes: Uint8Array): DocumentOfferBox | n
   }
   return Object.values(box).some(Boolean) ? box : null;
 }
+
+/** Every number printed in the document's text layer (amounts, unit prices, quantities), keyed to 6 decimals; null without
+ *  a readable text layer. The reading's verifier checks against it that each value the AI returned is printed in the
+ *  document (Tony, 31/10: "voglio che un agente legga dettagliatamente la bolletta e un'altro agente ... le cte"). */
+export function documentNumbers(bytes: Uint8Array): ReadonlySet<number> | null {
+  const text = documentTextItems(bytes);
+  if (text.status !== "AVAILABLE") return null;
+  const numbers = new Set<number>();
+  const joined = readableTextItems(text.items).map((item) => item.text).join(" ");
+  for (const token of joined.match(/\d{1,3}(?:\.\d{3})+(?:,\d+)?|\d+(?:[.,]\d+)?/g) ?? []) {
+    const value = /\.\d{3}(?:,|$)/.test(token) && /\d\.\d{3}/.test(token) && !/^\d+\.\d{3}$/.test(token) ? Number(token.replace(/\./g, "").replace(",", ".")) : Number(token.replace(",", "."));
+    if (Number.isFinite(value)) numbers.add(Math.round(value * 1e6));
+    // "1.234" is a thousand in Italian documents and 1,234 elsewhere: both are kept.
+    if (/^\d{1,3}\.\d{3}$/.test(token)) numbers.add(Math.round(Number(token.replace(".", "")) * 1e6));
+  }
+  return numbers.size ? numbers : null;
+}
+
+/** Whether a value read as text ("107,80 €", "0,276410", "1.234,56") is among the document's numbers. */
+export function printedInDocument(numbers: ReadonlySet<number>, raw: string | number | null | undefined): boolean {
+  if (raw === null || raw === undefined) return true;
+  const text = String(raw).replace(/[€\s]|eur/gi, "").replace(/^[-+−]/, "");
+  if (!/\d/.test(text)) return true;
+  const value = /,/.test(text) ? Number(text.replace(/\./g, "").replace(",", ".")) : Number(text);
+  if (!Number.isFinite(value) || value === 0) return true;
+  return numbers.has(Math.round(Math.abs(value) * 1e6));
+}

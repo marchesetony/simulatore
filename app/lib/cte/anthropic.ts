@@ -8,6 +8,10 @@ import type { CteProviderPayloadCapture } from "./provider-diagnostics.ts";
 import { assertPassThroughComponents } from "./validation.ts";
 // @ts-expect-error Node's strip-only test runner requires the explicit extension.
 import { normativeGuidance } from "../normative/archive.ts";
+// @ts-expect-error Node's strip-only test runner requires the explicit extension.
+import { documentNumbers } from "../ingestion/document-numeric-evidence.ts";
+// @ts-expect-error Node's strip-only test runner requires the explicit extension.
+import { betterCteReading, cteReadingConfirmed, cteReadingReviewPrompt, cteUnprintedValues } from "./reading-review.ts";
 
 export const ANTHROPIC_VERSION = "2023-06-01";
 export const ANTHROPIC_TOOL_NAME = "extract_cte";
@@ -17,6 +21,9 @@ export const ANTHROPIC_CTE_DEFAULT_MAX_TOKENS = 65_536;
 export const ANTHROPIC_CTE_MIN_MAX_TOKENS = 8_192;
 export const ANTHROPIC_CTE_MAX_MAX_TOKENS = 128_000;
 export const ANTHROPIC_CTE_DEFAULT_TIMEOUT_MS = 300_000;
+/** The CTE verifier must finish within the route's 300 s, and needs at least this much for a second reading. */
+const CTE_REVIEW_BUDGET_MS = 285_000;
+const CTE_REVIEW_MIN_MS = 90_000;
 export const ANTHROPIC_CTE_MIN_TIMEOUT_MS = 60_000;
 export const ANTHROPIC_CTE_MAX_TIMEOUT_MS = 600_000;
 /** Maximum operational evidence length; the complete provider response remains in diagnostics. */
@@ -594,10 +601,37 @@ export function createAnthropicCteOcrProvider(env: NodeJS.ProcessEnv = process.e
   const endpoint = `${baseUrl(env.ANTHROPIC_BASE_URL)}/v1/messages`;
   let diagnosticCapture: CteDiagnosticCapture | null = null;
   let providerPayloadCapture: CteProviderPayloadCapture | null = null;
+  // The verifier (see reading-review.ts): a second agent checks the first reading field by field against the CTE, unless
+  // the PDF's text layer already confirms every number, while the route's 300 s still leave room for it. Any failure keeps
+  // the first reading.
+  const verified = async (first: CteProviderExtraction, input: { readonly bytes: Uint8Array; readonly contentType: string }, payload: Record<string, unknown>, startedAt: number): Promise<CteProviderExtraction> => {
+    let numbers: ReadonlySet<number> | null = null;
+    try { numbers = input.contentType === "application/pdf" ? documentNumbers(input.bytes) : null; } catch { numbers = null; }
+    const issues = cteUnprintedValues(first, numbers);
+    const remaining = CTE_REVIEW_BUDGET_MS - (Date.now() - startedAt);
+    if (cteReadingConfirmed(first, numbers) || remaining < CTE_REVIEW_MIN_MS) return first;
+    const review = abortable(Math.min(remaining, timeoutMs));
+    try {
+      const messages = [{ role: "user", content: [documentBlock(input.bytes, input.contentType as CteDocumentContentType), { type: "text", text: cteReadingReviewPrompt(first, issues) }] }];
+      const response = await fetcher(endpoint, { method: "POST", headers: { "x-api-key": apiKey, "anthropic-version": ANTHROPIC_VERSION, "content-type": "application/json" }, body: JSON.stringify({ ...payload, messages }), signal: review.signal });
+      if (!response.ok) { console.error(`[CTE_READING_REVIEW_FAILURE] status=${response.status}`); return first; }
+      const second = parseAnthropicCteResponse(await response.json());
+      const secondIssues = cteUnprintedValues(second, numbers);
+      const kept = betterCteReading(first, issues, second, secondIssues);
+      console.info(`[CTE_READING_REVIEW] unprinted_before=${issues.length} unprinted_after=${secondIssues.length} kept=${kept ? "REVIEWED" : "FIRST"}`);
+      return kept ? second : first;
+    } catch (error) {
+      console.error(`[CTE_READING_REVIEW_FAILURE] message=${sanitizeProviderText(error instanceof Error ? error.message : "errore")}`);
+      return first;
+    } finally {
+      review.cancel();
+    }
+  };
   return {
     getDiagnosticCapture: () => diagnosticCapture,
     getProviderPayloadCapture: () => providerPayloadCapture,
     async extract(input) {
+      const startedAt = Date.now();
       const timeout = abortable(timeoutMs);
       const timeoutFailure = timeout.deadline.then(() => { throw new DOMException("CTE provider timeout", "AbortError"); });
       const payload = {
@@ -630,7 +664,7 @@ export function createAnthropicCteOcrProvider(env: NodeJS.ProcessEnv = process.e
           const extraction = parseAnthropicCteResponse(body);
           diagnosticCapture = buildCteDiagnosticCapture(body);
           providerPayloadCapture = { requestId: requestId(response, body), provider: "anthropic", model, timestamp: new Date().toISOString(), responseStatus: response.status, rawPayload: body, normalizedPayload: extraction, schemaValidation: { status: "PASS", errorCode: null, issuePaths: [], issueCodes: [] } };
-          return { ...extraction, providerDiagnostics: diagnostics };
+          return { ...(await verified(extraction, input, payload, startedAt)), providerDiagnostics: diagnostics };
         } catch (error) {
           if (error instanceof AnthropicCteResponseError) {
             diagnosticCapture = buildCteDiagnosticCapture(body, error);
