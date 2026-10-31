@@ -554,3 +554,12 @@ button:focus-visible,a:focus-visible,input:focus-visible,select:focus-visible,te
 .archive-purge-confirm label { display:flex; flex-wrap:wrap; gap:10px; align-items:center; font-weight:600; }
 .archive-purge-confirm input { min-width:180px; min-height:40px; padding:6px 12px; border:2px solid #94a3b8; border-radius:8px; background:#fff; color:var(--ink); font-size:16px; text-transform:uppercase; }
 .archive-purge-confirm input:focus { border-color:#d4a017; outline:none; }
+
+/* Dati di mercato: fasce PUN leggibili (Tony 31/10) */
+.market-bands { display:flex; flex-wrap:wrap; align-items:flex-end; justify-content:flex-end; gap:8px; }
+.market-band { display:grid; gap:2px; min-width:64px; padding:6px 10px; border-radius:10px; text-align:right; background:#f3f6fa; }
+.market-band small { font-size:10px; font-weight:800; letter-spacing:.08em; text-transform:uppercase; }
+.market-band b { font-size:15px; font-weight:600; color:var(--ink); font-variant-numeric:tabular-nums; }
+.market-band-f1 small { color:#1f5fa8; }.market-band-f2 small { color:#8a4fb3; }.market-band-f3 small { color:#b06a12; }
+.market-band-mono { background:var(--teal-soft); }.market-band-mono small { color:var(--teal); }.market-band-mono b { font-size:18px; font-weight:800; color:var(--teal); }
+.market-unit { align-self:center; color:var(--muted); font-size:11px; }
