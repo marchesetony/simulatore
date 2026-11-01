@@ -204,8 +204,12 @@ export function renderReceiptProposal(proposal: ProposalCanonicalSnapshot, prese
 
   // Tony (1/11, "queste le voci che dobbiamo avere visibili nell'offerta come una fattura reale, poi il dettaglio con il
   // paragone"): the new offer first as the ARERA "Scontrino dell'energia" (quantità × prezzo medio = importi).
-  if (presentation.scontrino?.length) {
-    sheet.section(`Scontrino dell'energia: ${presentation.offerName || presentation.offerSupplier}`);
+  const scontrinoBlocks = [
+    ...(presentation.billScontrino?.length ? [{ title: `Scontrino della bolletta attuale: ${presentation.billSupplier || "fornitore attuale"}`, lines: presentation.billScontrino }] : []),
+    ...(presentation.scontrino?.length ? [{ title: `Scontrino dell'energia della nuova offerta: ${presentation.offerName || presentation.offerSupplier}`, lines: presentation.scontrino }] : []),
+  ];
+  for (const block of scontrinoBlocks) {
+    sheet.section(block.title);
     const at = { label: L + 6, price: L + 380, amount: R - 6 };
     sheet.need(22);
     sheet.rect(L, sheet.y - 18, R - L, 18, NAVY);
@@ -213,7 +217,7 @@ export function renderReceiptProposal(proposal: ProposalCanonicalSnapshot, prese
     sheet.text("Prezzo medio", at.price, sheet.y - 12.5, 7.5, { bold: true, color: "1 1 1", align: "right" });
     sheet.text("Importi", at.amount, sheet.y - 12.5, 7.5, { bold: true, color: "1 1 1", align: "right" });
     sheet.y -= 18;
-    for (const line of presentation.scontrino) {
+    for (const line of block.lines) {
       const height = line.kind === "total" ? 20 : 14;
       sheet.need(height);
       if (line.kind === "section" || line.kind === "total") sheet.rect(L, sheet.y - height, R - L, height, line.kind === "total" ? TEAL_SOFT : PANEL);

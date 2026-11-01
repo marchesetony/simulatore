@@ -41,3 +41,22 @@ assert.equal(parsed.scontrino.length, lines.length);
 assert.deepEqual(parsed.scontrino[1], { kind: "main", label: "", quantity: "400 kWh", price: "0,180000 €/kWh", amount: 72 });
 assert.throws(() => parseProposalPresentation({ scontrino: [{ kind: "bogus", label: "x", amount: 1 }] }));
 console.log("OFFER_SCONTRINO_PDF=PASS");
+
+// Tony (1/11, "dove è lo scontrino della fattura?"): the uploaded bill's own scontrino from the same quotas (bill side),
+// next to the offer's; the company discount never touches the bill side.
+{
+  const both = (key, current, currentSeller, offer, offerSeller) => ({ key, label: key, basis: "", current, offer, difference: null, currentSeller, offerSeller, details: [] });
+  const billSide = offerScontrino({ quotas: [both("CONSUMPTION", 797.67, 668.46, 700, 600), both("TAXES", 100, null, 90, null)], offerTotal: 897.67, taxesIncluded: true, vector: "EE", quantity: 2642, months: 1, powerKw: null, side: "current", discount: -10 });
+  assert.deepEqual(billSide.map((line) => [line.kind, line.label || line.quantity, line.price ?? null, line.amount]), [
+    ["section", "Quota per consumi", null, null],
+    ["main", "2.642 kWh", "0,301919 €/kWh", 797.67],
+    ["sub", "di cui spesa per la vendita di energia elettrica", "0,253013 €/kWh", 668.46],
+    ["sub", "di cui spesa per la rete e gli oneri generali di sistema", "0,048906 €/kWh", 129.21],
+    ["item", "Accise e IVA", null, 100],
+    ["total", "Totale bolletta", null, 897.67],
+  ]);
+  const flow = (await import("node:fs")).readFileSync(new URL("../app/components/QuickQuoteFlow.tsx", import.meta.url), "utf8");
+  assert.match(flow, /Scontrino della bolletta attuale/);
+  assert.match(flow, /side: "current"/);
+  console.log("BILL_SCONTRINO=PASS");
+}

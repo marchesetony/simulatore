@@ -58,3 +58,8 @@ const boxIndex = estimateBillSpread(bill([line("Energia Attiva F1", "0,1200", 60
 assert.equal(boxIndex.source, "BILL");
 close(boxIndex.spread, 0.02);
 console.log("BILL_SPREAD_BOX_INDEX=PASS");
+
+// Tony (1/11, "come può essere lo spreed negativo? errore?"): a bill price below the official PUN is not the offer's energy
+// price (another per-kWh row was read): no spread is shown instead of a negative one.
+assert.equal(estimateBillSpread(bill([line("Energia F1", "0,0100", 600), line("Energia F2", "0,0100", 300), line("Energia F3", "0,0100", 100)]), ["2026-09"], [record], official).status, "PRICE_MISSING");
+console.log("BILL_SPREAD_NEGATIVE_HIDDEN=PASS");

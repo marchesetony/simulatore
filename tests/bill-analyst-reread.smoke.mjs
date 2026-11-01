@@ -15,7 +15,9 @@ const route = readFileSync(new URL("../app/api/bills/[id]/route.ts", import.meta
 assert.match(route, /operation === "reread-analyst"[\s\S]*extractAnalystOnly[\s\S]*createAnalystRefreshVersion/);
 assert.match(route, /export const maxDuration = 300;/);
 const bill = readFileSync(new URL("../app/lib/foundation/real-bill.ts", import.meta.url), "utf8");
-assert.match(bill, /chargeLinesUnread: working\.structuredBill \? working\.structuredBill\.analystExtractionStatus === "FAILED" \|\| \(working\.structuredBill\.economicChargeLines\?\.length \?\? 0\) === 0 : false/);
+// Tony (1/11, "leggere lo scontrino della bolletta"): a failed second reading completed by the printed scontrino is not unread.
+assert.match(bill, /\(working\.structuredBill\.analystExtractionStatus === "FAILED" && !readingHasScontrino\(working\.structuredBill\)\) \|\| \(working\.structuredBill\.economicChargeLines\?\.length \?\? 0\) === 0/);
+assert.match(route, /refine: \(extraction\) => withPrintedScontrino\(extraction, text\)/);
 const flow = readFileSync(new URL("../app/components/QuickQuoteFlow.tsx", import.meta.url), "utf8");
 assert.match(flow, /Rileggi le voci della bolletta/);
 assert.match(flow, /\{analystRetry\(draft\)\}/);

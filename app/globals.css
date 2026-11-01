@@ -586,3 +586,5 @@ button:focus-visible,a:focus-visible,input:focus-visible,select:focus-visible,te
 .offer-scontrino .scontrino-total th { text-align:left; }
 .offer-scontrino .scontrino-total th, .offer-scontrino .scontrino-total td { font-weight:700; background:rgba(120,180,90,.15); }
 .quote-compare-title { margin:8px 0; }
+.scontrino-pair { display:grid; grid-template-columns:repeat(auto-fit, minmax(320px, 1fr)); gap:12px; }
+.scontrino-pair .offer-scontrino { margin:12px 0; }

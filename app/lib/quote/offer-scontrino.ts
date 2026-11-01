@@ -6,7 +6,7 @@ import type { QuoteReceiptQuota } from "./receipt";
 // oneri generali di sistema", then bonus, altre partite, accise e IVA and the total. The comparison table follows it.
 export interface ScontrinoLine { readonly kind: "section" | "main" | "sub" | "item" | "total"; readonly label: string; readonly quantity?: string; readonly price?: string; readonly amount: number | null }
 
-const QUANTITY = new Intl.NumberFormat("it-IT", { maximumFractionDigits: 2 });
+const QUANTITY = new Intl.NumberFormat("it-IT", { maximumFractionDigits: 2, useGrouping: "always" });
 const PRICE = new Intl.NumberFormat("it-IT", { minimumFractionDigits: 6, maximumFractionDigits: 6 });
 const MONTHLY = new Intl.NumberFormat("it-IT", { minimumFractionDigits: 2, maximumFractionDigits: 4 });
 const cents = (value: number) => Math.round(value * 100) / 100;
@@ -20,10 +20,14 @@ export function billedMonths(periodStart: string, periodEndExclusive: string): n
   return Math.round(months * 100) / 100;
 }
 
-export function offerScontrino(input: { readonly quotas: readonly QuoteReceiptQuota[]; readonly offerTotal: number | null; readonly taxesIncluded: boolean; readonly vector: "EE" | "GAS"; readonly quantity: number | null; readonly months: number | null; readonly powerKw: number | null; /** The company discount (negative, net of VAT), shown as its own line (Tony 1/11: visible). */ readonly discount?: number | null }): readonly ScontrinoLine[] {
-  const discount = input.discount && input.discount < 0 ? input.discount : 0;
+export function offerScontrino(input: { readonly quotas: readonly QuoteReceiptQuota[]; readonly offerTotal: number | null; readonly taxesIncluded: boolean; readonly vector: "EE" | "GAS"; readonly quantity: number | null; readonly months: number | null; readonly powerKw: number | null; /** The company discount (negative, net of VAT), shown as its own line (Tony 1/11: visible). */ readonly discount?: number | null;
+  /** Tony (1/11, "dove è lo scontrino della fattura?"): "current" builds the uploaded bill's own scontrino from the same quotas. */
+  readonly side?: "current" | "offer" }): readonly ScontrinoLine[] {
+  const side = input.side ?? "offer";
+  const pick = (row: QuoteReceiptQuota) => side === "current" ? { ...row, offer: row.current, offerSeller: row.currentSeller } : row;
+  const discount = (input.side ?? "offer") === "offer" && input.discount && input.discount < 0 ? input.discount : 0;
   const unit = input.vector === "EE" ? "kWh" : "Smc";
-  const quota = (key: QuoteReceiptQuota["key"]) => input.quotas.find((item) => item.key === key);
+  const quota = (key: QuoteReceiptQuota["key"]) => { const found = input.quotas.find((item) => item.key === key); return found ? pick(found) : undefined; };
   const lines: ScontrinoLine[] = [];
   const split = (row: QuoteReceiptQuota, per: (amount: number) => string | undefined) => {
     const total = row.offer ?? 0; const seller = row.offerSeller ?? 0; const regulated = cents(total - seller);
@@ -57,7 +61,7 @@ export function offerScontrino(input: { readonly quotas: readonly QuoteReceiptQu
   if (discount) lines.push({ kind: "item", label: "Sconto commerciale aziendale", amount: cents(discount) });
   const other = quota("OTHER"); if (other && other.offer) lines.push({ kind: "item", label: "Altre partite", amount: other.offer });
   const bonus = quota("BONUS"); if (bonus && bonus.offer) lines.push({ kind: "item", label: "Bonus sociale", amount: bonus.offer });
-  const taxes = input.quotas.filter((item) => item.key === "EXCISE" || item.key === "VAT" || item.key === "TAXES").reduce<number | null>((sum, item) => item.offer === null ? sum : (sum ?? 0) + item.offer, null);
+  const taxes = input.quotas.filter((item) => item.key === "EXCISE" || item.key === "VAT" || item.key === "TAXES").map(pick).reduce<number | null>((sum, item) => item.offer === null ? sum : (sum ?? 0) + item.offer, null);
   if (taxes !== null) lines.push({ kind: "item", label: "Accise e IVA", amount: cents(taxes) });
   const placed = cents(lines.filter((line) => line.kind !== "sub" && line.kind !== "section").reduce((sum, line) => sum + (line.amount ?? 0), 0));
   lines.push({ kind: "total", label: input.taxesIncluded ? "Totale bolletta" : "Totale imposte escluse", amount: input.offerTotal ?? placed });

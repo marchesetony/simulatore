@@ -16,7 +16,8 @@ import { billPunRefresh } from "../../../lib/market-refresh/bill-pun";
 import { deleteBillPermanently } from "../../../lib/foundation/bill-retention";
 import { billVisibilityScope, getBillInScope } from "../../../lib/foundation/bill-visibility";
 import { isBillFeature, resolveBillFeaturePermissions, sanitizeBillForFeatureAccess, type BillFeature } from "../../../lib/foundation/bill-feature-permissions";
-import { createAnthropicTwoStageBillSdkAdapter } from "../../../lib/ingestion/anthropic-bill-sdk";
+import { createAnthropicTwoStageBillSdkAdapter, printedText } from "../../../lib/ingestion/anthropic-bill-sdk";
+import { printedScontrinoLines, withPrintedScontrino } from "../../../lib/ingestion/printed-scontrino";
 import type { AuthenticatedPrincipal } from "../../../lib/auth/types";
 import type { RuntimeRepositories } from "../../../lib/persistence/adapter";
 import type { PublicBillDocument } from "../../../lib/foundation/real-bill";
@@ -113,8 +114,13 @@ export async function PATCH(request: Request, context: { params: Promise<{ id: s
       const bytes = await repositories.documentStorage.read(tenantId, document.id);
       const contentType = storedBillContentType(bytes);
       if (!contentType) return deny("BILL_OPERATION_INVALID", "Stored file type not recognized", 400);
-      const analyst = await createAnthropicTwoStageBillSdkAdapter().extractAnalystOnly({ bytes, contentType });
-      const refreshed = createAnalystRefreshVersion({ document, tenantId, sourceVersionId: operation.versionId, analyst, at: now });
+      // The scontrino printed in the PDF text completes a reading that lacks it (Tony, 1/11); when the second reading fails
+      // again, the stored reading is kept and the printed scontrino alone fills the bill side.
+      const text = printedText({ bytes, contentType });
+      let analyst: Awaited<ReturnType<ReturnType<typeof createAnthropicTwoStageBillSdkAdapter>["extractAnalystOnly"]>> | null = null;
+      try { analyst = await createAnthropicTwoStageBillSdkAdapter().extractAnalystOnly({ bytes, contentType }); }
+      catch (error) { if (!text || !printedScontrinoLines(text).length) throw error; console.error(`[BILL_ANALYST_REREAD_FAILED] bill=${document.id} using printed scontrino`); }
+      const refreshed = createAnalystRefreshVersion({ document, tenantId, sourceVersionId: operation.versionId, analyst, at: now, refine: (extraction) => withPrintedScontrino(extraction, text) });
       await repository.saveIfCurrentVersion(refreshed, operation.versionId, document.versions.find((version) => version.versionId === operation.versionId)!);
       await audit.record({ type: "INGESTION", tenantId, documentId: id, outcome: "ALLOWED" });
       return Response.json({ document: await publicDocumentFor(principal, repositories, await attachOfficialPun(toPublicDocument(refreshed), repositories.marketArchiveRepository)) }, { headers: NO_STORE_HEADERS });

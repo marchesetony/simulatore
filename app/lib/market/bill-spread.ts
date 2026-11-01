@@ -240,6 +240,10 @@ export function estimateBillSpread(extraction: StructuredBillExtraction | null, 
   const printedMarkup = lines.every((line) => Math.abs(line.spread) < 0.0005) ? statedSpread(extraction) : null;
   if (printedMarkup !== null) return { status: "CALCULATED", source: "BILL", structure, months, lines: lines.map((line) => ({ band: line.band, billPrice: null, officialPun: null, spread: printedMarkup, label: "Spread" })), referencePun, referenceBands, spread: printedMarkup };
   const weightOf = (band: BillSpreadBand) => band === "F23" ? consumption.F2 + consumption.F3 : band === "F0" ? consumption.F1 + consumption.F2 + consumption.F3 : consumption[band];
+  // Tony (1/11, "come può essere lo spreed negativo? errore? non può esistere senza importo"): a bill price below the official
+  // PUN is not the energy price of the offer (another per-kWh row was read, or no energy amount at all): no spread is shown.
+  const derived = weighted(lines.map((line) => [line.spread, weightOf(line.band)] as const));
+  if (derived === null || derived < -0.005 || lines.some((line) => line.spread < -0.005)) return { status: "PRICE_MISSING", ...empty, referencePun, referenceBands };
   return { status: "CALCULATED", source: "CALCULATED", structure, months, lines, referencePun, referenceBands, spread: weighted(lines.map((line) => [line.spread, weightOf(line.band)] as const)) };
 }
 /** The spread the bill states on its own row or fact, in €/kWh. */

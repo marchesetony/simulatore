@@ -1,3 +1,5 @@
+// @ts-expect-error Node's strip-only test runner requires the explicit extension.
+import { readingHasScontrino } from "../ingestion/printed-scontrino.ts";
 import { randomUUID } from "node:crypto";
 import { mkdir, readFile, rm, unlink, writeFile } from "node:fs/promises";
 import path from "node:path";
@@ -627,7 +629,7 @@ export function toPublicDocumentVersion(document: BillDocument, versionId: strin
     structuredBill: working.structuredBill ?? null,
     // Tony (1/11, "mancano i raffronti con lo scontrino della bolletta inserita"): also a reading that holds no charge line at
     // all (second reading not run, or empty) offers the re-read, not only a failed one.
-    chargeLinesUnread: working.structuredBill ? working.structuredBill.analystExtractionStatus === "FAILED" || (working.structuredBill.economicChargeLines?.length ?? 0) === 0 : false,
+    chargeLinesUnread: working.structuredBill ? (working.structuredBill.analystExtractionStatus === "FAILED" && !readingHasScontrino(working.structuredBill)) || (working.structuredBill.economicChargeLines?.length ?? 0) === 0 : false,
     resolvedVector,
     invoicePunReferences: [],
     regulatoryAudit: null,
@@ -1329,8 +1331,11 @@ export function createAnalystRefreshVersion(input: {
   readonly document: BillDocument;
   readonly tenantId: string;
   readonly sourceVersionId: string;
-  readonly analyst: BillAnalystWireExtraction;
+  /** null: the second reading failed again; the stored reading is kept and only refined (printed scontrino). */
+  readonly analyst: BillAnalystWireExtraction | null;
   readonly at: string;
+  /** Applied to the new reading before it is stored (the scontrino read from the PDF text, Tony 1/11). */
+  readonly refine?: (extraction: StructuredBillExtraction) => StructuredBillExtraction;
 }): BillDocument {
   validateTenantId(input.tenantId);
   if (input.document.tenantId !== input.tenantId) throw new Error("TENANT_ACCESS_DENIED");
@@ -1341,7 +1346,8 @@ export function createAnalystRefreshVersion(input: {
   validateStructuredBillExtraction(previous.structuredBill);
 
   const currentCore: StructuredBillExtraction = stripBillAnalystData(previous.structuredBill);
-  const newStructuredBill = mergeBillCoreAndAnalyst(currentCore, input.analyst, { analystExtractionStatus: "EXTRACTED" });
+  const merged = input.analyst ? mergeBillCoreAndAnalyst(currentCore, input.analyst, { analystExtractionStatus: "EXTRACTED" }) : previous.structuredBill;
+  const newStructuredBill = input.refine ? input.refine(merged) : merged;
 
   const versionId = randomUUID();
   const energyContract = structuredBillContract({ extraction: newStructuredBill, tenantId: input.tenantId, billId: input.document.id, versionId });

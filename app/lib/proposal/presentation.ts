@@ -31,6 +31,8 @@ export interface ProposalPresentation {
   readonly excluded: readonly { readonly label: string; readonly amount: number }[];
   /** Tony (1/11): the offer as the ARERA "Scontrino dell'energia" (quantità, prezzo medio, importi), before the comparison. */
   readonly scontrino?: readonly ProposalScontrinoLine[];
+  /** The uploaded bill's own scontrino, same layout (Tony 1/11, "dove è lo scontrino della fattura?"). */
+  readonly billScontrino?: readonly ProposalScontrinoLine[];
 }
 export interface ProposalScontrinoLine { readonly kind: "section" | "main" | "sub" | "item" | "total"; readonly label: string; readonly quantity?: string; readonly price?: string; readonly amount: number | null }
 const SCONTRINO_KINDS = ["section", "main", "sub", "item", "total"] as const;
@@ -56,6 +58,7 @@ export function parseProposalPresentation(value: unknown): ProposalPresentation 
     comparison: list(input.comparison, 20).map((item) => { const row = object(item); return { label: text(row.label, 80), bill: text(row.bill, 160), offer: text(row.offer, 160) }; }),
     excluded: list(input.excluded, 20).map((item) => { const row = object(item); return { label: text(row.label, 120), amount: amount(row.amount) ?? 0 }; }),
     scontrino: list(input.scontrino, 40).map((item) => { const row = object(item); const kind = SCONTRINO_KINDS.find((value) => value === row.kind) ?? fail(); return { kind, label: text(row.label, 120), ...(row.quantity ? { quantity: text(row.quantity, 60) } : {}), ...(row.price ? { price: text(row.price, 60) } : {}), amount: amount(row.amount) }; }),
+    billScontrino: list(input.billScontrino, 40).map((item) => { const row = object(item); const kind = SCONTRINO_KINDS.find((value) => value === row.kind) ?? fail(); return { kind, label: text(row.label, 120), ...(row.quantity ? { quantity: text(row.quantity, 60) } : {}), ...(row.price ? { price: text(row.price, 60) } : {}), amount: amount(row.amount) }; }),
   };
 }
 

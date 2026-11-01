@@ -1,3 +1,7 @@
+// @ts-expect-error Node's strip-only test runner requires the explicit extension.
+import { pdfTextLayer } from "../regulatory-refresh/pdf-text.ts";
+// @ts-expect-error Node's strip-only test runner requires the explicit extension.
+import { withPrintedScontrino } from "./printed-scontrino.ts";
 import Anthropic, {
   APIConnectionError,
   APIConnectionTimeoutError,
@@ -204,6 +208,12 @@ function providerError(error: unknown): BillOcrErrorCode {
   return "BILL_OCR_PROVIDER_FAILED";
 }
 
+/** The PDF's own text layer, when it has one (null for images and scanned PDFs). */
+export function printedText(input: { readonly bytes: Uint8Array; readonly contentType: string }): string | null {
+  if (input.contentType !== "application/pdf") return null;
+  try { const layer = pdfTextLayer(input.bytes); return layer.status === "AVAILABLE" ? layer.text : null; } catch { return null; }
+}
+
 function documentBlock(bytes: Uint8Array, contentType: string): DocumentBlockParam | ImageBlockParam {
   const data = Buffer.from(bytes).toString("base64");
   if (contentType === "application/pdf") return { type: "document", source: { type: "base64", media_type: "application/pdf", data } };
@@ -407,7 +417,13 @@ export class AnthropicTwoStageBillSdkAdapter implements BillExtractionProvider {
     }
   }
 
+  // Tony (1/11, "leggere lo scontrino della bolletta e le condizioni applicate che sono riportate, se esiste leggere il
+  // dettaglio"): the scontrino printed in the PDF text is added to any reading that lacks it (see printed-scontrino.ts).
   async extract(input: { readonly bytes: Uint8Array; readonly contentType: string }): Promise<StructuredBillExtraction> {
+    return withPrintedScontrino(await this.#extractRead(input), printedText(input));
+  }
+
+  async #extractRead(input: { readonly bytes: Uint8Array; readonly contentType: string }): Promise<StructuredBillExtraction> {
     const startedAt = Date.now();
     // Tony (30/10): "ho come l'impressione che sia lento nelle elaborazioni ... quando attiviamo agenti e AI". The analyst
     // reading does not depend on the core one, so both run at the same time instead of one after the other.
