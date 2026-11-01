@@ -52,7 +52,7 @@ export function parseProposalPresentation(value: unknown): ProposalPresentation 
     offerSupplier: text(input.offerSupplier), offerName: text(input.offerName), offerCode: text(input.offerCode, 80), periodLabel: text(input.periodLabel), consumptionLabel: text(input.consumptionLabel),
     taxesIncluded: input.taxesIncluded === true, sameOffer: input.sameOffer === true,
     currentTotal: amount(input.currentTotal), offerTotal: amount(input.offerTotal), savings: amount(input.savings), savingsPercent: amount(input.savingsPercent),
-    annualSaving: amount(input.annualSaving), annualCurrent: amount(input.annualCurrent), annualBasisLabel: text(input.annualBasisLabel),
+    annualSaving: amount(input.annualSaving), annualCurrent: amount(input.annualCurrent), annualBasisLabel: text(input.annualBasisLabel, 400),
     validUntil: /^\d{4}-\d{2}-\d{2}$/.test(validUntil) ? validUntil : null,
     rows: list(input.rows, 80).map((item) => { const row = object(item); return { label: text(row.label, 120), current: amount(row.current), offer: amount(row.offer), difference: amount(row.difference), detail: row.detail === true, ...(row.note ? { note: text(row.note, 120) } : {}) }; }),
     comparison: list(input.comparison, 20).map((item) => { const row = object(item); return { label: text(row.label, 80), bill: text(row.bill, 160), offer: text(row.offer, 160) }; }),

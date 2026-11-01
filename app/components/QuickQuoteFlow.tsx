@@ -170,6 +170,23 @@ function annualProjection(offer: Offer, context: Context, bill: BillDocumentMode
   // discount keeps that saving on every bill of the year, so its annual saving is the same percentage of the annual cost.
   return annualSavingUnderDiscount(projected, discountOf(offer) !== null, offer.discount?.targetSavingPercent ?? null);
 }
+/**
+ * Tony (1/11, "il risparmio sulla bolletta risulta maggiore di quello annuo cosi come la percentuale"): the annual saving
+ * is not the bill's saving times 12. The consumption part follows the annual kWh (here 2.642 kWh of 6.034: the bill is 44% of
+ * the year), the quota fissa is paid every month. When the annual saving is lower, the card says why in one sentence.
+ */
+function annualGapNote(offer: Offer, context: Context, bill: BillDocumentModel, saving: number, annual: number, basis: { readonly annual: number; readonly billed: number }): string {
+  if (annual >= saving - 0.005) return "";
+  const days = (Date.parse(`${context.billingPeriod.periodEnd}T00:00:00Z`) - Date.parse(`${context.billingPeriod.periodStart}T00:00:00Z`)) / 86_400_000 + 1;
+  const months = Math.max(1, Math.round(days / 30.4375));
+  const share = Math.round(basis.billed / basis.annual * 100);
+  const billPcv = monthlyPcv(bill);
+  const offerPcv = offer.calculation.components.filter((component) => component.category === "FIXED_FEE").reduce((sum, component) => sum + (component.sign === "DISCOUNT" ? -1 : 1) * component.amount.amount, 0) / months;
+  const unit = context.vector === "EE" ? "kWh" : "Smc";
+  const consumption = `il consumo di questa bolletta (${amount(basis.billed, unit)}) è il ${share}% di quello annuo`;
+  const fixed = billPcv !== null && offerPcv > billPcv + 0.005 ? `, mentre la quota fissa di vendita dell'offerta (${euro(offerPcv)} al mese contro ${euro(billPcv)} della bolletta) si paga per 12 mesi` : "";
+  return `Il risparmio annuo è più basso di quello sulla bolletta perché ${consumption}${fixed}`;
+}
 /** The company discount applied to this quote (net of VAT, positive), or null. */
 function discountOf(offer: Offer): number | null {
   const line = offer.receipt.rows.find((row) => row.key === "ENERGY")?.details?.find((item) => item.key === "COMPANY_DISCOUNT");
@@ -792,7 +809,8 @@ function Receipt({ offer: quoted, today, business, context, bill, onPresentation
   // the gap is what the bill charges beyond (or below) its own CTE.
   const same = isSameOffer({ billSupplier: context.currentSupplier, billOffer: currentOffer, offerSupplier: offer.supplier, offerCode: offer.calculation.sourceCte.offerCode, offerName: offer.offerName });
   const headline = same ? (saving >= 0 ? "Stessa CTE della bolletta: la bolletta addebita più di quanto prevede la CTE" : "Stessa CTE della bolletta: la bolletta addebita meno di quanto prevede la CTE") : saving >= 0 ? "Risparmio sulla bolletta caricata" : "Costo in più sulla bolletta caricata";
-  const basisLabel = basis ? `Simulato su 12 mesi con ${amount(basis.annual, unit)} di consumo annuo${basis.estimated ? " stimato dalla bolletta" : " letto in bolletta"}` : "";
+  const note = basis && annualSaving !== null && !same ? annualGapNote(offer, context, bill, saving, annualSaving, basis) : "";
+  const basisLabel = basis ? `Simulato su 12 mesi con ${amount(basis.annual, unit)} di consumo annuo${basis.estimated ? " stimato dalla bolletta" : " letto in bolletta"}${note ? `. ${note}` : ""}` : "";
   const scontrino = offerScontrino({ quotas: receipt.quotas, offerTotal: receipt.status === "COMPLETE" ? receipt.offerTotal : null, taxesIncluded: receipt.taxesIncluded, vector: context.vector, quantity: periodQuantity, months: billedMonths(context.billingPeriod.periodStart, context.billingPeriod.periodEnd), powerKw: powerQuotaKw(context), discount: receipt.rows.find((row) => row.key === "ENERGY")?.details?.find((item) => item.key === "COMPANY_DISCOUNT")?.offer ?? null });
   const billScontrino = receipt.status === "COMPLETE" ? offerScontrino({ quotas: receipt.quotas, offerTotal: receipt.currentTotal, taxesIncluded: receipt.taxesIncluded, vector: context.vector, quantity: periodQuantity, months: billedMonths(context.billingPeriod.periodStart, context.billingPeriod.periodEnd), powerKw: powerQuotaKw(context), side: "current", excluded: billOutsideComparison(bill.analystReview.economics.economicAnalysis, receipt.currentTotal) }) : [];
   const presentation = { ...presentationOf(offer, receipt, bill, context, same ? null : annualSaving, annualCurrent, basisLabel, same), scontrino, billScontrino };
@@ -806,7 +824,7 @@ function Receipt({ offer: quoted, today, business, context, bill, onPresentation
       <strong>{euro(Math.abs(saving))}{receipt.savingsPercent !== null ? ` (${PERCENT.format(Math.abs(receipt.savingsPercent))}%)` : ""}</strong>
     </div> : null}
     {annualSaving !== null && basis && !same ? <div className={annualSaving >= 0 ? "quote-saving annual" : "quote-saving annual negative"}>
-      <span>{annualSaving >= 0 ? "Risparmio annuo previsto" : "Costo in più annuo previsto"}<small>Simulato su 12 mesi con {amount(basis.annual, unit)} di consumo annuo{basis.estimated ? " stimato: media mensile della bolletta × 12" : " letto in bolletta"}</small>
+      <span>{annualSaving >= 0 ? "Risparmio annuo previsto" : "Costo in più annuo previsto"}<small>Simulato su 12 mesi con {amount(basis.annual, unit)} di consumo annuo{basis.estimated ? " stimato: media mensile della bolletta × 12" : " letto in bolletta"}{note ? `. ${note}` : ""}</small>
         {/* Annual saving in euro and in percent with both annual costs, as the scheda sintetica's spesa annua (Codice art. 19; Tony, 29/10). */}
         {annualCurrent ? <small>Spesa annua attuale {euro(annualCurrent)} · con la nuova offerta {euro(annualCurrent - annualSaving)}{receipt.taxesIncluded ? " (imposte comprese)" : " (imposte escluse)"}</small> : null}</span>
       <strong>{euro(Math.abs(annualSaving))}{annualCurrent ? ` (${PERCENT.format(Math.abs(annualSaving / annualCurrent * 100))}%)` : ""}</strong>
