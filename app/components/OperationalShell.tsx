@@ -526,6 +526,16 @@ export default function OperationalShell() {
   const section: SectionId = chosenSection ?? (platformTenant ? "dashboard" : "quote");
   const companyAdmin = context?.role === "ADMIN";
   const visibleSection = (id: SectionId): boolean => platformTenant ? PLATFORM_SECTIONS.includes(id) : (companyAdmin ? COMPANY_ADMIN_SECTIONS : SALES_SECTIONS).includes(id);
+  // Tony (1/11): the fixed header's height (it changes with the logo) tells the menu where to stay while the page scrolls.
+  useEffect(() => {
+    const header = document.querySelector<HTMLElement>(".app-header");
+    if (!header || typeof ResizeObserver === "undefined") return;
+    const update = () => document.documentElement.style.setProperty("--app-header-height", `${header.offsetHeight}px`);
+    update();
+    const observer = new ResizeObserver(update);
+    observer.observe(header);
+    return () => observer.disconnect();
+  }, []);
   const roleLabel = platformTenant ? "Gestione piattaforma" : context?.role === "ADMIN" ? "Amministratore" : context?.role === "ANALYST" ? "Responsabile" : context?.role === "VIEWER" ? "Agente" : "Sola lettura";
   function useBillInSimulation(value: SimulationDraft) { setSimulationPrefill(value); setDraft(value); setSection("simulations"); } function onCalculation(result: CalculationModel, value: SimulationDraft) { setCalculation(result); setComparison(null); setSelectedId(result.calculationId); setDraft(value); } function onComparison(result: ComparisonModel, value: SimulationDraft) { setComparison(result); setCalculation(null); setSelectedId(result.ranking[0]?.calculationId ?? null); setDraft(value); }
   useEffect(() => {
