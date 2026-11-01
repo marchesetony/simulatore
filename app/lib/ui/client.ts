@@ -240,3 +240,31 @@ export async function downloadExport(path: string, payload: unknown, format: "JS
   anchor.click();
   URL.revokeObjectURL(url);
 }
+
+/**
+ * Tony (1/11): "una per inviarla al cliente dalla email dell'agente o altra posizione". The proposal PDF goes through the
+ * device's share sheet (mail, WhatsApp, ...) where the browser can share files; elsewhere it is downloaded and the agent's own
+ * mail program opens with subject and text ready, to attach it. Nothing is sent by the app itself.
+ */
+export async function shareProposalPdf(path: string, payload: unknown, message: { readonly subject: string; readonly body: string; readonly fileName: string }): Promise<"SHARED" | "MAIL"> {
+  const response = await fetch(path, { method: "POST", body: JSON.stringify(payload), credentials: "same-origin", headers: { "content-type": "application/json" } });
+  if (!response.ok) {
+    const body: unknown = await response.json().catch(() => null);
+    const errorBody = typeof body === "object" && body !== null && "error" in body ? (body as { readonly error?: unknown }).error : body;
+    throw errorFrom(errorBody, `HTTP_${response.status}`);
+  }
+  if (!(response.headers.get("content-type") ?? "").toLowerCase().startsWith("application/pdf")) throw new UiApiError("EXPORT_CONTENT_TYPE_INVALID", "Tipo contenuto export non valido");
+  const blob = await response.blob();
+  const fileName = safeFilename(message.fileName, ".pdf");
+  const file = new File([blob], fileName, { type: "application/pdf" });
+  const share = typeof navigator !== "undefined" ? navigator as Navigator & { canShare?: (data: ShareData) => boolean } : null;
+  if (share?.canShare?.({ files: [file] }) && typeof share.share === "function") {
+    try { await share.share({ files: [file], title: message.subject, text: message.body }); return "SHARED"; } catch (cause) { if (cause instanceof DOMException && cause.name === "AbortError") return "SHARED"; }
+  }
+  const url = URL.createObjectURL(blob);
+  const anchor = document.createElement("a");
+  anchor.href = url; anchor.download = fileName; document.body.appendChild(anchor); anchor.click(); anchor.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+  window.location.href = `mailto:?subject=${encodeURIComponent(message.subject)}&body=${encodeURIComponent(message.body)}`;
+  return "MAIL";
+}
