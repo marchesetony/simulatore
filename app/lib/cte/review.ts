@@ -469,6 +469,12 @@ export function tryBuildAuthoritativeCteContract(record: Pick<CteIngestionRecord
   const economicDuration = asSemantic<CteEconomicDuration>(fields.get("commercialTerms.economicDuration"));
   const lossSemantics = asSemantic<CteLossSemantics>(fields.get("commercialTerms.lossSemantics"));
   const exitFee = asSemantic<CteExitFee>(fields.get("commercialTerms.exitFee"));
+  // Tony (1/11, Be Family Casa Protetta vs Fast): "perche la be family fast costa più della casa protetta, pur avendo una pcv
+  // più bassa?". Both CTEs charge "una tantum gestione APP e servizi … prima bolletta di €1,50", but Casa Protetta also has a
+  // 69 € early-exit penalty and the one-off was dropped with it, so only Fast paid it. The exit penalty is never priced and
+  // the stored contract holds either one (CTE_EXIT_FEE_DUPLICATE), so a one-off of another amount wins: it is money the first
+  // bill charges. The same amount read twice is still the exit penalty.
+  const keptOneOff = oneOff && !(exitFee && Math.abs(oneOff.amount - exitFee.amount) < 0.005) ? oneOff : null;
   const discountsField = fields.get("commercialTerms.commercialDiscounts");
   // "Sconti: nessuno" means there is no discount, not an amount to map.
   const noDiscount = typeof discountsField?.normalizedValue === "string" && /^\s*(?:nessun[oa]?|assent[ei]|non\s+previst[ie]|non\s+presenti|none|n\/a|-|—)\s*\.?\s*$/i.test(discountsField.normalizedValue);
@@ -528,7 +534,7 @@ export function tryBuildAuthoritativeCteContract(record: Pick<CteIngestionRecord
     taxTreatment: tax,
     eligibility: record.vector === "EE" ? { customerTypes: customer, ...(structuredCustomerScope ? { customerScopes: structuredCustomerScope } : {}), ...canonicalScope, ...(annualRule ? { annualConsumptionRule: annualRule } : {}), voltageLevels: voltage } : { customerTypes: customer, ...canonicalScope, ...(annualRule ? { annualConsumptionRule: annualRule } : {}) },
     pricing,
-    commercialTerms: { fixedFees: [...(fixed ? [fixed] : []), ...extraFixedFees(fixed, fields, offerName, `${record.ingestionId}-fixed`, tax)], variableFees: variable ? [variable] : [], imbalance: imbalance ? { status: "DECLARED" as const, component: imbalance } : { status: "NOT_DECLARED" as const, reason: "NOT_PROVIDED" as const }, oneOffFees: exitFee ? [] : oneOff ? [oneOff] : [], commercialDiscounts: discounts ? [discounts] : [], ...(typedPassThroughComponents === null ? {} : { passThroughComponents: typedPassThroughComponents }), ...(economicDuration ? { economicDuration } : {}), ...(lossSemantics ? { lossSemantics } : {}), ...(exitFee ? { exitFee } : {}), ...(punResolutionRule ? { punRule: punResolutionRule } : {}), ...(structuredCapacitySchedule ? { capacityMarketSchedule: structuredCapacitySchedule } : {}), ...(dispatching ? { dispatchingReference: dispatching } : {}), ...(losses ? { lossReference: losses } : {}) },
+    commercialTerms: { fixedFees: [...(fixed ? [fixed] : []), ...extraFixedFees(fixed, fields, offerName, `${record.ingestionId}-fixed`, tax)], variableFees: variable ? [variable] : [], imbalance: imbalance ? { status: "DECLARED" as const, component: imbalance } : { status: "NOT_DECLARED" as const, reason: "NOT_PROVIDED" as const }, oneOffFees: keptOneOff ? [keptOneOff] : [], commercialDiscounts: discounts ? [discounts] : [], ...(typedPassThroughComponents === null ? {} : { passThroughComponents: typedPassThroughComponents }), ...(economicDuration ? { economicDuration } : {}), ...(lossSemantics ? { lossSemantics } : {}), ...(exitFee && !keptOneOff ? { exitFee } : {}), ...(punResolutionRule ? { punRule: punResolutionRule } : {}), ...(structuredCapacitySchedule ? { capacityMarketSchedule: structuredCapacitySchedule } : {}), ...(dispatching ? { dispatchingReference: dispatching } : {}), ...(losses ? { lossReference: losses } : {}) },
   } as CteContract;
   try { validateCteContract(contract); } catch (error) { const code = (error as { code?: unknown })?.code; return authoritativeFailure("CTE_AUTHORITATIVE_SCHEMA_INVALID", [typeof code === "string" ? code : "contract"]); }
   return { contract, errorCode: null, validationPaths: [] };

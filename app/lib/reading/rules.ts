@@ -62,6 +62,8 @@ export const READING_RULES: readonly ReadingRule[] = [
     text: "Segna se spread e corrispettivi sono \"al lordo\" o \"al netto\" delle perdite di rete, voce per voce." },
   { id: "CTE_FEES", uses: ["CTE"], origin: "Tony 31/10, Be Smile",
     text: "Leggi ogni corrispettivo con la sua unità: quota fissa (€/mese o €/anno), commercializzazione, sbilanciamento, dispacciamento, Capacity Market libero, una tantum. Se una voce è letta 0,00 ma il testo dice \"pari a 0,003 €/kWh\", vale il testo." },
+  { id: "CTE_ONE_OFF", uses: ["CTE"], origin: "Tony 1/11, Be Family Casa Protetta e Fast",
+    text: "L'una tantum della prima bolletta (es. \"gestione APP e servizi … prima bolletta di €1,50\") e la penale di recesso anticipato (es. 69 € per la polizza) sono due voci diverse: leggile entrambe, anche se stanno in sezioni diverse." },
   { id: "CTE_SCHEDA", uses: ["CTE"], origin: "Tony 31/10, Scheda Sintetica",
     text: "Gli indicatori della Scheda Sintetica (Costo fisso anno, Costo per consumi, Costo per potenza, spesa annua stimata) riassumono i corrispettivi: non sono voci in più. Voltura, subentro, depositi cauzionali, costo pratica, interessi di mora e penali di recesso non sono spesa di fornitura." },
   { id: "CTE_CDISPD", uses: ["CTE"], origin: "Tony 31/10",

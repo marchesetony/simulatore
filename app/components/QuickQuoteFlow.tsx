@@ -5,6 +5,7 @@ import type { ProposalPresentation } from "../lib/proposal/presentation";
 import { EmptyState, ErrorState, LoadingState } from "./UiStates";
 import { downloadExport, MAX_UPLOAD_BYTES, requestJson, requestUpload, toUiError } from "../lib/ui/client";
 import { buildQuoteReceipt, effectiveBillSpread, isSameOffer, regulatedVerification, sameOfferDifferences, type QuoteReceipt, type RegulatedDomain } from "../lib/quote/receipt";
+import { annualSaving } from "../lib/quote/annual-saving";
 import { customerTypeOf } from "../lib/ingestion/customer-type";
 import { estimatedAnnualConsumption } from "../lib/calculation/annual-consumption";
 import { historyMonthTotals } from "../lib/ingestion/consumption-history";
@@ -152,13 +153,8 @@ function annualProjection(offer: Offer, context: Context, bill: BillDocumentMode
   if (!basis || receipt.status !== "COMPLETE" || receipt.savings === null) return null;
   const days = (Date.parse(`${context.billingPeriod.periodEnd}T00:00:00Z`) - Date.parse(`${context.billingPeriod.periodStart}T00:00:00Z`)) / 86_400_000 + 1;
   const months = Math.max(1, Math.round(days / 30.4375));
-  const offerFixed = offer.calculation.components.filter((component) => component.category === "FIXED_FEE").reduce((sum, component) => sum + (component.sign === "DISCOUNT" ? -1 : 1) * component.amount.amount, 0);
-  const billFixed = (monthlyPcv(bill) ?? 0) * months;
-  const factor = basis.annual / basis.billed;
-  const fixedSaving = billFixed - offerFixed;
-  const saving = (receipt.savings - fixedSaving) * factor + fixedSaving / months * 12;
-  const current = receipt.currentTotal === null ? null : (receipt.currentTotal - billFixed) * factor + billFixed / months * 12;
-  return { saving, current };
+  const net = (category: string) => offer.calculation.components.filter((component) => component.category === category).reduce((sum, component) => sum + (component.sign === "DISCOUNT" ? -1 : 1) * component.amount.amount, 0);
+  return annualSaving({ savings: receipt.savings, currentTotal: receipt.currentTotal, billFixed: (monthlyPcv(bill) ?? 0) * months, offerFixed: net("FIXED_FEE"), oneOff: net("ONE_OFF_FEE"), vat: receipt.taxesIncluded ? 1 + (receipt.vatRate ?? 0) : 1, months, factor: basis.annual / basis.billed });
 }
 function monthlyPcv(bill: BillDocumentModel): number | null {
   const lines = (bill.structuredBill?.economicChargeLines ?? []).filter((line) => {
