@@ -145,6 +145,7 @@ function offerQuota(component: QuoteReceiptOfferComponent): Quota | "ONE_OFF" {
 // "oneri di sistema", each split into quota fissa, quota potenza and quota energia: the bill may print only those
 // aggregates, so the check is made on the same aggregates.
 type RegulatedSide = "NETWORK" | "SYSTEM" | "DISPATCHING";
+const euroText = (value: number): string => `${value.toFixed(2).replace(".", ",")} €`;
 function regulatedSide(component: QuoteReceiptOfferComponent): RegulatedSide | null {
   if (!component.category.startsWith("REGULATED_")) return null;
   const code = String(component.formulaInputs?.componentCode ?? "");
@@ -400,11 +401,20 @@ function withDetails(input: QuoteReceiptInput, rows: readonly QuoteReceiptRow[],
     if (item.key !== "CAPACITY" || item.current === null) return item;
     return { ...item, label: `${item.label}, in bolletta comprende anche il capacity market libero`, difference: hasBill && item.offer !== null && !item.missingReason ? cents(item.offer + liberoOffer - item.current) : null };
   });
-  const seller: readonly QuoteReceiptDetail[] = bundled.size === 0 && !energyBilled ? capacityLabelled : capacityLabelled.map((item) => {
-    if (inEnergy(item)) return { ...item, difference: null, currentNote: `compreso nel prezzo energia della bolletta${bundled.get(item.key) ? ` (${bundled.get(item.key)} €/kWh)` : ""}` };
-    if (item.key !== "ENERGY" || item.current === null || item.missingReason || bundledNames.length === 0) return item;
-    return { ...item, label: `${item.label}, in bolletta comprende anche ${bundledNames.join(", ")}`, difference: hasBill && !sellerDetails.some((other) => inEnergy(other) && other.missingReason) ? cents((item.offer ?? 0) + bundledOffer - item.current) : null };
+  // Tony (1/11, "credo che le differenze siano errate"): the energy line showed 141,34 € against 148,23 € with a difference of
+  // +47,78 €, because the bill's energy price also holds commercializzazione, sbilanciamento, dispacciamento and capacity that the
+  // CTE lists apart. The energy line now shows no difference of its own; a comparison line right after the CTE's parts states
+  // both sides (bill energy price against CTE energy plus those charges) and their difference. The columns still add up.
+  const seller: readonly QuoteReceiptDetail[] = bundled.size === 0 && !energyBilled ? capacityLabelled : capacityLabelled.flatMap((item) => {
+    if (inEnergy(item)) return [{ ...item, difference: null, currentNote: `compreso nel prezzo energia della bolletta${bundled.get(item.key) ? ` (${bundled.get(item.key)} €/kWh)` : ""}` }];
+    if (item.key !== "ENERGY" || item.current === null || item.missingReason || bundledNames.length === 0) return [item];
+    return [{ ...item, label: `${item.label}, in bolletta comprende anche ${bundledNames.join(", ")}`, difference: null }];
   });
+  const energyLine = seller.find((item) => item.key === "ENERGY");
+  const comparable = energyLine !== undefined && energyLine.current !== null && energyLine.offer !== null && bundledNames.length > 0 && !energyLine.missingReason && !sellerDetails.some((other) => inEnergy(other) && other.missingReason);
+  const lastBundled = comparable ? Math.max(...seller.map((item, index) => inEnergy(item) || item.key === "ENERGY" ? index : -1)) : -1;
+  const compareLine: QuoteReceiptDetail | null = comparable && hasBill ? { key: "ENERGY_COMPARISON", label: `Confronto energia: prezzo energia della bolletta contro energia della CTE ${euroText(energyLine.offer ?? 0)} + ${bundledNames.join(", ")}`, current: null, offer: null, currentNote: `bolletta ${euroText(energyLine.current ?? 0)}`, offerNote: `CTE ${euroText(cents((energyLine.offer ?? 0) + bundledOffer))}`, difference: cents((energyLine.offer ?? 0) + bundledOffer - (energyLine.current ?? 0)) } : null;
+  const sellerWithComparison: readonly QuoteReceiptDetail[] = compareLine ? [...seller.slice(0, lastBundled + 1), compareLine, ...seller.slice(lastBundled + 1)] : seller;
   const label = (quota: Quota | null) => quota ? QUOTA_LABEL[quota].replace("\u20ac/kWh", consumptionUnit) : "altre voci";
   const regulated = (group: string, side: "NETWORK" | "SYSTEM") => {
     const official = officialOf(input, side);
@@ -421,7 +431,7 @@ function withDetails(input: QuoteReceiptInput, rows: readonly QuoteReceiptRow[],
   const excise = sumKnown(components.filter((line) => line.classification === "ACCISE").map((line) => amountOf(line.amount)));
   return rows.map((row) => {
     const difference = row.current === null || row.offer === null ? null : cents(row.offer - row.current);
-    if (row.key === "ENERGY") return { ...row, difference, details: seller };
+    if (row.key === "ENERGY") return { ...row, difference, details: sellerWithComparison };
     if (row.key === "NETWORK") return { ...row, difference, details: regulated("REGULATED_NETWORK", "NETWORK") };
     if (row.key === "SYSTEM") return { ...row, difference, details: regulated("SYSTEM_CHARGES", "SYSTEM") };
     if (row.key === "BONUS") return { ...row, difference, details: [] };

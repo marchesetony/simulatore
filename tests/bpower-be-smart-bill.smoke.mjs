@@ -93,7 +93,9 @@ assert.equal(details.DISPATCHING.current, null);
 assert.match(details.DISPATCHING.currentNote, /compreso nel prezzo energia della bolletta \(0,010501 €\/kWh\)/);
 assert.match(details.LOSSES.currentNote, /compreso nel prezzo energia/);
 assert.match(details.ENERGY.label, /comprende anche/);
-assert.equal(details.ENERGY.difference, Math.round((774.31 + 77.43 + 40.56 + 28.97 + 7.02 + 17.56 - 963.56) * 100) / 100);
+// Tony (1/11, "credo che le differenze siano errate"): the difference moved from the energy line to the comparison line.
+assert.equal(details.ENERGY.difference, null);
+assert.equal(details.ENERGY_COMPARISON.difference, Math.round((774.31 + 77.43 + 40.56 + 28.97 + 7.02 + 17.56 - 963.56) * 100) / 100);
 assert.equal(receipt.rows.find((row) => row.key === "NETWORK").current, 99.91);
 
 // Tony (28/10): "come fa ad essere diversa se la fattura ... è stata emessa con le caratteristiche della cte selezionata?".
@@ -194,7 +196,8 @@ const cdispdDetails = buildQuoteReceipt({ vector: "EE", offerSupplyCost: 62.07, 
 assert.equal(cdispdDetails.find((item) => item.key === "DISPATCHING")?.offer, 3.21);
 assert.ok(!cdispdDetails.some((item) => item.key === "CAPACITY"));
 assert.match(fixDetails.ENERGY.label, /comprende anche/);
-assert.equal(fixDetails.ENERGY.difference, Math.round((38.13 + 3.81 + 2.46 + 0.75 + 0.85 + 1.07 - 49.21) * 100) / 100);
+// Tony (1/11): the energy difference is carried by the comparison line.
+assert.equal(fixDetails.ENERGY_COMPARISON.difference, Math.round((38.13 + 3.81 + 2.46 + 0.75 + 0.85 + 1.07 - 49.21) * 100) / 100);
 // Tony (28/10, BPower Casa Protetta, domestico non residente 3 kW, 65 kWh, totale 128,07 EUR): the quadro sintetico prices
 // the quota fissa per day ("di cui spesa per la rete" 8,86 EUR at 0,328148 EUR/giorno). A per-day line is the quota fissa,
 // so its transport is 8,86 - 7,13 ASOS quota fissa, not dropped as a second quota energia.

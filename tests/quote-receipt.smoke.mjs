@@ -79,7 +79,11 @@ assert.deepEqual(detailed.quotas[1].details.map((item) => [item.key, item.curren
 // 8. Order asked by Tony (26/10): materia energia, trasporto, oneri di sistema, imposte (accise e IVA) aggregated first,
 //    then each charge they contain; the details of a section add up to the section.
 assert.deepEqual(detailed.rows.map((row) => row.key), ["ENERGY", "NETWORK", "SYSTEM", "TAXES"]);
-assert.deepEqual(detailed.rows[0].details.map((item) => [item.key, item.current, item.offer]), [["ENERGY", 70, 66], ["DISPATCHING", 6, 6], ["CAPACITY", 4, null], ["IMBALANCE", null, 5], ["PCV", 15, 15], ["OPTIONS", null, 3]]);
+// Tony (1/11, "credo che le differenze siano errate"): after the charges the bill keeps inside its energy price comes one
+// comparison line, with no amount in the columns, carrying the energy difference (bill 70 against CTE 66 + 5 = 71).
+assert.deepEqual(detailed.rows[0].details.map((item) => [item.key, item.current, item.offer]), [["ENERGY", 70, 66], ["DISPATCHING", 6, 6], ["CAPACITY", 4, null], ["IMBALANCE", null, 5], ["ENERGY_COMPARISON", null, null], ["PCV", 15, 15], ["OPTIONS", null, 3]]);
+assert.equal(detailed.rows[0].details.find((item) => item.key === "ENERGY_COMPARISON").difference, 1);
+assert.equal(detailed.rows[0].details.find((item) => item.key === "ENERGY").difference, null, "no misleading difference on the energy line itself");
 assert.equal(detailed.rows[0].details.reduce((sum, item) => sum + (item.offer ?? 0), 0), detailed.rows[0].offer);
 assert.deepEqual(scontrino.rows[1].details.map((item) => [item.key, item.current, item.offer]), [["CONSUMPTION", 12, 12], ["FIXED", 8, 8], ["POWER", 10, 10]]);
 assert.deepEqual(scontrino.rows[3].details.map((item) => [item.label, item.current, item.offer]), [["Accise", 5, 5], ["IVA", 15, 14.3]]);
