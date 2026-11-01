@@ -27,3 +27,11 @@ export function annualSaving(input: AnnualSavingInput): { readonly saving: numbe
   const current = input.currentTotal === null ? null : (input.currentTotal - billFixed) * input.factor + billFixed / input.months * 12;
   return { saving, current };
 }
+
+/** Tony (1/11, "come scrivi risparmio e sotto costo in più sulla be smile flex"): a quote brought under the bill by the company
+ *  discount keeps that saving on every bill of the year, so its annual saving is the same percentage of the annual cost and
+ *  never a cost in più next to "Risparmio" on the same card. */
+export function annualSavingUnderDiscount(projected: { readonly saving: number; readonly current: number | null }, discounted: boolean, targetSavingPercent: number | null): { readonly saving: number; readonly current: number | null } {
+  if (!discounted || targetSavingPercent === null || projected.current === null) return projected;
+  return { saving: Math.round(projected.current * targetSavingPercent) / 100, current: projected.current };
+}

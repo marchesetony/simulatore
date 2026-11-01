@@ -6,7 +6,7 @@ import { billedMonths, offerScontrino, type ScontrinoLine } from "../lib/quote/o
 import { EmptyState, ErrorState, LoadingState } from "./UiStates";
 import { downloadExport, MAX_UPLOAD_BYTES, requestJson, requestUpload, toUiError } from "../lib/ui/client";
 import { buildQuoteReceipt, effectiveBillSpread, isSameOffer, regulatedVerification, sameOfferDifferences, type QuoteReceipt, type RegulatedDomain } from "../lib/quote/receipt";
-import { annualSaving } from "../lib/quote/annual-saving";
+import { annualSaving, annualSavingUnderDiscount } from "../lib/quote/annual-saving";
 import { customerTypeOf } from "../lib/ingestion/customer-type";
 import { exclusionRank } from "../lib/quote/exclusion-order";
 import { estimatedAnnualConsumption } from "../lib/calculation/annual-consumption";
@@ -165,7 +165,15 @@ function annualProjection(offer: Offer, context: Context, bill: BillDocumentMode
   const days = (Date.parse(`${context.billingPeriod.periodEnd}T00:00:00Z`) - Date.parse(`${context.billingPeriod.periodStart}T00:00:00Z`)) / 86_400_000 + 1;
   const months = Math.max(1, Math.round(days / 30.4375));
   const net = (category: string) => offer.calculation.components.filter((component) => component.category === category).reduce((sum, component) => sum + (component.sign === "DISCOUNT" ? -1 : 1) * component.amount.amount, 0);
-  return annualSaving({ savings: receipt.savings, currentTotal: receipt.currentTotal, billFixed: (monthlyPcv(bill) ?? 0) * months, offerFixed: net("FIXED_FEE"), oneOff: net("ONE_OFF_FEE"), vat: receipt.taxesIncluded ? 1 + (receipt.vatRate ?? 0) : 1, months, factor: basis.annual / basis.billed });
+  const projected = annualSaving({ savings: receipt.savings, currentTotal: receipt.currentTotal, billFixed: (monthlyPcv(bill) ?? 0) * months, offerFixed: net("FIXED_FEE"), oneOff: net("ONE_OFF_FEE"), vat: receipt.taxesIncluded ? 1 + (receipt.vatRate ?? 0) : 1, months, factor: basis.annual / basis.billed });
+  // Tony (1/11, "come scrivi risparmio e sotto costo in più sulla be smile flex"): a quote brought under the bill by the company
+  // discount keeps that saving on every bill of the year, so its annual saving is the same percentage of the annual cost.
+  return annualSavingUnderDiscount(projected, discountOf(offer) !== null, offer.discount?.targetSavingPercent ?? null);
+}
+/** The company discount applied to this quote (net of VAT, positive), or null. */
+function discountOf(offer: Offer): number | null {
+  const line = offer.receipt.rows.find((row) => row.key === "ENERGY")?.details?.find((item) => item.key === "COMPANY_DISCOUNT");
+  return line && line.offer !== null && line.offer < 0 ? -line.offer : null;
 }
 function monthlyPcv(bill: BillDocumentModel): number | null {
   const lines = (bill.structuredBill?.economicChargeLines ?? []).filter((line) => {
@@ -1046,6 +1054,8 @@ export default function QuickQuoteFlow({ readonly, showExcluded = false }: { rea
           {termLines(offer.candidate).map((line) => <span key={line} className="quote-offer-term">{line}</span>)}
           {offer.candidate.scope ? <small className="quote-offer-scope">Per {offer.candidate.scope.customer}{offer.candidate.scope.voltage.length ? ` · ${offer.candidate.scope.voltage.map((level) => level === "LV" ? "BT" : level === "MV" ? "MT" : level === "HV" ? "AT" : level).join("/")}` : ""}{offer.candidate.scope.consumption ? ` · consumo ${offer.candidate.scope.consumption}` : ""}</small> : null}
           <span className="quote-offer-total">{euro(offer.receipt.offerTotal ?? offer.receipt.rows[0].offer)}</span>
+          {/* Tony (1/11): two quotes at the same discounted price still say which one costs more before the discount. */}
+          {(() => { const off = discountOf(offer); if (off === null || offer.receipt.offerTotal === null) return null; const gross = offer.receipt.offerTotal + off * (offer.receipt.taxesIncluded ? 1 + (offer.receipt.vatRate ?? 0) : 1); return <small className="quote-offer-scope">Prezzo pieno {euro(Math.round(gross * 100) / 100)}, con sconto commerciale aziendale</small>; })()}
           {offer.receipt.savingsPercent !== null ? <small className={offer.receipt.savingsPercent >= 0 ? "positive" : "negative"}>{offer.receipt.savingsPercent >= 0 ? "Risparmio" : "Più cara"} {PERCENT.format(Math.abs(offer.receipt.savingsPercent))}%</small> : null}
           {(() => { if (isSameOffer({ billSupplier: quote.context.currentSupplier, billOffer: billOfferName(quote.bill, quote.context), offerSupplier: offer.supplier, offerCode: offer.calculation.sourceCte.offerCode, offerName: offer.offerName })) return <small>Stessa CTE della bolletta: verifica di fatturazione</small>; const projection = annualProjection(offer, quote.context, quote.bill); return projection ? <small className={projection.saving >= 0 ? "positive" : "negative"}>{projection.saving >= 0 ? "Risparmio annuo previsto" : "Costo in più annuo"} {euro(Math.abs(projection.saving))}</small> : null; })()}
           <small>Valida fino al {date(offer.receipt.validUntil)}</small>
