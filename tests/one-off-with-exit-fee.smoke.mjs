@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { tryBuildAuthoritativeCteContract } from "../app/lib/cte/review.ts";
 import { validateCteContract } from "../app/lib/cte/validation.ts";
 import { annualSaving } from "../app/lib/quote/annual-saving.ts";
+import { withOneOffRepair } from "../app/lib/cte/one-off-repair.ts";
 
 // Tony (1/11): "perche la be family fast costa più della casa protetta, pur avendo una pcv più bassa?". The two BPower CTEs
 // differ only in the PCV (13,00 vs 11,90 €/mese) and both charge "una tantum gestione APP e servizi … prima bolletta di
@@ -38,4 +39,22 @@ const fast = annualSaving({ ...base, savings: 174.2 - 170.16, offerFixed: 11.9 }
 assert.ok(Math.abs(fast.saving - cp.saving - 1.1 * 12 * 1.1) < 0.01, `lower PCV, higher annual saving (${fast.saving} vs ${cp.saving})`);
 const noOneOff = annualSaving({ ...base, oneOff: 0, savings: 174.2 - 169.72, offerFixed: 13 });
 assert.ok(Math.abs(noOneOff.saving - cp.saving - 1.65) < 0.01, "the one-off counts once a year, not ×12");
+
+// Tony (1/11): "non vorrei che lo stesso errore lo rifacciamo anche su altre cte, di nuovi clienti o anche su quelle che
+// abbiamo". A CTE approved before the fix gets its one-off back from its stored reading on every read, without re-upload.
+const old = { ...casaProtetta.contract, cteId: "cte-casa-protetta", commercialTerms: { ...casaProtetta.contract.commercialTerms, oneOffFees: [], exitFee } };
+const stored = { archiveId: "arc-1", tenantId: "tenant_bpower", cteId: old.cteId, vector: "EE", versions: [{ versionId: "v1", versionNumber: 1, supersedesVersionId: null, status: "APPROVED", contract: old, createdAt: "2026-10-31T00:00:00.000Z" }] };
+const saved = [];
+const raw = { get: async () => stored, list: async () => [stored], save: async (record) => { saved.push(record); } };
+const readings = { get: async (tenantId, id) => id === "cte-casa-protetta" && tenantId === "tenant_bpower" ? { payload: { documentId: id, ingestionId: id, vector: "EE", documentType: "CTE", fields: fields("1,50 €") } } : null };
+const repaired = withOneOffRepair(raw, readings);
+const [listed] = await repaired.list("tenant_bpower");
+assert.equal(listed.versions[0].contract.commercialTerms.oneOffFees[0].amount, 1.5, "the stored Casa Protetta gets its 1,50 € back");
+assert.equal(listed.versions[0].contract.commercialTerms.exitFee, undefined);
+assert.doesNotThrow(() => validateCteContract(listed.versions[0].contract));
+assert.equal((await repaired.get("tenant_bpower", "arc-1")).versions[0].contract.commercialTerms.oneOffFees.length, 1);
+await repaired.save(listed);
+assert.equal(saved[0].versions[0].contract, old, "the stored version is written back as it was: versions are immutable");
+const unreadable = withOneOffRepair(raw, { get: async () => null });
+assert.equal((await unreadable.list("tenant_bpower"))[0].versions[0].contract, old, "without its reading the CTE stays as stored");
 console.log("one-off with exit fee ok");

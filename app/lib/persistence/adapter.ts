@@ -4,6 +4,8 @@ import type { CompanyProfile } from "../company/profile";
 import type { ProposalPresentation } from "../proposal/presentation";
 // @ts-expect-error Node's strip-only test runner requires the explicit extension.
 import { LocalAccessDirectory } from "../access/local-directory.ts";
+// @ts-expect-error Node's strip-only test runner requires the explicit extension.
+import { withOneOffRepair, type StoredCteReadings } from "../cte/one-off-repair.ts";
 import type { BillRepository, DocumentStoragePort } from "../foundation/real-bill";
 import type { RegulatoryValueRecord } from "../foundation/regulatory-types.ts";
 import type { RegulatoryApprovalDomainState } from "../regulatory-approval-domain.ts";
@@ -137,6 +139,10 @@ export function clearProductionStorageAdapter(): void { productionStorageAdapter
 export function productionStorageAdapterConfigured(): boolean { return productionStorageAdapter !== null; }
 
 export function runtimeRepositories(): RuntimeRepositories {
+  const repositories = storedRepositories();
+  return { ...repositories, cteArchiveRepository: withOneOffRepair(repositories.cteArchiveRepository, repositories.cteArchives as unknown as StoredCteReadings) };
+}
+function storedRepositories(): RuntimeRepositories {
   const config = getRuntimeConfig();
   if (config.runtimeMode === "production") {
     if (!productionStorageAdapter) throw new Error("PERSISTENCE_ADAPTER_UNAVAILABLE");
