@@ -15,3 +15,9 @@ assert.match(flow, /Offerte più care della bolletta \(\{hiddenOffers\.length\}\
 assert.match(flow, /disabled=\{!reason\.trim\(\)\} onClick=\{\(\) => onChoose\(reason\.trim\(\)\)\}/, "no reason, no offer");
 assert.match(flow, /Scelta con motivazione: /);
 console.log("costlier offers hidden ok");
+// Tony (1/11, "azienda protetta deve costare più di bsmart, ha uno spread più alto"): the offers are checked against each
+// other, and the company admin sees a CTE with a higher spread and PCV that costs less than another of the same supplier.
+assert.match(flow, /function incoherentOffers\(offers: readonly Offer\[\]\): readonly string\[\] \{/);
+assert.match(flow, /a\.spread > b\.spread \+ 1e-9 && \(a\.monthlyFixedFee \?\? 0\) >= \(b\.monthlyFixedFee \?\? 0\) && ta < tb - 0\.5/);
+assert.match(flow, /\{showExcluded && incoherentOffers\(quote\.offers\)\.length \? <div className="quote-check open" role="alert">/);
+console.log("offer coherence check ok");

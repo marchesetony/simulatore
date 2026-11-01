@@ -247,10 +247,26 @@ function responseDiagnostics(body: unknown, model: string, httpStatus: number | 
  * thinking "disabled": they get tool_choice "auto" (the prompt asks for the tool call) and the
  * thinking mode each one documents. Older models keep the original forced, thinking-off request.
  */
-export function anthropicToolControls(model: string, toolName: string, parallel: "single" | "default" = "single"): { readonly thinking?: { readonly type: string }; readonly tool_choice: Record<string, unknown> } {
+export function anthropicToolControls(model: string, toolName: string, parallel: "single" | "default" = "single"): { readonly thinking?: { readonly type: string }; readonly tool_choice: Record<string, unknown>; readonly temperature?: number } {
   const match = /^claude-([a-z]+)-(\d+)(?:-(\d{1,2}))?(?:$|[^\d])/.exec(model.trim().toLowerCase());
   const family = match?.[1] ?? "";
   const version = match ? Number(match[2]) + Number(match[3] ?? 0) / 10 : 0;
+  // Tony (1/11): "applicando sempre e perentoriamente una temperatura di 0 gradi". Every reader that accepts it runs at
+  // temperature 0 (thinking off). Opus 4.7+, Sonnet 5+, Haiku 5+, Fable and Mythos reject any sampling value with a 400:
+  // there the reading is pinned by the strict tool schema, the "never invent" prompt and the check against the PDF text.
+  const sampling = acceptsTemperature(family, version) ? { temperature: 0 } : {};
+  return { ...toolControls(family, version, toolName, parallel), ...sampling };
+}
+
+/** Models that still accept a sampling temperature (with thinking disabled). */
+export function acceptsTemperature(family: string, version: number): boolean {
+  if (version <= 0) return false;
+  if (family === "opus") return version < 4.7;
+  if (family === "sonnet" || family === "haiku") return version < 5;
+  return false;
+}
+
+function toolControls(family: string, version: number, toolName: string, parallel: "single" | "default"): { readonly thinking?: { readonly type: string }; readonly tool_choice: Record<string, unknown> } {
   const forcedRejected = version >= 5.5 || ((family === "fable" || family === "mythos") && version >= 5.1);
   const single = parallel === "single" ? { disable_parallel_tool_use: true } : {};
   // Fable and Mythos always think: an explicit "disabled" is rejected, so the field is left out.
@@ -262,7 +278,7 @@ export function anthropicToolControls(model: string, toolName: string, parallel:
 
 function billToolControls(model: string, toolName: string): Record<string, unknown> {
   const controls = anthropicToolControls(model, toolName, "default");
-  return controls.tool_choice.type === "tool" ? { tool_choice: controls.tool_choice } : controls;
+  return controls.tool_choice.type === "tool" ? { tool_choice: controls.tool_choice, ...(controls.temperature !== undefined ? { temperature: controls.temperature } : {}) } : controls;
 }
 
 function sanitizeProviderText(value: string): string {

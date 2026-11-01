@@ -392,6 +392,23 @@ function CtePicker({ quote, onPick, disabled }: { readonly quote: Quote; readonl
   </div>;
 }
 
+// Tony (1/11, "azienda protetta deve costare più di bsmart, ha uno spread più alto ... un'altro la analizza simulando e
+// correggendo eventuali orrori di lettura"): the simulated offers are checked against each other. Two indexed CTEs of the
+// same supplier and index: the one with the higher spread and a PCV not lower must not cost less. Offers moved by the
+// commercial discount are left out, since the discount sets their total.
+function incoherentOffers(offers: readonly Offer[]): readonly string[] {
+  const total = (offer: Offer) => offer.receipt.offerTotal ?? offer.receipt.rows[0]?.offer ?? null;
+  const discounted = (offer: Offer) => offer.receipt.rows.some((row) => (row.details ?? []).some((item) => item.key === "COMPANY_DISCOUNT"));
+  const issues: string[] = [];
+  for (const dear of offers) for (const cheap of offers) {
+    const a = dear.candidate.terms; const b = cheap.candidate.terms; const ta = total(dear); const tb = total(cheap);
+    if (dear === cheap || !a || !b || a.spread === null || b.spread === null || ta === null || tb === null || discounted(dear) || discounted(cheap)) continue;
+    if (dear.supplier !== cheap.supplier || (dear.candidate.pricingReference ?? "PUN") !== (cheap.candidate.pricingReference ?? "PUN")) continue;
+    if (a.spread > b.spread + 1e-9 && (a.monthlyFixedFee ?? 0) >= (b.monthlyFixedFee ?? 0) && ta < tb - 0.5) issues.push(`${dear.offerName} (spread ${RATE.format(a.spread)}) costa meno di ${cheap.offerName} (spread ${RATE.format(b.spread)}): controllare la lettura delle due CTE`);
+  }
+  return issues;
+}
+
 /** An offer that costs more than the bill: hidden unless chosen with a reason (Tony, 1/11). The bill's own CTE (billing check)
  *  and a CTE authorized for this bill with a reason stay visible. */
 function costlierThanBill(offer: Offer, context: Context, bill: BillDocumentModel): boolean {
@@ -951,6 +968,7 @@ export default function QuickQuoteFlow({ readonly, showExcluded = false }: { rea
           {(() => { if (isSameOffer({ billSupplier: quote.context.currentSupplier, billOffer: billOfferName(quote.bill, quote.context), offerSupplier: offer.supplier, offerCode: offer.calculation.sourceCte.offerCode, offerName: offer.offerName })) return <small>Stessa CTE della bolletta: verifica di fatturazione</small>; const projection = annualProjection(offer, quote.context, quote.bill); return projection ? <small className={projection.saving >= 0 ? "positive" : "negative"}>{projection.saving >= 0 ? "Risparmio annuo previsto" : "Costo in più annuo"} {euro(Math.abs(projection.saving))}</small> : null; })()}
           <small>Valida fino al {date(offer.receipt.validUntil)}</small>
         </button>)}</div> : null}
+        {showExcluded && incoherentOffers(quote.offers).length ? <div className="quote-check open" role="alert"><strong>Verifica di coerenza non superata</strong><ul>{incoherentOffers(quote.offers).map((issue) => <li key={issue}>{issue}</li>)}</ul></div> : null}
         {quote.offers.length && !visibleOffers.length ? <p className="muted">Nessuna CTE costa meno della bolletta attuale.</p> : null}
         {hiddenOffers.length ? <details className="quote-cost-detail"><summary>Offerte più care della bolletta ({hiddenOffers.length})</summary>
           <p className="muted">Non sono proposte al cliente. Per mostrarne una scrivi il motivo della scelta.</p>

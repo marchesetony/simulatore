@@ -64,10 +64,11 @@ assert.deepEqual(monthly.components.filter((component) => component.formulaInput
 const mt = await calculatePreparedOffer(request({ voltageLevel: "MV" }), structuredClone(prepared), deps({ stored: records.filter((record) => record.customerScope === "NON_DOMESTIC_BT_BTA6"), peak: { peakKwh: 100, offPeakKwh: 300 }, withContext: false }));
 assert.deepEqual(capacity(mt).map((line) => line.amount), [5.19, 3.11]);
 
-// 4. No Terna value in the archive: nothing is estimated, the receipt says the official value is missing.
+// 4. No Terna value in the archive. Tony (1/11: "bisogna trovare da arera come già detto i valori standard"): the ARERA standard
+// monthly value applies, the same for every CTE (0,3197 c€/kWh x 1,10 x 1.000 kWh = 3,52), instead of leaving it out.
 const none = await calculatePreparedOffer(request(), structuredClone(prepared), deps({ stored: [], peak: { peakKwh: 100, offPeakKwh: 300 } }));
-assert.deepEqual(capacity(none), []);
-assert.ok(none.warnings.includes("OFFICIAL_VALUE_MISSING:CAPACITY_MARKET:OFFICIAL_VALUE_MISSING"));
+assert.deepEqual(capacity(none).map((line) => [line.label, line.amount]), [["Mercato della capacità (valore standard ARERA)", 3.52]]);
+assert.ok(!none.warnings.includes("OFFICIAL_VALUE_MISSING:CAPACITY_MARKET:OFFICIAL_VALUE_MISSING"));
 
 // 5. BT up to 55 kW keeps the monthly ARERA value: no peak split.
 const small = await calculatePreparedOffer(request(), structuredClone(prepared), { ...deps({ peak: { peakKwh: 100, offPeakKwh: 300 } }), trustedElectricityContext: { ...context, contractedPowerKw: 30, availablePowerKw: 30 } });

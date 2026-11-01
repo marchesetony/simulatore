@@ -291,9 +291,17 @@ function addCtePassThroughs(target: ComponentDraft[], request: ElectricitySimula
       // ... nella simulazione si scrive quello previsto nella cte"): when the archive has no official value for the period, the
       // value the CTE states for the supply's voltage ("attualmente pari a 0,01349 Eur/kWh in bassa tensione") is applied,
       // grossed up like the official one, so the charge is never left out.
+      // Tony (1/11, after Azienda Protetta came out cheaper than Be Smart with a higher spread: "bisogna trovare da arera come
+      // già detto i valori standard"): the regulated charge is the same for every offer, so the ARERA standard monthly value
+      // (TIV art. 4.1) comes first, for every CTE alike; the CTE's own printed value only when ARERA has none for the period.
       const missingAt = missing.indexOf("CAPACITY_MARKET:OFFICIAL_VALUE_MISSING", before);
-      const stated = missingAt >= 0 ? cteStatedCapacity(offer, request.voltageLevel, period.periodStart, period.periodEnd) : null;
-      if (stated) {
+      const standardArera = missingAt >= 0 && request.voltageLevel === "LV" ? areraCapacityForPeriod(period.periodStart, period.periodEnd, capacityMonths) : null;
+      const stated = missingAt >= 0 && !standardArera ? cteStatedCapacity(offer, request.voltageLevel, period.periodStart, period.periodEnd) : null;
+      if (standardArera) {
+        missing.splice(missingAt, 1);
+        const unitRate = grossUp(fromNumber(standardArera.eurPerKwh));
+        target.push({ componentId: "cte-pass-through:capacity-arera-standard", category: "VARIABLE_FEE", label: "Mercato della capacità (valore standard ARERA)", sign: "CHARGE", value: multiply(unitRate, totalQuantity), formulaId: "CTE_PASS_THROUGH_RATE_TIMES_KWH", formulaInputs: { kind: "CAPACITY_MARKET", feeUnit: "EUR_PER_KWH", feeRate: toDecimal(unitRate, 6), officialRate: standardArera.eurPerKwh, lossFactor: loss ? toDecimal(loss, 6) : 0, basisQuantity: toDecimal(totalQuantity, 3), source: `ARERA ${standardArera.months.map((month) => month.resolution).join(", ")}` } });
+      } else if (stated) {
         missing.splice(missingAt, 1);
         const unitRate = stated.lossTreatment === "GROSS_OF_LOSSES" ? fromNumber(stated.value) : grossUp(fromNumber(stated.value));
         target.push({ componentId: "cte-pass-through:capacity-cte-stated", category: "VARIABLE_FEE", label: "Mercato della capacità (valore indicato nella CTE)", sign: "CHARGE", value: multiply(unitRate, totalQuantity), formulaId: "CTE_PASS_THROUGH_RATE_TIMES_KWH", formulaInputs: { kind: "CAPACITY_MARKET", feeUnit: "EUR_PER_KWH", feeRate: toDecimal(unitRate, 6), officialRate: stated.value, lossFactor: loss ? toDecimal(loss, 6) : 0, basisQuantity: toDecimal(totalQuantity, 3), source: "CTE_REGULATED_SNAPSHOT" } });
