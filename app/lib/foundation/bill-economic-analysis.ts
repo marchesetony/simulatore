@@ -51,6 +51,7 @@ export interface BillEconomicAnalysis {
 }
 
 const text = (value: string | number | null | undefined): string => value === null || value === undefined ? "" : String(value).trim();
+const CARRIED_OVER = /^(CREDITO_RIMANENTE|IMPORTI_CHE_SARANNO_ADDEBITATI)/;
 const keyOf = (value: string | null | undefined): string => text(value).toUpperCase().replace(/[^A-Z0-9]+/g, "_").replace(/^_+|_+$/g, "");
 const numberFrom = (value: string | number | null | undefined): number | null => {
   if (typeof value === "number") return Number.isFinite(value) ? value : null;
@@ -118,6 +119,16 @@ export function classifyBillEconomicComponent(code: string | null | undefined, d
   if (["ADDEBITI", "DEBITS"].includes(c)) return "ADDEBITI";
   if (["ACCREDITI", "CREDITS"].includes(c)) return "ACCREDITI";
   if (["ALTRE_PARTITE", "OTHER_ITEMS", "OTHER_CHARGE"].includes(c)) return "ALTRE_PARTITE";
+  // Scontrino dell'energia (ARERA, Bolletta 2.0 as Tony sent it on 1/11): "Importi collegati all'offerta" is the seller's
+  // difference between the quota consumi billed and the fixed amount of the contract, so spesa per la vendita; "Restituzione
+  // crediti", "Importi relativi a bollette precedenti", "Altre partite" (deposito cauzionale, interessi di mora, indennizzi),
+  // "Servizi e prodotti aggiuntivi" are not supply; "Credito rimanente" and "Importi che saranno addebitati nella prossima
+  // bolletta" are outside the totale bolletta (see accountingRole).
+  if (d.startsWith("IMPORTI_COLLEGATI_ALL_OFFERTA") || d.startsWith("IMPORTI_COLLEGATI_ALLA_OFFERTA")) return "OTHER_SELLER_ENERGY_CHARGE";
+  if (d.startsWith("RESTITUZIONE_CREDITI")) return "RESTITUZIONI";
+  if (d.startsWith("IMPORTI_RELATIVI_A_BOLLETTE_PRECEDENTI")) return "ADDEBITI";
+  if (d.startsWith("SERVIZI_E_PRODOTTI_AGGIUNTIVI")) return "SERVIZI_AGGIUNTIVI";
+  if (d.startsWith("ALTRE_PARTITE") || d.includes("DEPOSITO_CAUZIONALE") || d.includes("INDENNIZZ") || CARRIED_OVER.test(d)) return "ALTRE_PARTITE";
   // Bolletta 2.0 wording when the reader gave a descriptive code (e.g. Repower: "F0 - energia (monoraria)",
   // "Corrispettivo capacità fuori picco", "Corrispettivo distribuzione, misura e trasporto", "Imposta Erariale").
   if (d.includes("REATTIV")) return "UNCLASSIFIED_BILL_CHARGE";
@@ -156,6 +167,8 @@ function accountingRole(classification: BillEconomicClassification, description:
   if (classification === "BILL_TOTAL") return "TOTAL";
   if (classification === "AMOUNT_DUE") return "TOTAL";
   if (classification === "PRIOR_BALANCE") return "PRIOR_BALANCE";
+  // Printed after the totale bolletta and moved to the next bill: never money of this bill.
+  if (CARRIED_OVER.test(key)) return "PRIOR_BALANCE";
   if (classification === "TAX_SUBTOTAL" || key.includes("SUBTOTALE") || key.includes("TOTALE_SEZIONE")) return "SUBTOTAL";
   if (aggregateDescription(key)) return "SUBTOTAL";
   return "ATOMIC";
@@ -287,7 +300,7 @@ const blockLabel = (description: string): string => { const { section, label } =
 const quotaOfKey = (key: string): SummaryQuota | null => { const at = (pattern: RegExp) => { const match = pattern.exec(key); return match ? match.index : Number.POSITIVE_INFINITY; }; const power = at(/POTENZA|(^|_)KW(_|$)/), fixed = at(/FISS|(^|_)(MESE|POD|GIORN[OI]|GG)(_|$)/), consumption = at(/CONSUM|VARIABIL|(^|_)K?WH(_|$)/); const first = Math.min(power, fixed, consumption); return first === Number.POSITIVE_INFINITY ? null : first === fixed ? "FIXED" : first === power ? "POWER" : "CONSUMPTION"; };
 const unitQuota = (unit: string | null): SummaryQuota | null => { const key = keyOf(unit); return /(^|_)KW(_|$)/.test(key) ? "POWER" : /(^|_)(MESE|POD|PDP|PDR|GIORN[OI]|GG|ANNO)(_|$)/.test(key) ? "FIXED" : /(^|_)(K?WH|SMC)(_|$)/.test(key) ? "CONSUMPTION" : null; };
 const summaryQuota = (item: BillEconomicComponent): SummaryQuota => { const { section, label } = labelOf(item.description); return unitQuota(item.unit) ?? quotaOfKey(label) ?? quotaOfKey(section) ?? "CONSUMPTION"; };
-const isNetworkAndSystemSummary = (item: BillEconomicComponent): boolean => /RETE_E_(GLI_)?ONERI/.test(keyOf(item.description));
+const isNetworkAndSystemSummary = (item: BillEconomicComponent): boolean => /RETE_E_(PER_)?(GLI_)?ONERI/.test(keyOf(item.description));
 // A line priced per day (€/giorno) is the quota fissa (Tony, 28/10, BPower Casa Protetta: "di cui spesa per la rete" 8,86 € at
 // 0,328148 €/giorno).
 // A system-charge line names its quota; one that names none (a page total, an ASOS/ARIM line without quota) has none.
@@ -392,9 +405,13 @@ function printedSummary(items: readonly BillEconomicComponent[]): BillPrintedSum
   };
   const box = (label: string) => label.startsWith("DI_CUI_SPESA_PER_LA_QUOTA") || label.startsWith("DI_CUI_QUOTA_SPESA");
   const offerTotal = items.find((item) => keyOf(item.rawDescription || item.description).startsWith("TOTALE_SPESA_DOVUTA"));
-  const seller = perQuota((label) => /RETE/.test(label) ? false : /VENDITA/.test(label) && !box(label)) ?? (offerTotal ? printed(offerTotal) : null);
-  const networkAndSystem = perQuota((label) => /RETE_E_(GLI_)?ONERI/.test(label), true);
-  const taxLine = items.find((item) => keyOf(item.rawDescription || item.description) === "ACCISE_E_IVA" && printed(item) !== null);
+  const quotaSeller = perQuota((label) => /RETE/.test(label) ? false : /VENDITA/.test(label) && !box(label)) ?? (offerTotal ? printed(offerTotal) : null);
+  // "Importi collegati all'offerta" is printed beside the quota consumi and belongs to the seller (ARERA, Tony 1/11).
+  const linked = items.filter((item) => item.classification === "OTHER_SELLER_ENERGY_CHARGE" && /^IMPORTI_COLLEGATI/.test(keyOf(item.rawDescription || item.description))).map(printed).filter((value): value is number => value !== null);
+  const seller = quotaSeller === null ? null : round(quotaSeller + linked.reduce((total, value) => total + value, 0));
+  const networkAndSystem = perQuota((label) => /RETE_E_(PER_)?(GLI_)?ONERI/.test(label), true);
+  const taxKey = (item: BillEconomicComponent) => keyOf(item.rawDescription || item.description);
+  const taxLine = items.find((item) => /^(ACCISE_E_IVA|TOTALE_IMPOSTE_E_IVA)$/.test(taxKey(item)) && printed(item) !== null);
   return { seller, networkAndSystem, taxes: taxLine ? printed(taxLine) : null };
 }
 const reconcilable = (i: BillEconomicComponent): boolean => i.classification !== "CANONE_RAI" && i.classification !== "BILL_TOTAL" && i.classification !== "AMOUNT_DUE" && i.classification !== "PRIOR_BALANCE" && i.classification !== "TAX_SUBTOTAL";
@@ -446,7 +463,7 @@ export function buildCurrentBillEconomicAnalysis(inputs: readonly BillEconomicCo
   // When only the excise is detailed (Duferco: "Addizionale Erariale 9,26 €"), the VAT is the printed "Accise e IVA" less it.
   if (!components.some((i) => i.classification === "IVA")) {
     const subtotals = components.filter((i) => i.classification === "TAX_SUBTOTAL" && numberFrom(i.amount) !== null);
-    const printed = subtotals.find((i) => keyOf(i.description) === "ACCISE_E_IVA") ?? [...subtotals].sort((a, b) => (numberFrom(b.amount) ?? 0) - (numberFrom(a.amount) ?? 0))[0];
+    const printed = subtotals.find((i) => /^(ACCISE_E_IVA|TOTALE_IMPOSTE_E_IVA)$/.test(keyOf(i.description))) ?? [...subtotals].sort((a, b) => (numberFrom(b.amount) ?? 0) - (numberFrom(a.amount) ?? 0))[0];
     const excise = round(components.filter((i) => i.classification === "ACCISE" && i.includedInReconciliation).reduce((total, i) => total + (numberFrom(i.amount) ?? 0), 0));
     const vat = printed ? round((numberFrom(printed.amount) ?? 0) - excise) : 0;
     if (printed && vat > 0.02) components = components.map((i) => i.lineId === printed.lineId ? { ...i, classification: "IVA", normalizedCode: "IVA", group: "TAX", accountingRole: "ATOMIC", includedInReconciliation: true, atomic: true, aggregate: false, ...(excise > 0 ? { amount: vat.toFixed(2).replace(".", ","), quantity: null, unitPrice: null, calculationCheck: "NOT_CHECKABLE" as const, description: `IVA: ${i.description} ${numberFrom(i.amount)?.toFixed(2).replace(".", ",")} € meno accise ${excise.toFixed(2).replace(".", ",")} €` } : {}) } : i);
