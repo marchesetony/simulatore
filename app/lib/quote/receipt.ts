@@ -2,7 +2,7 @@
 import { amountToken } from "../foundation/amount-token.ts";
 // @ts-expect-error Node's strip-only test runner requires the explicit extension.
 import { commercialDiscountAmount, type CommercialDiscountPolicy } from "../company/discount.ts";
-import type { BillEconomicAnalysis } from "../foundation/bill-economic-analysis";
+import type { BillEconomicAnalysis, BillEconomicComponent } from "../foundation/bill-economic-analysis";
 import type { BillRegulatoryAuditDTO } from "../foundation/bill-regulatory-audit";
 // @ts-expect-error Node's strip-only test runner requires the explicit extension.
 import { referenceDomainForComponent } from "../foundation/regulatory-domains.ts";
@@ -486,8 +486,40 @@ function anchoredToPrintedSummary(input: QuoteReceiptInput): QuoteReceiptInput {
   return next === totals || JSON.stringify(next) === JSON.stringify(totals) ? input : { ...input, analysis: { ...analysis, totals: next } };
 }
 
+// Tony (1/11, "le quote fisse e le quote potenza credo che li conteggi due volte"): when the bill prints only "spesa per la rete
+// e gli oneri generali di sistema" per quota and no oneri line was read, those amounts are transport AND oneri. Shown whole as
+// transport they looked 46,75 EUR above ARERA while the oneri column stayed empty. The oneri are regulated and equal for
+// every supplier: each quota is split into the ARERA oneri of the period and the rest, transport; the total stays as printed.
+function splitPrintedNetworkAndSystem(input: QuoteReceiptInput): QuoteReceiptInput {
+  const analysis = input.analysis;
+  if (!analysis) return input;
+  const live = (line: BillEconomicComponent) => !line.aggregate && line.includedInReconciliation !== false && amountOf(line.amount) !== null;
+  const combined = analysis.components.filter((line) => live(line) && line.group === "REGULATED_NETWORK" && /rete e (?:per )?(?:gli )?oneri/i.test(`${line.description} ${line.rawDescription ?? ""}`));
+  const official = officialOf(input, "SYSTEM");
+  if (!combined.length || !official.length || analysis.components.some((line) => live(line) && line.group === "SYSTEM_CHARGES")) return input;
+  const oneriOf = (quota: Quota) => cents(official.filter((component) => regulatedQuota(component) === quota).reduce((total, component) => total + signed(component), 0));
+  const write = (value: number) => value.toFixed(2).replace(".", ",");
+  const replaced = new Map<string, BillEconomicComponent>();
+  const added: BillEconomicComponent[] = [];
+  const done = new Set<Quota>();
+  for (const line of combined) {
+    const quota = billQuota(line);
+    if (quota === null || done.has(quota)) continue;
+    const oneri = oneriOf(quota);
+    const value = amountOf(line.amount) ?? 0;
+    if (oneri <= 0 || oneri > value + 0.01) continue;
+    done.add(quota);
+    replaced.set(line.lineId, { ...line, amount: write(value - oneri) });
+    added.push({ ...line, lineId: `${line.lineId}_ONERI`, classification: "ARERA_SYSTEM_CHARGES", group: "SYSTEM_CHARGES", amount: write(oneri), description: `${line.description} - oneri generali di sistema (valori ARERA del periodo)` });
+  }
+  if (!added.length) return input;
+  const moved = cents(added.reduce((total, line) => total + (amountOf(line.amount) ?? 0), 0));
+  const totals = analysis.totals;
+  return { ...input, analysis: { ...analysis, components: [...analysis.components.map((line) => replaced.get(line.lineId) ?? line), ...added], totals: { ...totals, regulatedNetworkTotal: totals.regulatedNetworkTotal === null ? null : cents(totals.regulatedNetworkTotal - moved), systemChargesTotal: cents((totals.systemChargesTotal ?? 0) + moved) } } };
+}
+
 export function buildQuoteReceipt(original: QuoteReceiptInput): QuoteReceipt {
-  const { input, moved } = summaryNetworkToSeller(anchoredToPrintedSummary(original));
+  const { input, moved } = summaryNetworkToSeller(splitPrintedNetworkAndSystem(anchoredToPrintedSummary(original)));
   const receipt = withCommercialDiscount(buildReceipt(input), original.commercialDiscount);
   if (!moved) return receipt;
   const note = `in bolletta comprende ${moved.toFixed(2).replace(".", ",")} € che la pagina sintetica mette nella spesa per la rete: la rete addebitata è il valore ARERA, come nella fattura di dettaglio`;
