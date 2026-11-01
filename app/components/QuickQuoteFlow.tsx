@@ -392,6 +392,20 @@ function CtePicker({ quote, onPick, disabled }: { readonly quote: Quote; readonl
   </div>;
 }
 
+/** An offer that costs more than the bill: hidden unless chosen with a reason (Tony, 1/11). The bill's own CTE (billing check)
+ *  and a CTE authorized for this bill with a reason stay visible. */
+function costlierThanBill(offer: Offer, context: Context, bill: BillDocumentModel): boolean {
+  if (offer.receipt.savingsPercent === null || offer.receipt.savingsPercent >= 0) return false;
+  if (offer.candidate.finalStatus === "ELIGIBLE_BY_OVERRIDE") return false;
+  return !isSameOffer({ billSupplier: context.currentSupplier, billOffer: billOfferName(bill, context), offerSupplier: offer.supplier, offerCode: offer.calculation.sourceCte.offerCode, offerName: offer.offerName });
+}
+
+function ChooseWithReason({ onChoose }: { readonly onChoose: (reason: string) => void }): ReactNode {
+  const [open, setOpen] = useState(false); const [reason, setReason] = useState("");
+  if (!open) return <button className="button secondary compact" type="button" onClick={() => setOpen(true)}>Mostra con motivazione</button>;
+  return <span className="quote-authorize"><input aria-label="Motivo della scelta" placeholder="Motivo (es. il cliente vuole questa offerta)" value={reason} maxLength={300} onChange={(event) => setReason(event.target.value)} /><button className="button primary compact" type="button" disabled={!reason.trim()} onClick={() => onChoose(reason.trim())}>Mostra</button><button className="button secondary compact" type="button" onClick={() => setOpen(false)}>Annulla</button></span>;
+}
+
 function NoOfferReasons({ quote, shown = [], onAuthorize }: { readonly quote: Quote; readonly shown?: readonly string[]; readonly onAuthorize?: (archiveId: string, reason: string) => Promise<void> }): ReactNode {
   // Only CTEs of the bill's commodity are worth explaining; a CTE of the other commodity never applies to this bill.
   const candidates = (quote.candidates ?? []).filter((candidate) => !shown.includes(candidate.archiveId) && ![...(candidate.reasonCodes ?? []), candidate.compatibilityReason ?? ""].some((code) => /VECTOR_MISMATCH/.test(code)));
@@ -760,6 +774,8 @@ export default function QuickQuoteFlow({ readonly, showExcluded = false }: { rea
   const [values, setValues] = useState<Readonly<Record<string, string>>>({});
   const [quote, setQuote] = useState<Quote | null>(null);
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  // Tony (1/11): "bisogna mostrare solo le più vantaggiose non quelle più care, tranne se scelte con motivazione".
+  const [chosen, setChosen] = useState<Readonly<Record<string, string>>>({});
   const [proposal, setProposal] = useState<ProposalModel | null>(null);
   const presentationRef = useRef<ProposalPresentation | null>(null);
   const keepPresentation = useCallback((presentation: ProposalPresentation) => { presentationRef.current = presentation; }, []);
@@ -788,7 +804,8 @@ export default function QuickQuoteFlow({ readonly, showExcluded = false }: { rea
       const discount = await requestJson<{ readonly policy: CommercialDiscount }>("/api/company/discount").then((response) => response.policy, () => null);
       const offers = offersFrom(bill, prepared.context, prepared.candidates, comparison, discount);
       setQuote({ ...base, comparison, offers });
-      setSelectedId(offers[0]?.calculation.calculationId ?? null);
+      setChosen({});
+      setSelectedId(offers.find((offer) => !costlierThanBill(offer, prepared.context, bill))?.calculation.calculationId ?? null);
     } catch (cause) {
       setQuote({ ...base, comparison: emptyComparison(prepared.context), offers: [], failure: `Il calcolo con ${anchor.supplier} · ${anchor.offer.name || anchor.offer.code} non è riuscito. ${message(cause)}` });
     }
@@ -869,7 +886,9 @@ export default function QuickQuoteFlow({ readonly, showExcluded = false }: { rea
     } catch (cause) { setError(message(cause)); setPending(undefined); }
   };
 
-  const selected = quote?.offers.find((offer) => offer.calculation.calculationId === selectedId) ?? null;
+  const visibleOffers = quote ? quote.offers.filter((offer) => !costlierThanBill(offer, quote.context, quote.bill) || chosen[offer.calculation.calculationId] !== undefined) : [];
+  const hiddenOffers = quote ? quote.offers.filter((offer) => !visibleOffers.includes(offer)) : [];
+  const selected = visibleOffers.find((offer) => offer.calculation.calculationId === selectedId) ?? null;
 
   const saveProposal = async () => {
     if (!quote || !selected || readonly || pending) return;
@@ -920,9 +939,10 @@ export default function QuickQuoteFlow({ readonly, showExcluded = false }: { rea
     {step === "offers" ? pending === "offers" ? <LoadingState label="Calcolo delle offerte per questa bolletta" /> : quote ? <>
       <BillSummary context={quote.context} bill={quote.bill} />
       <section className="ui-card"><h3>Offerte utilizzabili per {quote.context.vector === "EE" ? "questa fornitura di luce" : "questa fornitura di gas"}</h3>
-        {quote.offers.length ? <div className="quote-offers">{quote.offers.map((offer, index) => <button key={offer.calculation.calculationId} type="button" className={`quote-offer${offer.calculation.calculationId === selectedId ? " selected" : ""}${index === 0 ? " best" : ""}`} onClick={() => { setSelectedId(offer.calculation.calculationId); setProposal(null); }} aria-pressed={offer.calculation.calculationId === selectedId}>
+        {visibleOffers.length ? <div className="quote-offers">{visibleOffers.map((offer, index) => <button key={offer.calculation.calculationId} type="button" className={`quote-offer${offer.calculation.calculationId === selectedId ? " selected" : ""}${index === 0 ? " best" : ""}`} onClick={() => { setSelectedId(offer.calculation.calculationId); setProposal(null); }} aria-pressed={offer.calculation.calculationId === selectedId}>
           {index === 0 ? <span className="status-badge positive">La più conveniente</span> : null}
           {offer.candidate.finalStatus === "ELIGIBLE_BY_OVERRIDE" ? <span className="status-badge">Autorizzata per questa bolletta</span> : null}
+          {chosen[offer.calculation.calculationId] ? <small className="quote-offer-scope">Scelta con motivazione: {chosen[offer.calculation.calculationId]}</small> : null}
           <strong>{offer.supplier}</strong><span>{offer.offerName}</span>
           {termLines(offer.candidate).map((line) => <span key={line} className="quote-offer-term">{line}</span>)}
           {offer.candidate.scope ? <small className="quote-offer-scope">Per {offer.candidate.scope.customer}{offer.candidate.scope.voltage.length ? ` · ${offer.candidate.scope.voltage.map((level) => level === "LV" ? "BT" : level === "MV" ? "MT" : level === "HV" ? "AT" : level).join("/")}` : ""}{offer.candidate.scope.consumption ? ` · consumo ${offer.candidate.scope.consumption}` : ""}</small> : null}
@@ -931,6 +951,11 @@ export default function QuickQuoteFlow({ readonly, showExcluded = false }: { rea
           {(() => { if (isSameOffer({ billSupplier: quote.context.currentSupplier, billOffer: billOfferName(quote.bill, quote.context), offerSupplier: offer.supplier, offerCode: offer.calculation.sourceCte.offerCode, offerName: offer.offerName })) return <small>Stessa CTE della bolletta: verifica di fatturazione</small>; const projection = annualProjection(offer, quote.context, quote.bill); return projection ? <small className={projection.saving >= 0 ? "positive" : "negative"}>{projection.saving >= 0 ? "Risparmio annuo previsto" : "Costo in più annuo"} {euro(Math.abs(projection.saving))}</small> : null; })()}
           <small>Valida fino al {date(offer.receipt.validUntil)}</small>
         </button>)}</div> : null}
+        {quote.offers.length && !visibleOffers.length ? <p className="muted">Nessuna CTE costa meno della bolletta attuale.</p> : null}
+        {hiddenOffers.length ? <details className="quote-cost-detail"><summary>Offerte più care della bolletta ({hiddenOffers.length})</summary>
+          <p className="muted">Non sono proposte al cliente. Per mostrarne una scrivi il motivo della scelta.</p>
+          <ul>{hiddenOffers.map((offer) => <li key={offer.calculation.calculationId}><strong>{offer.supplier} · {offer.offerName}</strong>{offer.receipt.savingsPercent !== null ? <>: più cara del {PERCENT.format(Math.abs(offer.receipt.savingsPercent))}%</> : null}{readonly ? null : <> <ChooseWithReason onChoose={(reason) => { setChosen((current) => ({ ...current, [offer.calculation.calculationId]: reason })); setSelectedId(offer.calculation.calculationId); setProposal(null); }} /></>}</li>)}</ul>
+        </details> : null}
         {quote.offers.length ? <NoOfferReasons quote={quote} shown={quote.offers.map((offer) => offer.candidate.archiveId)} onAuthorize={readonly ? undefined : authorizeCte} /> : null}
         {quote.failure ? <CtePicker quote={quote} onPick={(archiveId) => void pickCte(archiveId)} disabled={readonly || Boolean(pending)} /> : null}
         {quote.offers.length || quote.failure ? null : <><EmptyState title="Nessuna offerta utilizzabile" detail="Nessuna CTE a te assegnata è adatta a questa bolletta. Chiedi all'amministratore di assegnartene una." /><NoOfferReasons quote={quote} onAuthorize={readonly ? undefined : authorizeCte} /></>}
