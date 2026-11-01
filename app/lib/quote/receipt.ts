@@ -365,7 +365,12 @@ function withDetails(input: QuoteReceiptInput, rows: readonly QuoteReceiptRow[],
   // Tony (28/10): "quello che segni non in bolletta, in effetti si trova dentro il prezzo energia": a seller charge the bill
   // does not print on its own line is billed inside its energy line, Box dell'offerta or not.
   const energyBilled = sellerDetails.some((item) => item.key === "ENERGY" && item.current !== null);
-  const inEnergy = (item: QuoteReceiptDetail) => (bundled.size > 0 || energyBilled) && item.current === null && !["ENERGY", "PCV", "ONE_OFF", "OPTIONS"].includes(item.key);
+  // Tony (1/11, Be Smart: "ma potrebbe essere già incluso nella parte iniziale, verifica"): the bill's "Mercato della capacità"
+  // line bills the regulated charge and the CTE's Capacity Market libero together (0,0032 + 0,0075 €/kWh = 41,32 €), so the
+  // libero is compared there, never inside the energy price.
+  const capacityBilled = sellerDetails.some((item) => item.key === "CAPACITY" && item.current !== null);
+  const inCapacity = (item: QuoteReceiptDetail) => capacityBilled && item.key === "CAPACITY_CTE" && item.current === null;
+  const inEnergy = (item: QuoteReceiptDetail) => (bundled.size > 0 || energyBilled) && item.current === null && !inCapacity(item) && !["ENERGY", "PCV", "ONE_OFF", "OPTIONS"].includes(item.key);
   const bundledOffer = sellerDetails.filter(inEnergy).reduce((total, item) => total + (item.offer ?? 0), 0);
   const bundledNames = sellerDetails.filter(inEnergy).map((item) => item.label.replace(/ \(.*\)$/, "").toLowerCase());
   // Tony (1/11, bolletta Elios): "Quota variabile smart (CVS) … 9,45" and "Quota variabile voci di trasporto … 3,78": "dove li
@@ -378,7 +383,13 @@ function withDetails(input: QuoteReceiptInput, rows: readonly QuoteReceiptRow[],
     if (item.key !== "ENERGY" || spreadNames.length === 0) return item;
     return { ...item, label: `${item.label}, nella CTE comprende anche ${spreadNames.join(" e ")}`, difference: hasBill && item.current !== null && item.offer !== null ? cents(item.offer - item.current - spreadBilledTotal) : item.difference };
   });
-  const seller: readonly QuoteReceiptDetail[] = bundled.size === 0 && !energyBilled ? spreadLabelled : spreadLabelled.map((item) => {
+  const liberoOffer = sellerDetails.filter(inCapacity).reduce((total, item) => total + (item.offer ?? 0), 0);
+  const capacityLabelled = !sellerDetails.some(inCapacity) ? spreadLabelled : spreadLabelled.map((item) => {
+    if (inCapacity(item)) return { ...item, difference: null, currentNote: "compreso nel mercato della capacità della bolletta" };
+    if (item.key !== "CAPACITY" || item.current === null) return item;
+    return { ...item, label: `${item.label}, in bolletta comprende anche il capacity market libero`, difference: hasBill && item.offer !== null && !item.missingReason ? cents(item.offer + liberoOffer - item.current) : null };
+  });
+  const seller: readonly QuoteReceiptDetail[] = bundled.size === 0 && !energyBilled ? capacityLabelled : capacityLabelled.map((item) => {
     if (inEnergy(item)) return { ...item, difference: null, currentNote: `compreso nel prezzo energia della bolletta${bundled.get(item.key) ? ` (${bundled.get(item.key)} €/kWh)` : ""}` };
     if (item.key !== "ENERGY" || item.current === null || item.missingReason || bundledNames.length === 0) return item;
     return { ...item, label: `${item.label}, in bolletta comprende anche ${bundledNames.join(", ")}`, difference: hasBill && !sellerDetails.some((other) => inEnergy(other) && other.missingReason) ? cents((item.offer ?? 0) + bundledOffer - item.current) : null };
