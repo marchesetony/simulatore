@@ -85,7 +85,7 @@ export function withCommercialDiscount(receipt: QuoteReceipt, policy: QuoteRecei
     if (row.key === "TAXES" && vatPart > 0) { const offer = less(row.offer, vatPart); return { ...row, offer, difference: diff(row.current, offer), details: (row.details ?? []).map((item) => item.key === "VAT" ? { ...item, offer: less(item.offer, vatPart), difference: diff(item.current, less(item.offer, vatPart)) } : item) }; }
     return row;
   });
-  const quotas = receipt.quotas.map((quota) => quota.key === "CONSUMPTION" ? { ...quota, offer: less(quota.offer, net), offerSeller: less(quota.offerSeller, net), difference: diff(quota.current, less(quota.offer, net)) } : quota.key === "VAT" && vatPart > 0 ? { ...quota, offer: less(quota.offer, vatPart), difference: diff(quota.current, less(quota.offer, vatPart)) } : quota);
+  const quotas = receipt.quotas.map((quota) => quota.key === "CONSUMPTION" ? { ...quota, offer: less(quota.offer, net), offerSeller: less(quota.offerSeller, net), difference: diff(quota.current, less(quota.offer, net)) } : (quota.key === "VAT" || quota.key === "TAXES") && vatPart > 0 ? { ...quota, offer: less(quota.offer, vatPart), difference: diff(quota.current, less(quota.offer, vatPart)) } : quota);
   const offerTotal = cents((receipt.offerTotal ?? 0) - gross);
   const currentTotal = receipt.currentTotal ?? 0;
   const savings = cents(currentTotal - offerTotal);

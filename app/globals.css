@@ -571,3 +571,18 @@ button:focus-visible,a:focus-visible,input:focus-visible,select:focus-visible,te
 .company-footer { padding:14px clamp(18px,4vw,56px) 34px; border-top:1px solid var(--line); color:var(--muted); background:#fff; font-size:12px; text-align:center; overflow-wrap:anywhere; }
 
 .quote-unit-price { display:block; font-size:11px; }
+
+/* Tony (1/11): the offer as a real bill's "Scontrino dell'energia" (ARERA facsimile), before the comparison. */
+.offer-scontrino { margin:12px 0 20px; border:1px solid var(--border, #d8dee8); border-radius:10px; overflow:hidden; }
+.offer-scontrino h4 { margin:0; padding:10px 14px; }
+.offer-scontrino table { width:100%; border-collapse:collapse; font-variant-numeric:tabular-nums; }
+.offer-scontrino thead th { text-align:right; padding:8px 14px; background:#f6d77a; color:#5a3d00; }
+.offer-scontrino thead th:first-child { text-align:left; }
+.offer-scontrino td, .offer-scontrino tbody th { padding:5px 14px; text-align:right; font-weight:400; }
+.offer-scontrino .scontrino-section th { text-align:left; background:rgba(127,127,127,.12); font-weight:600; }
+.offer-scontrino .scontrino-main th, .offer-scontrino .scontrino-main td { font-weight:700; font-style:italic; }
+.offer-scontrino .scontrino-sub th, .offer-scontrino .scontrino-sub td { font-style:italic; font-size:.9em; opacity:.85; }
+.offer-scontrino .scontrino-item th { text-align:left; }
+.offer-scontrino .scontrino-total th { text-align:left; }
+.offer-scontrino .scontrino-total th, .offer-scontrino .scontrino-total td { font-weight:700; background:rgba(120,180,90,.15); }
+.quote-compare-title { margin:8px 0; }

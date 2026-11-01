@@ -127,8 +127,13 @@ try {
   const receipt = Buffer.from(renderReceiptProposal(fixedProposal, screen, profile)).toString("latin1");
   assert.ok(receipt.startsWith("%PDF-1.4"));
   const plain = receipt.replace(/\\([()\\])/g, "$1").toUpperCase();
-  for (const expected of ["PROPOSTA COMMERCIALE", "Energia Demo S.r.l.", "IT00000000000", "Offerta Luce Prova", "Scontrino dell'energia", "Risparmio annuo", "Risparmio mensile", "Confronto tra l'offerta e la bolletta simulata", "Bolletta attuale", "Nuova offerta"]) assert.ok(plain.includes(expected.toUpperCase()), expected);
+  for (const expected of ["PROPOSTA COMMERCIALE", "Energia Demo S.r.l.", "IT00000000000", "Offerta Luce Prova", "Dettaglio e confronto con la bolletta attuale", "Risparmio annuo", "Risparmio mensile", "Confronto tra l'offerta e la bolletta simulata", "Bolletta attuale", "Nuova offerta"]) assert.ok(plain.includes(expected.toUpperCase()), expected);
   assert.ok(receipt.includes("/Subtype /Image") && receipt.includes("/DCTDecode"), "logo embedded");
+  // Tony (1/11, "queste le voci che dobbiamo avere visibili nell'offerta come una fattura reale, poi il dettaglio con il
+  // paragone"): with the screen's scontrino lines the PDF opens on the offer's ARERA "Scontrino dell'energia", then the
+  // comparison (titled "Dettaglio e confronto con la bolletta attuale").
+  const withScontrino = Buffer.from(renderReceiptProposal(fixedProposal, { ...screen, scontrino: [{ kind: "section", label: "Quota per consumi", amount: null }, { kind: "main", label: "", quantity: "400 kWh", price: "0,180000 €/kWh", amount: 72 }, { kind: "total", label: "Totale bolletta", amount: 72 }] }, profile)).toString("latin1").replace(/\\([()\\])/g, "$1").toUpperCase();
+  for (const expected of ["Scontrino dell'energia", "Quota per consumi", "400 kWh x", "Prezzo medio", "Totale bolletta"]) assert.ok(withScontrino.includes(expected.toUpperCase()), expected);
   assert.ok(!/Commercial proposal|Savings|Offer/.test(receipt.replace(/Offerta/g, "")), "only Italian text");
   const fallback = Buffer.from(renderReceiptProposal(fixedProposal, fallbackPresentation(fixedProposal), null)).toString("latin1");
   assert.ok(fallback.includes("PROPOSTA COMMERCIALE") && !fallback.includes("/DCTDecode"));

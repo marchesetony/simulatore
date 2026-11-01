@@ -202,8 +202,35 @@ export function renderReceiptProposal(proposal: ProposalCanonicalSnapshot, prese
   sheet.y = sTop - savingsHeight - 4;
   if (presentation.annualBasisLabel && !presentation.sameOffer) { sheet.y -= 4; sheet.paragraph(presentation.annualBasisLabel, L, R - L, 7.5, { color: MUTED }); }
 
+  // Tony (1/11, "queste le voci che dobbiamo avere visibili nell'offerta come una fattura reale, poi il dettaglio con il
+  // paragone"): the new offer first as the ARERA "Scontrino dell'energia" (quantità × prezzo medio = importi).
+  if (presentation.scontrino?.length) {
+    sheet.section(`Scontrino dell'energia: ${presentation.offerName || presentation.offerSupplier}`);
+    const at = { label: L + 6, price: L + 380, amount: R - 6 };
+    sheet.need(22);
+    sheet.rect(L, sheet.y - 18, R - L, 18, NAVY);
+    sheet.text("Quantità", at.label, sheet.y - 12.5, 7.5, { bold: true, color: "1 1 1" });
+    sheet.text("Prezzo medio", at.price, sheet.y - 12.5, 7.5, { bold: true, color: "1 1 1", align: "right" });
+    sheet.text("Importi", at.amount, sheet.y - 12.5, 7.5, { bold: true, color: "1 1 1", align: "right" });
+    sheet.y -= 18;
+    for (const line of presentation.scontrino) {
+      const height = line.kind === "total" ? 20 : 14;
+      sheet.need(height);
+      if (line.kind === "section" || line.kind === "total") sheet.rect(L, sheet.y - height, R - L, height, line.kind === "total" ? TEAL_SOFT : PANEL);
+      const size = line.kind === "sub" ? 7.5 : 8.5;
+      const bold = line.kind !== "sub" && line.kind !== "item";
+      const baseline = sheet.y - height / 2 - 3;
+      const label = line.kind === "main" ? `${line.quantity ?? ""}${line.quantity ? " x" : ""}` : line.label;
+      sheet.text(label, line.kind === "main" || line.kind === "sub" ? at.price - 70 : at.label, baseline, size, { bold, color: line.kind === "sub" ? MUTED : INK, align: line.kind === "main" || line.kind === "sub" ? "right" : undefined });
+      if (line.price) sheet.text(line.price, at.price, baseline, size, { bold, color: line.kind === "sub" ? MUTED : INK, align: "right" });
+      if (line.amount !== null) sheet.text(line.kind === "total" ? `= ${euro(line.amount)}` : `${line.amount < 0 ? "-" : "+"} ${euro(Math.abs(line.amount))}`, at.amount, baseline, size, { bold, color: line.kind === "sub" ? MUTED : INK, align: "right" });
+      sheet.y -= height;
+    }
+    sheet.y -= 8;
+  }
+
   // Scontrino: every voice of the bill against the offer.
-  sheet.section("Scontrino dell'energia: bolletta attuale e nuova offerta");
+  sheet.section("Dettaglio e confronto con la bolletta attuale");
   const cols = { label: L + 6, current: L + 330, offer: L + 420, diff: R - 6 };
   const headerRow = () => {
     sheet.need(22);
