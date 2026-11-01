@@ -17,7 +17,8 @@ assert.match(route, /export const maxDuration = 300;/);
 const bill = readFileSync(new URL("../app/lib/foundation/real-bill.ts", import.meta.url), "utf8");
 // Tony (1/11, "leggere lo scontrino della bolletta"): a failed second reading completed by the printed scontrino is not unread.
 assert.match(bill, /\(working\.structuredBill\.analystExtractionStatus === "FAILED" && !readingHasScontrino\(working\.structuredBill\)\) \|\| \(working\.structuredBill\.economicChargeLines\?\.length \?\? 0\) === 0/);
-assert.match(route, /refine: \(extraction\) => withPrintedScontrino\(extraction, text\)/);
+// Tony (1/11, "anche quella letta da immagine"): an image bill's transcript is refined the same way.
+assert.match(route, /refine: \(extraction\) => transcript \? withScontrinoTranscript\(extraction, transcript\) : withPrintedScontrino\(extraction, text\)/);
 const flow = readFileSync(new URL("../app/components/QuickQuoteFlow.tsx", import.meta.url), "utf8");
 assert.match(flow, /Rileggi le voci della bolletta/);
 assert.match(flow, /\{analystRetry\(draft\)\}/);

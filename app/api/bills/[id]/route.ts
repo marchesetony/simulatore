@@ -17,7 +17,7 @@ import { deleteBillPermanently } from "../../../lib/foundation/bill-retention";
 import { billVisibilityScope, getBillInScope } from "../../../lib/foundation/bill-visibility";
 import { isBillFeature, resolveBillFeaturePermissions, sanitizeBillForFeatureAccess, type BillFeature } from "../../../lib/foundation/bill-feature-permissions";
 import { createAnthropicTwoStageBillSdkAdapter, printedText } from "../../../lib/ingestion/anthropic-bill-sdk";
-import { printedScontrinoLines, readingHasScontrino, withPrintedScontrino } from "../../../lib/ingestion/printed-scontrino";
+import { printedScontrinoLines, readingHasScontrino, scontrinoSource, withPrintedScontrino, withScontrinoTranscript } from "../../../lib/ingestion/printed-scontrino";
 import type { AuthenticatedPrincipal } from "../../../lib/auth/types";
 import type { RuntimeRepositories } from "../../../lib/persistence/adapter";
 import type { PublicBillDocument } from "../../../lib/foundation/real-bill";
@@ -118,11 +118,16 @@ export async function PATCH(request: Request, context: { params: Promise<{ id: s
       if (!contentType) return deny("BILL_OPERATION_INVALID", "Stored file type not recognized", 400);
       // The scontrino printed in the PDF text completes a reading that lacks it (Tony, 1/11); when the second reading fails
       // again, the stored reading is kept and the printed scontrino alone fills the bill side.
-      const text = printedText({ bytes, contentType });
+      const pdfText = printedText({ bytes, contentType });
+      // Tony (1/11): an image or scanned bill gets its scontrino copied row by row and read by the same parser.
+      const current = document.versions.find((version) => version.versionId === operation.versionId)?.structuredBill ?? null;
+      const adapter = createAnthropicTwoStageBillSdkAdapter();
+      const transcript = pdfText && printedScontrinoLines(pdfText).length ? null : current?.scontrinoTranscript ?? await adapter.transcribeScontrino({ bytes, contentType });
+      const text = transcript ?? scontrinoSource(current, pdfText);
       let analyst: Awaited<ReturnType<ReturnType<typeof createAnthropicTwoStageBillSdkAdapter>["extractAnalystOnly"]>> | null = null;
-      try { analyst = await createAnthropicTwoStageBillSdkAdapter().extractAnalystOnly({ bytes, contentType }); }
+      try { analyst = await adapter.extractAnalystOnly({ bytes, contentType }); }
       catch (error) { if (!text || !printedScontrinoLines(text).length) throw error; console.error(`[BILL_ANALYST_REREAD_FAILED] bill=${document.id} using printed scontrino`); }
-      const refreshed = createAnalystRefreshVersion({ document, tenantId, sourceVersionId: operation.versionId, analyst, at: now, refine: (extraction) => withPrintedScontrino(extraction, text) });
+      const refreshed = createAnalystRefreshVersion({ document, tenantId, sourceVersionId: operation.versionId, analyst, at: now, refine: (extraction) => transcript ? withScontrinoTranscript(extraction, transcript) : withPrintedScontrino(extraction, text) });
       await repository.saveIfCurrentVersion(refreshed, operation.versionId, document.versions.find((version) => version.versionId === operation.versionId)!);
       await audit.record({ type: "INGESTION", tenantId, documentId: id, outcome: "ALLOWED" });
       return Response.json({ document: await publicDocumentFor(principal, repositories, await attachOfficialPun(toPublicDocument(refreshed), repositories.marketArchiveRepository)) }, { headers: NO_STORE_HEADERS });

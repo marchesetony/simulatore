@@ -112,6 +112,18 @@ export function withPrintedScontrino(extraction: StructuredBillExtraction, text:
   return { ...extraction, economicChargeLines: [...printed.filter((item) => item.code !== "ALTRE_PARTITE" || !itemised), ...kept] };
 }
 
+/** A bill without a text layer: the transcribed scontrino goes through the same parser and is kept with the reading, so an
+ *  archived image bill is shown the same way on every load. A transcript the parser cannot read is not kept. */
+export function withScontrinoTranscript(extraction: StructuredBillExtraction, transcript: string | null): StructuredBillExtraction {
+  if (!transcript || !printedScontrinoLines(transcript).length) return extraction;
+  return { ...withPrintedScontrino(extraction, transcript), scontrinoTranscript: transcript };
+}
+
+/** The text the scontrino is read from: the PDF text layer, else the stored transcript of an image bill. */
+export function scontrinoSource(extraction: StructuredBillExtraction | null | undefined, pdfText: string | null): string | null {
+  return pdfText && printedScontrinoLines(pdfText).length ? pdfText : extraction?.scontrinoTranscript ?? pdfText;
+}
+
 /** True when the reading holds the bill's scontrino (its "di cui" shares). */
 export function readingHasScontrino(extraction: StructuredBillExtraction | null | undefined): boolean {
   return Boolean(extraction && hasScontrino(extraction.economicChargeLines));

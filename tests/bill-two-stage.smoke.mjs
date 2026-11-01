@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { buildBillAnalystReview } from "../app/lib/foundation/bill-analyst-review.ts";
 import { ANALYST_SCHEMA_METRICS, ANALYST_WIRE_SCHEMA, ANALYST_WIRE_TOOL, BILL_ANALYST_TOOL_NAME, BILL_CORE_TOOL_NAME, CORE_SCHEMA_METRICS, CORE_WIRE_SCHEMA, CORE_WIRE_TOOL, mapBillAnalystItems, mapBillCoreToStructuredBill, mergeBillCoreAndAnalyst } from "../app/lib/ingestion/bill-two-stage.ts";
-import { AnthropicBillSdkError, AnthropicTwoStageBillSdkAdapter } from "../app/lib/ingestion/anthropic-bill-sdk.ts";
+import { AnthropicBillSdkError, AnthropicTwoStageBillSdkAdapter, SCONTRINO_TRANSCRIPT_TOOL_NAME } from "../app/lib/ingestion/anthropic-bill-sdk.ts";
 import { BILL_WIRE_FIELD_NAMES } from "../app/lib/ingestion/bill-wire.ts";
 import { normalizeAnalystItemCode } from "../app/lib/ingestion/bill-extended-contract.ts";
 
@@ -119,7 +119,9 @@ assert.equal(failedAnalyst.f1Consumption.value, 80);
 assert.equal(failedAnalyst.analystExtractionStatus, "FAILED");
 
 let requests = [];
-const client = { messages: { async create(params) { requests.push(params); return requests.length === 1 ? message([tool(BILL_CORE_TOOL_NAME, coreWire())]) : message([tool(BILL_ANALYST_TOOL_NAME, analyst)]); } } };
+// Tony (1/11, "anche quella letta da immagine"): a synthetic PDF with no text layer also gets its scontrino transcribed; that
+// request is answered apart (no scontrino) so the reading requests keep their order.
+const client = { messages: { async create(params) { if (params.tools[0].name === SCONTRINO_TRANSCRIPT_TOOL_NAME) return message([tool(SCONTRINO_TRANSCRIPT_TOOL_NAME, { rows: [] })]); requests.push(params); return requests.length === 1 ? message([tool(BILL_CORE_TOOL_NAME, coreWire())]) : message([tool(BILL_ANALYST_TOOL_NAME, analyst)]); } } };
 const adapter = new AnthropicTwoStageBillSdkAdapter(client, "synthetic-model", 8192);
 const extracted = await adapter.extract({ bytes: new Uint8Array(Buffer.from("%PDF-1.4 synthetic", "ascii")), contentType: "application/pdf" });
 // Tony (28/10): this fixture's lines do not add up to its total, so the AI reviews the reading once more (third request).
@@ -147,11 +149,12 @@ let failedCalls = 0;
   const parallelClient = { messages: { async create(params) { started.push(params.tools[0].name); if (params.tools[0].name === BILL_CORE_TOOL_NAME) { await coreGate; return message([tool(BILL_CORE_TOOL_NAME, coreWire())]); } return message([tool(BILL_ANALYST_TOOL_NAME, analyst)]); } } };
   const pending = new AnthropicTwoStageBillSdkAdapter(parallelClient, "synthetic-model", 8192).extract({ bytes: new Uint8Array(Buffer.from("%PDF-1.4 synthetic", "ascii")), contentType: "application/pdf" });
   await new Promise((resolve) => setTimeout(resolve, 20));
-  assert.deepEqual(started, [BILL_CORE_TOOL_NAME, BILL_ANALYST_TOOL_NAME]);
+  // The scontrino transcript of a PDF without text runs alongside (Tony 1/11), after the two reading stages start.
+  assert.deepEqual(started, [BILL_CORE_TOOL_NAME, BILL_ANALYST_TOOL_NAME, SCONTRINO_TRANSCRIPT_TOOL_NAME]);
   releaseCore();
   await pending;
 }
-const coreOnlyAdapter = new AnthropicTwoStageBillSdkAdapter({ messages: { async create() { failedCalls += 1; if (failedCalls === 1) return message([tool(BILL_CORE_TOOL_NAME, coreWire())]); throw new AnthropicBillSdkError("BILL_OCR_PROVIDER_FAILED", "req_b"); } } }, "synthetic-model", 8192);
+const coreOnlyAdapter = new AnthropicTwoStageBillSdkAdapter({ messages: { async create(params) { if (params.tools[0].name === SCONTRINO_TRANSCRIPT_TOOL_NAME) return message([tool(SCONTRINO_TRANSCRIPT_TOOL_NAME, { rows: [] })]); failedCalls += 1; if (failedCalls === 1) return message([tool(BILL_CORE_TOOL_NAME, coreWire())]); throw new AnthropicBillSdkError("BILL_OCR_PROVIDER_FAILED", "req_b"); } } }, "synthetic-model", 8192);
 const coreOnly = await coreOnlyAdapter.extract({ bytes: new Uint8Array(Buffer.from("%PDF-1.4 synthetic", "ascii")), contentType: "application/pdf" });
 assert.equal(failedCalls, 2);
 assert.equal(coreOnly.f1Consumption.value, 80);
@@ -171,7 +174,7 @@ assert.ok(dto.economics);
 const charge = (label, amount) => analystItem({ kind: "CHARGE", code: "OTHER_CHARGE", label, value: amount, amount });
 const offBy10 = analystWire([charge("Spesa per la vendita", "50,00"), charge("Spesa per la rete", "30,00"), charge("Altre partite", "10,00")]);
 const exact = analystWire([charge("Spesa per la vendita", "50,00"), charge("Spesa per la rete", "30,00")]);
-const reviewClient = (second) => { const sent = []; return { sent, messages: { async create(params) { sent.push(params); return sent.length === 1 ? message([tool(BILL_CORE_TOOL_NAME, coreWire())]) : message([tool(BILL_ANALYST_TOOL_NAME, sent.length === 2 ? offBy10 : second)]); } } }; };
+const reviewClient = (second) => { const sent = []; return { sent, messages: { async create(params) { if (params.tools[0].name === SCONTRINO_TRANSCRIPT_TOOL_NAME) return message([tool(SCONTRINO_TRANSCRIPT_TOOL_NAME, { rows: [] })]); sent.push(params); return sent.length === 1 ? message([tool(BILL_CORE_TOOL_NAME, coreWire())]) : message([tool(BILL_ANALYST_TOOL_NAME, sent.length === 2 ? offBy10 : second)]); } } }; };
 const pdf = { bytes: new Uint8Array(Buffer.from("%PDF-1.4 synthetic", "ascii")), contentType: "application/pdf" };
 const fixedClient = reviewClient(exact);
 const fixed = await new AnthropicTwoStageBillSdkAdapter(fixedClient, "synthetic-model", 8192).extract(pdf);
@@ -181,7 +184,7 @@ assert.deepEqual(fixed.economicChargeLines.map((line) => line.amount), ["50,00",
 const worseClient = reviewClient(analystWire([charge("Spesa per la vendita", "70,00"), charge("Spesa per la rete", "30,00")]));
 const kept = await new AnthropicTwoStageBillSdkAdapter(worseClient, "synthetic-model", 8192).extract(pdf);
 assert.equal(kept.economicChargeLines.length, 3, "a worse second reading is discarded");
-const exactClient = { sent: [], messages: { async create(params) { exactClient.sent.push(params); return exactClient.sent.length === 1 ? message([tool(BILL_CORE_TOOL_NAME, coreWire())]) : message([tool(BILL_ANALYST_TOOL_NAME, exact)]); } } };
+const exactClient = { sent: [], messages: { async create(params) { if (params.tools[0].name === SCONTRINO_TRANSCRIPT_TOOL_NAME) return message([tool(SCONTRINO_TRANSCRIPT_TOOL_NAME, { rows: [] })]); exactClient.sent.push(params); return exactClient.sent.length === 1 ? message([tool(BILL_CORE_TOOL_NAME, coreWire())]) : message([tool(BILL_ANALYST_TOOL_NAME, exact)]); } } };
 await new AnthropicTwoStageBillSdkAdapter(exactClient, "synthetic-model", 8192).extract(pdf);
 assert.equal(exactClient.sent.length, 2, "a reading that adds up is not reviewed");
 console.log("BILL_READING_REVIEW=PASS");

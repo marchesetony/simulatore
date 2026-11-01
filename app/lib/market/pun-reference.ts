@@ -13,7 +13,7 @@ import { attachBillRegulatoryAudit } from "../foundation/bill-public-audit.ts";
 // @ts-expect-error Node's strip-only test runner requires the explicit extension.
 import { estimateBillSpread } from "./bill-spread.ts";
 // @ts-expect-error Node's strip-only test runner requires the explicit extension.
-import { withPrintedScontrino } from "../ingestion/printed-scontrino.ts";
+import { scontrinoSource, withPrintedScontrino } from "../ingestion/printed-scontrino.ts";
 // @ts-expect-error Node's strip-only test runner requires the explicit extension.
 import { pdfTextLayer } from "../regulatory-refresh/pdf-text.ts";
 
@@ -139,7 +139,9 @@ export function officialPunInputFromPublicBill(document: Pick<PublicBillDocument
 /** Bills read before the formula table (or the offer name) was taken from the PDF get it now, in memory, so they need no re-upload. */
 export async function withDocumentPriceRows<T extends Pick<PublicBillDocument, "resolvedVector" | "structuredBill" | "fileName">>(document: T, read: () => Promise<Uint8Array>): Promise<T> {
   const bill = document.structuredBill;
-  if (!bill || !/\.pdf$/i.test(document.fileName)) return document;
+  if (!bill) return document;
+  // An image bill: its stored scontrino transcript is applied again (Tony 1/11: read like a PDF).
+  if (!/\.pdf$/i.test(document.fileName)) return bill.scontrinoTranscript ? { ...document, structuredBill: withPrintedScontrino(bill, bill.scontrinoTranscript) } : document;
   const needRows = document.resolvedVector === "EE" && bill.documentPriceRows === undefined;
   // Bills read before the box dell'offerta was taken from the PDF get it (and the offer name again) now, with no re-upload.
   const needBox = bill.documentOfferBox === undefined;
@@ -153,7 +155,7 @@ export async function withDocumentPriceRows<T extends Pick<PublicBillDocument, "
     // Tony (1/11, Loomen): every bill, also the ones already archived, shows the scontrino exactly as printed in the PDF.
     let text: string | null = null;
     try { const layer = pdfTextLayer(bytes); text = layer.status === "AVAILABLE" ? layer.text : null; } catch { text = null; }
-    return { ...document, structuredBill: withPrintedScontrino(withBox, text) };
+    return { ...document, structuredBill: withPrintedScontrino(withBox, scontrinoSource(withBox, text)) };
   } catch { return document; }
 }
 

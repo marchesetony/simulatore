@@ -123,6 +123,9 @@ export interface StructuredBillExtraction {
   readonly documentPriceRows?: readonly import("./document-numeric-evidence").DocumentPriceRow[];
   /** The current offer's name read straight from the PDF text layer, when the bill labels it. */
   readonly documentOfferName?: string | null;
+  /** Tony (1/11, "anche quella letta da immagine possa essere letta allo stesso modo del pdf"): the scontrino rows copied word for
+   *  word from a bill without a text layer (image or scan), read by the same parser as the PDF text. */
+  readonly scontrinoTranscript?: string | null;
   /** The box dell'offerta read from the PDF text; undefined on bills read before it existed. */
   readonly documentOfferBox?: import("./document-numeric-evidence").DocumentOfferBox | null;
   readonly supplyProfile?: BillSupplyProfile;
