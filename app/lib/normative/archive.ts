@@ -4,6 +4,9 @@
 // 189/2026/R/com and 255/2026/R/com, Allegato A 302/2016/R/com updated) and feed the AI prompts that read bills and CTEs.
 // The full archive with article references is in /mnt/project-files/normative/.
 
+// @ts-expect-error Node's strip-only test runner requires the explicit extension.
+import { readingRulesGuidance } from "../reading/rules.ts";
+
 export type NormativeAudience = "DOMESTIC" | "BUSINESS";
 export type NormativeUse = "BILL" | "CTE" | "SIMULATION" | "PRESENTATION";
 
@@ -93,5 +96,7 @@ export function normativeGuidance(use: NormativeUse): string {
     const who = rule.audiences.length === 2 ? "tutti i clienti" : AUDIENCE_LABEL[rule.audiences[0]];
     return `[${rule.source} ${rule.reference}, ${who}] ${rule.text}`;
   });
-  return ["Regole ARERA in vigore da applicare (distingui sempre domestico e business):", ...lines].join(" ");
+  const normative = ["Regole ARERA in vigore da applicare (distingui sempre domestico e business):", ...lines].join(" ");
+  // Tony (1/11): "leggi e fissa le regole per la lettura delle bollette e delle cte".
+  return use === "BILL" || use === "CTE" ? `${normative} ${readingRulesGuidance(use)}` : normative;
 }
