@@ -161,7 +161,7 @@ function accountingRole(classification: BillEconomicClassification, description:
 // The Box dell'offerta restates the seller's spend ("Totale spesa dovuta per l'offerta", "di cui quota spesa consumi"):
 // a summary of the quadro sintetico's "di cui spesa per la vendita", never money of its own (Tony, 29/10).
 function aggregateDescription(key: string): boolean {
-  return key.startsWith("TOTALE_SPESA_DOVUTA") || key.startsWith("DI_CUI_QUOTA_SPESA") || key.includes("TOTALE_VENDITA") || key.includes("TOTALE_TARIFFA") || key.includes("TOTALE_ONERI") || key === "TOTALE_IMPOSTE" || key === "TOTALE_FORNITURA" || key === "TOTALE_BOLLETTA" || key === "TOTALE_DA_PAGARE";
+  return key.startsWith("TOTALE_SPESA_DOVUTA") || key.startsWith("DI_CUI_QUOTA_SPESA") || key.startsWith("DI_CUI_SPESA_PER_LA_QUOTA") || key.includes("TOTALE_VENDITA") || key.includes("TOTALE_TARIFFA") || key.includes("TOTALE_ONERI") || key === "TOTALE_IMPOSTE" || key === "TOTALE_FORNITURA" || key === "TOTALE_BOLLETTA" || key === "TOTALE_DA_PAGARE";
 }
 
 function isDuplicatedSectionSummary(component: BillEconomicComponent): boolean {
@@ -229,7 +229,7 @@ const asRecalculation = (item: BillEconomicComponent): BillEconomicComponent => 
 // section totals ("TOTALE"), summary tables (IMPOSTE, ONERI GENERALI) and the elementi di dettaglio. Only the bill's
 // own total tells which copy is the atomic one, so each family of summary-looking lines is dropped only when that makes
 // the lines add up to the total (or brings them closest to it).
-const SUMMARY_KEYS = new Set(["QUOTA_ENERGIA", "QUOTA_FISSA", "QUOTA_POTENZA", "QUOTA_PER_CONSUMI", "QUOTA_PER_I_CONSUMI", "QUOTA_FISSA_E_QUOTA_POTENZA", "ACCISE_E_IVA", "RICALCOLI", "ULTERIORI_VOCI"]);
+const SUMMARY_KEYS = new Set(["QUOTA_CONSUMI", "QUOTA_ENERGIA", "QUOTA_FISSA", "QUOTA_POTENZA", "QUOTA_PER_CONSUMI", "QUOTA_PER_I_CONSUMI", "QUOTA_FISSA_E_QUOTA_POTENZA", "ACCISE_E_IVA", "RICALCOLI", "ULTERIORI_VOCI"]);
 function summaryFamilies(items: readonly BillEconomicComponent[]): readonly (readonly string[])[] {
   // Lines rebuilt from the quadro sintetico are the bill's own transport: never dropped to make the sum match.
   const atomic = items.filter((item) => item.includedInReconciliation && item.classification !== "BILL_TOTAL" && item.classification !== "AMOUNT_DUE" && item.code !== "NETWORK_FROM_SUMMARY");
@@ -282,7 +282,7 @@ const labelOf = (description: string): { readonly section: string; readonly labe
 // Only a quadro sintetico block ("Quota ...") is a prefix to drop: "Oneri di sistema - quota energia" stays an oneri line.
 const blockLabel = (description: string): string => { const { section, label } = labelOf(description); return section === "" || section.startsWith("QUOTA") ? label : keyOf(description); };
 const quotaOfKey = (key: string): SummaryQuota | null => { const at = (pattern: RegExp) => { const match = pattern.exec(key); return match ? match.index : Number.POSITIVE_INFINITY; }; const power = at(/POTENZA|(^|_)KW(_|$)/), fixed = at(/FISS|(^|_)(MESE|POD|GIORN[OI]|GG)(_|$)/), consumption = at(/CONSUM|VARIABIL|(^|_)K?WH(_|$)/); const first = Math.min(power, fixed, consumption); return first === Number.POSITIVE_INFINITY ? null : first === fixed ? "FIXED" : first === power ? "POWER" : "CONSUMPTION"; };
-const unitQuota = (unit: string | null): SummaryQuota | null => { const key = keyOf(unit); return /(^|_)KW(_|$)/.test(key) ? "POWER" : /(^|_)(MESE|POD|GIORN[OI]|GG|ANNO)(_|$)/.test(key) ? "FIXED" : /(^|_)(K?WH|SMC)(_|$)/.test(key) ? "CONSUMPTION" : null; };
+const unitQuota = (unit: string | null): SummaryQuota | null => { const key = keyOf(unit); return /(^|_)KW(_|$)/.test(key) ? "POWER" : /(^|_)(MESE|POD|PDP|PDR|GIORN[OI]|GG|ANNO)(_|$)/.test(key) ? "FIXED" : /(^|_)(K?WH|SMC)(_|$)/.test(key) ? "CONSUMPTION" : null; };
 const summaryQuota = (item: BillEconomicComponent): SummaryQuota => { const { section, label } = labelOf(item.description); return unitQuota(item.unit) ?? quotaOfKey(label) ?? quotaOfKey(section) ?? "CONSUMPTION"; };
 const isNetworkAndSystemSummary = (item: BillEconomicComponent): boolean => /RETE_E_(GLI_)?ONERI/.test(keyOf(item.description));
 // A line priced per day (€/giorno) is the quota fissa (Tony, 28/10, BPower Casa Protetta: "di cui spesa per la rete" 8,86 € at
@@ -334,7 +334,7 @@ function networkFromSummary(items: readonly BillEconomicComponent[]): readonly B
 // Minniti Casa Protetta: "stai inserendo dei calcoli che già sono presenti in altre voci e li stai conteggiando due volte"
 // (the quota fissa total 14,92 = PCV 13,00 + transport 1,92 was kept as a charge of its own, and the transport lines were
 // dropped to make the sum match). When the reading kept the total and the seller's part only, the rest is rete e oneri.
-const QUOTA_TOTALS: Readonly<Record<string, SummaryQuota>> = { QUOTA_PER_CONSUMI: "CONSUMPTION", QUOTA_PER_I_CONSUMI: "CONSUMPTION", QUOTA_ENERGIA: "CONSUMPTION", QUOTA_VARIABILE: "CONSUMPTION", QUOTA_FISSA: "FIXED", QUOTA_FISSA_E_QUOTA_POTENZA: "FIXED", QUOTA_FISSA_TOTALE: "FIXED", QUOTA_POTENZA: "POWER" };
+const QUOTA_TOTALS: Readonly<Record<string, SummaryQuota>> = { QUOTA_CONSUMI: "CONSUMPTION", QUOTA_PER_CONSUMI: "CONSUMPTION", QUOTA_PER_I_CONSUMI: "CONSUMPTION", QUOTA_ENERGIA: "CONSUMPTION", QUOTA_VARIABILE: "CONSUMPTION", QUOTA_FISSA: "FIXED", QUOTA_FISSA_E_QUOTA_POTENZA: "FIXED", QUOTA_FISSA_TOTALE: "FIXED", QUOTA_POTENZA: "POWER" };
 function quotaTotals(items: readonly BillEconomicComponent[]): readonly BillEconomicComponent[] {
   const live = (item: BillEconomicComponent) => item.includedInReconciliation && numberFrom(item.amount) !== null;
   const totals: { readonly item: BillEconomicComponent; readonly quota: SummaryQuota }[] = [];
@@ -408,6 +408,16 @@ export function buildCurrentBillEconomicAnalysis(inputs: readonly BillEconomicCo
   const periodStart = options.billingPeriodStart ? isoDates(options.billingPeriodStart)[0] ?? options.billingPeriodStart.slice(0, 10) : null;
   if (periodStart) components = components.map((item) => { const end = isoDates(item.period ?? item.rawPeriod).at(-1); return end !== undefined && end < periodStart && item.group !== "TAX" ? asRecalculation(item) : item; });
   components = networkFromSummary(systemChargeViews(quotaTotals(components)));
+  // Tony (1/11, bolletta Duferco: "ma dove sono i dati con gli importi della bolletta"): the quadro sintetico printed only
+  // "Accise e IVA 69,48 €", with no excise or VAT line of its own. That line is then the bill's taxes, not a summary to drop.
+  // When only the excise is detailed (Duferco: "Addizionale Erariale 9,26 €"), the VAT is the printed "Accise e IVA" less it.
+  if (!components.some((i) => i.classification === "IVA")) {
+    const subtotals = components.filter((i) => i.classification === "TAX_SUBTOTAL" && numberFrom(i.amount) !== null);
+    const printed = subtotals.find((i) => keyOf(i.description) === "ACCISE_E_IVA") ?? [...subtotals].sort((a, b) => (numberFrom(b.amount) ?? 0) - (numberFrom(a.amount) ?? 0))[0];
+    const excise = round(components.filter((i) => i.classification === "ACCISE" && i.includedInReconciliation).reduce((total, i) => total + (numberFrom(i.amount) ?? 0), 0));
+    const vat = printed ? round((numberFrom(printed.amount) ?? 0) - excise) : 0;
+    if (printed && vat > 0.02) components = components.map((i) => i.lineId === printed.lineId ? { ...i, classification: "IVA", normalizedCode: "IVA", group: "TAX", accountingRole: "ATOMIC", includedInReconciliation: true, atomic: true, aggregate: false, ...(excise > 0 ? { amount: vat.toFixed(2).replace(".", ","), quantity: null, unitPrice: null, calculationCheck: "NOT_CHECKABLE" as const, description: `IVA: ${i.description} ${numberFrom(i.amount)?.toFixed(2).replace(".", ",")} € meno accise ${excise.toFixed(2).replace(".", ",")} €` } : {}) } : i);
+  }
   components = withoutSummaries(components, numberFrom(options.sourceBillTotal ?? billTotal) ?? numberFrom(components.find((i) => i.classification === "BILL_TOTAL")?.amount));
   const seller = { ENERGY_PRICE: components.filter((i) => i.group === "ENERGY_PRICE"), COMMERCIALIZATION: components.filter((i) => i.group === "COMMERCIALIZATION"), DISPATCHING_OR_PASS_THROUGH: components.filter((i) => i.group === "DISPATCHING_OR_PASS_THROUGH"), CAPACITY_MARKET: components.filter((i) => i.group === "CAPACITY_MARKET"), OTHER_SELLER_CHARGES: components.filter((i) => i.group === "OTHER_SELLER_CHARGES") } as const;
   const regulatedAndSystemCosts = { ARERA_NETWORK: components.filter((i) => i.group === "REGULATED_NETWORK"), ARERA_SYSTEM_CHARGES: components.filter((i) => i.group === "SYSTEM_CHARGES"), TERNA_DISPATCHING_REFERENCES: components.filter((i) => i.classification === "TERNA_DISPATCHING_REFERENCES"), GME_MARKET_REFERENCE: components.filter((i) => i.classification === "GME_MARKET_REFERENCE") } as const;
