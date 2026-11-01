@@ -271,13 +271,16 @@ function addCtePassThroughs(target: ComponentDraft[], request: ElectricitySimula
     if (inCdispd || statedAway("CAPACITY_MARKET")) { /* inside CDISPD or stated away */ }
     else {
       const powerKw = context?.availablePowerKw ?? context?.contractedPowerKw;
-      const smallLv = request.voltageLevel === "LV" && powerKw !== undefined && powerKw <= 55;
+      // Tony (1/11): "non si può non calcolare un dato che sfalsa la bolletta". A BT bill without power read: with the kWh of
+      // Terna's peak hours on the bill it is priced as above 55 kW (the bill bills it that way), otherwise as up to 55 kW, the
+      // monthly ARERA value on all kWh. The charge is never left out.
+      const peakBilled = peakEnergy !== null && peakEnergy !== undefined && peakEnergy.peakKwh + peakEnergy.offPeakKwh > 0;
+      const smallLv = request.voltageLevel === "LV" && (powerKw === undefined ? !peakBilled : powerKw <= 55);
       // BT up to 55 kW: the monthly value ARERA fixes in the quarterly TIV update (art. 4.1), when the archive has none.
       const arera = smallLv && runtime?.capacityMarket?.value === undefined ? areraCapacityForPeriod(period.periodStart, period.periodEnd, capacityMonths) : null;
       const official = runtime?.capacityMarket?.value ?? arera?.eurPerKwh;
       const officialSource = runtime?.capacityMarket?.officialIdentifier ?? (arera ? `ARERA ${arera.months.map((month) => month.resolution).join(", ")}` : "OFFICIAL");
-      if (request.voltageLevel === "LV" && powerKw === undefined) missing.push("CAPACITY_MARKET:AVAILABLE_POWER_MISSING");
-      else if (!smallLv) addTernaPeakCapacity(target, request, ternaCapacity, peakEnergy, totalQuantity, grossUp, loss, missing);
+      if (!smallLv) addTernaPeakCapacity(target, request, ternaCapacity, peakEnergy, totalQuantity, grossUp, loss, missing);
       else if (official === undefined || !Number.isFinite(official) || official <= 0) missing.push("CAPACITY_MARKET:OFFICIAL_VALUE_MISSING");
       else {
         const unitRate = grossUp(fromNumber(official));

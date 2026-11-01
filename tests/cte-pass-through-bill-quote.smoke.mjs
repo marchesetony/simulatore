@@ -62,9 +62,11 @@ const large = await calculatePreparedOffer(request(true), prepared, deps(0.0105,
 assert.deepEqual(byKind(large, "CAPACITY_MARKET"), [5]);
 assert.ok(!large.warnings.includes("OFFICIAL_VALUE_MISSING:CAPACITY_MARKET:PEAK_HOUR_KWH_MISSING"));
 assert.ok(large.warnings.includes("OFFICIAL_VALUE_MISSING:CAPACITY_MARKET:OFFICIAL_VALUE_MISSING"));
-// Unknown available power on a BT supply: the 55 kW rule cannot be applied.
+// Tony (1/11): "non si può non calcolare un dato che sfalsa la bolletta". Unknown available power on a BT supply without the
+// peak-hour kWh: priced as up to 55 kW, the official monthly value on all kWh (0,004275 x 1,10 x 1.000 kWh = 4,70).
 const unknown = await calculatePreparedOffer(request(true), prepared, deps(0.0105, 0.004275));
-assert.ok(unknown.warnings.includes("OFFICIAL_VALUE_MISSING:CAPACITY_MARKET:AVAILABLE_POWER_MISSING"));
+assert.ok(!unknown.warnings.includes("OFFICIAL_VALUE_MISSING:CAPACITY_MARKET:AVAILABLE_POWER_MISSING"));
+assert.deepEqual(byKind(unknown, "CAPACITY_MARKET"), [5, 4.7]);
 // Capacity Market libero "al lordo delle perdite di rete" is applied to the energy plus losses: 0,005 x 1,10.
 const gross = structuredClone(prepared);
 gross.offer.capacityMarketSchedule[2].lossTreatment = "GROSS_OF_LOSSES";
