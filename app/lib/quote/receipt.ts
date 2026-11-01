@@ -42,7 +42,7 @@ export type QuoteReceiptQuotaKey = "CONSUMPTION" | "FIXED" | "POWER" | "OTHER" |
 /** One line of the scontrino: what the bill paid, what the simulated CTE pays, and how much of it is the seller's. */
 export interface QuoteReceiptQuota { readonly key: QuoteReceiptQuotaKey; readonly label: string; readonly basis: string; readonly current: number | null; readonly offer: number | null; readonly difference: number | null; readonly currentSeller: number | null; readonly offerSeller: number | null; readonly details: readonly QuoteReceiptDetail[] }
 /** One named charge inside a quota (energia, dispacciamento, capacity, sbilanciamento, PCV, trasporto, oneri), bill against CTE. */
-export interface QuoteReceiptDetail { readonly key: string; readonly label: string; readonly current: number | null; readonly offer: number | null; readonly difference: number | null; readonly missingReason?: string; /** Why the bill has no amount of its own for this charge (e.g. billed inside the energy price). */ readonly currentNote?: string }
+export interface QuoteReceiptDetail { readonly key: string; readonly label: string; readonly current: number | null; readonly offer: number | null; readonly difference: number | null; readonly missingReason?: string; /** Why the bill has no amount of its own for this charge (e.g. billed inside the energy price). */ readonly currentNote?: string; /** Why the CTE has no amount of its own for this charge (e.g. priced inside its spread). */ readonly offerNote?: string }
 export interface QuoteReceiptOfferComponent { readonly category: string; readonly sign: string; readonly label?: string; readonly formulaId?: string; readonly amount: { readonly amount: number }; readonly formulaInputs?: Readonly<Record<string, string | number | boolean>> }
 export interface QuoteReceiptInput {
   readonly vector: "EE" | "GAS";
@@ -189,6 +189,13 @@ const DETAIL_LABEL: Readonly<Record<string, string>> = {
   OPTIONS: "Opzioni e servizi a pagamento (es. Flex)", ONE_OFF: "Corrispettivi una tantum", REACTIVE: "Energia reattiva", NETWORK: "Tariffa per l'uso della rete (trasporto e gestione del contatore)", SYSTEM: "Oneri generali di sistema",
 };
 const DETAIL_ORDER = Object.keys(DETAIL_LABEL);
+// The bill's own name beside the charge kind, so a seller's wording ("Quota variabile smart (CVS)") is found on the scontrino.
+function billNamed(key: string, line: { readonly description: string }): string {
+  const base = DETAIL_LABEL[key] ?? key;
+  if (key !== "COMMERCIALIZATION" && key !== "SELLER_OTHER" && key !== "IMBALANCE") return base;
+  const name = line.description.replace(/\s+/g, " ").trim();
+  return name && !base.toLowerCase().includes(name.toLowerCase()) ? `${base}: ${name}` : base;
+}
 function billDetail(line: { readonly classification: string; readonly group?: string; readonly description: string; readonly unit?: string | null }): string {
   // Tony (29/10, fattura dettagliata BPower): "Commercializzazione 429 kWh 0,004432 €/kWh" is a per-kWh charge, never the PCV.
   if (["PCV", "COMMERCIALIZATION_FIXED_FEE", "SELLER_FIXED_FEE"].includes(line.classification) && /kwh|smc/i.test(line.unit ?? "") && /commercializzazion/i.test(line.description)) return "COMMERCIALIZATION";
@@ -320,7 +327,7 @@ function withDetails(input: QuoteReceiptInput, rows: readonly QuoteReceiptRow[],
     if (key !== "ENERGY" && key !== "PCV" && !components.some((other) => SELLER_GROUPS.has(other.group ?? "") && billDetail(other) === key && amountOf(other.amount) !== null)) bundled.set(key, line.unitPrice ?? (/[.,]\d{4,}/.test(line.amount ?? "") ? String(amountOf(line.amount)) : ""));
   }
   const sellerDetails = entries([
-    ...components.filter((line) => SELLER_GROUPS.has(line.group ?? "")).flatMap((line) => { const value = amountOf(line.amount); const key = insideSpread(billDetail(line)) ? "ENERGY" : billDetail(line); return value === null ? [] : [[key, DETAIL_LABEL[key] ?? key, value, null] as const]; }),
+    ...components.filter((line) => SELLER_GROUPS.has(line.group ?? "")).flatMap((line) => { const value = amountOf(line.amount); const key = billDetail(line); return value === null ? [] : [[key, billNamed(key, line), value, null] as const]; }),
     ...sellerComponents(input).map((component) => { const key = regulatedSide(component) === "DISPATCHING" ? "DISPATCHING" : offerDetail(component); return [key, DETAIL_LABEL[key] ?? key, null, signed(component)] as const; }),
     // A charge the base requires but whose official value is missing still gets its line, with the reason.
     ...[...missing.keys()].map((key) => [key, DETAIL_LABEL[key] ?? key, null, null] as const),
@@ -332,7 +339,16 @@ function withDetails(input: QuoteReceiptInput, rows: readonly QuoteReceiptRow[],
   const inEnergy = (item: QuoteReceiptDetail) => (bundled.size > 0 || energyBilled) && item.current === null && !["ENERGY", "PCV", "ONE_OFF", "OPTIONS"].includes(item.key);
   const bundledOffer = sellerDetails.filter(inEnergy).reduce((total, item) => total + (item.offer ?? 0), 0);
   const bundledNames = sellerDetails.filter(inEnergy).map((item) => item.label.replace(/ \(.*\)$/, "").toLowerCase());
-  const spreadLabelled = sellerDetails.map((item) => item.key === "ENERGY" && spreadNames.length > 0 ? { ...item, label: `${item.label}, in bolletta comprende anche ${spreadNames.join(" e ")}` } : item);
+  // Tony (1/11, bolletta Elios): "Quota variabile smart (CVS) … 9,45" and "Quota variabile voci di trasporto … 3,78": "dove li
+  // hai inseriti". A bill charge the CTE prices inside its spread keeps its own line with the bill's name; the energy line
+  // compares the CTE's indice + spread with the bill's energy plus those charges.
+  const spreadBilled = sellerDetails.filter((item) => insideSpread(item.key) && item.current !== null && item.offer === null);
+  const spreadBilledTotal = spreadBilled.reduce((total, item) => total + (item.current ?? 0), 0);
+  const spreadLabelled = sellerDetails.map((item) => {
+    if (spreadBilled.includes(item)) return { ...item, difference: null, offerNote: "compreso nello spread della CTE (delibera 386/2025)" };
+    if (item.key !== "ENERGY" || spreadNames.length === 0) return item;
+    return { ...item, label: `${item.label}, nella CTE comprende anche ${spreadNames.join(" e ")}`, difference: hasBill && item.current !== null && item.offer !== null ? cents(item.offer - item.current - spreadBilledTotal) : item.difference };
+  });
   const seller: readonly QuoteReceiptDetail[] = bundled.size === 0 && !energyBilled ? spreadLabelled : spreadLabelled.map((item) => {
     if (inEnergy(item)) return { ...item, difference: null, currentNote: `compreso nel prezzo energia della bolletta${bundled.get(item.key) ? ` (${bundled.get(item.key)} €/kWh)` : ""}` };
     if (item.key !== "ENERGY" || item.current === null || item.missingReason || bundledNames.length === 0) return item;

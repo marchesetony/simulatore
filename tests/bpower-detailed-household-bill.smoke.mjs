@@ -46,9 +46,14 @@ const receipt = buildQuoteReceipt({ vector: "EE", offerSupplyCost: 113.77, analy
 const energy = receipt.rows.find((row) => row.key === "ENERGY");
 const detail = (key) => energy.details.find((item) => item.key === key);
 assert.equal(detail("PCV").current, 13);
-assert.equal(detail("ENERGY").current, 93.05);
-assert.match(detail("ENERGY").label, /commercializzazione e sbilanciamento/);
-assert.equal(detail("IMBALANCE"), undefined);
+// Tony (1/11, bolletta Elios, "dove li hai inseriti"): the bill's commercializzazione and sbilanciamento keep their own lines,
+// marked as priced inside the CTE spread; the energy line compares the spread with energy plus those charges (93,05 €).
+assert.equal(detail("ENERGY").current, 88.77);
+assert.match(detail("ENERGY").label, /nella CTE comprende anche commercializzazione e sbilanciamento/);
+const insideSpread = ["COMMERCIALIZATION", "IMBALANCE"].map(detail);
+for (const item of insideSpread) { assert.equal(item.offer, null); assert.equal(item.difference, null); assert.match(item.offerNote, /compreso nello spread/); }
+assert.equal(Math.round((detail("ENERGY").current + insideSpread.reduce((sum, item) => sum + item.current, 0)) * 100) / 100, 93.05);
+assert.equal(detail("ENERGY").difference, Math.round((detail("ENERGY").offer - 93.05) * 100) / 100);
 const taxes = receipt.rows.find((row) => row.key === "TAXES");
 assert.equal(taxes.current, 25.36);
 assert.equal(taxes.details.find((item) => item.key === "VAT").current, 16.51);
