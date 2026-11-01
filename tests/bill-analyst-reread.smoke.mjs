@@ -1,0 +1,23 @@
+import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
+import { parseBillOperation, storedBillContentType } from "../app/lib/foundation/real-bill.ts";
+
+// Tony (1/11, "non funziona, le bollette non riesci a leggerle"): a bill whose charge lines were not read (second reading
+// failed) can be read again from its stored file, without uploading it again, and every user sees why and the button.
+assert.deepEqual(parseBillOperation({ operation: "reread-analyst", versionId: "v1" }), { operation: "reread-analyst", versionId: "v1" });
+assert.equal(parseBillOperation({ operation: "reread-analyst" }), null);
+assert.equal(parseBillOperation({ operation: "reread-analyst", versionId: "v1", extra: 1 }), null);
+assert.equal(storedBillContentType(new Uint8Array(Buffer.from("%PDF-1.7"))), "application/pdf");
+assert.equal(storedBillContentType(new Uint8Array([0xff, 0xd8, 0xff, 0])), "image/jpeg");
+assert.equal(storedBillContentType(new Uint8Array([0x89, 0x50, 0x4e, 0x47])), "image/png");
+assert.equal(storedBillContentType(new Uint8Array([1, 2, 3, 4])), null);
+const route = readFileSync(new URL("../app/api/bills/[id]/route.ts", import.meta.url), "utf8");
+assert.match(route, /operation === "reread-analyst"[\s\S]*extractAnalystOnly[\s\S]*createAnalystRefreshVersion/);
+assert.match(route, /export const maxDuration = 300;/);
+const bill = readFileSync(new URL("../app/lib/foundation/real-bill.ts", import.meta.url), "utf8");
+assert.match(bill, /chargeLinesUnread: working\.structuredBill\?\.analystExtractionStatus === "FAILED"/);
+const flow = readFileSync(new URL("../app/components/QuickQuoteFlow.tsx", import.meta.url), "utf8");
+assert.match(flow, /Rileggi le voci della bolletta/);
+assert.match(flow, /\{analystRetry\(draft\)\}/);
+assert.match(flow, /\{analystRetry\(quote\.bill\)\}/);
+console.log("BILL_ANALYST_REREAD=PASS");

@@ -199,6 +199,7 @@ export interface BillDocumentModel {
   readonly fields: Readonly<Record<string, { readonly value: string | null; readonly confidence: number; readonly source: string; readonly confirmed: boolean }>>;
   readonly normalized: import("../foundation/real-bill").PublicBillProfile | null;
   readonly structuredBill: import("../ingestion/structured-bill").StructuredBillExtraction | null;
+  readonly chargeLinesUnread?: boolean;
   readonly resolvedVector: "EE" | "GAS" | "UNKNOWN";
   readonly invoicePunReferences: import("../market/pun-reference").OfficialPunModel;
   readonly currentSpread?: import("../market/bill-spread").BillCurrentSpread | null;

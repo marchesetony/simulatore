@@ -13,7 +13,7 @@ import { historyMonthTotals } from "../lib/ingestion/consumption-history";
 import type { ApprovedBillSummaryModel, BillDocumentModel, CalculationModel, ComparisonModel, ProposalModel } from "../lib/ui/models";
 
 type Step = "bill" | "review" | "offers";
-type Pending = "upload" | "open" | "confirm" | "offers" | "proposal";
+type Pending = "upload" | "open" | "confirm" | "offers" | "proposal" | "reread";
 type Context = {
   readonly billId: string; readonly billVersionId: string; readonly vector: "EE" | "GAS"; readonly customerType: "RESIDENTIAL" | "NON_RESIDENTIAL";
   readonly supply: { readonly pod: string | null; readonly pdr: string | null; readonly voltageLevel: "LV" | "MV" | "HV" | "EHV" | null; readonly contractedPowerKw?: number | null };
@@ -716,6 +716,8 @@ function Receipt({ offer: quoted, today, business, context, bill, onPresentation
   const offer: Offer = { ...quoted, receipt };
   // Tony (1/11, "mancano i kwh sulla quale si calcola il costo, serve anche il costo per kwh"): the kWh of the period (same for
   // both columns) and, on every line priced per kWh, its cost per kWh.
+  // Tony (1/11, "il consumo sullo scontrino è al netto delle perdite, ma il costo per kwh è comprensivo di perdite"): the
+  // kWh are the bill's (net of losses) and every €/kWh is the amount divided by them, so it already includes the losses.
   const period = context.consumption?.period;
   const unitName = context.vector === "GAS" ? "Smc" : "kWh";
   const periodQuantity = !period ? null : context.vector === "GAS" ? period.smc : [period.f1, period.f2, period.f3].every((value) => value === null) ? null : (period.f1 ?? 0) + (period.f2 ?? 0) + (period.f3 ?? 0);
@@ -757,13 +759,13 @@ function Receipt({ offer: quoted, today, business, context, bill, onPresentation
     {/* Scontrino (Tony, 26/10): materia energia, trasporto e gestione del contatore, oneri di sistema, imposte e accise aggregated first,
         then every charge they contain (energia, dispacciamento, capacity, sbilanciamento, PCV, Flex, accise, IVA…) on its own line. */}
     <div className="responsive-table"><table className="quote-scontrino">
-      <caption>Periodo della bolletta: {date(context.billingPeriod.periodStart)} – {date(lastSuppliedDay(context.billingPeriod.periodEnd))} · {periodQuantity !== null ? `${QUANTITY.format(periodQuantity)} ${unitName}${bands ? ` (${bands})` : ""} per entrambe le colonne` : "stessi consumi per entrambe le colonne"}</caption>
+      <caption>Periodo della bolletta: {date(context.billingPeriod.periodStart)} – {date(lastSuppliedDay(context.billingPeriod.periodEnd))} · {periodQuantity !== null ? `${QUANTITY.format(periodQuantity)} ${unitName}${bands ? ` (${bands})` : ""} per entrambe le colonne${context.vector === "EE" ? ", al netto delle perdite; i prezzi per kWh comprendono le perdite" : ""}` : "stessi consumi per entrambe le colonne"}</caption>
       <thead><tr><th scope="col">Voce</th><th scope="col">Bolletta attuale{currentOffer ? <small>{context.currentSupplier} · {currentOffer}</small> : null}</th><th scope="col">CTE simulata<small>{offer.supplier} · {offer.offerName}</small></th><th scope="col">Differenza</th></tr></thead>
       <tbody>{receipt.rows.flatMap((row) => [<tr key={row.key} className={`quote-section-row${row.difference != null && Math.abs(row.difference) >= 0.01 ? " changed" : ""}`}>
         <th scope="row">{row.label}<VerificationNote bill={bill} rowKey={row.key} receipt={receipt} /></th><td>{euro(row.current)}</td><td>{euro(row.offer)}</td><td className={difference(row.difference ?? null)}>{signedEuro(row.difference ?? null)}</td>
       </tr>, ...(row.details ?? []).map((item) => <tr key={`${row.key}-${item.key}`} className={`quote-detail-row${item.difference !== null && Math.abs(item.difference) >= 0.01 ? " changed" : ""}`}>
         <th scope="row">{item.label}{row.key === "ENERGY" && item.current !== null ? <VerificationNote bill={bill} rowKey={item.key} /> : null}</th>
-        <td>{item.current === null ? (item.currentNote ? <small className="muted">{item.currentNote}</small> : receipt.status === "COMPLETE" ? "non in bolletta" : "—") : <>{euro(item.current)}{perUnit(item.key, item.current)}</>}</td><td>{item.offer !== null ? <>{euro(item.offer)}{perUnit(item.key, item.offer)}</> : item.missingReason ? <small className="quote-check open">Non calcolato: {item.missingReason}</small> : item.offerNote ? <small className="muted">{item.offerNote}</small> : "non nella CTE"}</td><td className={difference(item.difference)}>{signedEuro(item.difference)}</td>
+        <td>{item.current === null ? (item.currentNote ? <><small className="muted">{item.currentNote}</small>{item.unitBasis ? perUnit("ENERGY", item.unitBasis.current) : null}</> : receipt.status === "COMPLETE" ? "non in bolletta" : "—") : <>{euro(item.current)}{perUnit(item.key, item.current)}</>}</td><td>{item.offer !== null ? <>{euro(item.offer)}{perUnit(item.key, item.offer)}</> : item.missingReason ? <small className="quote-check open">Non calcolato: {item.missingReason}</small> : item.offerNote ? <><small className="muted">{item.offerNote}</small>{item.unitBasis ? perUnit("ENERGY", item.unitBasis.offer) : null}</> : "non nella CTE"}</td><td className={difference(item.difference)}>{signedEuro(item.difference)}</td>
       </tr>)])}</tbody>
       {receipt.status === "COMPLETE" ? <tfoot><tr><th scope="row">{receipt.taxesIncluded ? "Totale" : "Totale imposte escluse"}</th><td>{euro(receipt.currentTotal)}</td><td>{euro(receipt.offerTotal)}</td><td className={difference(receipt.savings === null ? null : -receipt.savings)}>{signedEuro(receipt.savings === null ? null : -receipt.savings)}</td></tr></tfoot> : null}
     </table></div>
@@ -885,6 +887,25 @@ export default function QuickQuoteFlow({ readonly, showExcluded = false }: { rea
     } catch (cause) { setError(cause instanceof Error && cause.message === "BILL_READ_FAILED" ? "Non siamo riusciti a leggere la bolletta. Riprova con un PDF più nitido." : withDetail(cause)); } finally { setPending(undefined); }
   };
 
+  // Tony (1/11, "le bollette non riesci a leggerle"): when the charge lines were not read, they are read again from the
+  // stored file and the bill opens on the new reading, to be confirmed as usual.
+  const rereadAnalyst = async (billId: string) => {
+    if (pending) return;
+    setPending("reread"); setError(undefined);
+    try {
+      const current = (await requestJson<{ readonly document: BillDocumentModel }>(`/api/bills/${encodeURIComponent(billId)}`)).document;
+      const document = (await requestJson<{ readonly document: BillDocumentModel }>(`/api/bills/${encodeURIComponent(billId)}`, { method: "PATCH", body: JSON.stringify({ operation: "reread-analyst", versionId: current.currentVersionId }) })).document;
+      setQuote(null); setProposal(null);
+      setDraft(document);
+      setValues(readValues(document));
+      setStep("review");
+    } catch (cause) { setError(`La nuova lettura delle voci non è riuscita. ${message(cause)}`); } finally { setPending(undefined); }
+  };
+  const analystRetry = (bill: BillDocumentModel) => bill.chargeLinesUnread || bill.structuredBill?.analystExtractionStatus === "FAILED" ? <div className="inline-warning" role="status">
+    <p>Le voci di spesa di questa bolletta non sono state lette: la seconda lettura non è riuscita. Senza voci di spesa il confronto con la bolletta non si può fare.</p>
+    <button className="button primary" type="button" onClick={() => void rereadAnalyst(bill.id)} disabled={readonly || Boolean(pending)}>{pending === "reread" ? "Lettura delle voci in corso…" : "Rileggi le voci della bolletta"}</button>
+  </div> : null;
+
   // An already loaded bill opens on its read data first, like a new upload.
   const openBill = async (billId: string) => {
     if (pending) return;
@@ -968,11 +989,13 @@ export default function QuickQuoteFlow({ readonly, showExcluded = false }: { rea
     </section> : null}
     {step === "review" && draft ? <section className="ui-card">
       <h3>Dati letti dalla bolletta</h3><p className="muted">Li usiamo per trovare le CTE adatte. Se vedi un errore evidente puoi correggerlo, altrimenti prosegui.</p>
+      {analystRetry(draft)}
       <BillContractFacts bill={draft} />
       <div className="form-grid">{FIELDS.map((field) => <label className="form-field" key={field.name}><span className="form-label">{field.label}{unitOf(field.name, draft.resolvedVector)}{field.name === "annualConsumption" && !draft.fields.annualConsumption?.value && values.annualConsumption ? historyMonthTotals(draft.structuredBill?.consumptionHistory).length ? " · media dello storico consumi × 12" : " · media mensile × 12" : ""}</span><input value={values[field.name] ?? ""} onChange={(event) => setValues((current) => ({ ...current, [field.name]: event.target.value }))} disabled={Boolean(pending)} /></label>)}</div>
       <div className="button-row"><button className="button primary" type="button" onClick={() => void confirm()} disabled={readonly || Boolean(pending)}>{pending === "confirm" ? "Ricerca in corso" : "Cerca le CTE utilizzabili"}</button></div>
     </section> : null}
     {step === "offers" ? pending === "offers" ? <LoadingState label="Calcolo delle offerte per questa bolletta" /> : quote ? <>
+      {analystRetry(quote.bill)}
       <BillSummary context={quote.context} bill={quote.bill} />
       <section className="ui-card"><h3>Offerte utilizzabili per {quote.context.vector === "EE" ? "questa fornitura di luce" : "questa fornitura di gas"}</h3>
         {visibleOffers.length ? <div className="quote-offers">{visibleOffers.map((offer, index) => <button key={offer.calculation.calculationId} type="button" className={`quote-offer${offer.calculation.calculationId === selectedId ? " selected" : ""}${index === 0 ? " best" : ""}`} onClick={() => { setSelectedId(offer.calculation.calculationId); setProposal(null); }} aria-pressed={offer.calculation.calculationId === selectedId}>

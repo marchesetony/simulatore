@@ -2,6 +2,8 @@ import {
   approveDocumentVersion,
   confirmBillFields,
   createManualCorrection,
+  createAnalystRefreshVersion,
+  storedBillContentType,
   toPublicApprovedDocument,
   parseBillOperation,
   toPublicDocument,
@@ -14,6 +16,7 @@ import { billPunRefresh } from "../../../lib/market-refresh/bill-pun";
 import { deleteBillPermanently } from "../../../lib/foundation/bill-retention";
 import { billVisibilityScope, getBillInScope } from "../../../lib/foundation/bill-visibility";
 import { isBillFeature, resolveBillFeaturePermissions, sanitizeBillForFeatureAccess, type BillFeature } from "../../../lib/foundation/bill-feature-permissions";
+import { createAnthropicTwoStageBillSdkAdapter } from "../../../lib/ingestion/anthropic-bill-sdk";
 import type { AuthenticatedPrincipal } from "../../../lib/auth/types";
 import type { RuntimeRepositories } from "../../../lib/persistence/adapter";
 import type { PublicBillDocument } from "../../../lib/foundation/real-bill";
@@ -104,6 +107,17 @@ export async function PATCH(request: Request, context: { params: Promise<{ id: s
       await audit.record({ type: "MANUAL_REVIEW", tenantId, documentId: id, outcome: "ALLOWED" });
       await audit.record({ type: "CORRECTION", tenantId, documentId: id, outcome: "ALLOWED" });
       return Response.json({ document: await publicDocumentFor(principal, repositories, await attachOfficialPun(toPublicDocument(corrected), repositories.marketArchiveRepository)) }, { headers: NO_STORE_HEADERS });
+    }
+    if (operation?.operation === "reread-analyst") {
+      // Tony (1/11, "le bollette non riesci a leggerle"): the charge lines are read again from the stored file.
+      const bytes = await repositories.documentStorage.read(tenantId, document.id);
+      const contentType = storedBillContentType(bytes);
+      if (!contentType) return deny("BILL_OPERATION_INVALID", "Stored file type not recognized", 400);
+      const analyst = await createAnthropicTwoStageBillSdkAdapter().extractAnalystOnly({ bytes, contentType });
+      const refreshed = createAnalystRefreshVersion({ document, tenantId, sourceVersionId: operation.versionId, analyst, at: now });
+      await repository.saveIfCurrentVersion(refreshed, operation.versionId, document.versions.find((version) => version.versionId === operation.versionId)!);
+      await audit.record({ type: "INGESTION", tenantId, documentId: id, outcome: "ALLOWED" });
+      return Response.json({ document: await publicDocumentFor(principal, repositories, await attachOfficialPun(toPublicDocument(refreshed), repositories.marketArchiveRepository)) }, { headers: NO_STORE_HEADERS });
     }
     return deny("BILL_OPERATION_INVALID", "Unsupported bill operation", 400);
   } catch (error) {
@@ -208,4 +222,5 @@ function messageFor(code: string): string {
   }
 }
 
-export const maxDuration = 120;
+// The charge lines can be read again here (reread-analyst): same time as an upload.
+export const maxDuration = 300;

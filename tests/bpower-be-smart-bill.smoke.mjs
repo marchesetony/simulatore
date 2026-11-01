@@ -218,3 +218,7 @@ const dailyBill = buildCurrentBillEconomicAnalysis([
 assert.equal(dailyBill.totals.reconstructedCurrentSupplyTotal, 128.07);
 assert.ok(dailyBill.components.some((item) => item.accountingRole === "ATOMIC" && /quota fissa/.test(item.description) && item.amount === "1,73"), "transport of the quota fissa");
 console.log("BPOWER_BE_SMART_BILL=PASS");
+
+// Tony (1/11, "il consumo sullo scontrino è al netto delle perdite, ma il costo per kwh è comprensivo di perdite"): the energy
+// comparison carries both totals, so the screen shows each one's €/kWh on the bill's net kWh, losses included.
+assert.deepEqual(details.ENERGY_COMPARISON.unitBasis, { current: 963.56, offer: Math.round((774.31 + 77.43 + 40.56 + 28.97 + 7.02 + 17.56) * 100) / 100 });

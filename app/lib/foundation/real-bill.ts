@@ -97,7 +97,10 @@ export type BillApprovalRecord = {
 export type BillCorrectionOperation = { readonly operation: "correct"; readonly field: FieldName; readonly value: string; readonly versionId?: string };
 export type BillApprovalOperation = { readonly operation: "approve"; readonly versionId: string };
 export type BillConfirmFieldsOperation = { readonly operation: "confirm-fields"; readonly versionId: string; readonly fields: readonly FieldName[] };
-export type BillOperation = BillCorrectionOperation | BillApprovalOperation | BillConfirmFieldsOperation;
+/** Tony (1/11, "le bollette non riesci a leggerle"): a bill whose charge lines were not read (second reading failed) is read
+ *  again from its stored PDF, without uploading it again. */
+export type BillAnalystRereadOperation = { readonly operation: "reread-analyst"; readonly versionId: string };
+export type BillOperation = BillCorrectionOperation | BillApprovalOperation | BillConfirmFieldsOperation | BillAnalystRereadOperation;
 export type BillDocument = {
   readonly id: string;
   readonly tenantId: string;
@@ -164,6 +167,8 @@ export type PublicBillDocument = {
   readonly versions: readonly PublicBillVersion[];
   readonly normalized: PublicBillProfile | null;
   readonly structuredBill: StructuredBillExtraction | null;
+  /** The second reading (charge lines) failed: shown to every user, with the button to read them again (Tony, 1/11). */
+  readonly chargeLinesUnread?: boolean;
   readonly resolvedVector: ResolvedBillVector;
   readonly invoicePunReferences: OfficialPunModel;
   /** Spread of the current supplier: applied energy price minus the official PUN (never printed on the bill). */
@@ -486,6 +491,8 @@ export function parseBillOperation(value: unknown): BillOperation | null {
   if (correction) return { operation: "correct", field: record.field as FieldName, value: record.value as string, versionId: record.versionId as string | undefined };
   const approval = record.operation === "approve" && typeof record.versionId === "string" && record.versionId.trim().length > 0;
   if (approval) return { operation: "approve", versionId: record.versionId as string };
+  const reread = record.operation === "reread-analyst" && typeof record.versionId === "string" && record.versionId.trim().length > 0 && Object.keys(record).every((key) => key === "operation" || key === "versionId");
+  if (reread) return { operation: "reread-analyst", versionId: record.versionId as string };
   return null;
 }
 
@@ -618,6 +625,7 @@ export function toPublicDocumentVersion(document: BillDocument, versionId: strin
       })),
     normalized: working.energyContract ? publicBillProfile(working.energyContract, working.fields) : null,
     structuredBill: working.structuredBill ?? null,
+    chargeLinesUnread: working.structuredBill?.analystExtractionStatus === "FAILED",
     resolvedVector,
     invoicePunReferences: [],
     regulatoryAudit: null,
@@ -1307,6 +1315,14 @@ function normalizeLegacyDocuments(value: readonly unknown[]): readonly BillDocum
  * fresh Analyst result. The old Analyst arrays are intentionally discarded:
  * an Analyst Refresh is a replacement, not an append operation.
  */
+/** The stored file's type, from its first bytes (the document keeps no content type of its own). */
+export function storedBillContentType(bytes: Uint8Array): "application/pdf" | "image/jpeg" | "image/png" | null {
+  if (bytes[0] === 0x25 && bytes[1] === 0x50 && bytes[2] === 0x44 && bytes[3] === 0x46) return "application/pdf";
+  if (bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff) return "image/jpeg";
+  if (bytes[0] === 0x89 && bytes[1] === 0x50 && bytes[2] === 0x4e && bytes[3] === 0x47) return "image/png";
+  return null;
+}
+
 export function createAnalystRefreshVersion(input: {
   readonly document: BillDocument;
   readonly tenantId: string;
