@@ -834,8 +834,10 @@ export default function QuickQuoteFlow({ readonly, showExcluded = false }: { rea
     const base = { bill, context: prepared.context, candidates: prepared.candidates, unlisted: prepared.unlisted ?? [], canAuthorizeCte: prepared.canAuthorizeCte === true };
     if (!anchor) { setQuote({ ...base, comparison: emptyComparison(prepared.context), offers: [] }); return; }
     try {
+      // Tony (1/11, speed): the company discount is fetched while the comparison runs, not after it.
+      const discountPending = requestJson<{ readonly policy: CommercialDiscount }>("/api/company/discount").then((response) => response.policy, () => null);
       const comparison = (await requestJson<{ readonly result: ComparisonModel }>("/api/comparison", { method: "POST", body: JSON.stringify({ sourceBill: { billId: bill.id, version: prepared.context.billVersionId }, cteId: anchor.archiveId, cteVersionId: anchor.cteVersionId, ...(anchor.finalStatus === "ELIGIBLE_BY_OVERRIDE" && anchor.eligibilityOverrideId ? { eligibilityOverrideId: anchor.eligibilityOverrideId } : {}) }) })).result;
-      const discount = await requestJson<{ readonly policy: CommercialDiscount }>("/api/company/discount").then((response) => response.policy, () => null);
+      const discount = await discountPending;
       const offers = offersFrom(bill, prepared.context, prepared.candidates, comparison, discount);
       setQuote({ ...base, comparison, offers });
       setChosen({});

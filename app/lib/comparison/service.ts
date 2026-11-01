@@ -117,10 +117,19 @@ export async function compareApprovedOffers(cteRepository: CteArchiveRepository,
   const records = [...await cteRepository.list(request.tenantId)].filter((record) => !dependencies.cteUsable || dependencies.cteUsable(record.archiveId)).sort((left, right) => compareText(left.archiveId, right.archiveId));
   const results: CalculationResult[] = [];
   const excludedOffers = [] as ReturnType<typeof exclusionFor>[];
-  for (const record of records) {
+  // Tony (1/11, "come si può velocizzare l'analisi?"): every CTE is simulated at the same time; the outcomes are then
+  // taken in the same archive order as before, so ranking, exclusions and the comparison fingerprint do not change.
+  const outcomes = await Promise.all(records.map(async (record) => {
     try {
       const prepared = await prepareApprovedOffer(cteRepository, marketRepository, request, record.archiveId, dependencies.eligibilityOverriddenCteIds);
-      const result = await calculatePreparedOffer(request, prepared, dependencies);
+      return { result: await calculatePreparedOffer(request, prepared, dependencies) };
+    } catch (error) { return { error }; }
+  }));
+  for (const [index, record] of records.entries()) {
+    const outcome = outcomes[index];
+    try {
+      if ("error" in outcome) throw outcome.error;
+      const result = outcome.result;
       const selection = comparisonCostOf(result);
       if (selection === null || (results.length > 0 && comparisonCompletenessKey(result) !== comparisonCompletenessKey(results[0]))) {
         excludedOffers.push(exclusionFor(record, "COMPARISON_INCOMPATIBLE", exclusionMessages.COMPARISON_INCOMPATIBLE));

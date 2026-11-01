@@ -181,7 +181,11 @@ function billFail(code: BillOcrErrorCode, phase: BillDiagnosticPhase, response: 
 function fail(code: string, issues: readonly { readonly path: string; readonly code: string }[] = []): never { throw new AnthropicCteResponseError(code, issues); }
 function isRecord(value: unknown): value is Record<string, unknown> { return typeof value === "object" && value !== null && !Array.isArray(value); }
 function baseUrl(value: string | undefined): string { const candidate = value?.trim() || ANTHROPIC_DEFAULT_BASE_URL; try { const parsed = new URL(candidate); if (parsed.protocol !== "https:") fail("CTE_OCR_PROVIDER_NOT_CONFIGURED"); return candidate.replace(/\/+$/, ""); } catch { fail("CTE_OCR_PROVIDER_NOT_CONFIGURED"); } }
-function documentBlock(bytes: Uint8Array, contentType: CteDocumentContentType): Record<string, unknown> { const data = Buffer.from(bytes).toString("base64"); return contentType === "application/pdf" ? { type: "document", source: { type: "base64", media_type: "application/pdf", data } } : { type: "image", source: { type: "base64", media_type: contentType, data } }; }
+// Tony (1/11, "come si può velocizzare l'analisi?"): the document carries a cache breakpoint, so the verifier's second
+// reading of the same CTE or bill reuses tools + instructions + document from Anthropic's prompt cache instead of
+// re-reading the whole PDF.
+export const DOCUMENT_CACHE = { type: "ephemeral" } as const;
+function documentBlock(bytes: Uint8Array, contentType: CteDocumentContentType): Record<string, unknown> { const data = Buffer.from(bytes).toString("base64"); return contentType === "application/pdf" ? { type: "document", source: { type: "base64", media_type: "application/pdf", data }, cache_control: DOCUMENT_CACHE } : { type: "image", source: { type: "base64", media_type: contentType, data }, cache_control: DOCUMENT_CACHE }; }
 function abortable(timeoutMs: number): { readonly signal: AbortSignal; readonly deadline: Promise<void>; readonly cancel: () => void } {
   const controller = new AbortController();
   let expire!: () => void;

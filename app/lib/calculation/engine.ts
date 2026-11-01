@@ -405,17 +405,23 @@ function profileForGas(request: GasSimulationRequest, month: string): number {
   return request.consumption.smc;
 }
 
+// Tony (1/11, "come si può velocizzare l'analisi?"): the PUN/PSV months of one bill are read once and shared by every
+// indexed CTE of the same comparison (the CTEs now run in parallel on the same request), and the months load together.
+const marketLoads = new WeakMap<MarketArchiveRepository, WeakMap<SimulationRequest, Promise<readonly MarketArchiveRecord[]>>>();
 async function marketForMonths(repository: MarketArchiveRepository, request: SimulationRequest, indexed: boolean): Promise<readonly MarketArchiveRecord[]> {
   if (!indexed) return [];
-  const result: MarketArchiveRecord[] = [];
-  for (const month of monthsInSimulationPeriod(request.supplyPeriod)) {
-    const date = `${month}-15`;
-    const records = await queryApprovedHistoricalMarketData(repository, request.tenantId, date, request.vector);
+  let byRequest = marketLoads.get(repository);
+  if (!byRequest) { byRequest = new WeakMap(); marketLoads.set(repository, byRequest); }
+  const cached = byRequest.get(request);
+  if (cached) return cached;
+  const pending = Promise.all(monthsInSimulationPeriod(request.supplyPeriod).map(async (month) => {
+    const records = await queryApprovedHistoricalMarketData(repository, request.tenantId, `${month}-15`, request.vector);
     const record = records.find((candidate) => candidate.month === month);
-    if (!record) return fail("MARKET_DATA_MISSING");
-    result.push(record);
-  }
-  return result;
+    return record ?? fail("MARKET_DATA_MISSING");
+  }));
+  byRequest.set(request, pending);
+  pending.catch(() => byRequest.delete(request));
+  return pending;
 }
 
 function referenceOf(record: MarketArchiveRecord): CalculationMarketReference { return { recordId: record.record.recordId, version: record.record.version, vector: record.vector, index: record.index, month: record.month, effectiveFrom: record.record.effectiveFrom, effectiveTo: record.record.effectiveTo }; }

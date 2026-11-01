@@ -307,7 +307,8 @@ type Sleep = (milliseconds: number) => Promise<void>;
 
 function documentBlock(bytes: Uint8Array, contentType: string): Record<string, unknown> {
   const data = Buffer.from(bytes).toString("base64");
-  return contentType === "application/pdf" ? { type: "document", source: { type: "base64", media_type: "application/pdf", data } } : { type: "image", source: { type: "base64", media_type: contentType, data } };
+  // Tony (1/11, speed): cache breakpoint on the document, reused by a second reading of the same bill.
+  return contentType === "application/pdf" ? { type: "document", source: { type: "base64", media_type: "application/pdf", data }, cache_control: { type: "ephemeral" } } : { type: "image", source: { type: "base64", media_type: contentType, data }, cache_control: { type: "ephemeral" } };
 }
 
 function numericConfig(value: string | undefined, fallback: number, minimum: number, maximum: number, code: string): number {

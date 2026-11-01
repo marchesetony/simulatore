@@ -206,8 +206,9 @@ function providerError(error: unknown): BillOcrErrorCode {
 
 function documentBlock(bytes: Uint8Array, contentType: string): DocumentBlockParam | ImageBlockParam {
   const data = Buffer.from(bytes).toString("base64");
-  if (contentType === "application/pdf") return { type: "document", source: { type: "base64", media_type: "application/pdf", data } };
-  if (contentType === "image/jpeg" || contentType === "image/png") return { type: "image", source: { type: "base64", media_type: contentType, data } };
+  // Tony (1/11, speed): cache breakpoint on the document, so the verifier's analyst re-read reuses the cached prefix.
+  if (contentType === "application/pdf") return { type: "document", source: { type: "base64", media_type: "application/pdf", data }, cache_control: { type: "ephemeral" } };
+  if (contentType === "image/jpeg" || contentType === "image/png") return { type: "image", source: { type: "base64", media_type: contentType, data }, cache_control: { type: "ephemeral" } };
   throw new AnthropicBillSdkError("BILL_OCR_REQUEST_INVALID");
 }
 
