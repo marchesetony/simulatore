@@ -11,12 +11,26 @@ import { assertCommerciallyActive } from "../../lib/calculation/engine";
 
 export const runtime = "nodejs";
 
+// Tony (1/11): "le proposte solo in pdf, bisogna mettere il nome del cliente e la cte proposta". The archive names each
+// proposal by its customer and its CTE, read from the scontrino saved with it, else from the proposal itself.
+async function proposalLabel(tenantId: string, proposalId: string, proposal: unknown): Promise<{ readonly customerName: string; readonly offerName: string; readonly offerSupplier: string; readonly savings: number | null }> {
+  const stored = await runtimeRepositories().proposalPresentations.get(tenantId, proposalId).catch(() => null);
+  const item = (typeof proposal === "object" && proposal !== null ? proposal : {}) as { readonly customer?: { readonly displayName?: string | null; readonly customerId?: string | null }; readonly selectedOffer?: { readonly supplier?: string; readonly offerCode?: string } };
+  const shown = stored?.payload;
+  return {
+    customerName: shown?.customerName || item.customer?.displayName || item.customer?.customerId || "",
+    offerName: shown?.offerName || item.selectedOffer?.offerCode || "",
+    offerSupplier: shown?.offerSupplier || item.selectedOffer?.supplier || "",
+    savings: typeof shown?.savings === "number" ? shown.savings : null,
+  };
+}
+
 export async function GET(request: Request): Promise<Response> {
   try {
     const principal = await requestPrincipal(request, "READ");
     const repositories = runtimeRepositories();
     const [records, access] = await Promise.all([repositories.proposals.list(principal.tenantId), proposalScope(principal, repositories)]);
-    const readback = await Promise.all(records.filter((record) => proposalInScope(access, record.payload.proposal as { readonly sourceBill?: { readonly billId: string } })).map(async (record) => ({ ...record, payload: { proposalId: record.payload.proposalId, proposalFingerprint: record.payload.proposalFingerprint, proposal: (await readCanonicalProposal(principal.tenantId, record.recordId)).proposal } })));
+    const readback = await Promise.all(records.filter((record) => proposalInScope(access, record.payload.proposal as { readonly sourceBill?: { readonly billId: string } })).map(async (record) => ({ ...record, payload: { proposalId: record.payload.proposalId, proposalFingerprint: record.payload.proposalFingerprint, proposal: (await readCanonicalProposal(principal.tenantId, record.recordId)).proposal, label: await proposalLabel(principal.tenantId, record.recordId, record.payload.proposal) } })));
     return Response.json({ records: readback }, { headers: { "cache-control": "no-store, private" } });
   } catch (error) { return proposalError(error); }
 }
