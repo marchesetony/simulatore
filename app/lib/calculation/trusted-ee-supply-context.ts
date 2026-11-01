@@ -171,8 +171,12 @@ function regulatoryPowerBasis(profile: BillSupplyProfile, scope: RegulatoryCusto
   // TIT art. 1, "potenza impegnata" (FAQ TIT 348/07, e-distribuzione BTA6): the contractually committed power where a power
   // limiter is installed, otherwise the maximum power drawn in the month. Limiters are fitted only up to 30 kW, so above
   // that the rule alone gives the basis (Tony, 27/10: the criterion comes from the resolutions, never from the bill).
+  // Tony (1/11, "la potenza si calcola come da norma sulla potenza impegnata sino a 16,5 oltre 16,5 sul massimo picco del
+  // mese"): above 16,5 kW (BTA6) the power quota is on the month's maximum drawn power whenever the bill prints it, whatever
+  // basis the bill states; only a bill that does not print it keeps the committed power, so the CTE is never blocked.
   const stated = profile.powerBillingBasis.status === "FOUND" ? profile.powerBillingBasis.normalizedValue : "UNKNOWN";
-  const basis = contractedPowerKw > LIMITER_MAX_KW ? "MONTHLY_MAX_DRAWN" : stated === "UNKNOWN" ? "CONTRACTUAL_COMMITTED" : stated;
+  const drawnRead = profile.powerMaximumDrawn.status === "FOUND";
+  const basis = drawnRead || contractedPowerKw > LIMITER_MAX_KW ? "MONTHLY_MAX_DRAWN" : stated === "UNKNOWN" ? "CONTRACTUAL_COMMITTED" : stated;
   if (basis === "CONTRACTUAL_COMMITTED") return { regulatoryPowerBasisKind: basis, regulatoryPowerBasisKw: contractedPowerKw };
   if (basis === "MONTHLY_MAX_DRAWN") return { regulatoryPowerBasisKind: basis, regulatoryPowerBasisKw: parseMaximumDrawnPowerKw(profile.powerMaximumDrawn) };
   return fail("BTA6_POWER_BILLING_BASIS_REQUIRED");

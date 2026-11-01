@@ -216,10 +216,14 @@ export async function calculateRegulatedEeSubset(
 
   const { trustedElectricityContext: context, regulatoryBridge: bridge } = execution;
   if (context.regulatoryCustomerScope === "NON_DOMESTIC_BT_BTA6") {
-    const powerBasisKw = context.regulatoryPowerBasisKw;
-    if (!context.regulatoryPowerBasisKind || powerBasisKw === undefined || !Number.isFinite(powerBasisKw) || powerBasisKw <= 0) return fail("REGULATORY_TRUST_CONTEXT_INVALID");
+    const printedBasisKw = context.regulatoryPowerBasisKw;
+    if (!context.regulatoryPowerBasisKind || printedBasisKw === undefined || !Number.isFinite(printedBasisKw) || printedBasisKw <= 0) return fail("REGULATORY_TRUST_CONTEXT_INVALID");
     const months = monthsInSimulationPeriod(request.supplyPeriod).length;
-    if (context.regulatoryPowerBasisKind === "MONTHLY_MAX_DRAWN" && months > 1) return fail("BTA6_MONTHLY_MAX_POWER_PROFILE_REQUIRED");
+    // One printed maximum cannot stand for several months. Up to 30 kW (where a limiter can make the committed power the
+    // basis) such a bill keeps the committed power instead of blocking every CTE (Tony 1/11: checks never stop); above
+    // 30 kW the monthly maxima are required.
+    if (context.regulatoryPowerBasisKind === "MONTHLY_MAX_DRAWN" && months > 1 && context.contractedPowerKw > 30) return fail("BTA6_MONTHLY_MAX_POWER_PROFILE_REQUIRED");
+    const powerBasisKw = context.regulatoryPowerBasisKind === "MONTHLY_MAX_DRAWN" && months > 1 ? context.contractedPowerKw : printedBasisKw;
     const networkFixed = await timelineFor(request, context, bridge, "NETWORK_FIXED", "EUR/POD/YEAR");
     const networkPower = await timelineFor(request, context, bridge, "NETWORK_POWER", "EUR/KW/YEAR");
     const networkEnergy = await timelineFor(request, context, bridge, "NETWORK_ENERGY", "EUR/KWH");

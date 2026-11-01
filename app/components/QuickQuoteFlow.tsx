@@ -17,7 +17,7 @@ type Step = "bill" | "review" | "offers";
 type Pending = "upload" | "open" | "confirm" | "offers" | "proposal" | "reread";
 type Context = {
   readonly billId: string; readonly billVersionId: string; readonly vector: "EE" | "GAS"; readonly customerType: "RESIDENTIAL" | "NON_RESIDENTIAL";
-  readonly supply: { readonly pod: string | null; readonly pdr: string | null; readonly voltageLevel: "LV" | "MV" | "HV" | "EHV" | null; readonly contractedPowerKw?: number | null };
+  readonly supply: { readonly pod: string | null; readonly pdr: string | null; readonly voltageLevel: "LV" | "MV" | "HV" | "EHV" | null; readonly contractedPowerKw?: number | null; readonly availablePowerKw?: number | null; readonly maximumDrawnPowerKw?: number | null };
   readonly consumption?: { readonly annual: number | null; readonly period: { readonly f1: number | null; readonly f2: number | null; readonly f3: number | null; readonly smc: number | null }; readonly monthlyProfile?: readonly { readonly f1: number; readonly f2: number; readonly f3: number }[] | null; readonly history?: readonly { readonly month: string; readonly quantity: number }[] };
   readonly currentOffer?: { readonly name: string | null; readonly code: string | null };
   readonly billingPeriod: { readonly periodStart: string; readonly periodEnd: string };
@@ -128,6 +128,13 @@ function italianDate(value: string | null | undefined): string | null {
 }
 // Tony (31/10, "solitamente la fornitura finisce l'ultimo del mese, come mai metti sempre giorno 1"): the simulation period
 // ends the day after the last supplied day; screen and proposal show the last supplied day (30/09, not 01/10).
+// Tony (1/11, "la potenza si calcola come da norma sulla potenza impegnata sino a 16,5 oltre 16,5 sul massimo picco del
+// mese"): the kW of the quota potenza line: committed power up to 16,5 kW, the month's maximum drawn power above it.
+function powerQuotaKw(context: Context): number | null {
+  const { contractedPowerKw, availablePowerKw, maximumDrawnPowerKw } = context.supply;
+  const above = !context.classification.domestic && (availablePowerKw ?? contractedPowerKw ?? 0) > 16.5;
+  return above && maximumDrawnPowerKw ? maximumDrawnPowerKw : contractedPowerKw ?? null;
+}
 function lastSuppliedDay(periodEnd: string): string { const time = Date.parse(`${periodEnd.slice(0, 10)}T00:00:00Z`); return Number.isFinite(time) ? new Date(time - 86_400_000).toISOString().slice(0, 10) : periodEnd; }
 function monthsIn(period: { readonly periodStart: string | null; readonly periodEnd: string | null } | undefined): number | null {
   if (!period?.periodStart || !period.periodEnd) return null;
@@ -740,7 +747,7 @@ function Receipt({ offer: quoted, today, business, context, bill, onPresentation
   const same = isSameOffer({ billSupplier: context.currentSupplier, billOffer: currentOffer, offerSupplier: offer.supplier, offerCode: offer.calculation.sourceCte.offerCode, offerName: offer.offerName });
   const headline = same ? (saving >= 0 ? "Stessa CTE della bolletta: la bolletta addebita più di quanto prevede la CTE" : "Stessa CTE della bolletta: la bolletta addebita meno di quanto prevede la CTE") : saving >= 0 ? "Risparmio sulla bolletta caricata" : "Costo in più sulla bolletta caricata";
   const basisLabel = basis ? `Simulato su 12 mesi con ${amount(basis.annual, unit)} di consumo annuo${basis.estimated ? " stimato dalla bolletta" : " letto in bolletta"}` : "";
-  const scontrino = offerScontrino({ quotas: receipt.quotas, offerTotal: receipt.status === "COMPLETE" ? receipt.offerTotal : null, taxesIncluded: receipt.taxesIncluded, vector: context.vector, quantity: periodQuantity, months: billedMonths(context.billingPeriod.periodStart, context.billingPeriod.periodEnd), powerKw: context.supply.contractedPowerKw ?? null, discount: receipt.rows.find((row) => row.key === "ENERGY")?.details?.find((item) => item.key === "COMPANY_DISCOUNT")?.offer ?? null });
+  const scontrino = offerScontrino({ quotas: receipt.quotas, offerTotal: receipt.status === "COMPLETE" ? receipt.offerTotal : null, taxesIncluded: receipt.taxesIncluded, vector: context.vector, quantity: periodQuantity, months: billedMonths(context.billingPeriod.periodStart, context.billingPeriod.periodEnd), powerKw: powerQuotaKw(context), discount: receipt.rows.find((row) => row.key === "ENERGY")?.details?.find((item) => item.key === "COMPANY_DISCOUNT")?.offer ?? null });
   const presentation = { ...presentationOf(offer, receipt, bill, context, same ? null : annualSaving, annualCurrent, basisLabel, same), scontrino };
   const presentationKey = JSON.stringify(presentation);
   useEffect(() => { onPresentation?.(JSON.parse(presentationKey) as ProposalPresentation); }, [presentationKey, onPresentation]);

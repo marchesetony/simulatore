@@ -30,8 +30,10 @@ assert.equal(context.regulatoryCustomerScope, "NON_DOMESTIC_BT_BTA6");
 assert.equal(context.regulatoryPowerBasisKind, "MONTHLY_MAX_DRAWN");
 assert.equal(context.regulatoryPowerBasisKw, 13.4);
 assert.equal(context.contractedPowerKw, 22);
-// A supply billed on its committed power (limiter fitted) keeps the committed power.
+// Tony (1/11, "la potenza si calcola come da norma sulla potenza impegnata sino a 16,5 oltre 16,5 sul massimo picco del
+// mese"): above 16,5 kW the month's maximum drawn power is the basis whenever the bill prints it.
+// A bill printing a maximum drawn equal to the committed power keeps 22 kW, now as the monthly maximum.
 const limited = buildTrustedElectricitySupplyContext(completeSupplyProfile(buildBillSupplyProfile(facts), evidence([line("Quota potenza", "22 kW", "€/kW", "2,74", "60,37")])));
-assert.equal(limited.regulatoryPowerBasisKind, "CONTRACTUAL_COMMITTED");
+assert.equal(limited.regulatoryPowerBasisKind, "MONTHLY_MAX_DRAWN");
 assert.equal(limited.regulatoryPowerBasisKw, 22);
 console.log("BTA6_MAX_DRAWN_FROM_BILLED_KW=PASS");

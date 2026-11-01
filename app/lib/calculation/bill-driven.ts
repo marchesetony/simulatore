@@ -104,6 +104,8 @@ export interface BillDrivenSimulationContext {
     readonly voltageLevel: VoltageLevel | null;
     readonly contractedPowerKw: number | null;
     readonly availablePowerKw: number | null;
+    /** The month's maximum drawn power, when the bill prints it: the power quota basis above 16,5 kW (Tony, 1/11). */
+    readonly maximumDrawnPowerKw?: number | null;
   };
   readonly billingPeriod: { readonly periodStart: string; readonly periodEnd: string };
   readonly consumption: {
@@ -211,7 +213,7 @@ function validIsoDate(value: string): boolean {
   return Number.isFinite(parsed) && new Date(parsed).toISOString().slice(0, 10) === value;
 }
 
-function parsePower(field: BillSupplyProfile["powerCommitted"] | BillSupplyProfile["powerAvailable"]): number | null {
+function parsePower(field: BillSupplyProfile["powerCommitted"] | BillSupplyProfile["powerAvailable"] | BillSupplyProfile["powerMaximumDrawn"]): number | null {
   if (field.status !== "FOUND" || typeof field.rawValue !== "string") return null;
   const match = field.rawValue.normalize("NFKC").trim().replace(/\s+/g, " ").match(/^(\d+(?:[.,]\d+)?)\s*kW$/i);
   if (!match) return null;
@@ -342,6 +344,7 @@ function buildContext(document: BillDocument, version: BillVersion): BillDrivenS
       voltageLevel,
       contractedPowerKw,
       availablePowerKw: profile ? parsePower(profile.powerAvailable) : null,
+      maximumDrawnPowerKw: profile ? parsePower(profile.powerMaximumDrawn) : null,
     },
     billingPeriod: period,
     consumption: {
