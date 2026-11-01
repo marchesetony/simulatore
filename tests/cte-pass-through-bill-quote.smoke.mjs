@@ -59,9 +59,16 @@ assert.ok(!noOfficial.warnings.includes("OFFICIAL_VALUE_MISSING:CAPACITY_MARKET:
 // BT above 55 kW: Terna's peak / off-peak charges (tests/capacity-peak-hours.smoke.mjs). Tony (30/10): "errore su come
 // calcolare il capacity": it is calculated, no longer left out for the peak-hour kWh; this stub archive has no Terna value.
 const large = await calculatePreparedOffer(request(true), prepared, deps(0.0105, 0.004275, 98));
-assert.deepEqual(byKind(large, "CAPACITY_MARKET"), [5]);
+// Tony (1/11: "nella simulazione si scrive quello previsto nella cte"): with no Terna value in the archive, the regulated
+// value the CTE prints for BT applies, grossed up for losses (0,01349 x 1,10 x 1.000 kWh = 14,84), beside the libero 5.
+assert.deepEqual(byKind(large, "CAPACITY_MARKET"), [5, 14.84]);
+assert.ok(large.components.some((component) => /valore indicato nella CTE/.test(component.label)));
 assert.ok(!large.warnings.includes("OFFICIAL_VALUE_MISSING:CAPACITY_MARKET:PEAK_HOUR_KWH_MISSING"));
-assert.ok(large.warnings.includes("OFFICIAL_VALUE_MISSING:CAPACITY_MARKET:OFFICIAL_VALUE_MISSING"));
+assert.ok(!large.warnings.includes("OFFICIAL_VALUE_MISSING:CAPACITY_MARKET:OFFICIAL_VALUE_MISSING"));
+// A CTE that prints no regulated value still reports the missing official value.
+const noStated = structuredClone(prepared); noStated.offer.capacityMarketSchedule = noStated.offer.capacityMarketSchedule.filter((entry) => entry.mode === "FIXED_VALUE");
+const noStatedQuote = await calculatePreparedOffer(request(true), noStated, deps(0.0105, 0.004275, 98));
+assert.ok(noStatedQuote.warnings.includes("OFFICIAL_VALUE_MISSING:CAPACITY_MARKET:OFFICIAL_VALUE_MISSING"));
 // Tony (1/11): "non si può non calcolare un dato che sfalsa la bolletta". Unknown available power on a BT supply without the
 // peak-hour kWh: priced as up to 55 kW, the official monthly value on all kWh (0,004275 x 1,10 x 1.000 kWh = 4,70).
 const unknown = await calculatePreparedOffer(request(true), prepared, deps(0.0105, 0.004275));

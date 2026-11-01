@@ -280,15 +280,34 @@ function addCtePassThroughs(target: ComponentDraft[], request: ElectricitySimula
       const arera = smallLv && runtime?.capacityMarket?.value === undefined ? areraCapacityForPeriod(period.periodStart, period.periodEnd, capacityMonths) : null;
       const official = runtime?.capacityMarket?.value ?? arera?.eurPerKwh;
       const officialSource = runtime?.capacityMarket?.officialIdentifier ?? (arera ? `ARERA ${arera.months.map((month) => month.resolution).join(", ")}` : "OFFICIAL");
+      const before = missing.length;
       if (!smallLv) addTernaPeakCapacity(target, request, ternaCapacity, peakEnergy, totalQuantity, grossUp, loss, missing);
       else if (official === undefined || !Number.isFinite(official) || official <= 0) missing.push("CAPACITY_MARKET:OFFICIAL_VALUE_MISSING");
       else {
         const unitRate = grossUp(fromNumber(official));
         target.push({ componentId: "cte-pass-through:capacity", category: "VARIABLE_FEE", label: "Mercato della capacità", sign: "CHARGE", value: multiply(unitRate, totalQuantity), formulaId: "CTE_PASS_THROUGH_RATE_TIMES_KWH", formulaInputs: { kind: "CAPACITY_MARKET", feeUnit: "EUR_PER_KWH", feeRate: toDecimal(unitRate, 6), officialRate: official, lossFactor: loss ? toDecimal(loss, 6) : 0, basisQuantity: toDecimal(totalQuantity, 3), source: officialSource } });
       }
+      // Tony (1/11: "bisogna trovare da arera come già detto i valori standard, ma solitamente le aziende lo scrivono nella cte
+      // ... nella simulazione si scrive quello previsto nella cte"): when the archive has no official value for the period, the
+      // value the CTE states for the supply's voltage ("attualmente pari a 0,01349 Eur/kWh in bassa tensione") is applied,
+      // grossed up like the official one, so the charge is never left out.
+      const missingAt = missing.indexOf("CAPACITY_MARKET:OFFICIAL_VALUE_MISSING", before);
+      const stated = missingAt >= 0 ? cteStatedCapacity(offer, request.voltageLevel, period.periodStart, period.periodEnd) : null;
+      if (stated) {
+        missing.splice(missingAt, 1);
+        const unitRate = stated.lossTreatment === "GROSS_OF_LOSSES" ? fromNumber(stated.value) : grossUp(fromNumber(stated.value));
+        target.push({ componentId: "cte-pass-through:capacity-cte-stated", category: "VARIABLE_FEE", label: "Mercato della capacità (valore indicato nella CTE)", sign: "CHARGE", value: multiply(unitRate, totalQuantity), formulaId: "CTE_PASS_THROUGH_RATE_TIMES_KWH", formulaInputs: { kind: "CAPACITY_MARKET", feeUnit: "EUR_PER_KWH", feeRate: toDecimal(unitRate, 6), officialRate: stated.value, lossFactor: loss ? toDecimal(loss, 6) : 0, basisQuantity: toDecimal(totalQuantity, 3), source: "CTE_REGULATED_SNAPSHOT" } });
+      }
     }
   }
   if (!loss) missing.push("LOSSES:OFFICIAL_VALUE_MISSING");
+}
+
+/** The regulated capacity value the CTE prints for the supply's voltage (all hours), used when the archive has none. */
+function cteStatedCapacity(offer: CalculationReadyOffer, voltage: string | undefined, periodStart: string, periodEnd: string): { readonly value: number; readonly lossTreatment: string } | null {
+  const entries = (offer.capacityMarketSchedule ?? []).filter((entry) => entry.mode === "OFFICIAL_PASS_THROUGH" && entry.timeClass === "ALL" && Number.isFinite(entry.value) && entry.value > 0 && entry.effectiveFrom < periodEnd && entry.effectiveTo > periodStart);
+  const entry = entries.find((item) => item.voltageScope === voltage) ?? (entries.length === 1 && entries[0].voltageScope === undefined ? entries[0] : undefined);
+  return entry ? { value: entry.value, lossTreatment: entry.lossTreatment } : null;
 }
 
 // Tony (30/10): "errore su come calcolare il capacity". BT above 55 kW, MT, AT: the kWh withdrawn in Terna's peak hours x
