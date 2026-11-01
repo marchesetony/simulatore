@@ -58,6 +58,8 @@ export const READING_RULES: readonly ReadingRule[] = [
     text: "Leggi il codice offerta completo: un codice diverso anche solo nel numero di versione (ESVFL01, ESVFL02) è un'altra CTE." },
   { id: "CTE_PRICE_TYPE", uses: ["CTE"], origin: "Tony 31/10, direttore",
     text: "\"VARIABLE\", \"prezzo variabile\" o indice + spread = offerta indicizzata. Leggi l'indice (PUN o PSV) e lo spread in €/kWh o €/Smc." },
+  { id: "BILL_REGULATORY_GROUPING", uses: ["BILL"], origin: "Tony 1/11, CTS in altre partite",
+    text: "I venditori scrivono e raggruppano le voci nei modi più disparati: assegna ogni voce al gruppo previsto dalla regolazione ARERA (vendita, rete, oneri di sistema, imposte, altre partite), diverso tra clienti domestici e business, in base a cosa è e non a dove o come la bolletta la stampa. Un corrispettivo del venditore stampato tra le \"altre partite\" (es. \"Addebito CTS - Corrispettivo Tariffario Specifico\") è spesa per la vendita." },
   { id: "CTE_LOSSES", uses: ["CTE"], origin: "Tony 28/10 e 29/10",
     text: "Segna se spread e corrispettivi sono \"al lordo\" o \"al netto\" delle perdite di rete, voce per voce." },
   { id: "CTE_FEES", uses: ["CTE"], origin: "Tony 31/10, Be Smile",
