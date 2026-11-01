@@ -1,3 +1,5 @@
+// @ts-expect-error Node's strip-only test runner requires the explicit extension.
+import { commercialDiscountAmount, type CommercialDiscountPolicy } from "../company/discount.ts";
 import type { BillEconomicAnalysis } from "../foundation/bill-economic-analysis";
 import type { BillRegulatoryAuditDTO } from "../foundation/bill-regulatory-audit";
 // @ts-expect-error Node's strip-only test runner requires the explicit extension.
@@ -57,9 +59,36 @@ export interface QuoteReceiptInput {
   readonly warnings?: readonly string[];
   /** Household offer from 1/4/2026: one spread covers commercializzazione and sbilanciamento (delibera 386/2025, Tony 29/10). */
   readonly householdSpread?: boolean;
+  /** The company's commercial discount for quotes costing slightly more than the bill (Tony, 1/11). */
+  readonly commercialDiscount?: Pick<CommercialDiscountPolicy, "enabled" | "maxGapPercent" | "targetSavingPercent"> | null;
 }
 
 const VAT_RATES = [0.04, 0.05, 0.1, 0.22] as const;
+
+// Tony (1/11): a quote costing more than the bill by at most the company's threshold gets the company's commercial discount,
+// down to the saving the company chose. It is a real discount: its own line in the sale spending, with the IVA it saves,
+// printed on the proposal; excise does not change.
+export function withCommercialDiscount(receipt: QuoteReceipt, policy: QuoteReceiptInput["commercialDiscount"]): QuoteReceipt {
+  if (receipt.status !== "COMPLETE") return receipt;
+  const gross = commercialDiscountAmount(policy, receipt.currentTotal, receipt.offerTotal);
+  if (gross <= 0) return receipt;
+  const vat = receipt.taxesIncluded ? receipt.vatRate ?? 0 : 0;
+  const net = cents(gross / (1 + vat));
+  const vatPart = cents(gross - net);
+  const less = (value: number | null, by: number) => value === null ? null : cents(value - by);
+  const diff = (current: number | null, offer: number | null) => current === null || offer === null ? null : cents(offer - current);
+  const label = `Sconto commerciale aziendale (preventivo portato al ${String(policy?.targetSavingPercent ?? 0).replace(".", ",")}% sotto la bolletta)`;
+  const rows = receipt.rows.map((row) => {
+    if (row.key === "ENERGY") { const offer = less(row.offer, net); return { ...row, offer, difference: diff(row.current, offer), details: [...(row.details ?? []), { key: "COMPANY_DISCOUNT", label, current: null, offer: -net, difference: -net, currentNote: "—" }] }; }
+    if (row.key === "TAXES" && vatPart > 0) { const offer = less(row.offer, vatPart); return { ...row, offer, difference: diff(row.current, offer), details: (row.details ?? []).map((item) => item.key === "VAT" ? { ...item, offer: less(item.offer, vatPart), difference: diff(item.current, less(item.offer, vatPart)) } : item) }; }
+    return row;
+  });
+  const quotas = receipt.quotas.map((quota) => quota.key === "CONSUMPTION" ? { ...quota, offer: less(quota.offer, net), offerSeller: less(quota.offerSeller, net), difference: diff(quota.current, less(quota.offer, net)) } : quota.key === "VAT" && vatPart > 0 ? { ...quota, offer: less(quota.offer, vatPart), difference: diff(quota.current, less(quota.offer, vatPart)) } : quota);
+  const offerTotal = cents((receipt.offerTotal ?? 0) - gross);
+  const currentTotal = receipt.currentTotal ?? 0;
+  const savings = cents(currentTotal - offerTotal);
+  return { ...receipt, rows, quotas, offerTotal, savings, savingsPercent: currentTotal > 0 ? Math.round((savings / currentTotal) * 1000) / 10 : null };
+}
 const cents = (value: number): number => Math.round((value + Number.EPSILON) * 100) / 100;
 const amountOf = (value: string | null | undefined): number | null => {
   if (value === null || value === undefined) return null;
@@ -418,7 +447,7 @@ function summaryNetworkToSeller(input: QuoteReceiptInput): { readonly input: Quo
 
 export function buildQuoteReceipt(original: QuoteReceiptInput): QuoteReceipt {
   const { input, moved } = summaryNetworkToSeller(original);
-  const receipt = buildReceipt(input);
+  const receipt = withCommercialDiscount(buildReceipt(input), original.commercialDiscount);
   if (!moved) return receipt;
   const note = `in bolletta comprende ${moved.toFixed(2).replace(".", ",")} € che la pagina sintetica mette nella spesa per la rete: la rete addebitata è il valore ARERA, come nella fattura di dettaglio`;
   return { ...receipt, rows: receipt.rows.map((row) => row.key !== "ENERGY" ? row : { ...row, details: (row.details ?? []).map((item) => item.key === "ENERGY" && item.current !== null ? { ...item, label: `${item.label}; ${note}` } : item) }) };

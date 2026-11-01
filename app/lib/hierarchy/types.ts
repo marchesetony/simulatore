@@ -17,6 +17,8 @@ export interface OrgNode {
   readonly limits: CommercialLimits;
   /** May authorize, for one bill, a CTE the eligibility rules leave out; it holds only while every manager above holds it too. */
   readonly canAuthorizeCte?: boolean;
+  /** Tony (1/11): may manage the company's commercial discount and pass the permission on to their branch. */
+  readonly canManageDiscount?: boolean;
   readonly updatedBy: string;
 }
 
@@ -25,6 +27,7 @@ export interface OrgNodeView extends OrgNode {
   readonly updatedAt: string;
   readonly effectiveLimits: CommercialLimits;
   readonly effectiveCanAuthorizeCte: boolean;
+  readonly effectiveCanManageDiscount: boolean;
   readonly ancestorUserIds: readonly string[];
 }
 

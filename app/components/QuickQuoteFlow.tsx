@@ -27,7 +27,9 @@ type Context = {
 type Unlisted = { readonly archiveId: string; readonly supplier: string; readonly offer: { readonly name: string; readonly code: string }; readonly reason: string };
 type Candidate = { readonly archiveId: string; readonly cteVersionId: string | null; readonly supplier: string; readonly offer: { readonly name: string; readonly code: string }; readonly validity: { readonly periodStart: string; readonly periodEnd: string }; readonly finalStatus?: string; readonly calculationReadiness: string; readonly compatibilityReason?: string; readonly reasonCodes?: readonly string[]; readonly overrideRequestable?: boolean; readonly eligibilityOverrideId?: string; readonly scope?: { readonly customer: string; readonly voltage: readonly string[]; readonly consumption: string | null; readonly uses: readonly string[] }; readonly pricingType?: "INDEXED" | "FIXED" | null; readonly pricingReference?: string | null; readonly terms?: Terms };
 type Terms = { readonly fixedPrice: number | null; readonly spread: number | null; readonly priceUnit: "EUR_PER_KWH" | "EUR_PER_SMC"; readonly monthlyFixedFee: number | null };
-type Offer = { readonly rank: number; readonly calculation: CalculationModel; readonly supplier: string; readonly offerName: string; readonly receipt: QuoteReceipt; readonly candidate: Candidate };
+type Offer = { readonly rank: number; readonly calculation: CalculationModel; readonly supplier: string; readonly offerName: string; readonly receipt: QuoteReceipt; readonly candidate: Candidate; readonly discount?: CommercialDiscount | null };
+// Tony (1/11): the company's commercial discount, applied to every quote that costs slightly more than the bill.
+type CommercialDiscount = { readonly enabled: boolean; readonly maxGapPercent: number; readonly targetSavingPercent: number };
 type Quote = { readonly bill: BillDocumentModel; readonly context: Context; readonly comparison: ComparisonModel; readonly offers: readonly Offer[]; readonly candidates?: readonly Candidate[]; readonly unlisted?: readonly Unlisted[]; readonly canAuthorizeCte?: boolean; readonly failure?: string };
 
 // The seven fields the server needs confirmed before a bill can be used.
@@ -353,7 +355,7 @@ function BillSummary({ context, bill }: { readonly context: Context; readonly bi
   </section>;
 }
 
-function offersFrom(bill: BillDocumentModel, context: Context, candidates: readonly Candidate[], comparison: ComparisonModel): readonly Offer[] {
+function offersFrom(bill: BillDocumentModel, context: Context, candidates: readonly Candidate[], comparison: ComparisonModel, discount: CommercialDiscount | null = null): readonly Offer[] {
   // The server ranks the offers; the list keeps its order.
   return comparison.ranking.flatMap((entry) => {
     const calculation = comparison.results.find((item) => item.calculationId === entry.calculationId);
@@ -361,8 +363,8 @@ function offersFrom(bill: BillDocumentModel, context: Context, candidates: reado
     // Only the CTEs the eligibility check allows for this bill are offered.
     const candidate = candidates.find((item) => item.archiveId === calculation.sourceCte.archiveId && (item.finalStatus === "ELIGIBLE" || item.finalStatus === "ELIGIBLE_BY_OVERRIDE"));
     if (!candidate) return [];
-    const receipt = buildQuoteReceipt({ vector: calculation.vector, offerSupplyCost: calculation.totalCommercialCost.amount, analysis: bill.analystReview.economics.economicAnalysis, domestic: context.classification.domestic, validUntil: candidate.validity.periodEnd, offerComponents: calculation.components, warnings: calculation.warnings, householdSpread: householdSpreadOf(context, calculation) });
-    return [{ rank: entry.rank, calculation, supplier: entry.supplier, offerName: candidate.offer.name || entry.offerCode, receipt, candidate }];
+    const receipt = buildQuoteReceipt({ vector: calculation.vector, offerSupplyCost: calculation.totalCommercialCost.amount, analysis: bill.analystReview.economics.economicAnalysis, domestic: context.classification.domestic, validUntil: candidate.validity.periodEnd, offerComponents: calculation.components, warnings: calculation.warnings, householdSpread: householdSpreadOf(context, calculation), commercialDiscount: discount });
+    return [{ rank: entry.rank, calculation, supplier: entry.supplier, offerName: candidate.offer.name || entry.offerCode, receipt, candidate, discount }];
   });
 }
 
@@ -669,7 +671,7 @@ function presentationOf(offer: Offer, receipt: QuoteReceipt, bill: BillDocumentM
 const VAT_CHOICES = [0.22, 0.1, 0.05, 0.04] as const;
 function Receipt({ offer: quoted, today, business, context, bill, onPresentation }: { readonly offer: Offer; readonly today: string; readonly business: boolean; readonly context: Context; readonly bill: BillDocumentModel; readonly onPresentation?: (presentation: ProposalPresentation) => void }): ReactNode {
   const [offerVatRate, setOfferVatRate] = useState<number | null>(null);
-  const receipt = offerVatRate === null ? quoted.receipt : buildQuoteReceipt({ vector: quoted.calculation.vector, offerSupplyCost: quoted.calculation.totalCommercialCost.amount, analysis: bill.analystReview.economics.economicAnalysis, domestic: context.classification.domestic, validUntil: quoted.candidate.validity.periodEnd, offerComponents: quoted.calculation.components, warnings: quoted.calculation.warnings, offerVatRate, householdSpread: householdSpreadOf(context, quoted.calculation) });
+  const receipt = offerVatRate === null ? quoted.receipt : buildQuoteReceipt({ vector: quoted.calculation.vector, offerSupplyCost: quoted.calculation.totalCommercialCost.amount, analysis: bill.analystReview.economics.economicAnalysis, domestic: context.classification.domestic, validUntil: quoted.candidate.validity.periodEnd, offerComponents: quoted.calculation.components, warnings: quoted.calculation.warnings, offerVatRate, householdSpread: householdSpreadOf(context, quoted.calculation), commercialDiscount: quoted.discount ?? null });
   const offer: Offer = { ...quoted, receipt };
   // Same saving per kWh (or Smc) as on the bill, simulated over 12 months of the annual consumption.
   const basis = annualBasis(context);
@@ -781,7 +783,8 @@ export default function QuickQuoteFlow({ readonly }: { readonly readonly: boolea
     if (!anchor) { setQuote({ ...base, comparison: emptyComparison(prepared.context), offers: [] }); return; }
     try {
       const comparison = (await requestJson<{ readonly result: ComparisonModel }>("/api/comparison", { method: "POST", body: JSON.stringify({ sourceBill: { billId: bill.id, version: prepared.context.billVersionId }, cteId: anchor.archiveId, cteVersionId: anchor.cteVersionId, ...(anchor.finalStatus === "ELIGIBLE_BY_OVERRIDE" && anchor.eligibilityOverrideId ? { eligibilityOverrideId: anchor.eligibilityOverrideId } : {}) }) })).result;
-      const offers = offersFrom(bill, prepared.context, prepared.candidates, comparison);
+      const discount = await requestJson<{ readonly policy: CommercialDiscount }>("/api/company/discount").then((response) => response.policy, () => null);
+      const offers = offersFrom(bill, prepared.context, prepared.candidates, comparison, discount);
       setQuote({ ...base, comparison, offers });
       setSelectedId(offers[0]?.calculation.calculationId ?? null);
     } catch (cause) {

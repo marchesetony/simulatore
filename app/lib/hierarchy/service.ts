@@ -62,7 +62,8 @@ export function validateOrgNode(value: unknown): OrgNode {
   if (displayName !== null && (typeof displayName !== "string" || displayName.trim().length === 0 || displayName.length > 120 || /[\u0000-\u001f\u007f<>]/.test(displayName))) fail("ORG_DISPLAY_NAME_INVALID");
   assertId(item.updatedBy, "ORG_NODE_INVALID");
   if (item.canAuthorizeCte !== undefined && typeof item.canAuthorizeCte !== "boolean") fail("ORG_NODE_INVALID");
-  return { userId: item.userId, level, parentUserId: parentUserId as string | null, displayName: displayName === null ? null : (displayName as string).trim(), limits: validateLimits(item.limits), ...(item.canAuthorizeCte === true ? { canAuthorizeCte: true } : {}), updatedBy: item.updatedBy };
+  if (item.canManageDiscount !== undefined && typeof item.canManageDiscount !== "boolean") fail("ORG_NODE_INVALID");
+  return { userId: item.userId, level, parentUserId: parentUserId as string | null, displayName: displayName === null ? null : (displayName as string).trim(), limits: validateLimits(item.limits), ...(item.canAuthorizeCte === true ? { canAuthorizeCte: true } : {}), ...(item.canManageDiscount === true ? { canManageDiscount: true } : {}), updatedBy: item.updatedBy };
 }
 
 export function validateCteAssignment(value: unknown): CteAssignment {
@@ -139,6 +140,19 @@ export function nodeCanAuthorizeCte(index: OrgChainIndex, userId: string): boole
   return node.canAuthorizeCte === true && [...ancestorUserIds(index, userId)].every((id) => { const above = index.nodes.get(id)?.payload; return !above || above.level === "AZIENDA" || above.canAuthorizeCte === true; });
 }
 
+// Tony (1/11): the commercial discount box is "gestibile e visibile solo dall'amministratore dell'azienda e a cascata chi lui
+// autorizza": the same cascade as the CTE authorization, on its own permission.
+export function nodeCanManageDiscount(index: OrgChainIndex, userId: string): boolean {
+  const node = index.nodes.get(userId)?.payload;
+  if (!node) return false;
+  if (node.level === "AZIENDA") return true;
+  return node.canManageDiscount === true && [...ancestorUserIds(index, userId)].every((id) => { const above = index.nodes.get(id)?.payload; return !above || above.level === "AZIENDA" || above.canManageDiscount === true; });
+}
+
+export function canManageDiscount(access: Pick<HierarchyAccess, "actor" | "index">): boolean {
+  return access.actor.role === "SUPER_ADMIN" || access.actor.role === "ADMIN" || nodeCanManageDiscount(access.index, access.actor.userId);
+}
+
 export function canAuthorizeCte(access: Pick<HierarchyAccess, "actor" | "index">): boolean {
   return access.actor.role === "SUPER_ADMIN" || nodeCanAuthorizeCte(access.index, access.actor.userId);
 }
@@ -184,7 +198,7 @@ function membershipFitsLevel(membership: FoundationMembershipRecord, level: OrgL
 }
 
 function nodeView(index: OrgChainIndex, record: TenantRecord<OrgNode>): OrgNodeView {
-  return { ...record.payload, version: record.version, updatedAt: record.updatedAt, effectiveLimits: effectiveLimits(index, record.payload.userId), effectiveCanAuthorizeCte: nodeCanAuthorizeCte(index, record.payload.userId), ancestorUserIds: ancestorUserIds(index, record.payload.userId) };
+  return { ...record.payload, version: record.version, updatedAt: record.updatedAt, effectiveLimits: effectiveLimits(index, record.payload.userId), effectiveCanManageDiscount: nodeCanManageDiscount(index, record.payload.userId), effectiveCanAuthorizeCte: nodeCanAuthorizeCte(index, record.payload.userId), ancestorUserIds: ancestorUserIds(index, record.payload.userId) };
 }
 
 /** Company admins see the whole chain; everybody else sees their own path up and their branch down. */
@@ -210,6 +224,7 @@ export interface SaveOrgNodeInput {
   readonly displayName?: unknown;
   readonly limits?: unknown;
   readonly canAuthorizeCte?: unknown;
+  readonly canManageDiscount?: unknown;
   readonly expectedVersion?: unknown;
 }
 
@@ -230,7 +245,7 @@ function conflict(error: unknown, code: string): never {
 }
 
 export async function saveOrgNode(stores: HierarchyStores, actor: HierarchyActor, input: SaveOrgNodeInput, now?: string): Promise<OrgNodeView> {
-  const node = validateOrgNode({ userId: input.userId, level: input.level, parentUserId: input.parentUserId ?? null, displayName: input.displayName ?? null, limits: input.limits, canAuthorizeCte: input.canAuthorizeCte ?? false, updatedBy: actor.userId });
+  const node = validateOrgNode({ userId: input.userId, level: input.level, parentUserId: input.parentUserId ?? null, displayName: input.displayName ?? null, limits: input.limits, canAuthorizeCte: input.canAuthorizeCte ?? false, canManageDiscount: input.canManageDiscount ?? false, updatedBy: actor.userId });
   const index = buildOrgChainIndex(await stores.orgChain.list(actor.tenantId));
   const existing = index.nodes.get(node.userId) ?? null;
   const expectedVersion = expectedVersionOf(input.expectedVersion, existing !== null, "ORG");
@@ -258,6 +273,10 @@ export async function saveOrgNode(stores: HierarchyStores, actor: HierarchyActor
   if (node.canAuthorizeCte === true && existing?.payload.canAuthorizeCte !== true) {
     if (actor.role !== "SUPER_ADMIN" && !nodeCanAuthorizeCte(index, actor.userId)) fail("ORG_CTE_AUTHORIZATION_GRANT_DENIED");
     if (node.parentUserId !== null && !nodeCanAuthorizeCte(index, node.parentUserId)) fail("ORG_CTE_AUTHORIZATION_PARENT_MISSING");
+  }
+  if (node.canManageDiscount === true && existing?.payload.canManageDiscount !== true) {
+    if (actor.role !== "SUPER_ADMIN" && actor.role !== "ADMIN" && !nodeCanManageDiscount(index, actor.userId)) fail("ORG_DISCOUNT_GRANT_DENIED");
+    if (node.parentUserId !== null && !nodeCanManageDiscount(index, node.parentUserId)) fail("ORG_DISCOUNT_PARENT_MISSING");
   }
 
   try {
