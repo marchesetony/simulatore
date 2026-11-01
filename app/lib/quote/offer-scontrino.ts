@@ -22,7 +22,9 @@ export function billedMonths(periodStart: string, periodEndExclusive: string): n
 
 export function offerScontrino(input: { readonly quotas: readonly QuoteReceiptQuota[]; readonly offerTotal: number | null; readonly taxesIncluded: boolean; readonly vector: "EE" | "GAS"; readonly quantity: number | null; readonly months: number | null; readonly powerKw: number | null; /** The company discount (negative, net of VAT), shown as its own line (Tony 1/11: visible). */ readonly discount?: number | null;
   /** Tony (1/11, "dove è lo scontrino della fattura?"): "current" builds the uploaded bill's own scontrino from the same quotas. */
-  readonly side?: "current" | "offer" }): readonly ScontrinoLine[] {
+  readonly side?: "current" | "offer";
+  /** Tony (1/11, Loomen): the bill's own altre partite (interessi, deposito cauzionale, bollo…) printed as on the bill; they stay out of the comparison. */
+  readonly excluded?: readonly { readonly label: string; readonly amount: number }[] }): readonly ScontrinoLine[] {
   const side = input.side ?? "offer";
   const pick = (row: QuoteReceiptQuota) => side === "current" ? { ...row, offer: row.current, offerSeller: row.currentSeller } : row;
   const discount = (input.side ?? "offer") === "offer" && input.discount && input.discount < 0 ? input.discount : 0;
@@ -60,10 +62,14 @@ export function offerScontrino(input: { readonly quotas: readonly QuoteReceiptQu
   }
   if (discount) lines.push({ kind: "item", label: "Sconto commerciale aziendale", amount: cents(discount) });
   const other = quota("OTHER"); if (other && other.offer) lines.push({ kind: "item", label: "Altre partite", amount: other.offer });
+  const excluded = side === "current" ? (input.excluded ?? []).filter((item) => Math.abs(item.amount) >= 0.005) : [];
+  for (const item of excluded) lines.push({ kind: "item", label: item.label, amount: cents(item.amount) });
   const bonus = quota("BONUS"); if (bonus && bonus.offer) lines.push({ kind: "item", label: "Bonus sociale", amount: bonus.offer });
   const taxes = input.quotas.filter((item) => item.key === "EXCISE" || item.key === "VAT" || item.key === "TAXES").map(pick).reduce<number | null>((sum, item) => item.offer === null ? sum : (sum ?? 0) + item.offer, null);
   if (taxes !== null) lines.push({ kind: "item", label: "Accise e IVA", amount: cents(taxes) });
   const placed = cents(lines.filter((line) => line.kind !== "sub" && line.kind !== "section").reduce((sum, line) => sum + (line.amount ?? 0), 0));
-  lines.push({ kind: "total", label: input.taxesIncluded ? "Totale bolletta" : "Totale imposte escluse", amount: input.offerTotal ?? placed });
+  const outside = cents(excluded.reduce((sum, item) => sum + item.amount, 0));
+  lines.push({ kind: "total", label: input.taxesIncluded ? "Totale bolletta" : "Totale imposte escluse", amount: input.offerTotal === null ? placed : cents(input.offerTotal + outside) });
+  if (outside) lines.push({ kind: "sub", label: `di cui fuori dal confronto (altre partite): ${outside.toFixed(2).replace(".", ",")} €; totale confrontato ${(input.offerTotal ?? cents(placed - outside)).toFixed(2).replace(".", ",")} €`, amount: null });
   return lines;
 }

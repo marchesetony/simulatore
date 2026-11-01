@@ -15,6 +15,8 @@ const QUANTITY = /(\d+(?:\.\d{3})*(?:,\d+)?)\s*(kWh|Smc|mes[ei]|kW)\b/i;
 const TAXES = /^(accise\s+e\s+iva|totale\s+imposte\s+e\s+iva|imposte(?:\s+e\s+iva)?)\b/i;
 const BONUS = /^bonus\s+sociale\b/i;
 const TOTAL = /^totale\s+(?:della\s+)?bolletta\b/i;
+const OTHER_ITEMS = /^(altre\s+partite|ricalcoli|canone\s+(?:di\s+abbonamento\s+)?(?:alla\s+)?(?:televisione|rai)|interessi\s+di\s+mora)\b/i;
+const ITEM = (row: string) => TAXES.test(row) || BONUS.test(row) || TOTAL.test(row) || OTHER_ITEMS.test(row);
 
 const clean = (value: string) => value.replace(/\s+/g, " ").replace(/[=+]\s*$/, "").trim();
 // "3 kW per 2 mesi x 2,00 €/kW/mese + 12,00 €" under "Quota fissa e Quota potenza": the power quota has no header of its own.
@@ -31,14 +33,15 @@ export function printedScontrinoLines(text: string): readonly StructuredBillEcon
   let start = first;
   for (let index = first; index >= Math.max(0, first - 6); index -= 1) if (QUOTA_HEADER.test(rows[index])) { start = index; break; }
   const totalAt = rows.findIndex((row, index) => index > first && TOTAL.test(row));
-  const end = totalAt > 0 && totalAt - start <= 80 ? totalAt : Math.min(rows.length - 1, start + 60);
+  // Tony (1/11, Loomen bill): "Totale bolletta" prints its amount on the next row, so the scan goes a few rows past it.
+  const end = totalAt > 0 && totalAt - start <= 80 ? Math.min(rows.length - 1, totalAt + 3) : Math.min(rows.length - 1, start + 60);
   const lines: StructuredBillEconomicChargeLine[] = [];
   let quota: string | null = null;
   // The amount of a row is on it or on one of the next three rows (the layout splits label, price and amount).
   const gather = (from: number): { readonly text: string; readonly next: number } => {
     let joined = rows[from];
     let index = from;
-    while (!amountOf(joined) && index < Math.min(end, from + 3)) { index += 1; if (QUOTA_HEADER.test(rows[index]) || DI_CUI.test(rows[index])) { index -= 1; break; } joined = `${joined} ${rows[index]}`; }
+    while (!amountOf(joined) && index < Math.min(end, from + 3)) { index += 1; if (QUOTA_HEADER.test(rows[index]) || DI_CUI.test(rows[index]) || ITEM(rows[index])) { index -= 1; break; } joined = `${joined} ${rows[index]}`; }
     return { text: joined, next: index };
   };
   for (let index = start; index <= end; index += 1) {
@@ -63,16 +66,22 @@ export function printedScontrinoLines(text: string): readonly StructuredBillEcon
       if (amount) {
         const price = UNIT_PRICE.exec(joined);
         const label = clean(row.replace(AMOUNT_AT_END, "").replace(UNIT_PRICE, ""));
-        lines.push(line("OTHER_CHARGE", `${quota} - ${label}`, amount, { unit: price ? `€/${price[2]}` : "", unitPrice: price ? price[1] : "" }));
+        lines.push(line(/rete/i.test(share[1]) ? "NETWORK_SYSTEM" : "OTHER_CHARGE", `${quota} - ${label}`, amount, { unit: price ? `€/${price[2]}` : "", unitPrice: price ? price[1] : "" }));
         index = next;
       }
       continue;
     }
-    const amount = amountOf(row);
+    // Altre partite, accise e IVA, bonus and the total: the label can span rows and the amount sits on a later row
+    // (Tony, 1/11, Loomen: "Altre partite - Interessi …, Bollo, Gestione Materia Energia" then "+ 403,86 €").
+    if (!ITEM(row)) continue;
+    const { text: joined, next } = gather(index);
+    const amount = amountOf(joined);
     if (!amount) continue;
-    if (TAXES.test(row)) lines.push(line("TAX_SUBTOTAL", clean(row.replace(AMOUNT_AT_END, "")), amount));
-    else if (BONUS.test(row)) lines.push(line("BONUS", clean(row.replace(AMOUNT_AT_END, "")), amount));
-    else if (TOTAL.test(row)) lines.push(line("BILL_TOTAL", clean(row.replace(AMOUNT_AT_END, "")), amount));
+    const label = clean(joined.replace(AMOUNT_AT_END, ""));
+    const code = TAXES.test(row) ? "TAX_SUBTOTAL" : BONUS.test(row) ? "BONUS" : TOTAL.test(row) ? "BILL_TOTAL" : "ALTRE_PARTITE";
+    lines.push(line(code, label, amount));
+    index = next;
+    if (code === "BILL_TOTAL") break;
   }
   // A scontrino needs at least one "di cui" share with its amount.
   return lines.some((item) => / - di cui /i.test(item.description)) ? lines : [];
@@ -80,13 +89,27 @@ export function printedScontrinoLines(text: string): readonly StructuredBillEcon
 
 const hasScontrino = (lines: readonly StructuredBillEconomicChargeLine[]) => lines.some((item) => /di\s+cui\s+spes[ae]\s+per/i.test(`${item.description} ${item.rawDescription ?? ""}`));
 
-/** Adds the printed scontrino to a reading that holds none; a reading that already has it is left as it is. */
+const amountValue = (amount: string) => Number(amount.replace(/[^\d,\-]/g, "").replace(",", "."));
+const SCONTRINO_ROW = /di\s+cui\s+spes[ae]\s+per|^(accise\s+e\s+iva|totale\s+(?:della\s+)?bolletta|altre\s+partite)\b/i;
+
+/**
+ * The printed scontrino wins over the AI reading of the same block. Tony (1/11, Loomen bill read as quota per consumi
+ * 0,00 € and altre partite 882,37 €: "bisogna trovare soluzione definitiva, affinchè sappia leggere qualsiasi bolletta di
+ * qualsiasi azienda. e non commetta più errori"): the scontrino is read from the PDF text, which never misreads a number,
+ * and replaces the AI's "di cui" shares, quota totals, accise e IVA, altre partite and totale bolletta. The detail lines the AI
+ * read elsewhere in the bill stay. Printed "altre partite" are added only when the AI read none of those items one by one.
+ */
 export function withPrintedScontrino(extraction: StructuredBillExtraction, text: string | null): StructuredBillExtraction {
-  if (!text || hasScontrino(extraction.economicChargeLines)) return extraction;
+  if (!text) return extraction;
   const printed = printedScontrinoLines(text);
   if (!printed.length) return extraction;
-  const present = new Set(extraction.economicChargeLines.filter((item) => item.code === "BILL_TOTAL" || item.code === "TAX_SUBTOTAL").map((item) => item.code));
-  return { ...extraction, economicChargeLines: [...extraction.economicChargeLines, ...printed.filter((item) => !present.has(item.code))] };
+  const headers = new Set(printed.filter((item) => QUOTA_HEADER.test(item.description) && !/ - /.test(item.description)).map((item) => amountValue(item.amount)));
+  const describe = (item: StructuredBillEconomicChargeLine) => `${item.description} ${item.rawDescription ?? ""}`.trim();
+  const duplicate = (item: StructuredBillEconomicChargeLine) => item.code === "TAX_SUBTOTAL" || item.code === "BILL_TOTAL" || SCONTRINO_ROW.test(describe(item))
+    || (QUOTA_HEADER.test(item.description.trim()) && headers.has(amountValue(item.amount)));
+  const kept = extraction.economicChargeLines.filter((item) => !duplicate(item));
+  const itemised = kept.some((item) => ["ALTRE_PARTITE", "INTERESSI_MORA", "LATE_PAYMENT", "ADMINISTRATIVE_FEES", "RICALCOLI", "ADDEBITI", "ACCREDITI", "RESTITUZIONI", "SERVIZI_AGGIUNTIVI", "CANONE_RAI", "TV_FEE", "PRIOR_BALANCE"].includes(item.code));
+  return { ...extraction, economicChargeLines: [...printed.filter((item) => item.code !== "ALTRE_PARTITE" || !itemised), ...kept] };
 }
 
 /** True when the reading holds the bill's scontrino (its "di cui" shares). */

@@ -224,8 +224,13 @@ export function renderReceiptProposal(proposal: ProposalCanonicalSnapshot, prese
       const size = line.kind === "sub" ? 7.5 : 8.5;
       const bold = line.kind !== "sub" && line.kind !== "item";
       const baseline = sheet.y - height / 2 - 3;
-      const label = line.kind === "main" ? `${line.quantity ?? ""}${line.quantity ? " x" : ""}` : line.label;
-      sheet.text(label, line.kind === "main" || line.kind === "sub" ? at.price - 70 : at.label, baseline, size, { bold, color: line.kind === "sub" ? MUTED : INK, align: line.kind === "main" || line.kind === "sub" ? "right" : undefined });
+      const full = line.kind === "main" ? `${line.quantity ?? ""}${line.quantity ? " x" : ""}` : line.label;
+      // A note under the total (amount null) starts at the left edge; long printed labels (altre partite) are cut to the row.
+      const note = line.kind === "sub" && line.amount === null;
+      const max = note ? 110 : 70;
+      const label = full.length > max ? `${full.slice(0, max - 3)}...` : full;
+      const right = (line.kind === "main" || line.kind === "sub") && !note;
+      sheet.text(label, right ? at.price - 70 : at.label, baseline, size, { bold, color: line.kind === "sub" ? MUTED : INK, align: right ? "right" : undefined });
       if (line.price) sheet.text(line.price, at.price, baseline, size, { bold, color: line.kind === "sub" ? MUTED : INK, align: "right" });
       if (line.amount !== null) sheet.text(line.kind === "total" ? `= ${euro(line.amount)}` : `${line.amount < 0 ? "-" : "+"} ${euro(Math.abs(line.amount))}`, at.amount, baseline, size, { bold, color: line.kind === "sub" ? MUTED : INK, align: "right" });
       sheet.y -= height;

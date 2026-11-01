@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { printedScontrinoLines, withPrintedScontrino, readingHasScontrino } from "../app/lib/ingestion/printed-scontrino.ts";
 import { buildCurrentBillEconomicAnalysis } from "../app/lib/foundation/bill-economic-analysis.ts";
 import { buildQuoteReceipt } from "../app/lib/quote/receipt.ts";
+import { offerScontrino } from "../app/lib/quote/offer-scontrino.ts";
 
 // Tony (1/11, "cazzo cazzo, quante volte dobbiamo fissare le regole. leggere lo scontrino della bolletta e le condizioni
 // applicate che sono riportate, se esiste leggere il dettaglio"): the scontrino is read from the PDF text without the AI.
@@ -9,16 +10,18 @@ import { buildQuoteReceipt } from "../app/lib/quote/receipt.ts";
 const duferco = `Potenza Impegnata: 22,00 kW\nQuantità Prezzo Medio Importi\nQuota Consumi\n741,0 kWh 0,239636  €/kWh 177,57 €\ndi cui spesa per vendita energia\n0,190742 €/kWh\n141,34 €\ndi cui spese per la rete e gli oneri generali di sistema\n0,048893 €/kWh\n36,23 €\nQuota Fissa\n1 mese 29,740000  €/PdP 29,74 €\ndi cui spesa per vendita energia\n26,000000 €/PdP\n26,00 €\ndi cui spese per la rete e gli oneri generali di sistema\n3,740000 €/PdP\n3,74 €\nQuota Potenza\n13,4 kW per 1 mese 4,266418  €/kW 57,17 €\ndi cui spese per la rete e gli oneri generali di sistema\n4,266418 €/kW\n57,17 €\nIl prezzo medio rappresenta un valore medio di sintesi.\nAccise e IVA 69,48 €\nTOTALE BOLLETTA 333,96 €\nTOTALE DA PAGARE 333,96 €`;
 const loomen = `SCONTRINO DELL'ENERGIA\nQuantità Prezzo medio Importi\nQuota per consumi\n2.642 kWh x 0,301919 €/kWh + 797,67 €\ndi cui spesa per la vendita di energia elettrica 0,253013 €/kWh + 668,46 €\ndi cui spesa per la rete e gli oneri generali di sistema 0,048906 €/kWh + 129,21 €\nQuota fissa e Quota potenza\n1 mese x 30,000000 €/mese + 30,00 €\ndi cui spesa per la vendita di energia elettrica 25,000000 €/mese + 25,00 €\ndi cui spesa per la rete e gli oneri generali di sistema 5,000000 €/mese + 5,00 €\n20 kW per 1 mese x 2,000000 €/kW/mese + 40,00 €\ndi cui spesa per la rete e gli oneri generali di sistema 2,000000 €/kW/mese + 40,00 €\nAccise e IVA + 199,00 €\nTotale bolletta = 1.066,67 €`;
 
+// Tony (1/11, Loomen bill): the "rete e oneri" shares carry the code NETWORK_SYSTEM, so they are counted as rete e oneri and
+// not as altre partite.
 const d = printedScontrinoLines(duferco);
 assert.deepEqual(d.map((line) => [line.code, line.description, line.amount]), [
   ["OTHER_CHARGE", "Quota Consumi", "177,57 €"],
   ["OTHER_CHARGE", "Quota Consumi - di cui spesa per vendita energia", "141,34 €"],
-  ["OTHER_CHARGE", "Quota Consumi - di cui spese per la rete e gli oneri generali di sistema", "36,23 €"],
+  ["NETWORK_SYSTEM", "Quota Consumi - di cui spese per la rete e gli oneri generali di sistema", "36,23 €"],
   ["OTHER_CHARGE", "Quota Fissa", "29,74 €"],
   ["OTHER_CHARGE", "Quota Fissa - di cui spesa per vendita energia", "26,00 €"],
-  ["OTHER_CHARGE", "Quota Fissa - di cui spese per la rete e gli oneri generali di sistema", "3,74 €"],
+  ["NETWORK_SYSTEM", "Quota Fissa - di cui spese per la rete e gli oneri generali di sistema", "3,74 €"],
   ["OTHER_CHARGE", "Quota Potenza", "57,17 €"],
-  ["OTHER_CHARGE", "Quota Potenza - di cui spese per la rete e gli oneri generali di sistema", "57,17 €"],
+  ["NETWORK_SYSTEM", "Quota Potenza - di cui spese per la rete e gli oneri generali di sistema", "57,17 €"],
   ["TAX_SUBTOTAL", "Accise e IVA", "69,48 €"],
   ["BILL_TOTAL", "TOTALE BOLLETTA", "333,96 €"],
 ]);
@@ -51,5 +54,46 @@ const base = { economicChargeLines: [{ code: "BILL_TOTAL", description: "Totale 
 const completed = withPrintedScontrino(base, loomen);
 assert.equal(readingHasScontrino(completed), true);
 assert.equal(completed.economicChargeLines.filter((line) => line.code === "BILL_TOTAL").length, 1, "no second total");
-assert.equal(withPrintedScontrino(completed, duferco), completed);
+// Tony (1/11, "bisogna trovare soluzione definitiva, affinchè sappia leggere qualsiasi bolletta"): the printed scontrino now
+// replaces the AI's reading of the same block instead of leaving it, and applying it twice changes nothing.
+assert.deepEqual(withPrintedScontrino(completed, loomen).economicChargeLines, completed.economicChargeLines);
+
+// Loomen layout as in the PDF text layer: label, price and amount on separate rows, altre partite on two rows, the total's
+// amount on the next row. Synthetic invoice numbers.
+const multiRow = `Quota per consumi\n2.642 kWh x 0,301919 €/kWh\n+ 797,67 €\ndi cui spesa per la vendita di energia elettrica\n0,253013 €/kWh\n+ 668,46 €\ndi cui spesa per\nla rete e gli oneri generali di sistema\n0,048906 €/kWh\n+ 129,21 €\nQuota fissa\n1 mese\n17,310000 €/mese\n+ 17,31 €\ndi cui spesa per la vendita di energia elettrica\n13,500000 €/mese\n+ 13,50 €\ndi cui spesa per la rete e gli oneri generali di sistema\n3,810000 €/mese\n+ 3,81 €\n15,00 kW per 1 mese\n4,492667 €/kW/mese\n+ 67,39 €\ndi cui spesa per la rete e gli oneri generali di sistema\n4,492667 €/kW/mese\n+ 67,39 €\nAltre partite - Interessi FT. X1, Deposito Cauzionale,\nBollo, Gestione Materia Energia\n+ 403,86 €\nAccise e IVA\n+ 239,48 €\nTotale bolletta\n= 1.525,71 €\nTotale da pagare\n= 1.525,71 €`;
+const m = printedScontrinoLines(multiRow);
+assert.deepEqual(m.filter((line) => !/ - di cui/.test(line.description)).map((line) => [line.code, line.amount]), [
+  ["OTHER_CHARGE", "797,67 €"], ["OTHER_CHARGE", "17,31 €"], ["OTHER_CHARGE", "67,39 €"],
+  ["ALTRE_PARTITE", "403,86 €"], ["TAX_SUBTOTAL", "239,48 €"], ["BILL_TOTAL", "1.525,71 €"],
+]);
+assert.match(m.find((line) => line.code === "ALTRE_PARTITE").description, /Bollo, Gestione Materia Energia$/);
+// The AI read the quota totals as charges and missed the altre partite (the bill showed quota per consumi 0,00 € and altre
+// partite 882,37 €): the printed scontrino replaces those lines and the bill adds up to 1.525,71 € with the right quotas.
+const wrongAi = { economicChargeLines: [
+  { code: "OTHER_CHARGE", description: "Quota per consumi", amount: "797,67 €", quantity: "2.642", unit: "kWh", unitPrice: "", periodRaw: "", status: "FOUND" },
+  { code: "OTHER_CHARGE", description: "Quota fissa e Quota potenza", amount: "17,31 €", quantity: "", unit: "", unitPrice: "", periodRaw: "", status: "FOUND" },
+  { code: "OTHER_CHARGE", description: "Quota potenza", amount: "67,39 €", quantity: "", unit: "", unitPrice: "", periodRaw: "", status: "FOUND" },
+  { code: "OTHER_CHARGE", description: "di cui spesa per la vendita di energia elettrica", amount: "668,46 €", quantity: "", unit: "", unitPrice: "", periodRaw: "", status: "FOUND" },
+  { code: "TAX_SUBTOTAL", description: "Accise e IVA", amount: "239,48 €", quantity: "", unit: "", unitPrice: "", periodRaw: "", status: "FOUND" },
+] };
+const fixed = withPrintedScontrino(wrongAi, multiRow);
+assert.deepEqual(fixed.economicChargeLines, m, "only the printed scontrino is left");
+const fixedAnalysis = buildCurrentBillEconomicAnalysis(fixed.economicChargeLines, "1.525,71");
+assert.equal(fixedAnalysis.totals.reconciliationStatus, "RECONCILED");
+assert.equal(fixedAnalysis.totals.sellerEnergyTotal, 668.46);
+assert.equal(fixedAnalysis.totals.regulatedNetworkTotal, 200.41);
+assert.equal(fixedAnalysis.totals.otherItemsTotal, 403.86);
+const fixedReceipt = buildQuoteReceipt({ vector: "EE", offerSupplyCost: 700, analysis: fixedAnalysis, domestic: false, validUntil: null });
+// The comparison leaves the altre partite (interessi, deposito, bollo) out: 1.525,71 - 403,86 = 1.121,85 €.
+assert.equal(fixedReceipt.currentTotal, 1121.85);
+// The bill's scontrino shows them as printed and the bill's own total.
+const billSide = offerScontrino({ quotas: fixedReceipt.quotas, offerTotal: fixedReceipt.currentTotal, taxesIncluded: fixedReceipt.taxesIncluded, vector: "EE", quantity: 2642, months: 1, powerKw: 15, side: "current", excluded: [{ label: "Altre partite", amount: 403.86 }] });
+assert.deepEqual(billSide.filter((line) => line.kind !== "sub").map((line) => [line.kind, line.label, line.amount]), [
+  ["section", "Quota per consumi", null], ["main", "", 797.67], ["section", "Quota fissa e Quota potenza", null], ["main", "", 17.31], ["main", "", 67.39],
+  ["item", "Altre partite", 403.86], ["item", "Accise e IVA", 239.48], ["total", "Totale bolletta", 1525.71],
+]);
+assert.ok((fixedReceipt.quotas.find((quota) => quota.key === "CONSUMPTION")?.current ?? 0) > 700, "quota per consumi is never 0,00 €");
+// Altre partite read one by one by the AI are not added a second time.
+const itemised = withPrintedScontrino({ economicChargeLines: [{ code: "INTERESSI_MORA", description: "Interessi", amount: "3,00 €", quantity: "", unit: "", unitPrice: "", periodRaw: "", status: "FOUND" }] }, multiRow);
+assert.equal(itemised.economicChargeLines.some((line) => line.code === "ALTRE_PARTITE"), false);
 console.log("PRINTED_SCONTRINO=PASS");

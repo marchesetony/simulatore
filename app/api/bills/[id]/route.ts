@@ -17,7 +17,7 @@ import { deleteBillPermanently } from "../../../lib/foundation/bill-retention";
 import { billVisibilityScope, getBillInScope } from "../../../lib/foundation/bill-visibility";
 import { isBillFeature, resolveBillFeaturePermissions, sanitizeBillForFeatureAccess, type BillFeature } from "../../../lib/foundation/bill-feature-permissions";
 import { createAnthropicTwoStageBillSdkAdapter, printedText } from "../../../lib/ingestion/anthropic-bill-sdk";
-import { printedScontrinoLines, withPrintedScontrino } from "../../../lib/ingestion/printed-scontrino";
+import { printedScontrinoLines, readingHasScontrino, withPrintedScontrino } from "../../../lib/ingestion/printed-scontrino";
 import type { AuthenticatedPrincipal } from "../../../lib/auth/types";
 import type { RuntimeRepositories } from "../../../lib/persistence/adapter";
 import type { PublicBillDocument } from "../../../lib/foundation/real-bill";
@@ -46,7 +46,9 @@ export async function GET(request: Request, context: { params: Promise<{ id: str
     const requestedFeature = new URL(request.url).searchParams.get("feature");
     if (requestedFeature !== null && (!isBillFeature(requestedFeature) || !access.features[requestedFeature as BillFeature])) return deny("BILL_FEATURE_ACCESS_DENIED", "Funzione tecnica non autorizzata", 403);
     const shownDocument = document ? (approvedView ? toPublicApprovedDocument(document) : toPublicDocument(document)) : null;
-    const publicDocument = shownDocument && document ? await withDocumentPriceRows(shownDocument, () => repositories.documentStorage.read(document.tenantId, document.id)) : shownDocument;
+    const withPrinted = shownDocument && document ? await withDocumentPriceRows(shownDocument, () => repositories.documentStorage.read(document.tenantId, document.id)) : shownDocument;
+    // The scontrino printed in the PDF counts as read charge lines.
+    const publicDocument = withPrinted && withPrinted.chargeLinesUnread && readingHasScontrino(withPrinted.structuredBill) ? { ...withPrinted, chargeLinesUnread: false } : withPrinted;
     if (publicDocument) await ensureOfficialPunForBill(publicDocument, repositories.marketArchiveRepository, billPunRefresh(repositories, publicDocument.tenantId));
     return publicDocument ? Response.json({ document: sanitizeBillForFeatureAccess(await attachOfficialPun(publicDocument, repositories.marketArchiveRepository), access) }, { headers: NO_STORE_HEADERS }) : deny("DOCUMENT_NOT_FOUND", "Bill document not found", 404);
   } catch (error) {

@@ -12,6 +12,10 @@ import { buildBillAnalystReview } from "../foundation/bill-analyst-review.ts";
 import { attachBillRegulatoryAudit } from "../foundation/bill-public-audit.ts";
 // @ts-expect-error Node's strip-only test runner requires the explicit extension.
 import { estimateBillSpread } from "./bill-spread.ts";
+// @ts-expect-error Node's strip-only test runner requires the explicit extension.
+import { withPrintedScontrino } from "../ingestion/printed-scontrino.ts";
+// @ts-expect-error Node's strip-only test runner requires the explicit extension.
+import { pdfTextLayer } from "../regulatory-refresh/pdf-text.ts";
 
 export type PunTariffStructure = "MONO" | "F1_F2_F3";
 
@@ -140,13 +144,16 @@ export async function withDocumentPriceRows<T extends Pick<PublicBillDocument, "
   // Bills read before the box dell'offerta was taken from the PDF get it (and the offer name again) now, with no re-upload.
   const needBox = bill.documentOfferBox === undefined;
   const needName = bill.documentOfferName === undefined || (needBox && !bill.documentOfferName);
-  if (!needRows && !needName && !needBox) return document;
   try {
     const bytes = await read();
     const documentPriceRows = needRows ? extractDocumentPriceRows(bytes) : [];
     const documentOfferName = needName ? extractDocumentOfferName(bytes) : bill.documentOfferName;
     const withRows = { ...bill, ...(documentPriceRows.length ? { documentPriceRows } : {}), documentOfferName };
-    return { ...document, structuredBill: needBox ? withDocumentOfferBox(withRows, extractDocumentOfferBox(bytes)) : withRows };
+    const withBox = needBox ? withDocumentOfferBox(withRows, extractDocumentOfferBox(bytes)) : withRows;
+    // Tony (1/11, Loomen): every bill, also the ones already archived, shows the scontrino exactly as printed in the PDF.
+    let text: string | null = null;
+    try { const layer = pdfTextLayer(bytes); text = layer.status === "AVAILABLE" ? layer.text : null; } catch { text = null; }
+    return { ...document, structuredBill: withPrintedScontrino(withBox, text) };
   } catch { return document; }
 }
 

@@ -718,6 +718,17 @@ function presentationOf(offer: Offer, receipt: QuoteReceipt, bill: BillDocumentM
 // VAT rates the agent can apply to the new offer when the company qualifies for a reduced rate (e.g. 10% for some business uses).
 const VAT_CHOICES = [0.22, 0.1, 0.05, 0.04] as const;
 const UNIT_PRICE = new Intl.NumberFormat("it-IT", { minimumFractionDigits: 6, maximumFractionDigits: 6 });
+// Tony (1/11, Loomen): the bill's altre partite (interessi, deposito cauzionale, bollo…) are printed on the bill's scontrino as
+// they are, outside the comparison; only when they are exactly what the comparison leaves out of the bill total.
+function billOutsideComparison(analysis: BillDocumentModel["analystReview"]["economics"]["economicAnalysis"], compared: number | null): readonly { readonly label: string; readonly amount: number }[] {
+  if (!analysis || compared === null) return [];
+  const value = (amount: string | null) => { const parsed = Number(String(amount ?? "").replace(/[^\d,\-]/g, "").replace(",", ".")); return Number.isFinite(parsed) ? parsed : 0; };
+  const items = analysis.components.filter((line) => line.group === "OTHER_ITEMS" && !line.aggregate && line.includedInReconciliation !== false && line.classification !== "BILL_TOTAL" && line.classification !== "AMOUNT_DUE")
+    .map((line) => ({ label: line.description, amount: value(line.amount) })).filter((item) => item.amount !== 0);
+  const total = analysis.totals.billTotal;
+  const sum = items.reduce((acc, item) => acc + item.amount, 0);
+  return total !== null && Math.abs(compared + sum - total) <= 0.02 ? items : [];
+}
 function ScontrinoTable({ title, lines, empty }: { readonly title: string; readonly lines: readonly ScontrinoLine[]; readonly empty?: string }) {
   return <div className="offer-scontrino">
     <h4>{title}</h4>
@@ -725,7 +736,7 @@ function ScontrinoTable({ title, lines, empty }: { readonly title: string; reado
       <thead><tr><th scope="col">Quantità</th><th scope="col">Prezzo medio</th><th scope="col">Importi</th></tr></thead>
       <tbody>{lines.map((line, index) => line.kind === "section"
         ? <tr key={index} className="scontrino-section"><th colSpan={3} scope="rowgroup">{line.label}</th></tr>
-        : <tr key={index} className={`scontrino-${line.kind}`}><th scope="row">{line.kind === "main" ? <>{line.quantity ?? ""}{line.quantity ? " x" : ""}</> : line.label}</th><td>{line.price ?? ""}</td><td>{line.amount === null ? "—" : line.kind === "total" ? `= ${euro(line.amount)}` : `${line.amount < 0 ? "−" : "+"} ${euro(Math.abs(line.amount))}`}</td></tr>)}</tbody>
+        : <tr key={index} className={`scontrino-${line.kind}`}><th scope="row">{line.kind === "main" ? <>{line.quantity ?? ""}{line.quantity ? " x" : ""}</> : line.label}</th><td>{line.price ?? ""}</td><td>{line.amount === null ? (line.kind === "sub" ? "" : "—") : line.kind === "total" ? `= ${euro(line.amount)}` : `${line.amount < 0 ? "−" : "+"} ${euro(Math.abs(line.amount))}`}</td></tr>)}</tbody>
     </table> : <p className="inline-warning">{empty}</p>}
   </div>;
 }
@@ -759,7 +770,7 @@ function Receipt({ offer: quoted, today, business, context, bill, onPresentation
   const headline = same ? (saving >= 0 ? "Stessa CTE della bolletta: la bolletta addebita più di quanto prevede la CTE" : "Stessa CTE della bolletta: la bolletta addebita meno di quanto prevede la CTE") : saving >= 0 ? "Risparmio sulla bolletta caricata" : "Costo in più sulla bolletta caricata";
   const basisLabel = basis ? `Simulato su 12 mesi con ${amount(basis.annual, unit)} di consumo annuo${basis.estimated ? " stimato dalla bolletta" : " letto in bolletta"}` : "";
   const scontrino = offerScontrino({ quotas: receipt.quotas, offerTotal: receipt.status === "COMPLETE" ? receipt.offerTotal : null, taxesIncluded: receipt.taxesIncluded, vector: context.vector, quantity: periodQuantity, months: billedMonths(context.billingPeriod.periodStart, context.billingPeriod.periodEnd), powerKw: powerQuotaKw(context), discount: receipt.rows.find((row) => row.key === "ENERGY")?.details?.find((item) => item.key === "COMPANY_DISCOUNT")?.offer ?? null });
-  const billScontrino = receipt.status === "COMPLETE" ? offerScontrino({ quotas: receipt.quotas, offerTotal: receipt.currentTotal, taxesIncluded: receipt.taxesIncluded, vector: context.vector, quantity: periodQuantity, months: billedMonths(context.billingPeriod.periodStart, context.billingPeriod.periodEnd), powerKw: powerQuotaKw(context), side: "current" }) : [];
+  const billScontrino = receipt.status === "COMPLETE" ? offerScontrino({ quotas: receipt.quotas, offerTotal: receipt.currentTotal, taxesIncluded: receipt.taxesIncluded, vector: context.vector, quantity: periodQuantity, months: billedMonths(context.billingPeriod.periodStart, context.billingPeriod.periodEnd), powerKw: powerQuotaKw(context), side: "current", excluded: billOutsideComparison(bill.analystReview.economics.economicAnalysis, receipt.currentTotal) }) : [];
   const presentation = { ...presentationOf(offer, receipt, bill, context, same ? null : annualSaving, annualCurrent, basisLabel, same), scontrino, billScontrino };
   const presentationKey = JSON.stringify(presentation);
   useEffect(() => { onPresentation?.(JSON.parse(presentationKey) as ProposalPresentation); }, [presentationKey, onPresentation]);
