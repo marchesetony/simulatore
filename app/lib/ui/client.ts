@@ -246,7 +246,18 @@ export async function downloadExport(path: string, payload: unknown, format: "JS
  * device's share sheet (mail, WhatsApp, ...) where the browser can share files; elsewhere it is downloaded and the agent's own
  * mail program opens with subject and text ready, to attach it. Nothing is sent by the app itself.
  */
-export async function shareProposalPdf(path: string, payload: unknown, message: { readonly subject: string; readonly body: string; readonly fileName: string }): Promise<"SHARED" | "MAIL"> {
+/** "proposta-BE FAMILY FAST 26" → "proposta-BE-FAMILY-FAST-26.pdf": letters, digits and dashes only, always ending in .pdf
+ *  (Tony 1/11: "Invia al cliente" failed with EXPORT_FILENAME_INVALID because the name had no extension). */
+export function proposalFileName(offer: string): string {
+  const base = `proposta-${offer}`.normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[^A-Za-z0-9._-]+/g, "-").replace(/-+/g, "-").replace(/^-|-$/g, "").slice(0, 80) || "proposta";
+  return /\.pdf$/i.test(base) ? base : `${base}.pdf`;
+}
+
+/**
+ * Tony (1/11, "aggiungi tasto per whatsapp"): channel WHATSAPP opens WhatsApp. On a phone the share sheet carries the PDF
+ * itself; where a browser cannot share files, the PDF is downloaded and WhatsApp opens with the text ready, to attach it.
+ */
+export async function shareProposalPdf(path: string, payload: unknown, message: { readonly subject: string; readonly body: string; readonly fileName: string }, channel: "MAIL" | "WHATSAPP" = "MAIL"): Promise<"SHARED" | "MAIL" | "WHATSAPP"> {
   const response = await fetch(path, { method: "POST", body: JSON.stringify(payload), credentials: "same-origin", headers: { "content-type": "application/json" } });
   if (!response.ok) {
     const body: unknown = await response.json().catch(() => null);
@@ -255,7 +266,7 @@ export async function shareProposalPdf(path: string, payload: unknown, message: 
   }
   if (!(response.headers.get("content-type") ?? "").toLowerCase().startsWith("application/pdf")) throw new UiApiError("EXPORT_CONTENT_TYPE_INVALID", "Tipo contenuto export non valido");
   const blob = await response.blob();
-  const fileName = safeFilename(message.fileName, ".pdf");
+  const fileName = safeFilename(proposalFileName(message.fileName.replace(/\.pdf$/i, "").replace(/^proposta-/, "")), ".pdf");
   const file = new File([blob], fileName, { type: "application/pdf" });
   const share = typeof navigator !== "undefined" ? navigator as Navigator & { canShare?: (data: ShareData) => boolean } : null;
   if (share?.canShare?.({ files: [file] }) && typeof share.share === "function") {
@@ -265,6 +276,13 @@ export async function shareProposalPdf(path: string, payload: unknown, message: 
   const anchor = document.createElement("a");
   anchor.href = url; anchor.download = fileName; document.body.appendChild(anchor); anchor.click(); anchor.remove();
   setTimeout(() => URL.revokeObjectURL(url), 1000);
+  if (channel === "WHATSAPP") {
+    const link = `https://wa.me/?text=${encodeURIComponent(`${message.subject}\n\n${message.body}`)}`;
+    // A popup blocked after the download opens WhatsApp in this tab instead.
+    const opened = window.open(link, "_blank");
+    if (opened) opened.opener = null; else window.location.href = link;
+    return "WHATSAPP";
+  }
   window.location.href = `mailto:?subject=${encodeURIComponent(message.subject)}&body=${encodeURIComponent(message.body)}`;
   return "MAIL";
 }

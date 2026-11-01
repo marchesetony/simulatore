@@ -18,7 +18,9 @@ console.log("proposal archive pdf only ok");
 // altra posizione". Delete asks a confirmation on the page; send uses the device's share sheet, else the agent's mail program.
 const client = readFileSync(new URL("../app/lib/ui/client.ts", import.meta.url), "utf8");
 const byId = readFileSync(new URL("../app/api/proposal/[id]/route.ts", import.meta.url), "utf8");
-assert.match(archive, /Invia al cliente/);
+// Tony (1/11, "aggiungi tasto per whatsapp"): the send button is split into email and WhatsApp.
+assert.match(archive, /Invia per email/);
+assert.match(archive, /Invia su WhatsApp/);
 assert.match(archive, /Sì, elimina/);
 assert.doesNotMatch(archive, /window\.confirm|confirm\(/, "no browser dialog");
 assert.match(client, /export async function shareProposalPdf/);
@@ -27,3 +29,13 @@ assert.match(client, /mailto:\?subject=/);
 assert.match(byId, /export async function DELETE/);
 assert.match(byId, /assertProposalInScope\(principal, repositories, readback\.proposal\)/);
 console.log("proposal archive send and delete ok");
+
+// Tony (1/11): "Invia al cliente" failed with EXPORT_FILENAME_INVALID because the file name had no .pdf extension.
+{
+  const { proposalFileName } = await import("../app/lib/ui/client.ts");
+  assert.equal(proposalFileName("BE FAMILY FAST 26"), "proposta-BE-FAMILY-FAST-26.pdf");
+  assert.equal(proposalFileName("Be Smile 11.25"), "proposta-Be-Smile-11.25.pdf");
+  assert.equal(proposalFileName("Più/Luce àè"), "proposta-Piu-Luce-ae.pdf");
+  assert.equal(proposalFileName(""), "proposta.pdf");
+  console.log("PROPOSAL_FILENAME=PASS");
+}
