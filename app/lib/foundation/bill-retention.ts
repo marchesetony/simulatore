@@ -75,7 +75,8 @@ export async function runBillRetention(input: {
 // Tony (31/10): "serve un tasto cancella le bollette, e le bollette con date superiori a 5 mesi devono essere eliminati in
 // automatico". A deleted bill is removed for good (record and PDF): the stored lifecycle is left untouched so the
 // production code reading the same database never meets a state it does not know.
-export const BILL_MAX_AGE_MONTHS = 5;
+// Tony (1/11): "eliminare le bollette oltre 4 mesi".
+export const BILL_MAX_AGE_MONTHS = 4;
 
 /** The bill's own date: end of the billing period it covers, else the upload date. */
 export function billReferenceDate(document: BillDocument): string {
@@ -90,7 +91,7 @@ export function billReferenceDate(document: BillDocument): string {
   return document.createdAt;
 }
 
-/** True when the bill's date is more than five calendar months before now. */
+/** True when the bill's date is more than BILL_MAX_AGE_MONTHS (4) calendar months before now. */
 export function billTooOld(document: BillDocument, now: string): boolean {
   const limit = new Date(now);
   if (!Number.isFinite(limit.getTime())) return false;

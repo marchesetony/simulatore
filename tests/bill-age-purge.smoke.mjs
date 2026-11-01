@@ -26,7 +26,14 @@ try {
   assert.match(billReferenceDate(old), /^2026-01-31/);
   assert.equal(billTooOld(old, "2026-10-31T09:00:00.000Z"), true, "31/01 is more than 5 months before 31/10");
   assert.equal(billTooOld(recent, "2026-10-31T09:00:00.000Z"), false);
-  assert.equal(billTooOld(old, "2026-06-30T00:00:00.000Z"), false, "exactly 5 months is kept");
+  // Tony (1/11, "eliminare le bollette oltre 4 mesi"): the limit is now 4 calendar months.
+  assert.equal(billTooOld(old, "2026-05-31T00:00:00.000Z"), false, "exactly 4 months is kept");
+  assert.equal(billTooOld(old, "2026-06-01T00:00:00.000Z"), true, "more than 4 months is deleted");
+  const july = await seed("01/07/2026 - 31/07/2026");
+  assert.equal(billTooOld(july, "2026-11-01T09:00:00.000Z"), false, "July bill kept on 1/11");
+  const june = await seed("01/06/2026 - 30/06/2026");
+  assert.equal(billTooOld(june, "2026-11-01T09:00:00.000Z"), true, "June bill deleted on 1/11");
+  await repository.delete(tenant, july.id); await repository.delete(tenant, june.id);
   const result = await purgeOldBills({ tenantId: tenant, repositories: { bills: repository, storage, audit }, now: "2026-10-31T09:00:00.000Z" });
   assert.deepEqual(result, { scanned: 2, deleted: 1, failed: 0 });
   assert.equal(await repository.get(tenant, old.id), null);

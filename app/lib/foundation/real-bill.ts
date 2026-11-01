@@ -625,7 +625,9 @@ export function toPublicDocumentVersion(document: BillDocument, versionId: strin
       })),
     normalized: working.energyContract ? publicBillProfile(working.energyContract, working.fields) : null,
     structuredBill: working.structuredBill ?? null,
-    chargeLinesUnread: working.structuredBill?.analystExtractionStatus === "FAILED",
+    // Tony (1/11, "mancano i raffronti con lo scontrino della bolletta inserita"): also a reading that holds no charge line at
+    // all (second reading not run, or empty) offers the re-read, not only a failed one.
+    chargeLinesUnread: working.structuredBill ? working.structuredBill.analystExtractionStatus === "FAILED" || (working.structuredBill.economicChargeLines?.length ?? 0) === 0 : false,
     resolvedVector,
     invoicePunReferences: [],
     regulatoryAudit: null,

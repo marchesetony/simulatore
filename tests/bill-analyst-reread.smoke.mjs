@@ -15,9 +15,9 @@ const route = readFileSync(new URL("../app/api/bills/[id]/route.ts", import.meta
 assert.match(route, /operation === "reread-analyst"[\s\S]*extractAnalystOnly[\s\S]*createAnalystRefreshVersion/);
 assert.match(route, /export const maxDuration = 300;/);
 const bill = readFileSync(new URL("../app/lib/foundation/real-bill.ts", import.meta.url), "utf8");
-assert.match(bill, /chargeLinesUnread: working\.structuredBill\?\.analystExtractionStatus === "FAILED"/);
+assert.match(bill, /chargeLinesUnread: working\.structuredBill \? working\.structuredBill\.analystExtractionStatus === "FAILED" \|\| \(working\.structuredBill\.economicChargeLines\?\.length \?\? 0\) === 0 : false/);
 const flow = readFileSync(new URL("../app/components/QuickQuoteFlow.tsx", import.meta.url), "utf8");
 assert.match(flow, /Rileggi le voci della bolletta/);
 assert.match(flow, /\{analystRetry\(draft\)\}/);
-assert.match(flow, /\{analystRetry\(quote\.bill\)\}/);
+assert.match(flow, /\{analystRetry\(quote\.bill, quote\.offers\.length > 0 && quote\.offers\.every\(\(item\) => item\.receipt\.status !== "COMPLETE"\)\)\}/);
 console.log("BILL_ANALYST_REREAD=PASS");

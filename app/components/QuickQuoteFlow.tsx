@@ -921,8 +921,9 @@ export default function QuickQuoteFlow({ readonly, showExcluded = false }: { rea
       setStep("review");
     } catch (cause) { setError(`La nuova lettura delle voci non è riuscita. ${message(cause)}`); } finally { setPending(undefined); }
   };
-  const analystRetry = (bill: BillDocumentModel) => bill.chargeLinesUnread || bill.structuredBill?.analystExtractionStatus === "FAILED" ? <div className="inline-warning" role="status">
-    <p>Le voci di spesa di questa bolletta non sono state lette: la seconda lettura non è riuscita. Senza voci di spesa il confronto con la bolletta non si può fare.</p>
+  // Also when every quote shows only the offer (no seller spend read from the bill): the scontrino of the bill was not read.
+  const analystRetry = (bill: BillDocumentModel, offerOnly = false) => bill.chargeLinesUnread || offerOnly || bill.structuredBill?.analystExtractionStatus === "FAILED" ? <div className="inline-warning" role="status">
+    <p>Le voci di spesa dello scontrino di questa bolletta non sono state lette, quindi il confronto con la bolletta non si può fare. Rileggile dal PDF già caricato.</p>
     <button className="button primary" type="button" onClick={() => void rereadAnalyst(bill.id)} disabled={readonly || Boolean(pending)}>{pending === "reread" ? "Lettura delle voci in corso…" : "Rileggi le voci della bolletta"}</button>
   </div> : null;
 
@@ -1000,7 +1001,7 @@ export default function QuickQuoteFlow({ readonly, showExcluded = false }: { rea
           <input type="search" value={billQuery} onChange={(event) => setBillQuery(event.target.value)} placeholder="Cerca per intestatario, fornitore o file" aria-label="Cerca bolletta" disabled={Boolean(pending)} />
           <select value="" onChange={(event) => { if (event.target.value) void openBill(event.target.value); }} disabled={Boolean(pending)} aria-label="Scegli la bolletta"><option value="">Scegli la bolletta</option>{billChoices(archive, billQuery).map((bill) => <option key={bill.id} value={bill.id}>{billLabel(bill)}</option>)}</select>
           <details className="quote-bill-manage"><summary>Cancella bollette caricate</summary>
-            <p className="muted">Le bollette con data di oltre 5 mesi fa vengono eliminate in automatico.</p>
+            <p className="muted">Le bollette con data di oltre 4 mesi fa vengono eliminate in automatico.</p>
             <ul>{billChoices(archive, billQuery).map((bill) => <li key={bill.id}><span>{billLabel(bill)}</span>{deleteId === bill.id
               ? <span className="button-row"><button className="button compact danger" type="button" onClick={() => void deleteBill(bill.id)} disabled={readonly || deleting}>{deleting ? "Cancellazione…" : "Conferma"}</button><button className="button compact secondary" type="button" onClick={() => setDeleteId(null)} disabled={deleting}>Annulla</button></span>
               : <button className="button compact danger" type="button" onClick={() => setDeleteId(bill.id)} disabled={readonly || deleting}>Cancella</button>}</li>)}</ul>
@@ -1015,7 +1016,7 @@ export default function QuickQuoteFlow({ readonly, showExcluded = false }: { rea
       <div className="button-row"><button className="button primary" type="button" onClick={() => void confirm()} disabled={readonly || Boolean(pending)}>{pending === "confirm" ? "Ricerca in corso" : "Cerca le CTE utilizzabili"}</button></div>
     </section> : null}
     {step === "offers" ? pending === "offers" ? <LoadingState label="Calcolo delle offerte per questa bolletta" /> : quote ? <>
-      {analystRetry(quote.bill)}
+      {analystRetry(quote.bill, quote.offers.length > 0 && quote.offers.every((item) => item.receipt.status !== "COMPLETE"))}
       <BillSummary context={quote.context} bill={quote.bill} />
       <section className="ui-card"><h3>Offerte utilizzabili per {quote.context.vector === "EE" ? "questa fornitura di luce" : "questa fornitura di gas"}</h3>
         {visibleOffers.length ? <div className="quote-offers">{visibleOffers.map((offer, index) => <button key={offer.calculation.calculationId} type="button" className={`quote-offer${offer.calculation.calculationId === selectedId ? " selected" : ""}${index === 0 ? " best" : ""}`} onClick={() => { setSelectedId(offer.calculation.calculationId); setProposal(null); }} aria-pressed={offer.calculation.calculationId === selectedId}>
