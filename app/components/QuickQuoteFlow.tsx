@@ -663,13 +663,14 @@ function presentationOf(offer: Offer, receipt: QuoteReceipt, bill: BillDocumentM
     annualSaving, annualCurrent, annualBasisLabel: basisLabel, validUntil: receipt.validUntil,
     rows: receipt.rows.flatMap((row) => [{ label: row.label, current: row.current, offer: row.offer, difference: row.difference ?? null, detail: false }, ...(row.details ?? []).map((item) => ({ label: item.label, current: item.current, offer: item.offer, difference: item.difference, detail: true, ...(item.offer === null && item.missingReason ? { note: `non calcolato: ${item.missingReason}` } : {}) }))]).slice(0, 80),
     comparison: offerBoxRows(offer, bill, context).map(([label, current, simulated]) => ({ label, bill: nodeText(current), offer: nodeText(simulated) })).slice(0, 20),
-    excluded: (receipt.excluded ?? []).slice(0, 20),
+    // Tony (1/11): "semplificare per evitare domande e confusione": the customer's proposal never lists them.
+    excluded: [],
   };
 }
 
 // VAT rates the agent can apply to the new offer when the company qualifies for a reduced rate (e.g. 10% for some business uses).
 const VAT_CHOICES = [0.22, 0.1, 0.05, 0.04] as const;
-function Receipt({ offer: quoted, today, business, context, bill, onPresentation }: { readonly offer: Offer; readonly today: string; readonly business: boolean; readonly context: Context; readonly bill: BillDocumentModel; readonly onPresentation?: (presentation: ProposalPresentation) => void }): ReactNode {
+function Receipt({ offer: quoted, today, business, context, bill, onPresentation, showExcluded = false }: { readonly showExcluded?: boolean; readonly offer: Offer; readonly today: string; readonly business: boolean; readonly context: Context; readonly bill: BillDocumentModel; readonly onPresentation?: (presentation: ProposalPresentation) => void }): ReactNode {
   const [offerVatRate, setOfferVatRate] = useState<number | null>(null);
   const receipt = offerVatRate === null ? quoted.receipt : buildQuoteReceipt({ vector: quoted.calculation.vector, offerSupplyCost: quoted.calculation.totalCommercialCost.amount, analysis: bill.analystReview.economics.economicAnalysis, domestic: context.classification.domestic, validUntil: quoted.candidate.validity.periodEnd, offerComponents: quoted.calculation.components, warnings: quoted.calculation.warnings, offerVatRate, householdSpread: householdSpreadOf(context, quoted.calculation), commercialDiscount: quoted.discount ?? null });
   const offer: Offer = { ...quoted, receipt };
@@ -718,7 +719,8 @@ function Receipt({ offer: quoted, today, business, context, bill, onPresentation
       </tr>)])}</tbody>
       {receipt.status === "COMPLETE" ? <tfoot><tr><th scope="row">{receipt.taxesIncluded ? "Totale" : "Totale imposte escluse"}</th><td>{euro(receipt.currentTotal)}</td><td>{euro(receipt.offerTotal)}</td><td className={difference(receipt.savings === null ? null : -receipt.savings)}>{signedEuro(receipt.savings === null ? null : -receipt.savings)}</td></tr></tfoot> : null}
     </table></div>
-    {receipt.excluded?.length ? <div className="quote-excluded"><strong>Partite escluse dal confronto</strong><ul>{receipt.excluded.map((item, index) => <li key={index}>{item.label}: {euro(item.amount)}</li>)}</ul></div> : null}
+    {/* Tony (1/11): "questi dati non facciamoli vedere a tutti se vuole solo amministratore. creano confusione": only the company administrator sees them. */}
+    {showExcluded && receipt.excluded?.length ? <div className="quote-excluded"><strong>Partite escluse dal confronto</strong><ul>{receipt.excluded.map((item, index) => <li key={index}>{item.label}: {euro(item.amount)}</li>)}</ul></div> : null}
     {/* The same totals by ARERA quota (consumi, fissa, potenza), for the scontrino dell'energia of the revised Bolletta 2.0. */}
     <details className="quote-detail">
       <summary>Riepilogo per quote (quota energia, quota fissa, quota potenza)</summary>
@@ -746,7 +748,7 @@ function Receipt({ offer: quoted, today, business, context, bill, onPresentation
   </section>;
 }
 
-export default function QuickQuoteFlow({ readonly }: { readonly readonly: boolean }): ReactNode {
+export default function QuickQuoteFlow({ readonly, showExcluded = false }: { readonly readonly: boolean; readonly showExcluded?: boolean }): ReactNode {
   const [step, setStep] = useState<Step>("bill");
   const [pending, setPending] = useState<Pending>();
   const [error, setError] = useState<string>();
@@ -933,7 +935,7 @@ export default function QuickQuoteFlow({ readonly }: { readonly readonly: boolea
         {quote.failure ? <CtePicker quote={quote} onPick={(archiveId) => void pickCte(archiveId)} disabled={readonly || Boolean(pending)} /> : null}
         {quote.offers.length || quote.failure ? null : <><EmptyState title="Nessuna offerta utilizzabile" detail="Nessuna CTE a te assegnata è adatta a questa bolletta. Chiedi all'amministratore di assegnartene una." /><NoOfferReasons quote={quote} onAuthorize={readonly ? undefined : authorizeCte} /></>}
       </section>
-      {selected ? <><Receipt offer={selected} today={today} business={quote.context.customerType === "NON_RESIDENTIAL"} context={quote.context} bill={quote.bill} onPresentation={keepPresentation} /><div className="button-row"><button className="button primary" type="button" onClick={() => void saveProposal()} disabled={readonly || Boolean(pending)}>{pending === "proposal" ? "Preparazione" : "Scarica la proposta in PDF"}</button>{proposal ? <span className="muted" role="status">Proposta salvata in Proposte.</span> : null}</div></> : null}
+      {selected ? <><Receipt offer={selected} today={today} business={quote.context.customerType === "NON_RESIDENTIAL"} context={quote.context} bill={quote.bill} onPresentation={keepPresentation} showExcluded={showExcluded} /><div className="button-row"><button className="button primary" type="button" onClick={() => void saveProposal()} disabled={readonly || Boolean(pending)}>{pending === "proposal" ? "Preparazione" : "Scarica la proposta in PDF"}</button>{proposal ? <span className="muted" role="status">Proposta salvata in Proposte.</span> : null}</div></> : null}
     </> : null : null}
     {error ? <ErrorState message={error} /> : null}
   </div>;
