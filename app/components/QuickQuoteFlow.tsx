@@ -393,18 +393,20 @@ function CtePicker({ quote, onPick, disabled }: { readonly quote: Quote; readonl
 }
 
 // Tony (1/11, "azienda protetta deve costare più di bsmart, ha uno spread più alto ... un'altro la analizza simulando e
-// correggendo eventuali orrori di lettura"): the simulated offers are checked against each other. Two indexed CTEs of the
-// same supplier and index: the one with the higher spread and a PCV not lower must not cost less. Offers moved by the
-// commercial discount are left out, since the discount sets their total.
+// correggendo eventuali orrori di lettura"): the simulated offers are checked against each other. Transport, oneri and the
+// other regulated items are the same whatever the CTE, so the offer with the higher seller spend (spread, commercializzazione,
+// sbilanciamento, capacity libero, PCV...) must cost more. The spread alone is not enough: Be Smile 11.25 has a lower spread
+// than Azienda Protetta but adds commercializzazione 0,003, sbilanciamento 0,005 and capacity libero 0,0075 €/kWh (Tony,
+// 1/11: "non è possibile devi verificare"). Offers moved by the commercial discount are left out.
 function incoherentOffers(offers: readonly Offer[]): readonly string[] {
   const total = (offer: Offer) => offer.receipt.offerTotal ?? offer.receipt.rows[0]?.offer ?? null;
+  const seller = (offer: Offer) => offer.receipt.quotas?.reduce((sum, quota) => sum + (quota.offerSeller ?? 0), 0) ?? null;
   const discounted = (offer: Offer) => offer.receipt.rows.some((row) => (row.details ?? []).some((item) => item.key === "COMPANY_DISCOUNT"));
   const issues: string[] = [];
   for (const dear of offers) for (const cheap of offers) {
-    const a = dear.candidate.terms; const b = cheap.candidate.terms; const ta = total(dear); const tb = total(cheap);
-    if (dear === cheap || !a || !b || a.spread === null || b.spread === null || ta === null || tb === null || discounted(dear) || discounted(cheap)) continue;
-    if (dear.supplier !== cheap.supplier || (dear.candidate.pricingReference ?? "PUN") !== (cheap.candidate.pricingReference ?? "PUN")) continue;
-    if (a.spread > b.spread + 1e-9 && (a.monthlyFixedFee ?? 0) >= (b.monthlyFixedFee ?? 0) && ta < tb - 0.5) issues.push(`${dear.offerName} (spread ${RATE.format(a.spread)}) costa meno di ${cheap.offerName} (spread ${RATE.format(b.spread)}): controllare la lettura delle due CTE`);
+    const ta = total(dear); const tb = total(cheap); const sa = seller(dear); const sb = seller(cheap);
+    if (dear === cheap || ta === null || tb === null || sa === null || sb === null || discounted(dear) || discounted(cheap)) continue;
+    if (sa > sb + 0.5 && ta < tb - 0.5) issues.push(`${dear.offerName} ha costi di vendita più alti di ${cheap.offerName} (${euro(sa)} contro ${euro(sb)}) ma un totale più basso: controllare il calcolo delle due offerte`);
   }
   return issues;
 }

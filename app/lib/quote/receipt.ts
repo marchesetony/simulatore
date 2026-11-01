@@ -210,6 +210,11 @@ const otherItems = (input: QuoteReceiptInput): readonly BillLine[] => (input.ana
 // the bill's own total (168,42 €) and the bonus still moves nothing in the comparison ("il bonus non va considerato").
 const bonusOf = (input: QuoteReceiptInput): number => sumKnown((input.analysis?.components ?? []).filter((line) => line.classification === "BONUS" && !line.aggregate && line.includedInReconciliation !== false).map((line) => amountOf(line.amount))) ?? 0;
 const isReactive = (line: BillLine): boolean => line.classification !== "RICALCOLI" && /reattiv/i.test(`${line.description} ${line.rawDescription ?? ""}`);
+// Tony (1/11, "Addebito CTS-Corrispettivo Tariffario Specifico: 42,46 €" listed as excluded: "se è una voce che compare nella
+// fattura deve essere inserita come costo"). The CTS is a distribution charge billed whoever the seller is: like reactive
+// energy it is carried to both columns in the network spend, so the totals hold it and it moves nothing between offers.
+const isCts = (line: BillLine): boolean => line.classification !== "RICALCOLI" && /\bCTS\b|corrispettivo tariffario specifico/i.test(`${line.description} ${line.rawDescription ?? ""}`);
+const isNetworkPassThrough = (line: BillLine): boolean => isReactive(line) || isCts(line);
 
 // Charges the bill and the CTE both name, so each one is compared on its own line and never hidden in an aggregate (Tony, 26/10).
 const DETAIL_LABEL: Readonly<Record<string, string>> = {
@@ -404,7 +409,7 @@ function withDetails(input: QuoteReceiptInput, rows: readonly QuoteReceiptRow[],
         return [[quota ?? "OTHER", label(quota), value, official.length ? null : value] as const];
       }),
       ...official.map((component) => { const quota = regulatedQuota(component); return [quota, label(quota), null, signed(component)] as const; }),
-      ...(side === "NETWORK" ? otherItems(input).filter(isReactive).map((line) => ["REACTIVE", DETAIL_LABEL.REACTIVE, amountOf(line.amount), amountOf(line.amount)] as const) : []),
+      ...(side === "NETWORK" ? otherItems(input).filter(isNetworkPassThrough).map((line) => isCts(line) ? ["CTS", line.description, amountOf(line.amount), amountOf(line.amount)] as const : ["REACTIVE", DETAIL_LABEL.REACTIVE, amountOf(line.amount), amountOf(line.amount)] as const) : []),
     ]);
   };
   const excise = sumKnown(components.filter((line) => line.classification === "ACCISE").map((line) => amountOf(line.amount)));
@@ -471,14 +476,14 @@ function buildReceipt(input: QuoteReceiptInput): QuoteReceipt {
   const totals = input.analysis?.totals ?? null;
   const currentEnergy = totals ? sumKnown([totals.sellerEnergyTotal, totals.sellerCommercializationTotal, totals.sellerOtherTotal]) : null;
   const billNetwork = totals?.regulatedNetworkTotal ?? null;
-  const reactive = sumKnown(otherItems(input).filter(isReactive).map((line) => amountOf(line.amount)));
+  const reactive = sumKnown(otherItems(input).filter(isNetworkPassThrough).map((line) => amountOf(line.amount)));
   const network = billNetwork === null && reactive === null ? null : cents((billNetwork ?? 0) + (reactive ?? 0));
   const system = totals?.systemChargesTotal ?? null;
   // Prior-period adjustments are one item, as in the bill's own summary ("Ricalcoli").
   const recalculations = otherItems(input).filter((line) => line.classification === "RICALCOLI");
   const excluded = [
     ...(recalculations.length ? [{ label: "Ricalcoli e conguagli dei mesi precedenti", amount: cents(recalculations.reduce((total, line) => total + (amountOf(line.amount) ?? 0), 0)) }] : []),
-    ...otherItems(input).filter((line) => !isReactive(line) && line.classification !== "RICALCOLI" && line.classification !== "BONUS").map((line) => ({ label: line.description, amount: amountOf(line.amount) ?? 0 })),
+    ...otherItems(input).filter((line) => !isNetworkPassThrough(line) && line.classification !== "RICALCOLI" && line.classification !== "BONUS").map((line) => ({ label: line.description, amount: amountOf(line.amount) ?? 0 })),
   ];
   const officialNetwork = officialOf(input, "NETWORK");
   const officialSystem = officialOf(input, "SYSTEM");
