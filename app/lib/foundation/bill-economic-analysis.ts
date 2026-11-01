@@ -36,7 +36,10 @@ export interface BillEconomicTotals {
   readonly currentInvoiceAtomicTotal: number | null; readonly currentInvoiceAggregateTotal: number | null; readonly fiscalTotal: number | null; readonly extraordinaryTotal: number | null;
   readonly totalExcludingTvFee: number | null; readonly totalToPay: number | null; readonly previousDebtIncludedInCurrentInvoiceTotal: boolean | null;
   readonly reconciliationStatus: "RECONCILED" | "DIFFERENCE" | "NOT_RECONCILABLE";
+  /** The quadro sintetico as printed (the bill's "scontrino"): the primary source of the bill column (Tony, 1/11). */
+  readonly printedSummary?: BillPrintedSummary;
 }
+export interface BillPrintedSummary { readonly seller: number | null; readonly networkAndSystem: number | null; readonly taxes: number | null; }
 
 export interface BillEconomicAnalysis {
   readonly priceType: "INDEXED_PUN_SPREAD" | "FIXED_PRICE" | "OTHER_INDEX" | "MIXED_FORMULA" | "NOT_DETERMINABLE";
@@ -367,6 +370,33 @@ function quotaTotals(items: readonly BillEconomicComponent[]): readonly BillEcon
   }
   return items.map((item) => replaced.get(item.lineId) ?? item);
 }
+// Tony (1/11): "la bolletta si compone di uno scontrino che riassume tutti i costi addebitati [...] devi inserire nel calcolo
+// principalmente le voci dello scontrino energetico prevista dal regolamento commerciale secondo le delibere ARERA. non
+// inventare nulla attenersi all'originale". The quadro sintetico (Bolletta 2.0, delibera 501/2014/R/com) prints, per quota,
+// "di cui spesa per la vendita" and "di cui spesa per la rete e gli oneri generali di sistema", then "Accise e IVA". These
+// printed values are read as they are, whatever the detail pages say; each quota counts once.
+function printedSummary(items: readonly BillEconomicComponent[]): BillPrintedSummary {
+  const printed = (item: BillEconomicComponent) => numberFrom(item.rawAmount || item.amount);
+  const perQuota = (matcher: (label: string) => boolean, derived = false): number | null => {
+    const seen = new Map<SummaryQuota, number>();
+    for (const item of items) {
+      // A quota printed as total and vendita only: its rete e oneri is the difference (see quotaTotals), still printed money.
+      if (derived && item.code === "NETWORK_AND_SYSTEM_FROM_TOTAL") { const quota = quotaOfKey(keyOf(item.description.replace(/^.*\(([^)]*)\).*$/, "$1"))) ?? "CONSUMPTION"; const value = numberFrom(item.amount); if (value !== null && !seen.has(quota)) seen.set(quota, value); continue; }
+      const label = blockLabel(item.rawDescription || item.description);
+      const value = printed(item);
+      if (value === null || !label.startsWith("DI_CUI") || !matcher(label)) continue;
+      const quota = summaryQuota({ ...item, description: item.rawDescription || item.description });
+      if (!seen.has(quota)) seen.set(quota, value);
+    }
+    return seen.size ? round([...seen.values()].reduce((total, value) => total + value, 0)) : null;
+  };
+  const box = (label: string) => label.startsWith("DI_CUI_SPESA_PER_LA_QUOTA") || label.startsWith("DI_CUI_QUOTA_SPESA");
+  const offerTotal = items.find((item) => keyOf(item.rawDescription || item.description).startsWith("TOTALE_SPESA_DOVUTA"));
+  const seller = perQuota((label) => /RETE/.test(label) ? false : /VENDITA/.test(label) && !box(label)) ?? (offerTotal ? printed(offerTotal) : null);
+  const networkAndSystem = perQuota((label) => /RETE_E_(GLI_)?ONERI/.test(label), true);
+  const taxLine = items.find((item) => keyOf(item.rawDescription || item.description) === "ACCISE_E_IVA" && printed(item) !== null);
+  return { seller, networkAndSystem, taxes: taxLine ? printed(taxLine) : null };
+}
 const reconcilable = (i: BillEconomicComponent): boolean => i.classification !== "CANONE_RAI" && i.classification !== "BILL_TOTAL" && i.classification !== "AMOUNT_DUE" && i.classification !== "PRIOR_BALANCE" && i.classification !== "TAX_SUBTOTAL";
 
 function ownership(components: readonly BillEconomicComponent[]): readonly BillEconomicComponent[] {
@@ -407,7 +437,10 @@ export function buildCurrentBillEconomicAnalysis(inputs: readonly BillEconomicCo
   if (hasExpandedAtomicBreakdown) components = components.map((item) => isDuplicatedSectionSummary(item) ? { ...item, accountingRole: "DETAIL_INCLUDED_IN_SUBTOTAL", includedInReconciliation: false } : item);
   const periodStart = options.billingPeriodStart ? isoDates(options.billingPeriodStart)[0] ?? options.billingPeriodStart.slice(0, 10) : null;
   if (periodStart) components = components.map((item) => { const end = isoDates(item.period ?? item.rawPeriod).at(-1); return end !== undefined && end < periodStart && item.group !== "TAX" ? asRecalculation(item) : item; });
-  components = networkFromSummary(systemChargeViews(quotaTotals(components)));
+  components = quotaTotals(components);
+  // Read before the transport is split from the oneri: the summary as the bill prints it.
+  const summary = printedSummary(components);
+  components = networkFromSummary(systemChargeViews(components));
   // Tony (1/11, bolletta Duferco: "ma dove sono i dati con gli importi della bolletta"): the quadro sintetico printed only
   // "Accise e IVA 69,48 €", with no excise or VAT line of its own. That line is then the bill's taxes, not a summary to drop.
   // When only the excise is detailed (Duferco: "Addizionale Erariale 9,26 €"), the VAT is the printed "Accise e IVA" less it.
@@ -437,5 +470,6 @@ export function buildCurrentBillEconomicAnalysis(inputs: readonly BillEconomicCo
   return { priceType: priceType(components), components, currentSellerCostBreakdown: seller, regulatedAndSystemCosts, taxesAndOtherItems, totals: {
     sellerEnergyTotal: sum(seller.ENERGY_PRICE), sellerCommercializationTotal: sum(seller.COMMERCIALIZATION), sellerOtherTotal: [seller.DISPATCHING_OR_PASS_THROUGH, seller.CAPACITY_MARKET, seller.OTHER_SELLER_CHARGES].flat().length ? sum([...seller.DISPATCHING_OR_PASS_THROUGH, ...seller.CAPACITY_MARKET, ...seller.OTHER_SELLER_CHARGES]) : null,
     regulatedNetworkTotal: sum(regulatedAndSystemCosts.ARERA_NETWORK), systemChargesTotal: sum(regulatedAndSystemCosts.ARERA_SYSTEM_CHARGES), taxTotal: fiscalTotal, otherItemsTotal: sum(taxesAndOtherItems.OTHER_ITEMS.filter((item) => item.classification !== "CANONE_RAI")), reconstructedCurrentSupplyTotal, currentPeriodTotal, priorBalanceTotal: priorBalance, tvFeeTotal, billTotal: sourceTotal, amountDue, currentBillReconstructedTotal: currentPeriodTotal, reconciliationDifference, currentInvoiceAtomicTotal: reconstructedCurrentSupplyTotal, currentInvoiceAggregateTotal: currentPeriodTotal, fiscalTotal, extraordinaryTotal, totalExcludingTvFee, totalToPay, previousDebtIncludedInCurrentInvoiceTotal, reconciliationStatus: reconciliationDifference === null ? "NOT_RECONCILABLE" : Math.abs(reconciliationDifference) <= 0.02 ? "RECONCILED" : "DIFFERENCE",
+    printedSummary: { ...summary, taxes: summary.taxes ?? printedSummary(components).taxes },
   } };
 }

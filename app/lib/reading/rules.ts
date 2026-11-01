@@ -60,6 +60,8 @@ export const READING_RULES: readonly ReadingRule[] = [
     text: "\"VARIABLE\", \"prezzo variabile\" o indice + spread = offerta indicizzata. Leggi l'indice (PUN o PSV) e lo spread in €/kWh o €/Smc." },
   { id: "BILL_REGULATORY_GROUPING", uses: ["BILL"], origin: "Tony 1/11, CTS in altre partite",
     text: "I venditori scrivono e raggruppano le voci nei modi più disparati: assegna ogni voce al gruppo previsto dalla regolazione ARERA (vendita, rete, oneri di sistema, imposte, altre partite), diverso tra clienti domestici e business, in base a cosa è e non a dove o come la bolletta la stampa. Un corrispettivo del venditore stampato tra le \"altre partite\" (es. \"Addebito CTS - Corrispettivo Tariffario Specifico\") è spesa per la vendita." },
+  { id: "BILL_SUMMARY_FIRST", uses: ["BILL"], origin: "Tony 1/11, scontrino della bolletta",
+    text: "Il quadro sintetico è lo scontrino della bolletta e riassume tutti i costi addebitati, comprese more e CMOR: leggi sempre per primi, esattamente come stampati, ogni \"Quota ...\" con i suoi \"di cui spesa per la vendita\" e \"di cui spesa per la rete e gli oneri generali di sistema\", \"Accise e IVA\" (o Totale imposte), le altre partite e il Totale bolletta. Il dettaglio serve solo a ripartire, mai a sostituire questi importi. Non inventare nulla." },
   { id: "CTE_LOSSES", uses: ["CTE"], origin: "Tony 28/10 e 29/10",
     text: "Segna se spread e corrispettivi sono \"al lordo\" o \"al netto\" delle perdite di rete, voce per voce." },
   { id: "CTE_FEES", uses: ["CTE"], origin: "Tony 31/10, Be Smile",

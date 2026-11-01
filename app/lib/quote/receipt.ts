@@ -467,8 +467,27 @@ function summaryNetworkToSeller(input: QuoteReceiptInput): { readonly input: Quo
   return { moved, input: { ...input, analysis: { ...analysis, components: analysis.components.map((line) => replaced.get(line.lineId) ?? line), totals: { ...totals, sellerEnergyTotal: cents((totals.sellerEnergyTotal ?? 0) + moved), regulatedNetworkTotal: totals.regulatedNetworkTotal === null ? null : cents(totals.regulatedNetworkTotal - moved) } } } };
 }
 
+// Tony (1/11, "attenersi all'originale"): the bill column follows the quadro sintetico as printed. When the lines read from
+// the detail give another spesa per la vendita, rete e oneri or imposte, the printed summary wins; the transport is then the
+// printed rete e oneri less the oneri read, the same split the bill uses.
+function anchoredToPrintedSummary(input: QuoteReceiptInput): QuoteReceiptInput {
+  const analysis = input.analysis;
+  const printed = analysis?.totals.printedSummary;
+  if (!analysis || !printed) return input;
+  const totals = analysis.totals;
+  const differs = (a: number | null, b: number | null) => a !== null && (b === null || Math.abs(a - b) > 0.02);
+  const seller = sumKnown([totals.sellerEnergyTotal, totals.sellerCommercializationTotal, totals.sellerOtherTotal]);
+  const reactive = sumKnown(otherItems(input).filter(isNetworkPassThrough).map((line) => amountOf(line.amount)));
+  const regulated = sumKnown([totals.regulatedNetworkTotal, totals.systemChargesTotal]);
+  const next = { ...totals };
+  if (differs(printed.seller, seller)) Object.assign(next, { sellerEnergyTotal: cents((printed.seller ?? 0) - (totals.sellerCommercializationTotal ?? 0) - (totals.sellerOtherTotal ?? 0)) });
+  if (differs(printed.networkAndSystem, regulated) && differs(printed.networkAndSystem, regulated === null ? null : cents(regulated + (reactive ?? 0)))) Object.assign(next, { regulatedNetworkTotal: cents((printed.networkAndSystem ?? 0) - (totals.systemChargesTotal ?? 0)) });
+  if (differs(printed.taxes, totals.taxTotal)) Object.assign(next, { taxTotal: printed.taxes, fiscalTotal: printed.taxes });
+  return next === totals || JSON.stringify(next) === JSON.stringify(totals) ? input : { ...input, analysis: { ...analysis, totals: next } };
+}
+
 export function buildQuoteReceipt(original: QuoteReceiptInput): QuoteReceipt {
-  const { input, moved } = summaryNetworkToSeller(original);
+  const { input, moved } = summaryNetworkToSeller(anchoredToPrintedSummary(original));
   const receipt = withCommercialDiscount(buildReceipt(input), original.commercialDiscount);
   if (!moved) return receipt;
   const note = `in bolletta comprende ${moved.toFixed(2).replace(".", ",")} € che la pagina sintetica mette nella spesa per la rete: la rete addebitata è il valore ARERA, come nella fattura di dettaglio`;
