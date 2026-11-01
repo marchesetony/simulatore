@@ -328,6 +328,8 @@ function estimatedFromPeriod(context: Context, ee: boolean): string {
 function readGap(bill: BillDocumentModel): string {
   const totals = bill.analystReview?.economics?.economicAnalysis?.totals;
   if (!totals || totals.billTotal === null || totals.reconstructedCurrentSupplyTotal === null) return "";
+  // Tony (1/11, "lette 8.290.000.923.000.068,00 €": "incomprensibile"): an impossible sum is never printed as if it were real.
+  if (Math.abs(totals.reconstructedCurrentSupplyTotal - totals.billTotal) > Math.max(1000, Math.abs(totals.billTotal) * 5)) return " (una voce della bolletta è stata letta male: ricaricala per una nuova lettura)";
   return ` (lette ${euro(totals.reconstructedCurrentSupplyTotal)} su ${euro(totals.billTotal)}, differenza ${euro(totals.reconstructedCurrentSupplyTotal - totals.billTotal)})`;
 }
 

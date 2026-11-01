@@ -1,3 +1,5 @@
+// @ts-expect-error Node's strip-only test runner requires the explicit extension.
+import { amountToken } from "./amount-token.ts";
 export const BILL_ECONOMIC_CLASSIFICATIONS = [
   "ENERGY_INDEX", "ENERGY_SPREAD", "ENERGY_FIXED_PRICE", "PCV", "COMMERCIALIZATION_FIXED_FEE", "COMMERCIALIZATION_VARIABLE_FEE", "SELLER_FIXED_FEE", "SELLER_ENERGY_FEE",
   "NETWORK_LOSS_CHARGE", "DISPATCHING_SELLER_CHARGE", "CAPACITY_MARKET_SELLER_CHARGE", "BALANCING_CHARGE", "OTHER_SELLER_ENERGY_CHARGE", "OTHER_SELLER_FIXED_CHARGE",
@@ -49,7 +51,7 @@ const text = (value: string | number | null | undefined): string => value === nu
 const keyOf = (value: string | null | undefined): string => text(value).toUpperCase().replace(/[^A-Z0-9]+/g, "_").replace(/^_+|_+$/g, "");
 const numberFrom = (value: string | number | null | undefined): number | null => {
   if (typeof value === "number") return Number.isFinite(value) ? value : null;
-  const token = text(value).replace(/\s/g, "").replace(/[^0-9,.+%-]/g, "").replace(/%$/, "");
+  const token = (amountToken(text(value)) ?? "").replace(/[^0-9,.+%-]/g, "").replace(/%$/, "");
   if (!token) return null;
   const normalized = token.includes(",") ? token.replace(/\./g, "").replace(",", ".") : token.split(".").length > 2 ? token.replace(/\./g, "") : token;
   const valueNumber = Number(normalized);

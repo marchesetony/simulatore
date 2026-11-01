@@ -1,4 +1,6 @@
 // @ts-expect-error Node's strip-only test runner requires the explicit extension.
+import { amountToken } from "../foundation/amount-token.ts";
+// @ts-expect-error Node's strip-only test runner requires the explicit extension.
 import { commercialDiscountAmount, type CommercialDiscountPolicy } from "../company/discount.ts";
 import type { BillEconomicAnalysis } from "../foundation/bill-economic-analysis";
 import type { BillRegulatoryAuditDTO } from "../foundation/bill-regulatory-audit";
@@ -92,7 +94,7 @@ export function withCommercialDiscount(receipt: QuoteReceipt, policy: QuoteRecei
 const cents = (value: number): number => Math.round((value + Number.EPSILON) * 100) / 100;
 const amountOf = (value: string | null | undefined): number | null => {
   if (value === null || value === undefined) return null;
-  const token = String(value).replace(/\s/g, "").replace(/[^0-9,.-]/g, "");
+  const token = (amountToken(String(value)) ?? "").replace(/[^0-9,.-]/g, "");
   if (!token) return null;
   const parsed = Number(token.includes(",") ? token.replace(/\./g, "").replace(",", ".") : token);
   return Number.isFinite(parsed) ? parsed : null;
