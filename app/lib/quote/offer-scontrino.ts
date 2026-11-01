@@ -73,3 +73,37 @@ export function offerScontrino(input: { readonly quotas: readonly QuoteReceiptQu
   if (outside) lines.push({ kind: "sub", label: `di cui fuori dal confronto (altre partite): ${outside.toFixed(2).replace(".", ",")} €; totale confrontato ${(input.offerTotal ?? cents(placed - outside)).toFixed(2).replace(".", ",")} €`, amount: null });
   return lines;
 }
+
+export interface ScontrinoSide { readonly quantity?: string; readonly price?: string; readonly amount: number | null }
+export interface ScontrinoPairRow { readonly kind: ScontrinoLine["kind"]; readonly label: string; readonly bill: ScontrinoSide | null; readonly offer: ScontrinoSide | null }
+
+/**
+ * Tony (1/11, "devi allineare le righe per leggere meglio il paragone"): the bill's scontrino and the offer's side by side in
+ * one table, the same voce on the same row. A voce found on one side only (altre partite, sconto aziendale) keeps its place
+ * and leaves the other side empty.
+ */
+export function pairScontrini(bill: readonly ScontrinoLine[], offer: readonly ScontrinoLine[]): readonly ScontrinoPairRow[] {
+  const keyed = (lines: readonly ScontrinoLine[]) => {
+    let section = ""; let main = 0;
+    return lines.map((line) => {
+      if (line.kind === "section") { section = line.label; main = 0; }
+      const key = line.kind === "section" ? `S|${line.label}` : line.kind === "main" ? `M|${section}|${main++}` : line.kind === "sub" ? `B|${section}|${main}|${line.label.replace(/:.*$/, "")}` : line.kind === "total" ? "T" : `I|${line.label}`;
+      return { key, line };
+    });
+  };
+  const left = keyed(bill); const right = keyed(offer);
+  const order = left.map((item) => item.key);
+  let after = -1;
+  for (const item of right) {
+    const at = order.indexOf(item.key);
+    if (at >= 0) { after = at; continue; }
+    // Items and notes under the total stay after the matching row; anything else goes right after the last shared row.
+    order.splice(after + 1, 0, item.key); after += 1;
+  }
+  const side = (line: ScontrinoLine | undefined): ScontrinoSide | null => line ? { quantity: line.quantity, price: line.price, amount: line.amount } : null;
+  return order.map((key) => {
+    const b = left.find((item) => item.key === key)?.line; const o = right.find((item) => item.key === key)?.line;
+    const line = (b ?? o) as ScontrinoLine;
+    return { kind: line.kind, label: line.kind === "main" ? (b?.quantity ?? o?.quantity ?? "") : line.label, bill: side(b), offer: side(o) };
+  });
+}

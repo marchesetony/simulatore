@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { billedMonths, offerScontrino } from "../app/lib/quote/offer-scontrino.ts";
+import { billedMonths, offerScontrino, pairScontrini } from "../app/lib/quote/offer-scontrino.ts";
 
 // Tony (1/11, "queste le voci che dobbiamo avere visibili nell'offerta come una fattura reale, poi il dettaglio con il
 // paragone"): the offer as the ARERA "Scontrino dell'energia" (facsimile Figura 1: 400 kWh x 0,18 = 72,00 of which 44,00
@@ -59,4 +59,21 @@ console.log("OFFER_SCONTRINO_PDF=PASS");
   assert.match(flow, /Scontrino della bolletta attuale/);
   assert.match(flow, /side: "current"/);
   console.log("BILL_SCONTRINO=PASS");
+}
+
+// Tony (1/11, "devi allineare le righe per leggere meglio il paragone"): bill and offer share one table, the same voce on the
+// same row; a voce on one side only keeps its row with the other side empty.
+{
+  const quotas = [{ key: "CONSUMPTION", current: 797.67, offer: 788.68, currentSeller: 668.46, offerSeller: 659.47 }, { key: "FIXED", current: 17.31, offer: 18.81, currentSeller: 13.5, offerSeller: 15 }, { key: "POWER", current: 67.39, offer: 67.39, currentSeller: 0, offerSeller: 0 }, { key: "TAXES", current: 239.48, offer: 239, currentSeller: null, offerSeller: null }];
+  const bill = offerScontrino({ quotas, offerTotal: 1121.85, taxesIncluded: true, vector: "EE", quantity: 2642, months: 1, powerKw: 15, side: "current", excluded: [{ label: "Altre partite", amount: 403.86 }] });
+  const offer = offerScontrino({ quotas, offerTotal: 1110, taxesIncluded: true, vector: "EE", quantity: 2642, months: 1, powerKw: 15, discount: -5 });
+  const rows = pairScontrini(bill, offer);
+  const row = (label) => rows.find((item) => item.label === label);
+  assert.deepEqual([row("2.642 kWh").bill.amount, row("2.642 kWh").offer.amount], [797.67, 793.68]);
+  assert.equal(rows.filter((item) => item.label === "di cui spesa per la vendita di energia elettrica").every((item) => item.bill && item.offer), true, "each di cui on one row for both sides");
+  assert.equal(row("Altre partite").offer, null);
+  assert.equal(row("Sconto commerciale aziendale").bill, null);
+  assert.deepEqual([row("Totale bolletta").bill.amount, row("Totale bolletta").offer.amount], [1525.71, 1110]);
+  assert.equal(rows.filter((item) => item.kind === "total").length, 1);
+  console.log("SCONTRINO_PAIR=PASS");
 }

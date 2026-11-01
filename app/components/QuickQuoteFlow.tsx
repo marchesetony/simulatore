@@ -2,7 +2,7 @@
 
 import { isValidElement, useCallback, useEffect, useRef, useState, type ChangeEvent, type ReactNode } from "react";
 import type { ProposalPresentation } from "../lib/proposal/presentation";
-import { billedMonths, offerScontrino, type ScontrinoLine } from "../lib/quote/offer-scontrino";
+import { billedMonths, offerScontrino, pairScontrini, type ScontrinoLine, type ScontrinoPairRow } from "../lib/quote/offer-scontrino";
 import { EmptyState, ErrorState, LoadingState } from "./UiStates";
 import { downloadExport, MAX_UPLOAD_BYTES, requestJson, requestUpload, toUiError } from "../lib/ui/client";
 import { buildQuoteReceipt, effectiveBillSpread, isSameOffer, regulatedVerification, sameOfferDifferences, type QuoteReceipt, type RegulatedDomain } from "../lib/quote/receipt";
@@ -737,6 +737,22 @@ function billOutsideComparison(analysis: BillDocumentModel["analystReview"]["eco
   const sum = items.reduce((acc, item) => acc + item.amount, 0);
   return total !== null && Math.abs(compared + sum - total) <= 0.02 ? items : [];
 }
+// Tony (1/11, "devi allineare le righe per leggere meglio il paragone"): one table, the bill's voce and the offer's on the same row.
+function ScontrinoPairTable({ billTitle, offerTitle, rows }: { readonly billTitle: string; readonly offerTitle: string; readonly rows: readonly ScontrinoPairRow[] }) {
+  const money = (kind: ScontrinoPairRow["kind"], amount: number | null | undefined) => amount === null || amount === undefined ? "" : kind === "total" ? `= ${euro(amount)}` : `${amount < 0 ? "−" : "+"} ${euro(Math.abs(amount))}`;
+  return <div className="offer-scontrino scontrino-compare"><div className="scontrino-scroll"><table>
+    <colgroup><col className="scontrino-col-label" /><col /><col /><col /><col /></colgroup>
+    <thead>
+      <tr><th scope="col" rowSpan={2}>Voce</th><th scope="colgroup" colSpan={2}>{billTitle}</th><th scope="colgroup" colSpan={2} className="scontrino-offer-head">{offerTitle}</th></tr>
+      <tr><th scope="col">Prezzo medio</th><th scope="col">Importi</th><th scope="col" className="scontrino-offer-head">Prezzo medio</th><th scope="col" className="scontrino-offer-head">Importi</th></tr>
+    </thead>
+    <tbody>{rows.map((row, index) => row.kind === "section"
+      ? <tr key={index} className="scontrino-section"><th colSpan={5} scope="rowgroup">{row.label}</th></tr>
+      : <tr key={index} className={`scontrino-${row.kind}`}><th scope="row">{row.kind === "main" ? `${row.label}${row.label ? " x" : ""}` : row.label}</th>
+        <td>{row.bill?.price ?? ""}</td><td>{money(row.kind, row.bill?.amount)}</td>
+        <td className="scontrino-offer">{row.offer?.price ?? ""}</td><td className="scontrino-offer">{money(row.kind, row.offer?.amount)}</td></tr>)}</tbody>
+  </table></div></div>;
+}
 function ScontrinoTable({ title, lines, empty }: { readonly title: string; readonly lines: readonly ScontrinoLine[]; readonly empty?: string }) {
   return <div className="offer-scontrino">
     <h4>{title}</h4>
@@ -798,10 +814,12 @@ function Receipt({ offer: quoted, today, business, context, bill, onPresentation
     {receipt.status === "COMPLETE" ? null : <p className="inline-warning" role="status">La bolletta non riporta la spesa per la vendita di energia: mostriamo solo il costo della nuova offerta.</p>}
     {/* Tony (1/11): the new offer as a real bill's "Scontrino dell'energia" (ARERA facsimile), beside the uploaded bill's own
         scontrino ("dove è lo scontrino della fattura?"), then the comparison. */}
-    <div className="scontrino-pair">
-      <ScontrinoTable title={`Scontrino della bolletta attuale · ${context.currentSupplier}`} lines={billScontrino} empty="Le voci di spesa dello scontrino di questa bolletta non sono state lette: usa «Rileggi le voci della bolletta» in cima alla pagina." />
-      <ScontrinoTable title={`Scontrino della nuova offerta · ${quoted.supplier} · ${quoted.offerName}`} lines={scontrino} />
-    </div>
+    {billScontrino.length
+      ? <ScontrinoPairTable billTitle={`Bolletta attuale · ${context.currentSupplier}`} offerTitle={`Nuova offerta · ${quoted.supplier} · ${quoted.offerName}`} rows={pairScontrini(billScontrino, scontrino)} />
+      : <div className="scontrino-pair">
+        <ScontrinoTable title={`Scontrino della bolletta attuale · ${context.currentSupplier}`} lines={billScontrino} empty="Le voci di spesa dello scontrino di questa bolletta non sono state lette: usa «Rileggi le voci della bolletta» in cima alla pagina." />
+        <ScontrinoTable title={`Scontrino della nuova offerta · ${quoted.supplier} · ${quoted.offerName}`} lines={scontrino} />
+      </div>}
     <h4 className="quote-compare-title">Dettaglio e confronto con la bolletta</h4>
     {/* Scontrino (Tony, 26/10): materia energia, trasporto e gestione del contatore, oneri di sistema, imposte e accise aggregated first,
         then every charge they contain (energia, dispacciamento, capacity, sbilanciamento, PCV, Flex, accise, IVA…) on its own line. */}
