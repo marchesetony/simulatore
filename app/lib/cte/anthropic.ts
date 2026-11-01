@@ -11,7 +11,9 @@ import { normativeGuidance } from "../normative/archive.ts";
 // @ts-expect-error Node's strip-only test runner requires the explicit extension.
 import { documentNumbers } from "../ingestion/document-numeric-evidence.ts";
 // @ts-expect-error Node's strip-only test runner requires the explicit extension.
-import { betterCteReading, cteReadingConfirmed, cteReadingReviewPrompt, cteUnprintedValues } from "./reading-review.ts";
+import { betterCteReading, cteMissedValues, cteReadingConfirmed, cteReadingReviewPrompt, cteUnprintedValues } from "./reading-review.ts";
+// @ts-expect-error Node's strip-only test runner requires the explicit extension.
+import { pdfTextLayer } from "../regulatory-refresh/pdf-text.ts";
 
 export const ANTHROPIC_VERSION = "2023-06-01";
 export const ANTHROPIC_TOOL_NAME = "extract_cte";
@@ -608,6 +610,17 @@ export function parseAnthropicCteResponse(body: unknown): CteProviderExtraction 
   return decodeCteProviderPayload(toolCall.input, { allowLegacy: true });
 }
 
+/** The numbers printed in a decoded text layer, as documentNumbers reads them. */
+function numbersOfText(text: string): ReadonlySet<number> | null {
+  const numbers = new Set<number>();
+  for (const token of text.match(/\d{1,3}(?:\.\d{3})+(?:,\d+)?|\d+(?:[.,]\d+)?/g) ?? []) {
+    const value = /^\d{1,3}(?:\.\d{3})+,\d+$/.test(token) ? Number(token.replace(/\./g, "").replace(",", ".")) : Number(token.replace(",", "."));
+    if (Number.isFinite(value)) numbers.add(Math.round(value * 1e6));
+    if (/^\d{1,3}\.\d{3}$/.test(token)) numbers.add(Math.round(Number(token.replace(".", "")) * 1e6));
+  }
+  return numbers.size ? numbers : null;
+}
+
 export function createAnthropicCteOcrProvider(env: NodeJS.ProcessEnv = process.env, fetcher: FetchLike = fetch): CteOcrProvider {
   const apiKey = env.ANTHROPIC_API_KEY?.trim();
   const model = env.ANTHROPIC_MODEL?.trim();
@@ -624,19 +637,24 @@ export function createAnthropicCteOcrProvider(env: NodeJS.ProcessEnv = process.e
   // the first reading.
   const verified = async (first: CteProviderExtraction, input: { readonly bytes: Uint8Array; readonly contentType: string }, payload: Record<string, unknown>, startedAt: number): Promise<CteProviderExtraction> => {
     let numbers: ReadonlySet<number> | null = null;
-    try { numbers = input.contentType === "application/pdf" ? documentNumbers(input.bytes) : null; } catch { numbers = null; }
+    let text: string | null = null;
+    // BPower CTEs embed fonts only their ToUnicode map decodes: the text layer that applies it gives the real figures.
+    try { const layer = input.contentType === "application/pdf" ? pdfTextLayer(input.bytes) : null; text = layer && layer.status === "AVAILABLE" ? layer.text : null; } catch { text = null; }
+    try { numbers = input.contentType === "application/pdf" ? (text ? numbersOfText(text) : null) ?? documentNumbers(input.bytes) : null; } catch { numbers = null; }
     const issues = cteUnprintedValues(first, numbers);
+    const missed = cteMissedValues(first, text);
     const remaining = CTE_REVIEW_BUDGET_MS - (Date.now() - startedAt);
-    if (cteReadingConfirmed(first, numbers) || remaining < CTE_REVIEW_MIN_MS) return first;
+    if ((cteReadingConfirmed(first, numbers) && !missed.length) || remaining < CTE_REVIEW_MIN_MS) return first;
     const review = abortable(Math.min(remaining, timeoutMs));
     try {
-      const messages = [{ role: "user", content: [documentBlock(input.bytes, input.contentType as CteDocumentContentType), { type: "text", text: cteReadingReviewPrompt(first, issues) }] }];
+      const messages = [{ role: "user", content: [documentBlock(input.bytes, input.contentType as CteDocumentContentType), { type: "text", text: cteReadingReviewPrompt(first, issues, missed) }] }];
       const response = await fetcher(endpoint, { method: "POST", headers: { "x-api-key": apiKey, "anthropic-version": ANTHROPIC_VERSION, "content-type": "application/json" }, body: JSON.stringify({ ...payload, messages }), signal: review.signal });
       if (!response.ok) { console.error(`[CTE_READING_REVIEW_FAILURE] status=${response.status}`); return first; }
       const second = parseAnthropicCteResponse(await response.json());
       const secondIssues = cteUnprintedValues(second, numbers);
-      const kept = betterCteReading(first, issues, second, secondIssues);
-      console.info(`[CTE_READING_REVIEW] unprinted_before=${issues.length} unprinted_after=${secondIssues.length} kept=${kept ? "REVIEWED" : "FIRST"}`);
+      const secondMissed = cteMissedValues(second, text);
+      const kept = betterCteReading(first, issues, second, secondIssues, missed, secondMissed);
+      console.info(`[CTE_READING_REVIEW] unprinted_before=${issues.length} unprinted_after=${secondIssues.length} missed_before=${missed.length} missed_after=${secondMissed.length} kept=${kept ? "REVIEWED" : "FIRST"}`);
       return kept ? second : first;
     } catch (error) {
       console.error(`[CTE_READING_REVIEW_FAILURE] message=${sanitizeProviderText(error instanceof Error ? error.message : "errore")}`);
