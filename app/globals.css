@@ -569,3 +569,5 @@ button:focus-visible,a:focus-visible,input:focus-visible,select:focus-visible,te
 /* Company branding (Tony, 1/11): logo top left, company data bottom centre. */
 .brand-logo { display:block; max-width:160px; max-height:48px; padding:4px 8px; border-radius:10px; background:#fff; object-fit:contain; }
 .company-footer { padding:14px clamp(18px,4vw,56px) 34px; border-top:1px solid var(--line); color:var(--muted); background:#fff; font-size:12px; text-align:center; overflow-wrap:anywhere; }
+
+.quote-unit-price { display:block; font-size:11px; }

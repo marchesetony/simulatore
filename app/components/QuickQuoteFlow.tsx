@@ -709,10 +709,19 @@ function presentationOf(offer: Offer, receipt: QuoteReceipt, bill: BillDocumentM
 
 // VAT rates the agent can apply to the new offer when the company qualifies for a reduced rate (e.g. 10% for some business uses).
 const VAT_CHOICES = [0.22, 0.1, 0.05, 0.04] as const;
+const UNIT_PRICE = new Intl.NumberFormat("it-IT", { minimumFractionDigits: 6, maximumFractionDigits: 6 });
 function Receipt({ offer: quoted, today, business, context, bill, onPresentation, showExcluded = false }: { readonly showExcluded?: boolean; readonly offer: Offer; readonly today: string; readonly business: boolean; readonly context: Context; readonly bill: BillDocumentModel; readonly onPresentation?: (presentation: ProposalPresentation) => void }): ReactNode {
   const [offerVatRate, setOfferVatRate] = useState<number | null>(null);
   const receipt = offerVatRate === null ? quoted.receipt : buildQuoteReceipt({ vector: quoted.calculation.vector, offerSupplyCost: quoted.calculation.totalCommercialCost.amount, analysis: bill.analystReview.economics.economicAnalysis, domestic: context.classification.domestic, validUntil: quoted.candidate.validity.periodEnd, offerComponents: quoted.calculation.components, warnings: quoted.calculation.warnings, offerVatRate, householdSpread: householdSpreadOf(context, quoted.calculation), commercialDiscount: quoted.discount ?? null });
   const offer: Offer = { ...quoted, receipt };
+  // Tony (1/11, "mancano i kwh sulla quale si calcola il costo, serve anche il costo per kwh"): the kWh of the period (same for
+  // both columns) and, on every line priced per kWh, its cost per kWh.
+  const period = context.consumption?.period;
+  const unitName = context.vector === "GAS" ? "Smc" : "kWh";
+  const periodQuantity = !period ? null : context.vector === "GAS" ? period.smc : [period.f1, period.f2, period.f3].every((value) => value === null) ? null : (period.f1 ?? 0) + (period.f2 ?? 0) + (period.f3 ?? 0);
+  const bands = context.vector === "EE" && period && [period.f1, period.f2, period.f3].some((value) => value !== null && value > 0) ? (["F1", "F2", "F3"] as const).map((name, index) => `${name} ${QUANTITY.format([period.f1, period.f2, period.f3][index] ?? 0)}`).join(", ") : "";
+  const PER_UNIT_KEYS = new Set(["ENERGY", "ENERGY_ONLY", "LOSSES", "COMMERCIALIZATION", "DISPATCHING", "CAPACITY", "CAPACITY_CTE", "IMBALANCE", "CONSUMPTION"]);
+  const perUnit = (key: string, amount: number): ReactNode => periodQuantity && periodQuantity > 0 && PER_UNIT_KEYS.has(key) ? <small className="muted quote-unit-price">{UNIT_PRICE.format(amount / periodQuantity)} €/{unitName}</small> : null;
   // Same saving per kWh (or Smc) as on the bill, simulated over 12 months of the annual consumption.
   const basis = annualBasis(context);
   const factor = basis ? basis.annual / basis.billed : null;
@@ -748,13 +757,13 @@ function Receipt({ offer: quoted, today, business, context, bill, onPresentation
     {/* Scontrino (Tony, 26/10): materia energia, trasporto e gestione del contatore, oneri di sistema, imposte e accise aggregated first,
         then every charge they contain (energia, dispacciamento, capacity, sbilanciamento, PCV, Flex, accise, IVA…) on its own line. */}
     <div className="responsive-table"><table className="quote-scontrino">
-      <caption>Periodo della bolletta: {date(context.billingPeriod.periodStart)} – {date(lastSuppliedDay(context.billingPeriod.periodEnd))} · stessi consumi per entrambe le colonne</caption>
+      <caption>Periodo della bolletta: {date(context.billingPeriod.periodStart)} – {date(lastSuppliedDay(context.billingPeriod.periodEnd))} · {periodQuantity !== null ? `${QUANTITY.format(periodQuantity)} ${unitName}${bands ? ` (${bands})` : ""} per entrambe le colonne` : "stessi consumi per entrambe le colonne"}</caption>
       <thead><tr><th scope="col">Voce</th><th scope="col">Bolletta attuale{currentOffer ? <small>{context.currentSupplier} · {currentOffer}</small> : null}</th><th scope="col">CTE simulata<small>{offer.supplier} · {offer.offerName}</small></th><th scope="col">Differenza</th></tr></thead>
       <tbody>{receipt.rows.flatMap((row) => [<tr key={row.key} className={`quote-section-row${row.difference != null && Math.abs(row.difference) >= 0.01 ? " changed" : ""}`}>
         <th scope="row">{row.label}<VerificationNote bill={bill} rowKey={row.key} receipt={receipt} /></th><td>{euro(row.current)}</td><td>{euro(row.offer)}</td><td className={difference(row.difference ?? null)}>{signedEuro(row.difference ?? null)}</td>
       </tr>, ...(row.details ?? []).map((item) => <tr key={`${row.key}-${item.key}`} className={`quote-detail-row${item.difference !== null && Math.abs(item.difference) >= 0.01 ? " changed" : ""}`}>
         <th scope="row">{item.label}{row.key === "ENERGY" && item.current !== null ? <VerificationNote bill={bill} rowKey={item.key} /> : null}</th>
-        <td>{item.current === null ? (item.currentNote ? <small className="muted">{item.currentNote}</small> : receipt.status === "COMPLETE" ? "non in bolletta" : "—") : euro(item.current)}</td><td>{item.offer !== null ? euro(item.offer) : item.missingReason ? <small className="quote-check open">Non calcolato: {item.missingReason}</small> : item.offerNote ? <small className="muted">{item.offerNote}</small> : "non nella CTE"}</td><td className={difference(item.difference)}>{signedEuro(item.difference)}</td>
+        <td>{item.current === null ? (item.currentNote ? <small className="muted">{item.currentNote}</small> : receipt.status === "COMPLETE" ? "non in bolletta" : "—") : <>{euro(item.current)}{perUnit(item.key, item.current)}</>}</td><td>{item.offer !== null ? <>{euro(item.offer)}{perUnit(item.key, item.offer)}</> : item.missingReason ? <small className="quote-check open">Non calcolato: {item.missingReason}</small> : item.offerNote ? <small className="muted">{item.offerNote}</small> : "non nella CTE"}</td><td className={difference(item.difference)}>{signedEuro(item.difference)}</td>
       </tr>)])}</tbody>
       {receipt.status === "COMPLETE" ? <tfoot><tr><th scope="row">{receipt.taxesIncluded ? "Totale" : "Totale imposte escluse"}</th><td>{euro(receipt.currentTotal)}</td><td>{euro(receipt.offerTotal)}</td><td className={difference(receipt.savings === null ? null : -receipt.savings)}>{signedEuro(receipt.savings === null ? null : -receipt.savings)}</td></tr></tfoot> : null}
     </table></div>
