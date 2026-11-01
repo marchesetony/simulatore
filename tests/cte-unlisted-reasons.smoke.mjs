@@ -69,5 +69,6 @@ assert.equal(prepared.candidates.length, 0);
 const { readFileSync } = await import("node:fs");
 const flow = readFileSync(new URL("../app/components/QuickQuoteFlow.tsx", import.meta.url), "utf8");
 assert.match(flow, /NOT_APPROVED: "CTE non ancora approvata in archivio"/);
-assert.match(flow, /const rows = \[\.\.\.evaluated, \.\.\.unlisted\]/);
+// Tony (1/11): the evaluated CTEs are now sorted by customer type and consumption fit, still followed by the unlisted ones.
+assert.match(flow, /const rows = \[\.\.\.\[\.\.\.evaluated\]\.sort\([^\n]*\), \.\.\.unlisted\]/);
 console.log("unlisted cte reasons ok");
