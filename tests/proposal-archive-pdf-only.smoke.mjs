@@ -39,3 +39,17 @@ console.log("proposal archive send and delete ok");
   assert.equal(proposalFileName(""), "proposta.pdf");
   console.log("PROPOSAL_FILENAME=PASS");
 }
+
+// Tony (2/11, "e whatsapp non si attiva"): a proposal whose CTE was deleted from the archive says so on its row and cannot be
+// sent; WhatsApp opens its window on the click and, on a computer, skips the system share sheet that has no WhatsApp.
+{
+  const { readFileSync } = await import("node:fs");
+  const route = readFileSync(new URL("../app/api/proposal/route.ts", import.meta.url), "utf8");
+  assert.match(route, /cteIssue: await cteIssueOf\(/);
+  const shell = readFileSync(new URL("../app/components/OperationalShell.tsx", import.meta.url), "utf8");
+  assert.match(shell, /Non inviabile: /);
+  assert.match(shell, /window\.open\("", "_blank"\)/);
+  const client = readFileSync(new URL("../app/lib/ui/client.ts", import.meta.url), "utf8");
+  assert.match(client, /\(channel === "MAIL" \|\| phone\) && share\?\.canShare/);
+  console.log("PROPOSAL_CTE_ISSUE=PASS");
+}

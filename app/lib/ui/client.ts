@@ -257,7 +257,7 @@ export function proposalFileName(offer: string): string {
  * Tony (1/11, "aggiungi tasto per whatsapp"): channel WHATSAPP opens WhatsApp. On a phone the share sheet carries the PDF
  * itself; where a browser cannot share files, the PDF is downloaded and WhatsApp opens with the text ready, to attach it.
  */
-export async function shareProposalPdf(path: string, payload: unknown, message: { readonly subject: string; readonly body: string; readonly fileName: string }, channel: "MAIL" | "WHATSAPP" = "MAIL"): Promise<"SHARED" | "MAIL" | "WHATSAPP"> {
+export async function shareProposalPdf(path: string, payload: unknown, message: { readonly subject: string; readonly body: string; readonly fileName: string }, channel: "MAIL" | "WHATSAPP" = "MAIL", whatsappWindow: Window | null = null): Promise<"SHARED" | "MAIL" | "WHATSAPP"> {
   const response = await fetch(path, { method: "POST", body: JSON.stringify(payload), credentials: "same-origin", headers: { "content-type": "application/json" } });
   if (!response.ok) {
     const body: unknown = await response.json().catch(() => null);
@@ -269,8 +269,10 @@ export async function shareProposalPdf(path: string, payload: unknown, message: 
   const fileName = safeFilename(proposalFileName(message.fileName.replace(/\.pdf$/i, "").replace(/^proposta-/, "")), ".pdf");
   const file = new File([blob], fileName, { type: "application/pdf" });
   const share = typeof navigator !== "undefined" ? navigator as Navigator & { canShare?: (data: ShareData) => boolean } : null;
-  if (share?.canShare?.({ files: [file] }) && typeof share.share === "function") {
-    try { await share.share({ files: [file], title: message.subject, text: message.body }); return "SHARED"; } catch (cause) { if (cause instanceof DOMException && cause.name === "AbortError") return "SHARED"; }
+  // Tony (2/11, "e whatsapp non si attiva"): on a computer the system share sheet has no WhatsApp, so WhatsApp skips it there.
+  const phone = typeof window !== "undefined" && typeof window.matchMedia === "function" && window.matchMedia("(pointer: coarse)").matches;
+  if ((channel === "MAIL" || phone) && share?.canShare?.({ files: [file] }) && typeof share.share === "function") {
+    try { await share.share({ files: [file], title: message.subject, text: message.body }); whatsappWindow?.close(); return "SHARED"; } catch (cause) { if (cause instanceof DOMException && cause.name === "AbortError") return "SHARED"; }
   }
   const url = URL.createObjectURL(blob);
   const anchor = document.createElement("a");
@@ -278,9 +280,9 @@ export async function shareProposalPdf(path: string, payload: unknown, message: 
   setTimeout(() => URL.revokeObjectURL(url), 1000);
   if (channel === "WHATSAPP") {
     const link = `https://wa.me/?text=${encodeURIComponent(`${message.subject}\n\n${message.body}`)}`;
-    // A popup blocked after the download opens WhatsApp in this tab instead.
-    const opened = window.open(link, "_blank");
-    if (opened) opened.opener = null; else window.location.href = link;
+    // The window was opened on the click (browsers block a popup opened after the download); a blocked one falls back here.
+    const opened = whatsappWindow && !whatsappWindow.closed ? whatsappWindow : window.open(link, "_blank");
+    if (opened) { opened.opener = null; opened.location.href = link; } else window.location.href = link;
     return "WHATSAPP";
   }
   window.location.href = `mailto:?subject=${encodeURIComponent(message.subject)}&body=${encodeURIComponent(message.body)}`;
