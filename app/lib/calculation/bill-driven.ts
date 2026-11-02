@@ -541,7 +541,7 @@ export async function prepareBillDrivenSimulation(principal: AuthenticatedPrinci
   const document = documentValue as BillDocument;
   const version = approvedVersion(document);
   const context = buildContext(document, version);
-  // Bills whose supply period started before the quote window are discarded.
+  // Bills whose supply period ended before the quote window are discarded.
   if (context.billingPeriod.periodStart && supplyPeriodTooOld(context.billingPeriod, asOf)) fail("SOURCE_BILL_TOO_OLD");
   const records = await repositories.cteArchiveRepository.list(principal.tenantId);
   const hierarchy = repositories.orgChain && repositories.cteAssignments ? await loadHierarchyAccess(principal, { foundationMemberships: repositories.foundationMemberships, orgChain: repositories.orgChain, cteAssignments: repositories.cteAssignments }, asOf) : null;

@@ -11,7 +11,10 @@ export function quoteWindowStart(asOf: string, months = QUOTE_WINDOW_MONTHS): st
   return target.toISOString().slice(0, 10);
 }
 
-/** True when part of the supply period lies before the quote window. */
-export function supplyPeriodTooOld(period: { readonly periodStart: string }, asOf: string): boolean {
-  return period.periodStart < quoteWindowStart(asOf);
+// Tony (2/11, a bimonthly Enel bill luglio-agosto refused on 2 November: "perchè"): the bill's date is the end of its supply
+// period, as for the 4-month archive (Tony 1/11). A bill of two months is usable while its last month is within the window;
+// only its start falling before the window no longer discards it.
+/** True when the supply period ended before the quote window (its start when no end is known). */
+export function supplyPeriodTooOld(period: { readonly periodStart: string; readonly periodEnd?: string | null }, asOf: string): boolean {
+  return (period.periodEnd || period.periodStart) < quoteWindowStart(asOf);
 }
