@@ -1,4 +1,4 @@
-import type { QuoteReceiptQuota } from "./receipt";
+import type { QuoteReceipt, QuoteReceiptQuota } from "./receipt";
 
 // Tony (1/11, "queste le voci che dobbiamo avere visibili nell'offerta come una fattura reale, poi il dettaglio con il
 // paragone"): the new offer is shown first as the ARERA "Scontrino dell'energia" (Bolletta 2.0 facsimile, Figura 1):
@@ -106,4 +106,18 @@ export function pairScontrini(bill: readonly ScontrinoLine[], offer: readonly Sc
     const line = (b ?? o) as ScontrinoLine;
     return { kind: line.kind, label: line.kind === "main" ? (b?.quantity ?? o?.quantity ?? "") : line.label, bill: side(b), offer: side(o) };
   });
+}
+
+/** One sentence on the rete e oneri of the offer: ARERA values of the period, checked against the bill, or the bill's own. */
+export function areraNote(receipt: Pick<QuoteReceipt, "officialCheck">): string | null {
+  const checks = receipt.officialCheck;
+  if (!checks) return null;
+  const both = [checks.NETWORK, checks.SYSTEM];
+  const official = both.reduce((sum, check) => sum + (check.official ?? 0), 0);
+  const money = (value: number) => `${value.toFixed(2).replace(".", ",")} €`;
+  if (both.every((check) => check.status === "NOT_AVAILABLE" && check.official === null)) return `Rete e oneri dell'offerta: valori della bolletta, non verificati su ARERA (${both.find((check) => check.reason)?.reason ?? "valori ARERA del periodo non disponibili"})`;
+  const gap = both.reduce((sum, check) => sum + (check.status === "DIFFERENCE" ? check.difference ?? 0 : 0), 0);
+  if (Math.abs(gap) >= 0.01) return `Rete e oneri dell'offerta: valori ARERA del periodo (${money(official)}). La bolletta addebita ${money(Math.abs(gap))} ${gap > 0 ? "in più" : "in meno"} di ARERA`;
+  if (both.every((check) => check.status === "VERIFIED")) return `Rete e oneri: verificati sui valori ARERA del periodo (${money(official)}), uguali per ogni fornitore`;
+  return `Rete e oneri dell'offerta: valori ARERA del periodo (${money(official)})`;
 }

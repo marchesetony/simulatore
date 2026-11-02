@@ -2,7 +2,7 @@
 
 import { isValidElement, useCallback, useEffect, useRef, useState, type ChangeEvent, type ReactNode } from "react";
 import type { ProposalPresentation } from "../lib/proposal/presentation";
-import { billedMonths, offerScontrino, pairScontrini, type ScontrinoLine, type ScontrinoPairRow } from "../lib/quote/offer-scontrino";
+import { areraNote, billedMonths, offerScontrino, pairScontrini, type ScontrinoLine, type ScontrinoPairRow } from "../lib/quote/offer-scontrino";
 import { EmptyState, ErrorState, LoadingState } from "./UiStates";
 import { downloadExport, MAX_UPLOAD_BYTES, requestJson, requestUpload, toUiError } from "../lib/ui/client";
 import { buildQuoteReceipt, effectiveBillSpread, isSameOffer, regulatedVerification, sameOfferDifferences, type QuoteReceipt, type RegulatedDomain } from "../lib/quote/receipt";
@@ -812,8 +812,12 @@ function Receipt({ offer: quoted, today, business, context, bill, onPresentation
   const note = basis && annualSaving !== null && !same ? annualGapNote(offer, context, bill, saving, annualSaving, basis) : "";
   const basisLabel = basis ? `Simulato su 12 mesi con ${amount(basis.annual, unit)} di consumo annuo${basis.estimated ? " stimato dalla bolletta" : " letto in bolletta"}${note ? `. ${note}` : ""}` : "";
   const scontrino = offerScontrino({ quotas: receipt.quotas, offerTotal: receipt.status === "COMPLETE" ? receipt.offerTotal : null, taxesIncluded: receipt.taxesIncluded, vector: context.vector, quantity: periodQuantity, months: billedMonths(context.billingPeriod.periodStart, context.billingPeriod.periodEnd), powerKw: powerQuotaKw(context), discount: receipt.rows.find((row) => row.key === "ENERGY")?.details?.find((item) => item.key === "COMPANY_DISCOUNT")?.offer ?? null });
+  // Tony (2/11, "siamo sicuri che quelli di hera siano uguali a bpower, sono stati verificati con la delibera arera del
+  // trimestre?"): the scontrino says where the offer's rete e oneri come from and how the bill stands against ARERA.
+  const regulatedNote = areraNote(receipt);
+  const offerLines: readonly ScontrinoLine[] = regulatedNote ? [...scontrino, { kind: "sub", label: regulatedNote, amount: null }] : scontrino;
   const billScontrino = receipt.status === "COMPLETE" ? offerScontrino({ quotas: receipt.quotas, offerTotal: receipt.currentTotal, taxesIncluded: receipt.taxesIncluded, vector: context.vector, quantity: periodQuantity, months: billedMonths(context.billingPeriod.periodStart, context.billingPeriod.periodEnd), powerKw: powerQuotaKw(context), side: "current", excluded: billOutsideComparison(bill.analystReview.economics.economicAnalysis, receipt.currentTotal) }) : [];
-  const presentation = { ...presentationOf(offer, receipt, bill, context, same ? null : annualSaving, annualCurrent, basisLabel, same), scontrino, billScontrino };
+  const presentation = { ...presentationOf(offer, receipt, bill, context, same ? null : annualSaving, annualCurrent, basisLabel, same), scontrino: offerLines, billScontrino };
   const presentationKey = JSON.stringify(presentation);
   useEffect(() => { onPresentation?.(JSON.parse(presentationKey) as ProposalPresentation); }, [presentationKey, onPresentation]);
   return <section className="ui-card quote-receipt" aria-label="Scontrino dell'energia">
@@ -833,10 +837,10 @@ function Receipt({ offer: quoted, today, business, context, bill, onPresentation
     {/* Tony (1/11): the new offer as a real bill's "Scontrino dell'energia" (ARERA facsimile), beside the uploaded bill's own
         scontrino ("dove è lo scontrino della fattura?"), then the comparison. */}
     {billScontrino.length
-      ? <ScontrinoPairTable billTitle={`Bolletta attuale · ${context.currentSupplier}`} offerTitle={`Nuova offerta · ${quoted.supplier} · ${quoted.offerName}`} rows={pairScontrini(billScontrino, scontrino)} />
+      ? <ScontrinoPairTable billTitle={`Bolletta attuale · ${context.currentSupplier}`} offerTitle={`Nuova offerta · ${quoted.supplier} · ${quoted.offerName}`} rows={pairScontrini(billScontrino, offerLines)} />
       : <div className="scontrino-pair">
         <ScontrinoTable title={`Scontrino della bolletta attuale · ${context.currentSupplier}`} lines={billScontrino} empty="Le voci di spesa dello scontrino di questa bolletta non sono state lette: usa «Rileggi le voci della bolletta» in cima alla pagina." />
-        <ScontrinoTable title={`Scontrino della nuova offerta · ${quoted.supplier} · ${quoted.offerName}`} lines={scontrino} />
+        <ScontrinoTable title={`Scontrino della nuova offerta · ${quoted.supplier} · ${quoted.offerName}`} lines={offerLines} />
       </div>}
     <h4 className="quote-compare-title">Dettaglio e confronto con la bolletta</h4>
     {/* Scontrino (Tony, 26/10): materia energia, trasporto e gestione del contatore, oneri di sistema, imposte e accise aggregated first,

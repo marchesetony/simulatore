@@ -77,3 +77,17 @@ console.log("OFFER_SCONTRINO_PDF=PASS");
   assert.equal(rows.filter((item) => item.kind === "total").length, 1);
   console.log("SCONTRINO_PAIR=PASS");
 }
+
+// Tony (2/11, "siamo sicuri che quelli di hera siano uguali a bpower, sono stati verificati con la delibera arera del
+// trimestre?"): the offer's scontrino says whether its rete e oneri are the ARERA values of the period and how the bill
+// stands against them, or that they are the bill's own because ARERA was not available.
+{
+  const { areraNote } = await import("../app/lib/quote/offer-scontrino.ts");
+  const verified = { status: "VERIFIED", official: 200, difference: 0.01, reason: null };
+  assert.match(areraNote({ officialCheck: { NETWORK: verified, SYSTEM: { ...verified, official: 105.71 } } }), /verificati sui valori ARERA del periodo \(305,71 €\)/);
+  assert.match(areraNote({ officialCheck: { NETWORK: { status: "DIFFERENCE", official: 200, difference: 3, reason: null }, SYSTEM: verified } }), /La bolletta addebita 3,00 € in più di ARERA/);
+  const missing = { status: "NOT_AVAILABLE", official: null, difference: null, reason: "valori ARERA di ASOS non in archivio" };
+  assert.match(areraNote({ officialCheck: { NETWORK: missing, SYSTEM: missing } }), /valori della bolletta, non verificati su ARERA \(valori ARERA di ASOS non in archivio\)/);
+  assert.equal(areraNote({}), null);
+  console.log("ARERA_NOTE=PASS");
+}
