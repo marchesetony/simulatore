@@ -135,6 +135,11 @@ function powerQuotaKw(context: Context): number | null {
   const above = !context.classification.domestic && (availablePowerKw ?? contractedPowerKw ?? 0) > 16.5;
   return above && maximumDrawnPowerKw ? maximumDrawnPowerKw : contractedPowerKw ?? null;
 }
+// Tony (2/11, J Fuel "01/09/2026 - 30/09/2026" shown as 0,97 mesi and 109,00 €/mese against the printed "1 mese" and 105,73
+// €/mese): a period read from printed dates ends on its last supplied day, one read from month names on the next month's first
+// day. The screen counts on the second form, as the calculation does (simulationPeriodOf): a last day is moved to the day after.
+function exclusiveEnd(periodEnd: string): string { const time = Date.parse(`${periodEnd.slice(0, 10)}T00:00:00Z`); return Number.isFinite(time) && new Date(time).getUTCDate() !== 1 ? new Date(time + 86_400_000).toISOString().slice(0, 10) : periodEnd; }
+function withExclusiveEnd<T extends { readonly billingPeriod: { readonly periodStart: string; readonly periodEnd: string } }>(context: T): T { return { ...context, billingPeriod: { ...context.billingPeriod, periodEnd: exclusiveEnd(context.billingPeriod.periodEnd) } }; }
 function lastSuppliedDay(periodEnd: string): string { const time = Date.parse(`${periodEnd.slice(0, 10)}T00:00:00Z`); return Number.isFinite(time) ? new Date(time - 86_400_000).toISOString().slice(0, 10) : periodEnd; }
 function monthsIn(period: { readonly periodStart: string | null; readonly periodEnd: string | null } | undefined): number | null {
   if (!period?.periodStart || !period.periodEnd) return null;
@@ -920,7 +925,7 @@ export default function QuickQuoteFlow({ readonly, showExcluded = false }: { rea
   // quale usare, aggiungi qualche tasto per selezionare"): a failed calculation keeps the bill and its CTEs on screen, says why
   // in Italian and lets the agent pick the CTE to calculate with.
   const compareWith = async (bill: BillDocumentModel, prepared: Prepared, anchor: Candidate | null) => {
-    const base = { bill, context: prepared.context, candidates: prepared.candidates, unlisted: prepared.unlisted ?? [], canAuthorizeCte: prepared.canAuthorizeCte === true };
+    const base = { bill, context: withExclusiveEnd(prepared.context), candidates: prepared.candidates, unlisted: prepared.unlisted ?? [], canAuthorizeCte: prepared.canAuthorizeCte === true };
     if (!anchor) { setQuote({ ...base, comparison: emptyComparison(prepared.context), offers: [] }); return; }
     try {
       // Tony (1/11, speed): the company discount is fetched while the comparison runs, not after it.

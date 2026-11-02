@@ -3,7 +3,8 @@ import { voltageFromText, withTextVoltage } from "../app/lib/ingestion/printed-v
 import { printedScontrinoLines } from "../app/lib/ingestion/printed-scontrino.ts";
 import { buildCurrentBillEconomicAnalysis } from "../app/lib/foundation/bill-economic-analysis.ts";
 import { buildQuoteReceipt } from "../app/lib/quote/receipt.ts";
-import { offerScontrino } from "../app/lib/quote/offer-scontrino.ts";
+import { billedMonths, offerScontrino } from "../app/lib/quote/offer-scontrino.ts";
+import { readFileSync } from "node:fs";
 
 // Tony (2/11, "voglio capire perchè a noi risulta molto meno il risparmio rispetto a quello che ha fatto bpower"): a business
 // bill in media tensione (20.000 V, 200 kW) was quoted as bassa tensione, and its 510,89 € of oneri (ASOS and ARIM listed
@@ -54,5 +55,11 @@ assert.equal(bill.find((line) => line.kind === "total").amount, 4505.46);
 // 3. The receipt says why rete e oneri are the bill's in media tensione.
 const mv = buildQuoteReceipt({ vector: "EE", offerSupplyCost: 2500, analysis, domestic: false, validUntil: null, warnings: ["OFFICIAL_VALUE_MISSING:REGULATED:REGULATORY_SCOPE_VOLTAGE_MV"] });
 assert.match(mv.officialCheck.NETWORK.reason, /media tensione/);
+
+// 4. "01/09/2026 - 30/09/2026" is one month, as printed ("1 mese"), not 0,97: the screen counts on the day after the last day.
+assert.equal(billedMonths("2026-09-01", "2026-10-01"), 1);
+const flow = readFileSync(new URL("../app/components/QuickQuoteFlow.tsx", import.meta.url), "utf8");
+assert.match(flow, /const base = \{ bill, context: withExclusiveEnd\(prepared\.context\)/);
+assert.match(flow, /getUTCDate\(\) !== 1 \? new Date\(time \+ 86_400_000\)/);
 
 console.log("medium voltage bill smoke ok");
