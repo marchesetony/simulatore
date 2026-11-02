@@ -1,3 +1,5 @@
+// @ts-expect-error Node's strip-only test runner requires the explicit extension.
+import { parseItalianPeriod } from "./billing-period.ts";
 import type { DeclaredText, Quantity } from "../energy/types";
 // @ts-expect-error Node's strip-only test runner requires the explicit extension.
 import { validateBillContract } from "../energy/validation.ts";
@@ -169,7 +171,12 @@ function parseEnum<T extends string>(values: readonly T[], value: string): T {
   return value as T;
 }
 
+// Tony (2/11): every other printed form of the period ("luglio - agosto 2026", "dal 1 luglio 2026 al 31 agosto 2026").
 function parsePeriod(value: string): StructuredBillPeriod {
+  try { return parseStrictPeriod(value); }
+  catch (error) { const wider = parseItalianPeriod(value); if (wider) return wider; throw error; }
+}
+function parseStrictPeriod(value: string): StructuredBillPeriod {
   const raw = value.trim().replace(/[‐‑‒–—−]/g, "-").replace(/\s+/g, " ").replace(/(\d{1,2}[/.]\d{1,2}[/.]\d{4}|\d{4}-\d{1,2}-\d{1,2})\s*-\s*(?=(?:\d{1,2}[/.]\d{1,2}[/.]\d{4}|\d{4}-\d{1,2}-\d{1,2}))/i, "$1 - ");
   const monthNames: Readonly<Record<string, number>> = { gennaio: 1, febbraio: 2, marzo: 3, aprile: 4, maggio: 5, giugno: 6, luglio: 7, agosto: 8, settembre: 9, ottobre: 10, novembre: 11, dicembre: 12 };
   const monthOnly = /^(?:(\d{1,2})[/. -](\d{4})|([a-zàèéìòù]+)\s+(\d{4}))$/i.exec(raw);

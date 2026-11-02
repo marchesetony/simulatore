@@ -2,6 +2,8 @@
 import { pdfTextLayer } from "../regulatory-refresh/pdf-text.ts";
 // @ts-expect-error Node's strip-only test runner requires the explicit extension.
 import { printedScontrinoLines, withPrintedScontrino, withScontrinoTranscript } from "./printed-scontrino.ts";
+// @ts-expect-error Node's strip-only test runner requires the explicit extension.
+import { withTextBillingPeriod } from "./billing-period.ts";
 import Anthropic, {
   APIConnectionError,
   APIConnectionTimeoutError,
@@ -442,7 +444,8 @@ export class AnthropicTwoStageBillSdkAdapter implements BillExtractionProvider {
   // dettaglio"): the scontrino printed in the PDF text is added to any reading that lacks it (see printed-scontrino.ts).
   async extract(input: { readonly bytes: Uint8Array; readonly contentType: string }): Promise<StructuredBillExtraction> {
     const text = printedText(input);
-    if (text) return withPrintedScontrino(await this.#extractRead(input), text);
+    // Tony (2/11): an empty billing period is read from the PDF text (also two-month periods, see billing-period.ts).
+    if (text) return withTextBillingPeriod(withPrintedScontrino(await this.#extractRead(input), text), text);
     // No text layer (image or scanned PDF): the scontrino is copied by the model at the same time as the reading.
     const [reading, transcript] = await Promise.all([this.#extractRead(input), this.transcribeScontrino(input)]);
     return withScontrinoTranscript(reading, transcript);

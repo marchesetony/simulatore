@@ -15,6 +15,8 @@ import { estimateBillSpread } from "./bill-spread.ts";
 // @ts-expect-error Node's strip-only test runner requires the explicit extension.
 import { scontrinoSource, withPrintedScontrino } from "../ingestion/printed-scontrino.ts";
 // @ts-expect-error Node's strip-only test runner requires the explicit extension.
+import { withTextBillingPeriod } from "../ingestion/billing-period.ts";
+// @ts-expect-error Node's strip-only test runner requires the explicit extension.
 import { pdfTextLayer } from "../regulatory-refresh/pdf-text.ts";
 
 export type PunTariffStructure = "MONO" | "F1_F2_F3";
@@ -155,8 +157,18 @@ export async function withDocumentPriceRows<T extends Pick<PublicBillDocument, "
     // Tony (1/11, Loomen): every bill, also the ones already archived, shows the scontrino exactly as printed in the PDF.
     let text: string | null = null;
     try { const layer = pdfTextLayer(bytes); text = layer.status === "AVAILABLE" ? layer.text : null; } catch { text = null; }
-    return { ...document, structuredBill: withPrintedScontrino(withBox, scontrinoSource(withBox, text)) };
+    const structuredBill = withTextBillingPeriod(withPrintedScontrino(withBox, scontrinoSource(withBox, text)), text);
+    return withReadBillingPeriodField({ ...document, structuredBill });
   } catch { return document; }
+}
+
+// Tony (2/11, "manca il periodo di riferimento… bollette… riferite a due mesi di fornitura"): a bill archived with an empty
+// "Periodo fatturato" shows the period read from its PDF text, for the agent to confirm in the review form.
+export function withReadBillingPeriodField<T extends { readonly structuredBill?: StructuredBillExtraction | null }>(document: T): T {
+  const fields = (document as { readonly fields?: PublicBillDocument["fields"] }).fields;
+  const period = document.structuredBill?.billingPeriod;
+  if (!fields || fields.billingPeriod.value || period?.status !== "FOUND" || !period.value) return document;
+  return { ...document, fields: { ...fields, billingPeriod: { value: `${period.value.from} - ${period.value.to}`, confidence: period.confidence, source: "document-ai", confirmed: false } } };
 }
 
 /** Fetches the official PUN of the bill months when the archive lacks them (the cron only runs in production). */

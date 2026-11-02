@@ -1,3 +1,5 @@
+// @ts-expect-error Node's strip-only test runner requires the explicit extension.
+import { parseItalianPeriod } from "./billing-period.ts";
 import type {
   StructuredBillEconomicChargeLine,
   StructuredBillExtendedFact,
@@ -261,7 +263,9 @@ function documentField<T>(value: T | null, status: BillWireStatus): StructuredBi
   return { value, status, confidence: status === "FOUND" ? 0.9 : status === "NEEDS_REVIEW" ? 0.5 : 0, source: "DOCUMENT_AI" };
 }
 
-function parsePeriod(value: string): StructuredBillPeriod | null {
+// Tony (2/11): every other printed form of the period is read by billing-period.ts.
+function parsePeriod(value: string): StructuredBillPeriod | null { return parseStrictPeriod(value) ?? parseItalianPeriod(value); }
+function parseStrictPeriod(value: string): StructuredBillPeriod | null {
   const raw = value.trim().replace(/[‐‑‒–—−]/g, "-").replace(/\s+/g, " ").replace(/(\d{1,2}[/.]\d{1,2}[/.]\d{4}|\d{4}-\d{1,2}-\d{1,2})\s*-\s*(?=(?:\d{1,2}[/.]\d{1,2}[/.]\d{4}|\d{4}-\d{1,2}-\d{1,2}))/i, "$1 - ");
   const monthNames: Readonly<Record<string, number>> = { gennaio: 1, febbraio: 2, marzo: 3, aprile: 4, maggio: 5, giugno: 6, luglio: 7, agosto: 8, settembre: 9, ottobre: 10, novembre: 11, dicembre: 12 };
   const monthOnly = /^(?:(\d{1,2})[/. -](\d{4})|([a-zàèéìòù]+)\s+(\d{4}))$/i.exec(raw);
