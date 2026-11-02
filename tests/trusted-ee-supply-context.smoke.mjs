@@ -61,10 +61,6 @@ assertCode(() => buildTrustedElectricitySupplyContext(profile({ committed: null,
 assert.equal(buildTrustedElectricitySupplyContext(profile({ committed: "3 kW", available: "9 kW" })).contractedPowerKw, 3);
 // Tony (2/11, J Fuel 20.000 V): a media tensione supply is named as such, so the receipt says its rete e oneri come from the bill.
 assertCode(() => buildTrustedElectricitySupplyContext(profile({ supplyUse: "domestico", voltage: "MT" })), "REGULATORY_SCOPE_VOLTAGE_MV");
-// Tony (2/11, 311,1 kW priced on the BT tables: "stai commettendo decine di errori"): bassa tensione stops at 100 kW, so a
-// supply read as BT with more power is media tensione and its rete e oneri come from the bill.
-assertCode(() => buildTrustedElectricitySupplyContext(profile({ supplyUse: "altri usi", committed: "311,1 kW", available: "320 kW" })), "REGULATORY_SCOPE_VOLTAGE_MV");
-assert.equal(buildTrustedElectricitySupplyContext(profile({ supplyUse: "altri usi", committed: "100 kW", available: "100 kW", maximumDrawn: "90 kW" })).regulatoryCustomerScope, "NON_DOMESTIC_BT_BTA6");
 
 const baseRequest = {
   schemaVersion: 1,

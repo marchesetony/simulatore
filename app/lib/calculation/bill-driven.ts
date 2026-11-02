@@ -301,9 +301,7 @@ function buildContext(document: BillDocument, version: BillVersion): BillDrivenS
   const inferredLowVoltage = contract.vector === "EE" && (customerType === "RESIDENTIAL" || profile?.supplyUseCategory.normalizedValue === "DOMESTIC" || ((availablePower ?? contractedPower) !== null && (availablePower ?? contractedPower)! > 0 && (availablePower ?? contractedPower)! <= 30));
   // Tony (31/10, SOURCE_BILL_VOLTAGE_MISMATCH): the calculation checks the request against the trusted supply context of the
   // bill, so when that context has a voltage it is the one the offers are chosen and calculated on.
-  const readVoltage: VoltageLevel | null = contract.vector === "EE" ? supplyContext?.voltageLevel ?? contract.supply.voltageLevel ?? (inferredLowVoltage ? "LV" : null) : null;
-  // Tony (2/11, 311 kW priced on the BT tables): bassa tensione stops at 100 kW (TIC); more power is media tensione.
-  const voltageLevel: VoltageLevel | null = readVoltage === "LV" && Math.max(contractedPower ?? 0, availablePower ?? 0) > 100 ? "MV" : readVoltage;
+  const voltageLevel: VoltageLevel | null = contract.vector === "EE" ? supplyContext?.voltageLevel ?? contract.supply.voltageLevel ?? (inferredLowVoltage ? "LV" : null) : null;
   const missing: string[] = [];
   if (!customerType) missing.push("customerType");
   if (!period.periodStart || !period.periodEnd) missing.push("billingPeriod");
