@@ -16,7 +16,9 @@ const TAXES = /^(accise\s+e\s+iva|totale\s+imposte\s+e\s+iva|imposte(?:\s+e\s+iv
 const BONUS = /^bonus\s+sociale\b/i;
 const TOTAL = /^totale\s+(?:della\s+)?bolletta\b/i;
 const OTHER_ITEMS = /^(altre\s+partite|ricalcoli|canone\s+(?:di\s+abbonamento\s+)?(?:alla\s+)?(?:televisione|rai)|interessi\s+di\s+mora)\b/i;
-const ITEM = (row: string) => TAXES.test(row) || BONUS.test(row) || TOTAL.test(row) || OTHER_ITEMS.test(row);
+// Tony (2/11, J Fuel): "Energia reattiva prelevata 753 kVARh x 0,003772 €/kVARh 2,84 €" is printed under the quota per consumi.
+const REACTIVE = /^energia\s+reattiva\b/i;
+const ITEM = (row: string) => TAXES.test(row) || BONUS.test(row) || TOTAL.test(row) || OTHER_ITEMS.test(row) || REACTIVE.test(row);
 
 const clean = (value: string) => value.replace(/\s+/g, " ").replace(/[=+]\s*$/, "").trim();
 // "3 kW per 2 mesi x 2,00 €/kW/mese + 12,00 €" under "Quota fissa e Quota potenza": the power quota has no header of its own.
@@ -78,6 +80,12 @@ export function printedScontrinoLines(text: string): readonly StructuredBillEcon
     const amount = amountOf(joined);
     if (!amount) continue;
     const label = clean(joined.replace(AMOUNT_AT_END, ""));
+    if (REACTIVE.test(row)) {
+      const quantity = /(\d+(?:\.\d{3})*(?:,\d+)?)\s*kVArh/i.exec(joined); const price = /(\d+,\d+)\s*€\s*\/\s*kVArh/i.exec(joined);
+      lines.push(line("OTHER_CHARGE", clean(label.replace(/\d[\d.,]*\s*kVArh.*$/i, "")), amount, { quantity: quantity ? quantity[1] : "", unit: quantity ? "kVArh" : "", unitPrice: price ? price[1] : "" }));
+      index = next;
+      continue;
+    }
     const code = TAXES.test(row) ? "TAX_SUBTOTAL" : BONUS.test(row) ? "BONUS" : TOTAL.test(row) ? "BILL_TOTAL" : "ALTRE_PARTITE";
     lines.push(line(code, label, amount));
     index = next;
@@ -90,7 +98,7 @@ export function printedScontrinoLines(text: string): readonly StructuredBillEcon
 const hasScontrino = (lines: readonly StructuredBillEconomicChargeLine[]) => lines.some((item) => /di\s+cui\s+spes[ae]\s+per/i.test(`${item.description} ${item.rawDescription ?? ""}`));
 
 const amountValue = (amount: string) => Number(amount.replace(/[^\d,\-]/g, "").replace(",", "."));
-const SCONTRINO_ROW = /di\s+cui\s+spes[ae]\s+per|^(accise\s+e\s+iva|totale\s+(?:della\s+)?bolletta|altre\s+partite)\b/i;
+const SCONTRINO_ROW = /di\s+cui\s+spes[ae]\s+per|^(accise\s+e\s+iva|totale\s+(?:della\s+)?bolletta|altre\s+partite|energia\s+reattiva)\b/i;
 
 /**
  * The printed scontrino wins over the AI reading of the same block. Tony (1/11, Loomen bill read as quota per consumi

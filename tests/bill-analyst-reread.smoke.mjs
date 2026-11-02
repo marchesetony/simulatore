@@ -18,7 +18,8 @@ const bill = readFileSync(new URL("../app/lib/foundation/real-bill.ts", import.m
 // Tony (1/11, "leggere lo scontrino della bolletta"): a failed second reading completed by the printed scontrino is not unread.
 assert.match(bill, /\(working\.structuredBill\.analystExtractionStatus === "FAILED" && !readingHasScontrino\(working\.structuredBill\)\) \|\| \(working\.structuredBill\.economicChargeLines\?\.length \?\? 0\) === 0/);
 // Tony (1/11, "anche quella letta da immagine"): an image bill's transcript is refined the same way.
-assert.match(route, /refine: \(extraction\) => transcript \? withScontrinoTranscript\(extraction, transcript\) : withPrintedScontrino\(extraction, text\)/);
+// Tony (2/11, J Fuel 20.000 V and bimonthly Enel bill): the reread also takes the printed voltage and period from the PDF text.
+assert.match(route, /const scontrino = transcript \? withScontrinoTranscript\(extraction, transcript\) : withPrintedScontrino\(extraction, text\); return withTextVoltage\(withTextBillingPeriod\(scontrino, pdfText\), pdfText\);/);
 const flow = readFileSync(new URL("../app/components/QuickQuoteFlow.tsx", import.meta.url), "utf8");
 assert.match(flow, /Rileggi le voci della bolletta/);
 assert.match(flow, /\{analystRetry\(draft\)\}/);

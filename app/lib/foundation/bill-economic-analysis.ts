@@ -326,6 +326,16 @@ function networkFromSummary(items: readonly BillEconomicComponent[]): readonly B
   const system = tagged.length ? tagged : oneri;
   const quotaOfSystem = (item: BillEconomicComponent): SummaryQuota | null => tagged.length ? systemQuota(item) : "CONSUMPTION";
   if (!summaries.length || !system.length) return items;
+  // Tony (2/11, J Fuel in media tensione: "voglio capire perchè a noi risulta molto meno il risparmio"): the oneri page lists
+  // ASOS 461,62 and ARIM 49,27 with no quota, more than the 439,53 € of rete e oneri on the quota per consumi. Those oneri
+  // are also on the quota fissa and the quota potenza, so they cannot be taken from the consumption quota alone (it fell to
+  // -71,36 € and the 510,89 € went to "altre partite"). The printed quotas then stay as printed and the oneri page is detail.
+  const consumptionSummary = summaries.find((item) => summaryQuota(item) === "CONSUMPTION");
+  const untaggedTotal = round(oneri.reduce((total, item) => total + (numberFrom(item.amount) ?? 0), 0));
+  if (!tagged.length && consumptionSummary && untaggedTotal > (numberFrom(consumptionSummary.amount) ?? 0) + 0.02) {
+    const detail = new Set(oneri.map((item) => item.lineId));
+    return items.map((item) => detail.has(item.lineId) ? { ...item, accountingRole: "DETAIL_INCLUDED_IN_SUBTOTAL", includedInReconciliation: false, atomic: false, aggregate: true } : item);
+  }
   const replaced = new Map<string, BillEconomicComponent>();
   for (const quota of ["CONSUMPTION", "FIXED", "POWER"] as const) {
     const [first, ...copies] = summaries.filter((item) => summaryQuota(item) === quota);

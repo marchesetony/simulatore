@@ -4,6 +4,8 @@ import { pdfTextLayer } from "../regulatory-refresh/pdf-text.ts";
 import { printedScontrinoLines, withPrintedScontrino, withScontrinoTranscript } from "./printed-scontrino.ts";
 // @ts-expect-error Node's strip-only test runner requires the explicit extension.
 import { withTextBillingPeriod } from "./billing-period.ts";
+// @ts-expect-error Node's strip-only test runner requires the explicit extension.
+import { withTextVoltage } from "./printed-voltage.ts";
 import Anthropic, {
   APIConnectionError,
   APIConnectionTimeoutError,
@@ -445,7 +447,8 @@ export class AnthropicTwoStageBillSdkAdapter implements BillExtractionProvider {
   async extract(input: { readonly bytes: Uint8Array; readonly contentType: string }): Promise<StructuredBillExtraction> {
     const text = printedText(input);
     // Tony (2/11): an empty billing period is read from the PDF text (also two-month periods, see billing-period.ts).
-    if (text) return withTextBillingPeriod(withPrintedScontrino(await this.#extractRead(input), text), text);
+    // Tony (2/11, J Fuel 20.000 V quoted as BT): the voltage printed in the PDF text wins (printed-voltage.ts).
+    if (text) return withTextVoltage(withTextBillingPeriod(withPrintedScontrino(await this.#extractRead(input), text), text), text);
     // No text layer (image or scanned PDF): the scontrino is copied by the model at the same time as the reading.
     const [reading, transcript] = await Promise.all([this.#extractRead(input), this.transcribeScontrino(input)]);
     return withScontrinoTranscript(reading, transcript);

@@ -59,7 +59,8 @@ assert.equal(buildTrustedElectricitySupplyContext(profile({ supplyUse: "ricarica
 assertCode(() => buildTrustedElectricitySupplyContext(profile({ residence: "domestico" })), "DOMESTIC_RESIDENCE_INVALID");
 assertCode(() => buildTrustedElectricitySupplyContext(profile({ committed: null, available: "6 kW" })), "CONTRACTED_POWER_REQUIRED");
 assert.equal(buildTrustedElectricitySupplyContext(profile({ committed: "3 kW", available: "9 kW" })).contractedPowerKw, 3);
-assertCode(() => buildTrustedElectricitySupplyContext(profile({ supplyUse: "domestico", voltage: "MT" })), "REGULATORY_SCOPE_UNRESOLVED");
+// Tony (2/11, J Fuel 20.000 V): a media tensione supply is named as such, so the receipt says its rete e oneri come from the bill.
+assertCode(() => buildTrustedElectricitySupplyContext(profile({ supplyUse: "domestico", voltage: "MT" })), "REGULATORY_SCOPE_VOLTAGE_MV");
 
 const baseRequest = {
   schemaVersion: 1,

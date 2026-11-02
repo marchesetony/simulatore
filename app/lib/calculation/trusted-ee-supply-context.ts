@@ -71,6 +71,9 @@ function requiredSupplyUse(profile: BillSupplyProfile): Exclude<SupplyUseCategor
 }
 
 function deriveRegulatoryCustomerScope(profile: BillSupplyProfile, voltageLevel: VoltageLevel, availablePowerKw: number | undefined): RegulatoryCustomerScope {
+  // Tony (2/11, J Fuel 20.000 V): the archive has no official tables for media tensione; the quote then takes rete e oneri from
+  // the bill, the same for every offer, and says why.
+  if (voltageLevel === "MV") fail("REGULATORY_SCOPE_VOLTAGE_MV");
   if (voltageLevel !== "LV") fail("REGULATORY_SCOPE_UNRESOLVED");
   const supplyUse = requiredSupplyUse(profile);
   if (supplyUse === "DOMESTIC") {

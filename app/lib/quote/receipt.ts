@@ -182,6 +182,7 @@ function regulatedUnavailable(input: QuoteReceiptInput): string {
   if (/^(POWER_|AVAILABLE_POWER|CONTRACTED_POWER|BTA6_)/.test(code)) return `potenza impegnata/disponibile non letta in bolletta (${code})`;
   if (/^SUPPLY_USE/.test(code)) return `uso della fornitura (domestico/altri usi) non letto in bolletta (${code})`;
   if (/^VOLTAGE_LEVEL/.test(code)) return `livello di tensione non letto in bolletta (${code})`;
+  if (code.startsWith("REGULATORY_SCOPE_VOLTAGE_MV")) return "fornitura in media tensione: tabelle ARERA della media tensione non in archivio, rete e oneri sono quelli della bolletta, uguali per ogni offerta";
   if (/^(REGULATORY_SCOPE|DOMESTIC_)/.test(code)) return `tipologia cliente non determinabile dalla bolletta (${code})`;
   if (code) return `dati tecnici della bolletta incompleti (${code})`;
   return "valori ufficiali ARERA del periodo non calcolati per questa fornitura";
