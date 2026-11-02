@@ -135,4 +135,13 @@ assert.equal(t.find((line) => /^Energia reattiva \(compresa/.test(line.descripti
 const twoReceipt = buildQuoteReceipt({ vector: "EE", offerSupplyCost: 300, analysis: buildCurrentBillEconomicAnalysis(t, "364,40"), domestic: false, validUntil: null });
 assert.equal(twoReceipt.currentTotal, 364.4);
 assert.equal(twoReceipt.rows.find((row) => row.key === "NETWORK").current, 59.4);
+
+// Tony (2/11, sample bills): Hera prints the amount before the average price, Elios prints amounts without "€" under an
+// "Importi [€]" heading. Synthetic amounts.
+const hera = ["Quota per consumi", "1000 kWh                                       300,00 €                0,300000 €/kWh", "    di cui spesa per la vendita di energia elettrica*          250,00 €              0,250000 €/kWh", "    di cui spesa per la rete e gli oneri generali di sistema**          50,00 €              0,050000 €/kWh", "Quota fissa e quota potenza", "1 mesi                       17,81 €             17,810000 €/mese", "    di cui spesa per la vendita di energia elettrica*          14,00 €              14,000000 €/mese", "    di cui spesa per la rete e gli oneri generali di sistema**          3,81 €               3,810000 €/mese", "10 kW per 1 mesi                       44,92 € 4,492000 €/kW/mese", "    di cui spesa per la rete e gli oneri generali di sistema**          44,92 € 4,492000 €/kW/mese", "Accise e IVA          60,00 €", "Totale bolletta          422,73 €"].join("\n");
+assert.equal(buildCurrentBillEconomicAnalysis(printedScontrinoLines(hera), "422,73").totals.reconciliationStatus, "RECONCILED");
+const elios = ["Quantità          Prezzo medio(*) Unità di misura          Importi [€]", "     QUOTA PER I CONSUMI", "          100,03          0,3488          €/kWh          34,88", "     di cui spesa per vendita energia elettrica          0,26593          €/kWh          26,60          testo a destra", "     di cui spesa per la rete e oneri generali di sistema          0,08287          €/kWh          8,28", "     QUOTA FISSA E QUOTA POTENZA", "     Quota potenza 3          1,976667          €/kW/mese          5,93          altra colonna", "     di cui spesa per la rete e oneri generali di sistema          1,976667          €/kW/mese          5,93", "    Accise e IVA          10,71          modo uniforme", "          Totale bolletta          51,52"].join("\n");
+const eliosLines = printedScontrinoLines(elios);
+assert.equal(eliosLines.find((line) => line.description === "QUOTA PER I CONSUMI")?.amount, "34,88 €", "the quantity is not the amount");
+assert.equal(buildCurrentBillEconomicAnalysis(eliosLines, "51,52").totals.reconciliationStatus, "RECONCILED");
 console.log("PRINTED_SCONTRINO=PASS");

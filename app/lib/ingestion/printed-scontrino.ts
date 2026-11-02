@@ -35,7 +35,14 @@ export function printedScontrinoLines(text: string): readonly StructuredBillEcon
   // Tony (2/11, Plenitude sample bill): the Box dell'offerta is printed in a column to the right of the scontrino
   // ("di cui spesa per la rete e gli oneri   3,75 €      Totale dovuto per la vendita ...: 642,18 €"): a row ends at its
   // first amount in euro followed by a wide gap, so the box never lends the scontrino its amounts or labels.
-  const rows = text.split(/\r?\n/).map((raw) => raw.replace(/^(.*?\d,\d{2}\s*€)\s{6,}\S.*$/, "$1")).map(clean).filter(Boolean);
+  // Hera prints the amount before the average price ("10 kW per 1 mesi   44,92 € 4,492000 €/kW/mese"): the price is put
+  // first, so the row still ends with its amount.
+  // Elios prints the amounts without "€" under an "Importi [€]" heading: there a trailing amount is in euro.
+  const bareEuro = /importi\s*[\[(]\s*€\s*[\])]/i.test(text);
+  const rows = text.split(/\r?\n/)
+    .map((raw) => bareEuro ? raw.replace(/(\s[+\-−]?\d{1,3}(?:\.\d{3})*,\d{2})(?=\s{6,}[^\s€\d]|\s*$)/, "$1 €") : raw)
+    .map((raw) => raw.replace(/(\d{1,3}(?:\.\d{3})*,\d{2}\s*€)(\s+)(\d+(?:\.\d{3})*,\d{3,}\s*€\s*\/\s*[A-Za-z]+(?:\/[A-Za-z]+)?)/g, "$3$2$1"))
+    .map((raw) => raw.replace(/^(.*?\d,\d{2}\s*€)\s{6,}\S.*$/, "$1")).map(clean).filter(Boolean);
   const first = rows.findIndex((row) => DI_CUI.test(row));
   if (first < 0) return [];
   let start = first;
