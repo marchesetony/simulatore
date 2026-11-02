@@ -60,6 +60,13 @@ function requiredVoltageLevel(profile: BillSupplyProfile): VoltageLevel {
   }
   const value = profile.voltageClass.normalizedValue?.toUpperCase();
   if (!value || !VOLTAGE_LEVELS.includes(value as VoltageLevel)) fail("VOLTAGE_LEVEL_INVALID");
+  // Tony (2/11, 311 kW and 74.563 kWh priced on the BT tables: "stai commettendo decine di errori"): bassa tensione stops at
+  // 100 kW (TIC). A supply read as BT with more power is in media tensione.
+  if (value === "LV") {
+    let power: number | undefined;
+    try { power = Math.max(parseAvailablePowerKw(profile.powerAvailable) ?? 0, parseContractedPowerKw(profile.powerCommitted)); } catch { power = undefined; }
+    if (power !== undefined && power > BT_MAX_KW) return "MV";
+  }
   return value as VoltageLevel;
 }
 
@@ -168,6 +175,7 @@ function selectAsosClass(profile: BillSupplyProfile, options: TrustedElectricity
 }
 
 const LIMITER_MAX_KW = 30;
+const BT_MAX_KW = 100;
 
 function regulatoryPowerBasis(profile: BillSupplyProfile, scope: RegulatoryCustomerScope, contractedPowerKw: number): { readonly regulatoryPowerBasisKind: Exclude<PowerBillingBasis, "UNKNOWN">; readonly regulatoryPowerBasisKw: number } | undefined {
   if (scope !== "NON_DOMESTIC_BT_BTA6") return undefined;
