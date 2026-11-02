@@ -113,4 +113,26 @@ assert.equal(irenReceipt.rows.find((row) => row.key === "NETWORK").current, 58.8
 for (const label of ["Corrispettivo FTE (TIDE)", "Corrispettivo OTHER (TIDE)", "Corrispettivo Uplift (TIDE)"]) assert.equal(classifyBillEconomicComponent("OTHER_CHARGE", label), "DISPATCHING_SELLER_CHARGE", label);
 assert.equal(classifyBillEconomicComponent("OTHER_CHARGE", "Corrispettivo Mercato capacità"), "CAPACITY_MARKET_SELLER_CHARGE");
 assert.equal(classifyBillEconomicComponent("ALTRE_PARTITE", "Altre partite non soggette ad IVA"), "ALTRE_PARTITE");
+
+// Tony (2/11, Plenitude sample bill layout): the Box dell'offerta sits in a column to the right of the scontrino, and the
+// quota per consumi holds reactive energy that neither "di cui" shows. Synthetic amounts.
+const pad = (left, right = "") => `${left.padEnd(100)}${right}`;
+const twoColumns = [
+  pad("   QUOTA PER CONSUMI 1000 kWh      0,300000      304,40 €", "Nome offerta: Offerta Test"),
+  pad("      di cui spesa per la vendita di energia      0,250000      250,00 €", "Codice offerta: TEST"),
+  pad("      di cui spesa per la rete e gli oneri      0,050000      50,00 €", "Validità: dal 01/05/2025"),
+  pad("      generali di sistema      €/kWh"),
+  pad("   QUOTA FISSA 1 mesi      20,000000      20,00 €", "Oneri di recesso: no"),
+  pad("      di cui spesa per la vendita di energia      15,000000      15,00 €"),
+  pad("      di cui spesa per la rete e gli oneri      5,000000      5,00 €", "Totale dovuto per la vendita: 265,00 €"),
+  pad("   Accise e IVA      40,00 €"),
+  pad("   Totale bolletta      364,40 €"),
+  "   Energia Reattiva Prelevata      €/kVArh      0,01088000      404      F1      4,40",
+].join("\n");
+const t = printedScontrinoLines(twoColumns);
+assert.equal(t.find((line) => line.description === "QUOTA FISSA - di cui spesa per la rete e gli oneri 5,000000")?.amount, "5,00 €", "the box column lends no amount");
+assert.equal(t.find((line) => /^Energia reattiva \(compresa/.test(line.description))?.amount, "4,40 €");
+const twoReceipt = buildQuoteReceipt({ vector: "EE", offerSupplyCost: 300, analysis: buildCurrentBillEconomicAnalysis(t, "364,40"), domestic: false, validUntil: null });
+assert.equal(twoReceipt.currentTotal, 364.4);
+assert.equal(twoReceipt.rows.find((row) => row.key === "NETWORK").current, 59.4);
 console.log("PRINTED_SCONTRINO=PASS");

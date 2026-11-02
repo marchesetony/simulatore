@@ -32,7 +32,10 @@ const line = (code: StructuredBillEconomicChargeLine["code"], description: strin
 
 /** The scontrino lines printed in the PDF text, in the order of the bill. Empty when the text has no scontrino. */
 export function printedScontrinoLines(text: string): readonly StructuredBillEconomicChargeLine[] {
-  const rows = text.split(/\r?\n/).map(clean).filter(Boolean);
+  // Tony (2/11, Plenitude sample bill): the Box dell'offerta is printed in a column to the right of the scontrino
+  // ("di cui spesa per la rete e gli oneri   3,75 €      Totale dovuto per la vendita ...: 642,18 €"): a row ends at its
+  // first amount in euro followed by a wide gap, so the box never lends the scontrino its amounts or labels.
+  const rows = text.split(/\r?\n/).map((raw) => raw.replace(/^(.*?\d,\d{2}\s*€)\s{6,}\S.*$/, "$1")).map(clean).filter(Boolean);
   const first = rows.findIndex((row) => DI_CUI.test(row));
   if (first < 0) return [];
   let start = first;
@@ -99,7 +102,30 @@ export function printedScontrinoLines(text: string): readonly StructuredBillEcon
     if (code === "BILL_TOTAL") break;
   }
   // A scontrino needs at least one "di cui" share with its amount.
-  return lines.some((item) => / - di cui /i.test(item.description)) ? withoutAltrePartiteHeading(lines) : [];
+  return lines.some((item) => / - di cui /i.test(item.description)) ? withoutAltrePartiteHeading(withReactiveInQuota(lines, text)) : [];
+}
+
+// Tony (2/11, Plenitude sample bill): "QUOTA PER CONSUMI 744,18 €" holds vendita 626,18 € + rete e oneri 113,60 € and the
+// reactive energy of the rete detail (4,40 €), which neither "di cui" shows. The small remainder of a quota whose bill bills
+// reactive energy is that reactive energy, so the bill side keeps its printed total.
+function withReactiveInQuota(lines: readonly StructuredBillEconomicChargeLine[], text: string): readonly StructuredBillEconomicChargeLine[] {
+  if (!/energia\s+reattiva\s+(prelevata|immessa)/i.test(text) || lines.some((item) => REACTIVE.test(item.description))) return lines;
+  const cents = (amount: string) => Math.round(Number(amount.replace(/[^\d,\-]/g, "").replace(",", ".")) * 100);
+  const result: StructuredBillEconomicChargeLine[] = [];
+  for (let index = 0; index < lines.length; index += 1) {
+    const item = lines[index];
+    result.push(item);
+    if (item.code !== "OTHER_CHARGE" || !/consumi/i.test(item.description) || / - di cui /i.test(item.description)) continue;
+    let end = index + 1;
+    while (end < lines.length && lines[end].description.startsWith(`${item.description} - di cui`)) end += 1;
+    const shares = lines.slice(index + 1, end);
+    if (shares.length < 2) continue;
+    const remainder = cents(item.amount) - shares.reduce((sum, share) => sum + cents(share.amount), 0);
+    if (remainder <= 0 || remainder > cents(item.amount) * 0.05) continue;
+    result.push(...shares, line("OTHER_CHARGE", `Energia reattiva (compresa nella ${item.description.toLowerCase()})`, `${Math.floor(remainder / 100)},${String(remainder % 100).padStart(2, "0")} €`));
+    index = end - 1;
+  }
+  return result;
 }
 
 // An "Altre partite ..." heading whose amount is the sum of the altre partite printed right below it is their subtotal.
