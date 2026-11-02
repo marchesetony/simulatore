@@ -70,3 +70,10 @@ assert.equal(withPrintedVoltageCheck({ normalized: { supply: { voltageLevel: "MV
 assert.match(flow, /bill\.printedVoltageMismatch \|\| bill\.chargeLinesUnread/);
 
 console.log("medium voltage bill smoke ok");
+
+// Tony (2/11, sample bills): the voltage is printed in table layouts too. IREN prints the header "Tensione di
+// alimentazione" with "Media Tensione 20.000" on the row below; Repower prints "LIVELLO NOMINALE DI TENSIONE" with
+// "Bassa tensione (380 V)" two rows below; BPower prints "Tensione nominale: 220 V". Synthetic layouts.
+assert.equal(voltageFromText("   Tipologia cliente      Tensione di alimentazione      Potenza Impegnata\n   ALTRI USI              Media Tensione 20.000          311,1 kW"), "MV");
+assert.equal(voltageFromText("      LIVELLO NOMINALE DI TENSIONE                 dal 01/10/2025\n                                                   Aggiornato\n      Bassa tensione (380 V)"), "LV");
+assert.equal(voltageFromText("Tipologia cliente: Altri usi\nTensione nominale: 220 V"), "LV");

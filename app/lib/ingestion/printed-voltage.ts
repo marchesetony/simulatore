@@ -21,13 +21,25 @@ const named = (text: string): VoltageLevel | null =>
 /** The supply voltage printed in the bill's text ("Tensione nominale di alimentazione 20.000 V", "220 V - Bassa Tensione"). */
 export function voltageFromText(text: string | null): VoltageLevel | null {
   if (!text) return null;
-  for (const row of text.split(/\r?\n/).map((item) => item.replace(/\s+/g, " ").trim())) {
+  const LABEL = /tensione(?:\s+nominale)?(?:\s+di)?\s+(?:alimentazione|fornitura|consegna)|livello\s+(?:nominale\s+)?di\s+tensione|tensione(?:\s+nominale)?\s*:/i;
+  const lines = text.split(/\r?\n/);
+  for (let index = 0; index < lines.length; index += 1) {
     // Only the row of the supply's voltage: "tensione" followed by a value in V or kV, or the level named on that row.
-    const at = row.search(/tensione(?:\s+nominale)?(?:\s+di)?\s+(?:alimentazione|fornitura|consegna)|livello\s+di\s+tensione|tensione\s*:/i);
+    const raw = lines[index]; const at = raw.search(LABEL);
     if (at < 0) continue;
-    const rest = row.slice(at, at + 90);
+    const rest = raw.slice(at).replace(/\s+/g, " ").trim().slice(0, 90);
     const level = volts(rest) ?? named(rest);
     if (level) return level;
+    // Tony (2/11, IREN Citrus Juices: "Tensione di alimentazione" heads a table column, "Media Tensione 20.000" is printed
+    // on the row below, in the same column): read the value under the label.
+    const cell = lines.slice(index + 1, index + 4).map((line) => line.slice(Math.max(0, at - 2), at + 40).replace(/\s+/g, " ").trim()).find((item) => item !== "");
+    if (!cell) continue;
+    const named2 = named(cell);
+    const volt = /(\d{1,3}(?:\.\d{3})+|\d+)(?:,\d+)?\s*(kV|V)?\b/i.exec(cell);
+    const value = volt ? Number(volt[1].replace(/\./g, "")) * (/^kv$/i.test(volt[2] ?? "") ? 1000 : 1) : NaN;
+    const byValue = value > 0 ? (value <= 1000 ? "LV" : value <= 35000 ? "MV" : value <= 150000 ? "HV" : "EHV") : null;
+    const found = named2 ?? (volt?.[2] ? byValue : null);
+    if (found) return found;
   }
   return null;
 }
