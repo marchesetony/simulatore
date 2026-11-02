@@ -274,15 +274,18 @@ function addCtePassThroughs(target: ComponentDraft[], request: ElectricitySimula
       // Tony (1/11): "non si può non calcolare un dato che sfalsa la bolletta". A BT bill without power read: with the kWh of
       // Terna's peak hours on the bill it is priced as above 55 kW (the bill bills it that way), otherwise as up to 55 kW, the
       // monthly ARERA value on all kWh. The charge is never left out.
-      const peakBilled = peakEnergy !== null && peakEnergy !== undefined && peakEnergy.peakKwh + peakEnergy.offPeakKwh > 0;
-      const smallLv = request.voltageLevel === "LV" && (powerKw === undefined ? !peakBilled : powerKw <= 55);
+      // Tony (2/11, after the sample bills: "puoi leggere arera anzichè terna"): IREN (MT, 311 kW), Repower (BT, 152 kW),
+      // Hera and Plenitude all bill the monthly ARERA value (TIV art. 4.1, 0,3197 c€/kWh in September 2026) grossed up for
+      // the losses of their voltage; the Terna peak rate (0,065 €/kWh) on every kWh had priced Citrus about 5.000 € too high.
+      // So the monthly ARERA value applies to every non-household supply, whatever its power or voltage.
+      void peakEnergy; void powerKw; void ternaCapacity;
+      const smallLv = true;
       // BT up to 55 kW: the monthly value ARERA fixes in the quarterly TIV update (art. 4.1), when the archive has none.
       const arera = smallLv && runtime?.capacityMarket?.value === undefined ? areraCapacityForPeriod(period.periodStart, period.periodEnd, capacityMonths) : null;
       const official = runtime?.capacityMarket?.value ?? arera?.eurPerKwh;
       const officialSource = runtime?.capacityMarket?.officialIdentifier ?? (arera ? `ARERA ${arera.months.map((month) => month.resolution).join(", ")}` : "OFFICIAL");
       const before = missing.length;
-      if (!smallLv) addTernaPeakCapacity(target, request, ternaCapacity, peakEnergy, totalQuantity, grossUp, loss, missing);
-      else if (official === undefined || !Number.isFinite(official) || official <= 0) missing.push("CAPACITY_MARKET:OFFICIAL_VALUE_MISSING");
+      if (official === undefined || !Number.isFinite(official) || official <= 0) missing.push("CAPACITY_MARKET:OFFICIAL_VALUE_MISSING");
       else {
         const unitRate = grossUp(fromNumber(official));
         target.push({ componentId: "cte-pass-through:capacity", category: "VARIABLE_FEE", label: "Mercato della capacità", sign: "CHARGE", value: multiply(unitRate, totalQuantity), formulaId: "CTE_PASS_THROUGH_RATE_TIMES_KWH", formulaInputs: { kind: "CAPACITY_MARKET", feeUnit: "EUR_PER_KWH", feeRate: toDecimal(unitRate, 6), officialRate: official, lossFactor: loss ? toDecimal(loss, 6) : 0, basisQuantity: toDecimal(totalQuantity, 3), source: officialSource } });
@@ -295,7 +298,7 @@ function addCtePassThroughs(target: ComponentDraft[], request: ElectricitySimula
       // già detto i valori standard"): the regulated charge is the same for every offer, so the ARERA standard monthly value
       // (TIV art. 4.1) comes first, for every CTE alike; the CTE's own printed value only when ARERA has none for the period.
       const missingAt = missing.indexOf("CAPACITY_MARKET:OFFICIAL_VALUE_MISSING", before);
-      const standardArera = missingAt >= 0 && request.voltageLevel === "LV" ? areraCapacityForPeriod(period.periodStart, period.periodEnd, capacityMonths) : null;
+      const standardArera = missingAt >= 0 ? areraCapacityForPeriod(period.periodStart, period.periodEnd, capacityMonths) : null;
       const stated = missingAt >= 0 && !standardArera ? cteStatedCapacity(offer, request.voltageLevel, period.periodStart, period.periodEnd) : null;
       if (standardArera) {
         missing.splice(missingAt, 1);

@@ -39,35 +39,28 @@ const context = { vector: "EE", contractedPowerKw: 98, availablePowerKw: 98, sup
 const deps = ({ stored = records, peak, withContext = true } = {}) => ({ regulatoryBridge: bridge(stored), regulatoryRuntimeResolver: { resolveDispatching: async () => null, resolveCapacity: async () => null, resolveLoss: async () => null }, ...(withContext ? { trustedElectricityContext: context } : {}), ...(peak ? { billPeakEnergy: peak } : {}) });
 const capacity = (result) => result.components.filter((component) => component.formulaInputs?.kind === "CAPACITY_MARKET").map((component) => ({ label: component.label, amount: component.amount.amount, basis: component.formulaInputs.basisQuantity, rate: component.formulaInputs.officialRate }));
 
-// 1. BT 98 kW, the bill prints 100 kWh peak and 300 off-peak (25% peak); the simulation has 1.000 kWh, so 250 + 750.
-// Peak 0,02 x 1,10 x 250 = 5,50; off-peak 0,004 x 1,10 x 750 = 3,30.
+// Tony (2/11, after the sample bills: "puoi leggere arera anzichè terna, e verifica che le aziende calcolano quello che
+// pubblica arera oltre alla voce extra capacity"): IREN (MT 311 kW), Repower (BT 152 kW), Hera and Plenitude bill the
+// monthly ARERA value (TIV art. 4.1) grossed up for losses, whatever the power. The Terna peak/off-peak split and the
+// "highest rate of the month" (30/10) no longer apply.
+// 1. BT 98 kW with peak kWh on the bill: ARERA September 0,3197 c€/kWh x 1,10 x 1.000 kWh = 3,52.
 const split = await calculatePreparedOffer(request(), structuredClone(prepared), deps({ peak: { peakKwh: 100, offPeakKwh: 300 } }));
-assert.deepEqual(capacity(split), [{ label: "Mercato della capacità · ore di picco", amount: 5.5, basis: 250, rate: 0.02 }, { label: "Mercato della capacità · fuori picco", amount: 3.3, basis: 750, rate: 0.004 }]);
-const peakLine = split.components.find((component) => component.label === "Mercato della capacità · ore di picco");
-assert.equal(peakLine.formulaId, "CTE_PASS_THROUGH_RATE_TIMES_KWH"); assert.equal(peakLine.formulaInputs.feeUnit, "EUR_PER_KWH"); assert.equal(peakLine.formulaInputs.feeRate, 0.022); assert.equal(peakLine.formulaInputs.lossFactor, 0.1); assert.equal(peakLine.formulaInputs.source, "TERNA_CAPACITY_MARKET_2026-07");
+assert.deepEqual(capacity(split).map((line) => [line.label, line.amount, line.basis]), [["Mercato della capacità", 3.52, 1000]]);
 assert.ok(!split.warnings.some((warning) => /CAPACITY_MARKET:/.test(warning)), split.warnings.join(","));
 
-// 2. Tony (30/10): "la regola dovrebbe esssere il prezzo massimo del mese su tutto il mese di riferimento". Without the
-// peak kWh on the bill every kWh of the month takes the month's highest rate: 0,02 x 1,10 x 1.000 = 22.
+// 2. Without peak kWh: the same ARERA value, never the Terna peak rate on every kWh.
 const fallback = await calculatePreparedOffer(request(), structuredClone(prepared), deps());
-assert.deepEqual(capacity(fallback), [{ label: "Mercato della capacità · prezzo massimo del mese (kWh di picco non in bolletta)", amount: 22, basis: 1000, rate: 0.02 }]);
-assert.ok(!fallback.warnings.includes("OFFICIAL_VALUE_MISSING:CAPACITY_MARKET:PEAK_HOUR_KWH_MISSING"));
+assert.deepEqual(capacity(fallback).map((line) => [line.label, line.amount]), [["Mercato della capacità", 3.52]]);
+assert.ok(!capacity(fallback).some((line) => /picco/.test(line.label)));
 
-// One line per month: September 1.000 kWh x 0,02 x 1,10 = 22; October 500 kWh x 0,03 x 1,10 = 16,50.
-const twoMonths = request({ periodEnd: "2026-11-01", monthlyProfile: [{ month: "2026-09", f1: 1000, f2: 0, f3: 0 }, { month: "2026-10", f1: 500, f2: 0, f3: 0 }] });
-const monthly = await calculatePreparedOffer(twoMonths, structuredClone(prepared), deps());
-assert.deepEqual(capacity(monthly).map((line) => [line.amount, line.basis, line.rate]), [[22, 1000, 0.02], [16.5, 500, 0.03]]);
-assert.deepEqual(monthly.components.filter((component) => component.formulaInputs?.kind === "CAPACITY_MARKET").map((component) => component.formulaInputs.month), ["2026-09", "2026-10"]);
+// 3. MT: losses 3,8% (TIS Tab. 4): 0,3197 c€/kWh x 1,038 x 1.000 kWh = 3,32 (IREN bills 0,00331837 €/kWh).
+const mt = await calculatePreparedOffer(request({ voltageLevel: "MV" }), structuredClone(prepared), deps({ stored: records.filter((record) => record.customerScope === "NON_DOMESTIC_BT_BTA6"), withContext: false }));
+assert.deepEqual(capacity(mt).map((line) => line.amount), [3.32]);
 
-// 3. MT, no trusted context (its scope is outside the ARERA registry), Terna records of the BTA6 scope only: losses 3,8%.
-// Peak 0,02 x 1,038 x 250 = 5,19; off-peak 0,004 x 1,038 x 750 = 3,114 -> 3,11.
-const mt = await calculatePreparedOffer(request({ voltageLevel: "MV" }), structuredClone(prepared), deps({ stored: records.filter((record) => record.customerScope === "NON_DOMESTIC_BT_BTA6"), peak: { peakKwh: 100, offPeakKwh: 300 }, withContext: false }));
-assert.deepEqual(capacity(mt).map((line) => line.amount), [5.19, 3.11]);
-
-// 4. No Terna value in the archive. Tony (1/11: "bisogna trovare da arera come già detto i valori standard"): the ARERA standard
+// 4. No Terna value in the archive (Tony 2/11: the ARERA value is the rule, so it is no longer a "standard" fallback line). Tony (1/11: "bisogna trovare da arera come già detto i valori standard"): the ARERA standard
 // monthly value applies, the same for every CTE (0,3197 c€/kWh x 1,10 x 1.000 kWh = 3,52), instead of leaving it out.
 const none = await calculatePreparedOffer(request(), structuredClone(prepared), deps({ stored: [], peak: { peakKwh: 100, offPeakKwh: 300 } }));
-assert.deepEqual(capacity(none).map((line) => [line.label, line.amount]), [["Mercato della capacità (valore standard ARERA)", 3.52]]);
+assert.deepEqual(capacity(none).map((line) => [line.label, line.amount]), [["Mercato della capacità", 3.52]]);
 assert.ok(!none.warnings.includes("OFFICIAL_VALUE_MISSING:CAPACITY_MARKET:OFFICIAL_VALUE_MISSING"));
 
 // 5. BT up to 55 kW keeps the monthly ARERA value: no peak split.
