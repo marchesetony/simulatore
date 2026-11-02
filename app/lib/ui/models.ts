@@ -200,6 +200,7 @@ export interface BillDocumentModel {
   readonly normalized: import("../foundation/real-bill").PublicBillProfile | null;
   readonly structuredBill: import("../ingestion/structured-bill").StructuredBillExtraction | null;
   readonly chargeLinesUnread?: boolean;
+  readonly printedVoltageMismatch?: { readonly printed: "LV" | "MV" | "HV" | "EHV"; readonly read: string | null };
   readonly resolvedVector: "EE" | "GAS" | "UNKNOWN";
   readonly invoicePunReferences: import("../market/pun-reference").OfficialPunModel;
   readonly currentSpread?: import("../market/bill-spread").BillCurrentSpread | null;

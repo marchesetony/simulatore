@@ -171,6 +171,8 @@ export type PublicBillDocument = {
   readonly structuredBill: StructuredBillExtraction | null;
   /** The second reading (charge lines) failed: shown to every user, with the button to read them again (Tony, 1/11). */
   readonly chargeLinesUnread?: boolean;
+  /** Tony (2/11, J Fuel 20.000 V read as BT): the voltage printed in the PDF differs from the one the bill was read with. */
+  readonly printedVoltageMismatch?: { readonly printed: "LV" | "MV" | "HV" | "EHV"; readonly read: string | null };
   readonly resolvedVector: ResolvedBillVector;
   readonly invoicePunReferences: OfficialPunModel;
   /** Spread of the current supplier: applied energy price minus the official PUN (never printed on the bill). */

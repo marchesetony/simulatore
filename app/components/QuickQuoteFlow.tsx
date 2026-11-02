@@ -994,8 +994,10 @@ export default function QuickQuoteFlow({ readonly, showExcluded = false }: { rea
     } catch (cause) { setError(`La nuova lettura delle voci non è riuscita. ${message(cause)}`); } finally { setPending(undefined); }
   };
   // Also when every quote shows only the offer (no seller spend read from the bill): the scontrino of the bill was not read.
-  const analystRetry = (bill: BillDocumentModel, offerOnly = false) => bill.chargeLinesUnread || offerOnly || bill.structuredBill?.analystExtractionStatus === "FAILED" ? <div className="inline-warning" role="status">
-    <p>Le voci di spesa dello scontrino di questa bolletta non sono state lette, quindi il confronto con la bolletta non si può fare. Rileggile dal PDF già caricato.</p>
+  // Tony (2/11, J Fuel "come mai ancora uguale"): a bill read with a voltage other than the printed one is read again too.
+  const VOLTAGE_NAME: Record<string, string> = { LV: "bassa tensione", MV: "media tensione", HV: "alta tensione", EHV: "altissima tensione" };
+  const analystRetry = (bill: BillDocumentModel, offerOnly = false) => bill.printedVoltageMismatch || bill.chargeLinesUnread || offerOnly || bill.structuredBill?.analystExtractionStatus === "FAILED" ? <div className="inline-warning" role="status">
+    <p>{bill.printedVoltageMismatch ? `La bolletta è stampata in ${VOLTAGE_NAME[bill.printedVoltageMismatch.printed]} ma è stata letta in ${bill.printedVoltageMismatch.read ? VOLTAGE_NAME[bill.printedVoltageMismatch.read] ?? bill.printedVoltageMismatch.read : "tensione non indicata"}: perdite di rete, rete e oneri sarebbero sbagliati. Rileggila dal PDF già caricato e conferma i dati.` : "Le voci di spesa dello scontrino di questa bolletta non sono state lette, quindi il confronto con la bolletta non si può fare. Rileggile dal PDF già caricato."}</p>
     <button className="button primary" type="button" onClick={() => void rereadAnalyst(bill.id)} disabled={readonly || Boolean(pending)}>{pending === "reread" ? "Lettura delle voci in corso…" : "Rileggi le voci della bolletta"}</button>
   </div> : null;
 

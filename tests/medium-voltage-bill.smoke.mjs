@@ -5,6 +5,7 @@ import { buildCurrentBillEconomicAnalysis } from "../app/lib/foundation/bill-eco
 import { buildQuoteReceipt } from "../app/lib/quote/receipt.ts";
 import { billedMonths, offerScontrino } from "../app/lib/quote/offer-scontrino.ts";
 import { readFileSync } from "node:fs";
+import { withPrintedVoltageCheck } from "../app/lib/market/pun-reference.ts";
 
 // Tony (2/11, "voglio capire perchè a noi risulta molto meno il risparmio rispetto a quello che ha fatto bpower"): a business
 // bill in media tensione (20.000 V, 200 kW) was quoted as bassa tensione, and its 510,89 € of oneri (ASOS and ARIM listed
@@ -61,5 +62,11 @@ assert.equal(billedMonths("2026-09-01", "2026-10-01"), 1);
 const flow = readFileSync(new URL("../app/components/QuickQuoteFlow.tsx", import.meta.url), "utf8");
 assert.match(flow, /const base = \{ bill, context: withExclusiveEnd\(prepared\.context\)/);
 assert.match(flow, /getUTCDate\(\) !== 1 \? new Date\(time \+ 86_400_000\)/);
+
+// 5. Tony (2/11, "come mai ancora uguale"): a bill archived as BT while it prints 20.000 V says so, with the reread button.
+const archived = { normalized: { supply: { voltageLevel: "LV" } }, structuredBill: read };
+assert.deepEqual(withPrintedVoltageCheck(archived, "Tensione nominale di alimentazione 20.000 V").printedVoltageMismatch, { printed: "MV", read: "LV" });
+assert.equal(withPrintedVoltageCheck({ normalized: { supply: { voltageLevel: "MV" } }, structuredBill: read }, "Tensione nominale di alimentazione 20.000 V").printedVoltageMismatch, undefined);
+assert.match(flow, /bill\.printedVoltageMismatch \|\| bill\.chargeLinesUnread/);
 
 console.log("medium voltage bill smoke ok");

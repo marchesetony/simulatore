@@ -17,6 +17,8 @@ import { scontrinoSource, withPrintedScontrino } from "../ingestion/printed-scon
 // @ts-expect-error Node's strip-only test runner requires the explicit extension.
 import { withTextBillingPeriod } from "../ingestion/billing-period.ts";
 // @ts-expect-error Node's strip-only test runner requires the explicit extension.
+import { voltageFromText } from "../ingestion/printed-voltage.ts";
+// @ts-expect-error Node's strip-only test runner requires the explicit extension.
 import { pdfTextLayer } from "../regulatory-refresh/pdf-text.ts";
 
 export type PunTariffStructure = "MONO" | "F1_F2_F3";
@@ -158,12 +160,22 @@ export async function withDocumentPriceRows<T extends Pick<PublicBillDocument, "
     let text: string | null = null;
     try { const layer = pdfTextLayer(bytes); text = layer.status === "AVAILABLE" ? layer.text : null; } catch { text = null; }
     const structuredBill = withTextBillingPeriod(withPrintedScontrino(withBox, scontrinoSource(withBox, text)), text);
-    return withReadBillingPeriodField({ ...document, structuredBill });
+    return withPrintedVoltageCheck(withReadBillingPeriodField({ ...document, structuredBill }), text);
   } catch { return document; }
 }
 
 // Tony (2/11, "manca il periodo di riferimento… bollette… riferite a due mesi di fornitura"): a bill archived with an empty
 // "Periodo fatturato" shows the period read from its PDF text, for the agent to confirm in the review form.
+// Tony (2/11, J Fuel: "come mai ancora uguale"): a bill archived before the printed voltage was read keeps the voltage it was
+// read with (bassa tensione for a 20.000 V supply). The bill then says so, with the button to read it again from its PDF.
+export function withPrintedVoltageCheck<T extends { readonly structuredBill?: StructuredBillExtraction | null }>(document: T, text: string | null): T {
+  const printed = voltageFromText(text);
+  const normalized = (document as { readonly normalized?: { readonly supply?: { readonly voltageLevel?: string } } | null }).normalized;
+  const bill = document.structuredBill?.voltageLevel;
+  const read = normalized?.supply?.voltageLevel ?? (bill?.status === "FOUND" ? bill.value : null) ?? null;
+  return printed && read !== printed ? { ...document, printedVoltageMismatch: { printed, read } } : document;
+}
+
 export function withReadBillingPeriodField<T extends { readonly structuredBill?: StructuredBillExtraction | null }>(document: T): T {
   const fields = (document as { readonly fields?: PublicBillDocument["fields"] }).fields;
   const period = document.structuredBill?.billingPeriod;
