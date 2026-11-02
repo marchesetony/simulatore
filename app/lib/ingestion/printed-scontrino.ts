@@ -15,9 +15,12 @@ const QUANTITY = /(\d+(?:\.\d{3})*(?:,\d+)?)\s*(kWh|Smc|mes[ei]|kW)\b/i;
 const TAXES = /^(accise\s+e\s+iva|totale\s+imposte\s+e\s+iva|imposte(?:\s+e\s+iva)?)\b/i;
 const BONUS = /^bonus\s+sociale\b/i;
 const TOTAL = /^totale\s+(?:della\s+)?bolletta\b/i;
-const OTHER_ITEMS = /^(altre\s+partite|ricalcoli|canone\s+(?:di\s+abbonamento\s+)?(?:alla\s+)?(?:televisione|rai)|interessi\s+di\s+mora)\b/i;
+// Tony (2/11, IREN Citrus Juices): "Altre partite non soggette ad IVA 125,47 €" is followed by "Bollo fattura 2,00 €" and
+// "Interessi di mora 123,47 €": the items are read and the heading that sums them is left out (see below).
+const OTHER_ITEMS = /^(altre\s+partite|ricalcoli|canone\s+(?:di\s+abbonamento\s+)?(?:alla\s+)?(?:televisione|rai)|interessi\s+di\s+mora|bollo(?:\s+fattura)?)\b/i;
 // Tony (2/11, J Fuel): "Energia reattiva prelevata 753 kVARh x 0,003772 €/kVARh 2,84 €" is printed under the quota per consumi.
 const REACTIVE = /^energia\s+reattiva\b/i;
+const REACTIVE_QUOTA = "Energia reattiva";
 const ITEM = (row: string) => TAXES.test(row) || BONUS.test(row) || TOTAL.test(row) || OTHER_ITEMS.test(row) || REACTIVE.test(row);
 
 const clean = (value: string) => value.replace(/\s+/g, " ").replace(/[=+]\s*$/, "").trim();
@@ -62,6 +65,9 @@ export function printedScontrinoLines(text: string): readonly StructuredBillEcon
       continue;
     }
     const share = DI_CUI.exec(row);
+    // Tony (2/11, IREN Citrus Juices): "ENERGIA REATTIVA 53,00 €" is followed by its own "di cui spesa per la rete" 53,00 €:
+    // that share repeats the reactive line, it is not a second quota per consumi share.
+    if (share && quota === REACTIVE_QUOTA) { index = gather(index).next; continue; }
     if (share && quota) {
       const { text: joined, next } = gather(index);
       const amount = amountOf(joined);
@@ -83,6 +89,7 @@ export function printedScontrinoLines(text: string): readonly StructuredBillEcon
     if (REACTIVE.test(row)) {
       const quantity = /(\d+(?:\.\d{3})*(?:,\d+)?)\s*kVArh/i.exec(joined); const price = /(\d+,\d+)\s*€\s*\/\s*kVArh/i.exec(joined);
       lines.push(line("OTHER_CHARGE", clean(label.replace(/\d[\d.,]*\s*kVArh.*$/i, "")), amount, { quantity: quantity ? quantity[1] : "", unit: quantity ? "kVArh" : "", unitPrice: price ? price[1] : "" }));
+      quota = REACTIVE_QUOTA;
       index = next;
       continue;
     }
@@ -92,7 +99,22 @@ export function printedScontrinoLines(text: string): readonly StructuredBillEcon
     if (code === "BILL_TOTAL") break;
   }
   // A scontrino needs at least one "di cui" share with its amount.
-  return lines.some((item) => / - di cui /i.test(item.description)) ? lines : [];
+  return lines.some((item) => / - di cui /i.test(item.description)) ? withoutAltrePartiteHeading(lines) : [];
+}
+
+// An "Altre partite ..." heading whose amount is the sum of the altre partite printed right below it is their subtotal.
+function withoutAltrePartiteHeading(lines: readonly StructuredBillEconomicChargeLine[]): readonly StructuredBillEconomicChargeLine[] {
+  const cents = (amount: string) => Math.round(Number(amount.replace(/[^\d,\-]/g, "").replace(",", ".")) * 100);
+  const dropped = new Set<number>();
+  lines.forEach((item, index) => {
+    if (item.code !== "ALTRE_PARTITE" || !/^altre\s+partite/i.test(item.description)) return;
+    let sum = 0;
+    for (let next = index + 1; next < lines.length && lines[next].code === "ALTRE_PARTITE"; next += 1) {
+      sum += cents(lines[next].amount);
+      if (sum === cents(item.amount) && next > index + 1) { dropped.add(index); return; }
+    }
+  });
+  return dropped.size === 0 ? lines : lines.filter((_, index) => !dropped.has(index));
 }
 
 const hasScontrino = (lines: readonly StructuredBillEconomicChargeLine[]) => lines.some((item) => /di\s+cui\s+spes[ae]\s+per/i.test(`${item.description} ${item.rawDescription ?? ""}`));

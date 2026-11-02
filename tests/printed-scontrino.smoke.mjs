@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { printedScontrinoLines, withPrintedScontrino, readingHasScontrino } from "../app/lib/ingestion/printed-scontrino.ts";
-import { buildCurrentBillEconomicAnalysis } from "../app/lib/foundation/bill-economic-analysis.ts";
+import { buildCurrentBillEconomicAnalysis, classifyBillEconomicComponent } from "../app/lib/foundation/bill-economic-analysis.ts";
 import { buildQuoteReceipt } from "../app/lib/quote/receipt.ts";
 import { offerScontrino } from "../app/lib/quote/offer-scontrino.ts";
 
@@ -96,4 +96,21 @@ assert.ok((fixedReceipt.quotas.find((quota) => quota.key === "CONSUMPTION")?.cur
 // Altre partite read one by one by the AI are not added a second time.
 const itemised = withPrintedScontrino({ economicChargeLines: [{ code: "INTERESSI_MORA", description: "Interessi", amount: "3,00 €", quantity: "", unit: "", unitPrice: "", periodRaw: "", status: "FOUND" }] }, multiRow);
 assert.equal(itemised.economicChargeLines.some((line) => line.code === "ALTRE_PARTITE"), false);
+
+// Tony (2/11, sample bills, IREN layout): the reactive rows carry their own "di cui rete" share, and "Altre partite non
+// soggette ad IVA" heads bollo and interessi di mora. Synthetic amounts.
+const iren = `Quota per consumi\nENERGIA ATTIVA 1.000 kWh x 0,300000 €/kWh 300,00 €\ndi cui spesa per la vendita di energia elettrica 0,250000 €/kWh 250,00 €\ndi cui spesa per la rete e gli oneri generali di sistema 0,050000 €/kWh 50,00 €\nENERGIA REATTIVA 1.000 kVARh x 0,003770 €/kVARh 3,77 €\ndi cui spesa per la rete e gli oneri generali di sistema 0,003770 €/kVARh 3,77 €\nENERGIA REATTIVA IMMESSA 10 kVARh x 0,010000 €/kVARh 0,10 €\ndi cui spesa per la rete e gli oneri generali di sistema 0,010000 €/kVARh 0,10 €\nQuota fissa 1 mese x 20,000000 €/mese 20,00 €\ndi cui spesa per la vendita di energia elettrica 15,000000 €/mese 15,00 €\ndi cui spesa per la rete e gli oneri generali di sistema 5,000000 €/mese 5,00 €\nAltre partite non soggette ad IVA 12,00 €\nBollo fattura 2,00 €\nInteressi di mora 10,00 €\nAccise e IVA 40,00 €\nTotale bolletta 375,87 €`;
+const i = printedScontrinoLines(iren);
+assert.ok(!i.some((line) => /^Quota per consumi - di cui/.test(line.description) && ["3,77 €", "0,10 €"].includes(line.amount)), "the reactive share is not a quota per consumi share");
+assert.deepEqual(i.filter((line) => line.code === "ALTRE_PARTITE").map((line) => [line.description, line.amount]), [["Bollo fattura", "2,00 €"], ["Interessi di mora", "10,00 €"]]);
+const irenAnalysis = buildCurrentBillEconomicAnalysis(i, "375,87");
+assert.equal(irenAnalysis.totals.reconciliationStatus, "RECONCILED");
+const irenReceipt = buildQuoteReceipt({ vector: "EE", offerSupplyCost: 300, analysis: irenAnalysis, domestic: false, validUntil: null });
+// Out of the comparison: the altre partite 12,00 €; in: reactive 3,87 € with the network (50 + 5 + 3,87).
+assert.equal(irenReceipt.currentTotal, 363.87);
+assert.equal(irenReceipt.rows.find((row) => row.key === "NETWORK").current, 58.87);
+// The TIDE dispatching lines of the spesa per la materia energia are seller dispatching, never altre partite.
+for (const label of ["Corrispettivo FTE (TIDE)", "Corrispettivo OTHER (TIDE)", "Corrispettivo Uplift (TIDE)"]) assert.equal(classifyBillEconomicComponent("OTHER_CHARGE", label), "DISPATCHING_SELLER_CHARGE", label);
+assert.equal(classifyBillEconomicComponent("OTHER_CHARGE", "Corrispettivo Mercato capacità"), "CAPACITY_MARKET_SELLER_CHARGE");
+assert.equal(classifyBillEconomicComponent("ALTRE_PARTITE", "Altre partite non soggette ad IVA"), "ALTRE_PARTITE");
 console.log("PRINTED_SCONTRINO=PASS");

@@ -80,6 +80,11 @@ export function classifyBillEconomicComponent(code: string | null | undefined, d
   // Delibera ARG/elt 98/11 is the capacity market; TIDE art. 25 and TIS are dispatching charges passed on by the seller.
   if (/ARG_ELT_98_11/.test(d)) return "CAPACITY_MARKET_SELLER_CHARGE";
   if (/(^|_)(TIDE|TIS)(_|$)/.test(d) && /^ART(ICOLO)?_/.test(d)) return "DISPATCHING_SELLER_CHARGE";
+  // Tony (2/11, IREN Citrus Juices): "Corrispettivo FTE / MOD RID / MPROD / OTHER / UESS / Uplift (TIDE)" are the TIDE
+  // dispatching charges in the spesa per la materia energia (812,74 €), never altre partite.
+  if (/(^|_)TIDE(_|$)/.test(d)) return "DISPATCHING_SELLER_CHARGE";
+  // Same bill: "Corrispettivo Mercato capacità" (247,43 €) is the seller's capacity charge.
+  if (/MERCATO_(DELLA_)?CAPACIT/.test(d)) return "CAPACITY_MARKET_SELLER_CHARGE";
   if (/^SPESA_PER_LA_TARIFFA_PER_L_USO_DELLA_RETE_.+/.test(d)) return "ARERA_NETWORK";
   if (/^SPESA_PER_GLI_ONERI_GENERALI_DI_SISTEMA_.+/.test(d)) return "ARERA_SYSTEM_CHARGES";
   if (["ENERGY_FIXED_PRICE", "FIXED_PRICE", "PREZZO_FISSO"].includes(c) || d.includes("PREZZO_FISSO")) return "ENERGY_FIXED_PRICE";
@@ -106,6 +111,8 @@ export function classifyBillEconomicComponent(code: string | null | undefined, d
   if (["AMOUNT_DUE", "TOTAL_AMOUNT_DUE"].includes(c) || d === "TOTALE_DA_PAGARE") return "AMOUNT_DUE";
   if (["PRIOR_BALANCE", "PREVIOUS_BALANCE", "OUTSTANDING_AMOUNT"].includes(c) || d.includes("IMPORTO_INSOLUTO") || d.includes("SALDO_PRECEDENTE")) return "PRIOR_BALANCE";
   if (["TAX_SUBTOTAL", "EXCISE_VAT_SUBTOTAL"].includes(c) || d === "ACCISE_E_IVA" || d.includes("TOTALE_IMPOSTE")) return "TAX_SUBTOTAL";
+  // "Altre partite non soggette ad IVA" (IREN) is the altre partite heading, not VAT.
+  if (d.startsWith("ALTRE_PARTITE")) return "ALTRE_PARTITE";
   if (["VAT", "IVA"].includes(c) || /(^|_)IVA(_|$)/.test(d)) return "IVA";
   if (["EXCISE", "ACCISE"].includes(c) || /(^|_)ACCISA?(_|$)/.test(d)) return "ACCISE";
   if (["CANONE_RAI", "TV_FEE", "RAI"].includes(c) || d.includes("CANONE_DI_ABBONAMENTO") || d.includes("TELEVISIONE")) return "CANONE_RAI";
