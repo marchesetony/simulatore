@@ -40,6 +40,9 @@ export interface QuoteReceipt {
   readonly officialCheck?: Readonly<Record<"NETWORK" | "SYSTEM", OfficialCheck>>;
   /** Bill items left out of the comparison (prior-period adjustments, late-payment interest, deposits, TV licence...). */
   readonly excluded?: readonly { readonly label: string; readonly amount: number }[];
+  /** Tony (3/11, Atlante delle voci): charges the CTE does not make determinable (losses, dispatching, capacity). While any
+   *  is listed the offer total is not definitive and is shown as such. */
+  readonly undetermined?: readonly string[];
 }
 export interface OfficialCheck { readonly status: "VERIFIED" | "DIFFERENCE" | "NOT_AVAILABLE"; readonly official: number | null; readonly difference: number | null; readonly reason: string | null }
 export type QuoteReceiptQuotaKey = "CONSUMPTION" | "FIXED" | "POWER" | "OTHER" | "BONUS" | "EXCISE" | "VAT" | "TAXES";
@@ -194,6 +197,8 @@ const MISSING_REASON: Readonly<Record<string, string>> = {
   PEAK_HOUR_KWH_MISSING: "servono i kWh prelevati nelle ore di picco Terna",
   AVAILABLE_POWER_MISSING: "potenza disponibile non letta in bolletta",
   CTE_REFERENCE_MISSING: "la CTE in archivio non indica come si applica: va riletta la CTE",
+  // Tony (3/11, Atlante delle voci): a charge the CTE does not make determinable is shown, never priced.
+  CTE_NOT_DETERMINABLE: "non determinabile: la CTE non dice se è compreso nel prezzo né come si applica",
   CDISPD_MISSING: "CDISPD ARERA del mese (dispacciamento e capacità, TIV comma 48.9) non ancora in archivio: va eseguito l'aggiornamento ARERA",
 };
 function missingOfficial(input: QuoteReceiptInput): ReadonlyMap<string, string> {
@@ -204,6 +209,10 @@ function missingOfficial(input: QuoteReceiptInput): ReadonlyMap<string, string> 
     if (prefix === "OFFICIAL_VALUE_MISSING" && key && !result.has(key)) result.set(key, MISSING_REASON[reason ?? ""] ?? "valore ufficiale mancante");
   }
   return result;
+}
+function undeterminedOf(input: QuoteReceiptInput): readonly string[] {
+  const labels = (input.warnings ?? []).filter((warning) => warning.endsWith(":CTE_NOT_DETERMINABLE")).map((warning) => DETAIL_LABEL[MISSING_KEY[warning.split(":")[1] ?? ""] ?? ""] ?? warning.split(":")[1] ?? "");
+  return [...new Set(labels.filter(Boolean))];
 }
 // Reactive energy is an ARERA charge tied to the customer's plant: the same on both sides (base di calcolo, 26/10).
 // Every other "altre partite" line (prior periods, interest, deposits, indemnities, TV licence) stays out of the comparison.
@@ -591,13 +600,13 @@ function buildReceipt(input: QuoteReceiptInput): QuoteReceipt {
   ];
   const bonusShown = bonusTotal !== 0 && taxesIncluded ? bonusTotal : 0;
   if (currentEnergy === null) {
-    return { status: "OFFER_ONLY", rows: withDetails(input, rows, false), currentTotal: null, offerTotal: null, savings: null, savingsPercent: null, taxesIncluded: false, vatRate: null, vatRateEstimated: false, validUntil: input.validUntil, quotas: quotasOf(input, null, offerEnergy, network, system, null, null, offerNetwork, offerSystem), officialCheck: check, excluded };
+    return { status: "OFFER_ONLY", rows: withDetails(input, rows, false), currentTotal: null, offerTotal: null, savings: null, savingsPercent: null, taxesIncluded: false, vatRate: null, vatRateEstimated: false, validUntil: input.validUntil, quotas: quotasOf(input, null, offerEnergy, network, system, null, null, offerNetwork, offerSystem), officialCheck: check, excluded, undetermined: undeterminedOf(input) };
   }
   const currentTotal = cents(currentEnergy + (network ?? 0) + (system ?? 0) + bonusShown + (taxesIncluded ? currentTaxes : 0));
   const offerTotal = cents(offerEnergy + (offerNetwork ?? 0) + (offerSystem ?? 0) + bonusShown + (offerTaxes ?? 0));
   const savings = cents(currentTotal - offerTotal);
   const savingsPercent = currentTotal > 0 ? Math.round((savings / currentTotal) * 1000) / 10 : null;
-  return { status: "COMPLETE", rows: withDetails(input, rows, true), currentTotal, offerTotal, savings, savingsPercent, taxesIncluded, vatRate: taxesIncluded ? chosenRate ?? vatRate : null, vatRateEstimated: taxesIncluded && chosenRate === null && printedRate === null, billVatRate: taxesIncluded ? vatRate : null, validUntil: input.validUntil, quotas: quotasOf(input, currentEnergy, offerEnergy, network, system, taxesIncluded ? currentTaxes : null, offerTaxes, offerNetwork, offerSystem), officialCheck: check, excluded };
+  return { status: "COMPLETE", rows: withDetails(input, rows, true), currentTotal, offerTotal, savings, savingsPercent, taxesIncluded, vatRate: taxesIncluded ? chosenRate ?? vatRate : null, vatRateEstimated: taxesIncluded && chosenRate === null && printedRate === null, billVatRate: taxesIncluded ? vatRate : null, validUntil: input.validUntil, quotas: quotasOf(input, currentEnergy, offerEnergy, network, system, taxesIncluded ? currentTaxes : null, offerTaxes, offerNetwork, offerSystem), officialCheck: check, excluded, undetermined: undeterminedOf(input) };
 }
 
 /**

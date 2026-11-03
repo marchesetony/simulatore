@@ -144,4 +144,9 @@ const elios = ["Quantità          Prezzo medio(*) Unità di misura          Imp
 const eliosLines = printedScontrinoLines(elios);
 assert.equal(eliosLines.find((line) => line.description === "QUOTA PER I CONSUMI")?.amount, "34,88 €", "the quantity is not the amount");
 assert.equal(buildCurrentBillEconomicAnalysis(eliosLines, "51,52").totals.reconciliationStatus, "RECONCILED");
+
+// Tony (3/11, Atlante delle voci): charges the CTE does not make determinable are listed, so the total is shown as provisional.
+const provisional = buildQuoteReceipt({ vector: "EE", offerSupplyCost: 300, analysis: irenAnalysis, domestic: false, validUntil: null, warnings: ["OFFICIAL_VALUE_MISSING:LOSSES:CTE_NOT_DETERMINABLE", "OFFICIAL_VALUE_MISSING:DISPATCHING:CTE_NOT_DETERMINABLE"] });
+assert.deepEqual(provisional.undetermined, ["Perdite di rete", "Dispacciamento"]);
+assert.deepEqual(irenReceipt.undetermined, []);
 console.log("PRINTED_SCONTRINO=PASS");

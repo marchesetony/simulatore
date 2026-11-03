@@ -193,7 +193,17 @@ function addCtePassThroughs(target: ComponentDraft[], request: ElectricitySimula
   const grossUp = (rate: Rational) => loss ? multiply(rate, add(fromNumber(1), loss)) : rate;
   // Losses on energy: the energy price (index and spread, or the fixed price) applied to the energy lost on the networks.
   // Only a CTE that names the index alone as grossed up keeps the spread out of the base.
-  if (loss && standard && !priced.has("LOSSES")) {
+  // Tony (3/11, Atlante delle voci): "senza applicazione automatica del 10% quando la CTE tace. Prima verificare se il prezzo
+  // comprende già le perdite; in caso di ambiguità, segnalare il dato non determinabile e non inventare il costo". Losses are
+  // priced only when the CTE states how they apply (Tabella 4 TIS, a price or spread net or gross of losses) or the rule does
+  // (households from 1/4/2026, delibera 386/2025: seller charges gross of losses, losses on the index); a CTE that includes
+  // them in the price adds none; otherwise the line is "non determinabile".
+  const householdFrom2026 = context?.regulatoryCustomerScope?.startsWith("DOMESTIC") === true && request.supplyPeriod.periodStart.slice(0, 10) >= "2026-04-01";
+  const priceLoss = offer.pricing.mode === "INDEXED" ? offer.pricing.spread.lossTreatment : offer.pricing.mode === "FIXED" ? offer.pricing.fixedPrice?.lossTreatment : undefined;
+  const lossesIncluded = priceLoss === "INCLUDED";
+  const lossesStated = offer.lossReference !== undefined || offer.lossSemantics !== undefined || ["NET_OF_LOSSES", "GROSS_OF_LOSSES", "OFFICIAL_REFERENCE"].includes(String(priceLoss ?? "")) || householdFrom2026;
+  if (!lossesStated && !lossesIncluded && !priced.has("LOSSES")) missing.push("LOSSES:CTE_NOT_DETERMINABLE");
+  if (loss && standard && lossesStated && !lossesIncluded && !priced.has("LOSSES")) {
     // A spread stated gross of losses already contains them (Tony, 28/10, BE Family Casa Protetta).
     // Households from 1 April 2026 (delibera 386/2025/R/com, Codice di condotta commerciale art. 5.1.a): the seller's
     // charges are stated "al lordo delle perdite di rete" and the index carries one spread covering every cost outside it,
@@ -242,7 +252,13 @@ function addCtePassThroughs(target: ComponentDraft[], request: ElectricitySimula
       target.push({ componentId: "cte-pass-through:domestic-cdispd", category: "VARIABLE_FEE", label: "Dispacciamento e mercato della capacità (CDISPD)", sign: "CHARGE", value: multiply(unitRate, totalQuantity), formulaId: "CTE_PASS_THROUGH_RATE_TIMES_KWH", formulaInputs: { kind: "DISPATCHING", feeUnit: "EUR_PER_KWH", feeRate: toDecimal(unitRate, 6), officialRate: cdispd.eurPerKwh, lossFactor: 0, basisQuantity: toDecimal(totalQuantity, 3), source: cdispd.months.map((month) => month.resolution).join(", ") } });
     } else missing.push("DISPATCHING:CDISPD_MISSING");
   }
-  if (!inCdispd && (dispatching || !statedAway("DISPATCHING")) && !priced.has("DISPATCHING")) {
+  // Tony (3/11, Atlante delle voci): dispatching and capacity apply "soltanto quando il corrispettivo è applicabile, non già
+  // incluso e determinabile attraverso la normativa e la documentazione contrattuale. In caso contrario, segnalare la voce
+  // come non determinabile, senza aggiungere importi arbitrari". This replaces the 28/10 rule (silent CTE = official value).
+  const statedBy = (kind: "DISPATCHING" | "CAPACITY_MARKET") => (offer.passThroughComponents ?? []).some((item) => item.kind === kind && (item.declarationState === "EXPLICIT_COMPONENT" || item.declarationState === "EXTERNAL_PASS_THROUGH"));
+  const dispatchingStated = dispatching !== undefined || statedBy("DISPATCHING");
+  if (!inCdispd && !dispatchingStated && !statedAway("DISPATCHING") && !priced.has("DISPATCHING")) missing.push("DISPATCHING:CTE_NOT_DETERMINABLE");
+  if (!inCdispd && dispatchingStated && !priced.has("DISPATCHING")) {
     // Customers other than households: Terna's quarterly TIDE dispatching charge, when the archive resolves none.
     const terna = runtime?.dispatching?.value === undefined && !domestic ? ternaTideForPeriod(request.supplyPeriod.periodStart, request.supplyPeriod.periodEnd, tideQuarters) : null;
     const official = runtime?.dispatching?.value ?? terna?.eurPerKwh;
@@ -268,7 +284,10 @@ function addCtePassThroughs(target: ComponentDraft[], request: ElectricitySimula
     // Tony (30/10, AZIENDA PROTETTA: "credo ci siano errori ancora"): a CTE that fixes only its own Capacity Market libero is
     // silent on the regulated charge, which then applies as for any silent CTE (Tony 28/10), beside the CTE's own value.
     // A CTE stating capacity included in the energy price, or not applicable, adds none (Tony 28/10).
+    const capacityStated = statedBy("CAPACITY_MARKET") || entries.some((entry) => entry.mode === "OFFICIAL_PASS_THROUGH");
     if (inCdispd || statedAway("CAPACITY_MARKET")) { /* inside CDISPD or stated away */ }
+    // A CTE silent on the regulated capacity charge (or stating only its own Capacity Market libero, V9): not determinable.
+    else if (!capacityStated) missing.push("CAPACITY_MARKET:CTE_NOT_DETERMINABLE");
     else {
       const powerKw = context?.availablePowerKw ?? context?.contractedPowerKw;
       // Tony (1/11): "non si può non calcolare un dato che sfalsa la bolletta". A BT bill without power read: with the kWh of

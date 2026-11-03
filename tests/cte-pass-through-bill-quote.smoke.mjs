@@ -21,6 +21,8 @@ const prepared = {
     fixedFees: [], variableFees: [], imbalance: { status: "NOT_DECLARED", reason: "NOT_APPLICABLE" }, oneOffFees: [], commercialDiscounts: [], vector: "EE",
     pricing: { mode: "FIXED", reference: "NONE", fixedPrice: { amount: 0.1, currency: "EUR", unit: "EUR_PER_KWH", taxTreatment: "EXCLUDED" }, spread: { status: "NOT_DECLARED", reason: "NOT_APPLICABLE" } },
     dispatchingReference: { mode: "OFFICIAL_PASS_THROUGH", reference, formula: "Art. 24 TIS", lossTreatment: "OFFICIAL_REFERENCE", snapshotValue: 0.01155, snapshotUnit: "EUR_PER_KWH", effectiveFrom: "2026-08-03", effectiveTo: "2027-01-01", sourceEvidence: "attualmente pari a 0,01155 Eur/kWh" },
+    // Tony (3/11, Atlante delle voci): losses are priced only when the CTE states them (here "Tabella 4 colonna A TIS").
+    lossReference: { lossMode: "OFFICIAL_REFERENCE", reference: { authority: "ARERA_TERNA", document: "TIS", table: "Tabella 4", column: "A" }, applicationTargets: ["DISPATCHING"], sourceEvidence: "perdite di rete Tabella 4 colonna A TIS" },
     capacityMarketSchedule: [
       { voltageScope: "LV", timeClass: "ALL", value: 0.01349, unit: "EUR_PER_KWH", mode: "OFFICIAL_PASS_THROUGH", effectiveFrom: "2026-08-03", effectiveTo: "2027-01-01", lossTreatment: "NOT_DECLARED", sourceEvidence: "0,01349 Eur/kWh in bassa tensione" },
       { voltageScope: "MV", timeClass: "ALL", value: 0.065, unit: "EUR_PER_KWH", mode: "OFFICIAL_PASS_THROUGH", effectiveFrom: "2026-08-03", effectiveTo: "2027-01-01", lossTreatment: "NOT_DECLARED", sourceEvidence: "media tensione" },
@@ -43,6 +45,12 @@ assert.deepEqual(byKind(quote, "DISPATCHING"), [11.55]);
 assert.deepEqual(byKind(quote, "CAPACITY_MARKET"), [5, 4.7]);
 // Losses: 1.000 kWh x 0,1 EUR x 10% = 10 EUR, always present (Tony, 26/10).
 assert.deepEqual(byKind(quote, "LOSSES"), [10], "BT standard losses 10% of the energy cost");
+// Tony (3/11): "senza applicazione automatica del 10% quando la CTE tace": the same CTE without the losses paragraph prices
+// none and says the losses are not determinable.
+const silentLosses = structuredClone(prepared); delete silentLosses.offer.lossReference;
+const silentLossQuote = await calculatePreparedOffer(request(true), silentLosses, deps(0.0105, 0.004275, 30));
+assert.deepEqual(byKind(silentLossQuote, "LOSSES"), []);
+assert.ok(silentLossQuote.warnings.includes("OFFICIAL_VALUE_MISSING:LOSSES:CTE_NOT_DETERMINABLE"), silentLossQuote.warnings.join(","));
 assert.equal(quote.totalCommercialCost.amount, 100 + 10 + 11.55 + 5 + 4.7);
 // The stub has no ARERA tables for business BT: only that reason remains, so the receipt can say why (Tony, 27/10).
 assert.deepEqual(quote.warnings.filter((warning) => warning.startsWith("OFFICIAL_VALUE_MISSING")), ["OFFICIAL_VALUE_MISSING:REGULATED:SCOPE_UNREGISTERED_NON_DOMESTIC_BT"]);
@@ -71,8 +79,10 @@ assert.ok(!large.warnings.includes("OFFICIAL_VALUE_MISSING:CAPACITY_MARKET:OFFIC
 // A CTE that prints no regulated value gets the very same regulated charge.
 const noStated = structuredClone(prepared); noStated.offer.capacityMarketSchedule = noStated.offer.capacityMarketSchedule.filter((entry) => entry.mode === "FIXED_VALUE");
 const noStatedQuote = await calculatePreparedOffer(request(true), noStated, deps(0.0105, 0.004275, 98));
-// Tony (2/11): same archive value as above (4,70), still equal for every CTE.
-assert.deepEqual(byKind(noStatedQuote, "CAPACITY_MARKET"), [5, 4.7]);
+// Tony (3/11, Atlante delle voci): a CTE that states only its Capacity Market libero does not make the regulated charge
+// determinable: only the libero 5 is priced and the regulated line is "non determinabile".
+assert.deepEqual(byKind(noStatedQuote, "CAPACITY_MARKET"), [5]);
+assert.ok(noStatedQuote.warnings.includes("OFFICIAL_VALUE_MISSING:CAPACITY_MARKET:CTE_NOT_DETERMINABLE"), noStatedQuote.warnings.join(","));
 // Tony (1/11): "non si può non calcolare un dato che sfalsa la bolletta". Unknown available power on a BT supply without the
 // peak-hour kWh: priced as up to 55 kW, the official monthly value on all kWh (0,004275 x 1,10 x 1.000 kWh = 4,70).
 const unknown = await calculatePreparedOffer(request(true), prepared, deps(0.0105, 0.004275));
@@ -102,9 +112,11 @@ assert.ok(gap.warnings.some((warning) => /^OFFICIAL_VALUE_MISSING:REGULATED:TIME
 const silent = structuredClone(prepared);
 delete silent.offer.dispatchingReference; delete silent.offer.capacityMarketSchedule; silent.version.contract.commercialTerms = {};
 const silentQuote = await calculatePreparedOffer(request(true), silent, deps(null, null, 6));
-assert.deepEqual(byKind(silentQuote, "DISPATCHING"), [11.55]);
-// ARERA TIV 219/2026 art. 4.1, settembre 2026: 0,3197 c€/kWh x 1,10 x 1.000 kWh = 3,52.
-assert.deepEqual(byKind(silentQuote, "CAPACITY_MARKET"), [3.52]);
+// Tony (3/11, Atlante delle voci), replacing the 28/10 rule: dispatching and capacity apply "soltanto quando il
+// corrispettivo è applicabile, non già incluso e determinabile". A silent CTE prices neither and marks both not determinable.
+assert.deepEqual(byKind(silentQuote, "DISPATCHING"), []);
+assert.deepEqual(byKind(silentQuote, "CAPACITY_MARKET"), []);
+assert.ok(["DISPATCHING", "CAPACITY_MARKET"].every((kind) => silentQuote.warnings.includes(`OFFICIAL_VALUE_MISSING:${kind}:CTE_NOT_DETERMINABLE`)), silentQuote.warnings.join(","));
 assert.ok(!silentQuote.warnings.some((warning) => /CTE_REFERENCE_MISSING/.test(warning)), silentQuote.warnings.join(","));
 const includedOffer = structuredClone(silent);
 includedOffer.offer.passThroughComponents = ["DISPATCHING", "CAPACITY_MARKET"].map((kind) => ({ componentId: `pt-${kind}`, kind, effectiveFrom: "2026-08-03", effectiveTo: "2027-01-01", declarationState: "INCLUDED_IN_ENERGY_PRICE" }));
@@ -150,5 +162,8 @@ const ownOnly = structuredClone(prepared);
 ownOnly.offer.capacityMarketSchedule = [prepared.offer.capacityMarketSchedule[2]];
 ownOnly.version.contract.commercialTerms = { dispatchingReference: prepared.offer.dispatchingReference, capacityMarketSchedule: ownOnly.offer.capacityMarketSchedule };
 const ownOnlyQuote = await calculatePreparedOffer(request(true), ownOnly, deps(0.0105, 0.004275, 3));
-assert.deepEqual(byKind(ownOnlyQuote, "CAPACITY_MARKET"), [5, 3.52]);
+// Tony (3/11, Atlante delle voci) replaces this: the regulated charge is no longer added to a CTE that does not make it
+// determinable; only the libero 5 is priced and the regulated line is "non determinabile".
+assert.deepEqual(byKind(ownOnlyQuote, "CAPACITY_MARKET"), [5]);
+assert.ok(ownOnlyQuote.warnings.includes("OFFICIAL_VALUE_MISSING:CAPACITY_MARKET:CTE_NOT_DETERMINABLE"));
 assert.ok(!ownOnlyQuote.warnings.some((warning) => /CAPACITY_MARKET:CTE_REFERENCE_MISSING/.test(warning)), ownOnlyQuote.warnings.join(","));

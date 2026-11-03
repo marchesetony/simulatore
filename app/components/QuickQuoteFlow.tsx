@@ -861,6 +861,7 @@ function Receipt({ offer: quoted, today, business, context, bill, onPresentation
       </tr>)])}</tbody>
       {receipt.status === "COMPLETE" ? <tfoot><tr><th scope="row">{receipt.taxesIncluded ? "Totale" : "Totale imposte escluse"}</th><td>{euro(receipt.currentTotal)}</td><td>{euro(receipt.offerTotal)}</td><td className={difference(receipt.savings === null ? null : -receipt.savings)}>{signedEuro(receipt.savings === null ? null : -receipt.savings)}</td></tr></tfoot> : null}
     </table></div>
+    {receipt.undetermined?.length ? <p className="quote-check open" role="alert"><strong>Totale dell'offerta provvisorio.</strong> La CTE non permette di determinare: {receipt.undetermined.join(", ").toLowerCase()}. Queste voci non sono state aggiunte e il totale le esclude.</p> : null}
     {/* Tony (1/11): "questi dati non facciamoli vedere a tutti se vuole solo amministratore. creano confusione": only the company administrator sees them. */}
     {showExcluded && receipt.excluded?.length ? <div className="quote-excluded"><strong>Partite escluse dal confronto</strong><ul>{receipt.excluded.map((item, index) => <li key={index}>{item.label}: {euro(item.amount)}</li>)}</ul></div> : null}
     {/* The same totals by ARERA quota (consumi, fissa, potenza), for the scontrino dell'energia of the revised Bolletta 2.0. */}
@@ -1101,6 +1102,8 @@ export default function QuickQuoteFlow({ readonly, showExcluded = false }: { rea
           {termLines(offer.candidate).map((line) => <span key={line} className="quote-offer-term">{line}</span>)}
           {offer.candidate.scope ? <small className="quote-offer-scope">Per {offer.candidate.scope.customer}{offer.candidate.scope.voltage.length ? ` · ${offer.candidate.scope.voltage.map((level) => level === "LV" ? "BT" : level === "MV" ? "MT" : level === "HV" ? "AT" : level).join("/")}` : ""}{offer.candidate.scope.consumption ? ` · consumo ${offer.candidate.scope.consumption}` : ""}</small> : null}
           <span className="quote-offer-total">{euro(offer.receipt.offerTotal ?? offer.receipt.rows[0].offer)}</span>
+          {/* Tony (3/11): "un totale presentato come definitivo, quando mancano componenti economiche rilevanti, sarebbe fuorviante". */}
+          {offer.receipt.undetermined?.length ? <small className="quote-offer-scope negative">Totale provvisorio: non determinabili {offer.receipt.undetermined.join(", ").toLowerCase()}</small> : null}
           {/* Tony (1/11): two quotes at the same discounted price still say which one costs more before the discount. */}
           {(() => { const off = discountOf(offer); if (off === null || offer.receipt.offerTotal === null) return null; const gross = offer.receipt.offerTotal + off * (offer.receipt.taxesIncluded ? 1 + (offer.receipt.vatRate ?? 0) : 1); return <small className="quote-offer-scope">Prezzo pieno {euro(Math.round(gross * 100) / 100)}, con sconto commerciale aziendale</small>; })()}
           {offer.receipt.savingsPercent !== null ? <small className={offer.receipt.savingsPercent >= 0 ? "positive" : "negative"}>{offer.receipt.savingsPercent >= 0 ? "Risparmio" : "Più cara"} {PERCENT.format(Math.abs(offer.receipt.savingsPercent))}%</small> : null}

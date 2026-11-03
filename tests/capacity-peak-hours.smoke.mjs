@@ -22,6 +22,9 @@ const prepared = {
   offer: {
     schemaVersion: 1, tenantId: tenant, sourceCteId: "cte-cap", sourceCteVersion: "1", approval: { status: "APPROVED" }, offerId: "offer-cap", supplierId: "test", offerCode: "TEST", offerName: "Offerta Test",
     currency: "EUR", taxTreatment: "EXCLUDED", validity: { periodStart: "2026-08-01", periodEnd: "2027-01-01" }, expiry: { status: "NO_EXPIRY_DECLARED", reason: "NOT_PROVIDED" },
+    // Tony (3/11, Atlante delle voci): the regulated capacity applies only when the CTE makes it determinable, so the CTE of
+    // these cases states it as a pass-through of the official value.
+    passThroughComponents: [{ componentId: "capacity", kind: "CAPACITY_MARKET", declarationState: "EXTERNAL_PASS_THROUGH" }],
     fixedFees: [], variableFees: [], imbalance: { status: "NOT_DECLARED", reason: "NOT_APPLICABLE" }, oneOffFees: [], commercialDiscounts: [], vector: "EE",
     pricing: { mode: "FIXED", reference: "NONE", fixedPrice: { amount: 0.1, currency: "EUR", unit: "EUR_PER_KWH", taxTreatment: "EXCLUDED" }, spread: { status: "NOT_DECLARED", reason: "NOT_APPLICABLE" } },
   },
@@ -62,6 +65,12 @@ assert.deepEqual(capacity(mt).map((line) => line.amount), [3.32]);
 const none = await calculatePreparedOffer(request(), structuredClone(prepared), deps({ stored: [], peak: { peakKwh: 100, offPeakKwh: 300 } }));
 assert.deepEqual(capacity(none).map((line) => [line.label, line.amount]), [["Mercato della capacità", 3.52]]);
 assert.ok(!none.warnings.includes("OFFICIAL_VALUE_MISSING:CAPACITY_MARKET:OFFICIAL_VALUE_MISSING"));
+
+// 6. Tony (3/11): a CTE silent on capacity gets no capacity line, only the "non determinabile" warning.
+const silentOffer = structuredClone(prepared); delete silentOffer.offer.passThroughComponents;
+const silent = await calculatePreparedOffer(request(), silentOffer, deps({ peak: { peakKwh: 100, offPeakKwh: 300 } }));
+assert.deepEqual(capacity(silent), []);
+assert.ok(silent.warnings.includes("OFFICIAL_VALUE_MISSING:CAPACITY_MARKET:CTE_NOT_DETERMINABLE"), silent.warnings.join(","));
 
 // 5. BT up to 55 kW keeps the monthly ARERA value: no peak split.
 const small = await calculatePreparedOffer(request(), structuredClone(prepared), { ...deps({ peak: { peakKwh: 100, offPeakKwh: 300 } }), trustedElectricityContext: { ...context, contractedPowerKw: 30, availablePowerKw: 30 } });
