@@ -747,6 +747,7 @@ function presentationOf(offer: Offer, receipt: QuoteReceipt, bill: BillDocumentM
 
 // VAT rates the agent can apply to the new offer when the company qualifies for a reduced rate (e.g. 10% for some business uses).
 const VAT_CHOICES = [0.22, 0.1, 0.05, 0.04] as const;
+const BUSINESS_VAT_CHOICES = [0.1] as const;
 const UNIT_PRICE = new Intl.NumberFormat("it-IT", { minimumFractionDigits: 6, maximumFractionDigits: 6 });
 // Tony (1/11, Loomen): the bill's altre partite (interessi, deposito cauzionale, bollo…) are printed on the bill's scontrino as
 // they are, outside the comparison; only when they are exactly what the comparison leaves out of the bill total.
@@ -875,10 +876,13 @@ function Receipt({ offer: quoted, today, business, context, bill, onPresentation
     {receipt.taxesIncluded ? <label className="quote-vat">
       <span>Aliquota IVA della nuova offerta</span>
       <select value={offerVatRate ?? ""} onChange={(event) => setOfferVatRate(event.target.value === "" ? null : Number(event.target.value))}>
-        <option value="">Come in bolletta ({PERCENT.format((receipt.billVatRate ?? quoted.receipt.vatRate ?? 0.22) * 100)}%)</option>
-        {VAT_CHOICES.map((rate) => <option key={rate} value={rate}>{PERCENT.format(rate * 100)}%{rate < 0.22 ? " (aliquota agevolata)" : ""}</option>)}
+        {/* Tony (3/11): business always 22%, switchable to 10% only for the categories the law allows. */}
+        {context.classification.domestic
+          ? <option value="">Come in bolletta ({PERCENT.format((receipt.billVatRate ?? quoted.receipt.vatRate ?? 0.22) * 100)}%)</option>
+          : <option value="">22% (aliquota ordinaria per le imprese)</option>}
+        {(context.classification.domestic ? VAT_CHOICES : BUSINESS_VAT_CHOICES).map((rate) => <option key={rate} value={rate}>{PERCENT.format(rate * 100)}%{rate < 0.22 ? (context.classification.domestic ? " (aliquota agevolata)" : " (solo se l'azienda rientra nelle categorie agevolate)") : ""}</option>)}
       </select>
-      <small>Accise uguali alla bolletta: non dipendono dal fornitore. Cambia l&apos;IVA solo se l&apos;azienda ha diritto all&apos;aliquota agevolata.</small>
+      <small>Accise uguali alla bolletta: non dipendono dal fornitore. {context.classification.domestic ? <>Cambia l&apos;IVA solo se il cliente ha diritto a un&apos;aliquota diversa.</> : <>Per le imprese l&apos;IVA è al 22%; scegli il 10% solo se l&apos;azienda rientra nelle categorie agevolate previste dalla legge (attività e destinazione d&apos;uso, non basta la tariffa BTA6 o la forma S.r.l.).</>}</small>
     </label> : null}
     <SameOfferCheck offer={offer} bill={bill} context={context} />
     <OfferBox offer={offer} bill={bill} context={context} />
@@ -887,7 +891,7 @@ function Receipt({ offer: quoted, today, business, context, bill, onPresentation
       <small>{left === null ? "Verifica la scadenza sulla CTE prima di firmare." : left < 0 ? "Offerta scaduta: non può più essere firmata." : `Il cliente deve firmare il contratto entro questa data${left <= 7 ? ` (mancano ${left} giorni)` : ""}.`}</small>
     </div>
     <CostDetail offer={offer} open={business} />
-    <p className="muted quote-note">Calcolo sugli stessi consumi e sullo stesso periodo della bolletta, con le voci di spesa della delibera ARERA 386/2025. Tariffa per l'uso della rete, oneri generali di sistema e accise non dipendono dal fornitore e restano quelli della bolletta{receipt.vatRate !== null ? `; IVA della nuova offerta al ${PERCENT.format(receipt.vatRate * 100)}%${receipt.vatRateEstimated ? " stimata" : ""}${offerVatRate !== null && receipt.billVatRate != null && Math.abs(offerVatRate - receipt.billVatRate) > 0.0001 ? ` (in bolletta ${PERCENT.format(receipt.billVatRate * 100)}%)` : ""}` : ""}.</p>
+    <p className="muted quote-note">Calcolo sugli stessi consumi e sullo stesso periodo della bolletta, con le voci di spesa della delibera ARERA 386/2025. Tariffa per l'uso della rete, oneri generali di sistema e accise non dipendono dal fornitore e restano quelli della bolletta{receipt.vatRate !== null ? `; IVA della nuova offerta al ${PERCENT.format(receipt.vatRate * 100)}%${receipt.vatRateEstimated ? " stimata" : ""}${receipt.billVatRate != null && Math.abs(receipt.vatRate - receipt.billVatRate) > 0.0001 ? ` (in bolletta ${PERCENT.format(receipt.billVatRate * 100)}%)` : ""}` : ""}.</p>
   </section>;
 }
 

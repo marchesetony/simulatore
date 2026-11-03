@@ -571,7 +571,9 @@ function buildReceipt(input: QuoteReceiptInput): QuoteReceipt {
   const offerSystem = hasOfficial ? check.SYSTEM.official ?? 0 : system;
   const printedRate = input.analysis ? billVatRate(input.analysis) : null;
   const vatRate = printedRate ?? (input.domestic && input.vector === "EE" ? 0.1 : 0.22);
-  const chosenRate = input.offerVatRate ?? null;
+  // Tony (3/11): "busines sempre 22 con possibilita di variarla al 10 se rientra nelle categorie previste". A business offer
+  // is priced at 22% whatever the bill shows; the operator lowers it only for an eligible customer.
+  const chosenRate = input.offerVatRate ?? (input.domestic ? null : 0.22);
   const exciseLines = sumKnown((input.analysis?.components ?? []).filter((line) => line.classification === "ACCISE" && !line.aggregate).map((line) => amountOf(line.amount)));
   // Tony (29/10, fattura dettagliata BPower): the detailed bill lists the charges with their IVA rate but no IVA amount. Its
   // taxes are then the excise only, and the bill's IVA is the rate on the same taxable amount, as for the new offer.

@@ -23,7 +23,8 @@ assert.equal(receipt.validUntil, "2026-11-30");
 
 // 3. A dearer offer shows a negative saving rather than hiding it.
 const dearer = buildQuoteReceipt({ vector: "GAS", offerSupplyCost: 120, analysis: { components: [], totals }, domestic: false, validUntil: null });
-assert.equal(dearer.vatRate, 0.22); assert.equal(dearer.vatRateEstimated, true);
+// Tony (3/11): "busines sempre 22": for a business offer 22% is the rule, not an estimate from the bill.
+assert.equal(dearer.vatRate, 0.22); assert.equal(dearer.vatRateEstimated, false);
 // Voci di spesa named as in the bill from 1/4/2026, delibera 386/2025 (Tony, 29/10).
 assert.equal(dearer.rows[0].label, "Spesa per la vendita di gas naturale");
 assert.equal(dearer.savings, -24.4);
