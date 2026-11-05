@@ -129,6 +129,17 @@ export interface StructuredBillExtraction {
   /** The box dell'offerta read from the PDF text; undefined on bills read before it existed. */
   readonly documentOfferBox?: import("./document-numeric-evidence").DocumentOfferBox | null;
   readonly supplyProfile?: BillSupplyProfile;
+  /** Tony (5/11/2026): "CLAUDE_DIRETTO" when Claude read the whole bill in one pass (app/lib/reading/bill-reader.ts); the
+   *  PDF text layer is then never used to add or replace values. */
+  readonly reader?: string;
+  /** Checks that still fail after the reading (the numbers do not add up): shown to the operator, never auto-corrected. */
+  readonly readingChecks?: readonly string[];
+  /** Fields the bill does not print, with the reason Claude gave. */
+  readonly readingAbsent?: readonly { readonly field: string; readonly reason: string }[];
+  /** Page and printed text each value was copied from. */
+  readonly readingSources?: readonly { readonly field: string; readonly page: number; readonly text: string }[];
+  /** True when the bill was read a second time because the first reading did not add up. */
+  readonly readingReread?: boolean;
   /** Two-stage metadata; absent on legacy/CORE-only fixtures. */
   readonly analystExtractionStatus?: "NOT_RUN" | "EXTRACTED" | "FAILED";
   readonly analystDiagnostic?: {

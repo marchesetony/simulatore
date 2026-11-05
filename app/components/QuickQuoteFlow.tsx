@@ -39,6 +39,7 @@ const FIELDS: readonly { readonly name: string; readonly label: string }[] = [
   { name: "customerName", label: "Intestatario" }, { name: "supplier", label: "Fornitore attuale" }, { name: "pod", label: "POD / PDR" }, { name: "billingPeriod", label: "Periodo fatturato" },
   { name: "billedConsumption", label: "Consumo fatturato" }, { name: "annualConsumption", label: "Consumo annuo" }, { name: "totalAmount", label: "Totale bolletta" },
 ];
+const ABSENT_LABEL: Readonly<Record<string, string>> = { consumoAnnuo: "Consumo annuo", consumoFatturato: "Consumo fatturato", periodoDal: "Periodo fatturato", periodoAl: "Periodo fatturato", periodoStampato: "Periodo fatturato", totaleBolletta: "Totale bolletta" };
 const NUMERIC_FIELDS = new Set(["billedConsumption", "annualConsumption", "totalAmount"]);
 const ISO_DATE = /(\d{4})-(\d{2})-(\d{2})/g;
 const IT_DATE = /(\d{1,2})\/(\d{1,2})\/(\d{4})/g;
@@ -1009,7 +1010,7 @@ export default function QuickQuoteFlow({ readonly, showExcluded = false }: { rea
   // Also when every quote shows only the offer (no seller spend read from the bill): the scontrino of the bill was not read.
   // Tony (2/11, J Fuel "come mai ancora uguale"): a bill read with a voltage other than the printed one is read again too.
   const VOLTAGE_NAME: Record<string, string> = { LV: "bassa tensione", MV: "media tensione", HV: "alta tensione", EHV: "altissima tensione" };
-  const analystRetry = (bill: BillDocumentModel, offerOnly = false) => bill.printedVoltageMismatch || bill.chargeLinesUnread || offerOnly || bill.structuredBill?.analystExtractionStatus === "FAILED" ? <div className="inline-warning" role="status">
+  const analystRetry = (bill: BillDocumentModel, offerOnly = false) => bill.printedVoltageMismatch || bill.chargeLinesUnread || offerOnly || bill.structuredBill?.analystExtractionStatus === "FAILED" ? <div className="warning-text" role="status">
     <p>{bill.printedVoltageMismatch ? `La bolletta è stampata in ${VOLTAGE_NAME[bill.printedVoltageMismatch.printed]} ma è stata letta in ${bill.printedVoltageMismatch.read ? VOLTAGE_NAME[bill.printedVoltageMismatch.read] ?? bill.printedVoltageMismatch.read : "tensione non indicata"}: perdite di rete, rete e oneri sarebbero sbagliati. Rileggila dal PDF già caricato e conferma i dati.` : "Le voci di spesa dello scontrino di questa bolletta non sono state lette, quindi il confronto con la bolletta non si può fare. Rileggile dal PDF già caricato."}</p>
     <button className="button primary" type="button" onClick={() => void rereadAnalyst(bill.id)} disabled={readonly || Boolean(pending)}>{pending === "reread" ? "Lettura delle voci in corso…" : "Rileggi le voci della bolletta"}</button>
   </div> : null;
@@ -1101,6 +1102,9 @@ export default function QuickQuoteFlow({ readonly, showExcluded = false }: { rea
     {step === "review" && draft ? <section className="ui-card">
       <h3>Dati letti dalla bolletta</h3><p className="muted">Li usiamo per trovare le CTE adatte. Se vedi un errore evidente puoi correggerlo, altrimenti prosegui.</p>
       {analystRetry(draft)}
+      {/* Tony (5/11/2026): what does not add up after the reading, or is not printed, is said here instead of a wrong number. */}
+      {draft.structuredBill?.readingChecks?.length ? <div className="warning-text" role="status"><strong>Da controllare sulla bolletta</strong><ul>{draft.structuredBill.readingChecks.map((check) => <li key={check}>{check}</li>)}</ul></div> : null}
+      {draft.structuredBill?.readingAbsent?.some((item) => /consumoAnnuo|consumoFatturato|periodo|totaleBolletta/.test(item.field)) ? <p className="muted">{draft.structuredBill.readingAbsent.filter((item) => /consumoAnnuo|consumoFatturato|periodo|totaleBolletta/.test(item.field)).map((item) => `${ABSENT_LABEL[item.field] ?? item.field}: ${item.reason}`).join(" · ")}</p> : null}
       <BillContractFacts bill={draft} />
       <div className="form-grid">{FIELDS.map((field) => <label className="form-field" key={field.name}><span className="form-label">{field.label}{unitOf(field.name, draft.resolvedVector)}{field.name === "annualConsumption" && !draft.fields.annualConsumption?.value && values.annualConsumption ? historyMonthTotals(draft.structuredBill?.consumptionHistory).length ? " · media dello storico consumi × 12" : " · media mensile × 12" : ""}</span><input value={values[field.name] ?? ""} onChange={(event) => setValues((current) => ({ ...current, [field.name]: event.target.value }))} disabled={Boolean(pending)} /></label>)}</div>
       <div className="button-row"><button className="button primary" type="button" onClick={() => void confirm()} disabled={readonly || Boolean(pending)}>{pending === "confirm" ? "Ricerca in corso" : "Cerca le CTE utilizzabili"}</button></div>

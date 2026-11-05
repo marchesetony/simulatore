@@ -16,10 +16,8 @@ import { billPunRefresh } from "../../../lib/market-refresh/bill-pun";
 import { deleteBillPermanently } from "../../../lib/foundation/bill-retention";
 import { billVisibilityScope, getBillInScope } from "../../../lib/foundation/bill-visibility";
 import { isBillFeature, resolveBillFeaturePermissions, sanitizeBillForFeatureAccess, type BillFeature } from "../../../lib/foundation/bill-feature-permissions";
-import { createAnthropicTwoStageBillSdkAdapter, printedText } from "../../../lib/ingestion/anthropic-bill-sdk";
-import { withTextVoltage } from "../../../lib/ingestion/printed-voltage";
-import { withTextBillingPeriod } from "../../../lib/ingestion/billing-period";
-import { printedScontrinoLines, readingHasScontrino, scontrinoSource, withPrintedScontrino, withScontrinoTranscript } from "../../../lib/ingestion/printed-scontrino";
+import { createClaudeBillReader } from "../../../lib/reading/bill-reader";
+import { readingHasScontrino } from "../../../lib/ingestion/printed-scontrino";
 import type { AuthenticatedPrincipal } from "../../../lib/auth/types";
 import type { RuntimeRepositories } from "../../../lib/persistence/adapter";
 import type { PublicBillDocument } from "../../../lib/foundation/real-bill";
@@ -48,7 +46,7 @@ export async function GET(request: Request, context: { params: Promise<{ id: str
     const requestedFeature = new URL(request.url).searchParams.get("feature");
     if (requestedFeature !== null && (!isBillFeature(requestedFeature) || !access.features[requestedFeature as BillFeature])) return deny("BILL_FEATURE_ACCESS_DENIED", "Funzione tecnica non autorizzata", 403);
     const shownDocument = document ? (approvedView ? toPublicApprovedDocument(document) : toPublicDocument(document)) : null;
-    const withPrinted = shownDocument && document ? await withDocumentPriceRows(shownDocument, () => repositories.documentStorage.read(document.tenantId, document.id)) : shownDocument;
+    const withPrinted = shownDocument && document ? await withDocumentPriceRows(shownDocument) : shownDocument;
     // The scontrino printed in the PDF counts as read charge lines.
     const publicDocument = withPrinted && withPrinted.chargeLinesUnread && readingHasScontrino(withPrinted.structuredBill) ? { ...withPrinted, chargeLinesUnread: false } : withPrinted;
     if (publicDocument) await ensureOfficialPunForBill(publicDocument, repositories.marketArchiveRepository, billPunRefresh(repositories, publicDocument.tenantId));
@@ -118,18 +116,10 @@ export async function PATCH(request: Request, context: { params: Promise<{ id: s
       const bytes = await repositories.documentStorage.read(tenantId, document.id);
       const contentType = storedBillContentType(bytes);
       if (!contentType) return deny("BILL_OPERATION_INVALID", "Stored file type not recognized", 400);
-      // The scontrino printed in the PDF text completes a reading that lacks it (Tony, 1/11); when the second reading fails
-      // again, the stored reading is kept and the printed scontrino alone fills the bill side.
-      const pdfText = printedText({ bytes, contentType });
-      // Tony (1/11): an image or scanned bill gets its scontrino copied row by row and read by the same parser.
-      const current = document.versions.find((version) => version.versionId === operation.versionId)?.structuredBill ?? null;
-      const adapter = createAnthropicTwoStageBillSdkAdapter();
-      const transcript = pdfText && printedScontrinoLines(pdfText).length ? null : current?.scontrinoTranscript ?? await adapter.transcribeScontrino({ bytes, contentType });
-      const text = transcript ?? scontrinoSource(current, pdfText);
-      let analyst: Awaited<ReturnType<ReturnType<typeof createAnthropicTwoStageBillSdkAdapter>["extractAnalystOnly"]>> | null = null;
-      try { analyst = await adapter.extractAnalystOnly({ bytes, contentType }); }
-      catch (error) { if (!text || !printedScontrinoLines(text).length) throw error; console.error(`[BILL_ANALYST_REREAD_FAILED] bill=${document.id} using printed scontrino`); }
-      const refreshed = createAnalystRefreshVersion({ document, tenantId, sourceVersionId: operation.versionId, analyst, at: now, refine: (extraction) => { const scontrino = transcript ? withScontrinoTranscript(extraction, transcript) : withPrintedScontrino(extraction, text); return withTextVoltage(withTextBillingPeriod(scontrino, pdfText), pdfText); } });
+      // Tony (5/11/2026): "Rileggi" reads the whole bill again with the new reader (app/lib/reading/bill-reader.ts); the PDF
+      // text layer is no longer used to patch the reading.
+      const reading = await createClaudeBillReader().extract({ bytes, contentType });
+      const refreshed = createAnalystRefreshVersion({ document, tenantId, sourceVersionId: operation.versionId, analyst: null, at: now, refine: () => reading });
       await repository.saveIfCurrentVersion(refreshed, operation.versionId, document.versions.find((version) => version.versionId === operation.versionId)!);
       await audit.record({ type: "INGESTION", tenantId, documentId: id, outcome: "ALLOWED" });
       return Response.json({ document: await publicDocumentFor(principal, repositories, await attachOfficialPun(toPublicDocument(refreshed), repositories.marketArchiveRepository)) }, { headers: NO_STORE_HEADERS });

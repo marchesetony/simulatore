@@ -12,6 +12,8 @@ export interface ReadingRule {
   readonly text: string;
 }
 
+// Tony (5/11/2026): rules 17-20 no longer mention the PDF text layer: the bill is read only by Claude looking at the pages
+// (app/lib/reading/bill-reader.ts), and what does not add up is read again or shown to the operator.
 export const READING_RULES: readonly ReadingRule[] = [
   // General.
   { id: "READ_EVERYTHING", uses: ["BILL", "CTE"], origin: "Tony 31/10, \"devi saper leggere tutte le cte, in qualsiasi modo ti vengano presentate\"",
@@ -63,13 +65,13 @@ export const READING_RULES: readonly ReadingRule[] = [
   { id: "BILL_SUMMARY_FIRST", uses: ["BILL"], origin: "Tony 1/11, scontrino della bolletta",
     text: "Il quadro sintetico è lo scontrino della bolletta e riassume tutti i costi addebitati, comprese more e CMOR: leggi sempre per primi, esattamente come stampati, ogni \"Quota ...\" con i suoi \"di cui spesa per la vendita\" e \"di cui spesa per la rete e gli oneri generali di sistema\", \"Accise e IVA\" (o Totale imposte), le altre partite e il Totale bolletta. Il dettaglio serve solo a ripartire, mai a sostituire questi importi. Non inventare nulla." },
   { id: "BILL_SCONTRINO_THEN_DETAIL", uses: ["BILL"], origin: "Tony 1/11, \"quante volte dobbiamo fissare le regole\"",
-    text: "Ordine di lettura della bolletta: 1) lo scontrino dell'energia (ogni Quota con i suoi \"di cui\", accise e IVA, bonus, altre partite, totale); 2) le condizioni applicate riportate (box dell'offerta: nome e codice offerta, prezzo o indice e spread, scadenze); 3) se esiste, il dettaglio voce per voce. Lo scontrino viene anche letto direttamente dal testo del PDF e aggiunto se la lettura non lo contiene." },
+    text: "Ordine di lettura della bolletta: 1) lo scontrino dell'energia (ogni Quota con i suoi \"di cui\", accise e IVA, bonus, altre partite, totale); 2) le condizioni applicate riportate (box dell'offerta: nome e codice offerta, prezzo o indice e spread, scadenze); 3) se esiste, il dettaglio voce per voce. Bollette PDF, foto e scansioni si leggono allo stesso modo, guardando la pagina." },
   { id: "BILL_PRINTED_SCONTRINO_WINS", uses: ["BILL"], origin: "Tony 1/11, bolletta Loomen: \"bisogna trovare soluzione definitiva, affinchè sappia leggere qualsiasi bolletta di qualsiasi azienda\"",
-    text: "Quando il PDF ha il testo, lo scontrino stampato (Quote con i loro \"di cui\", altre partite, accise e IVA, totale bolletta) si legge dal testo e sostituisce la lettura AI dello stesso blocco, anche per le bollette già archiviate: l'etichetta e l'importo possono stare su righe diverse. Le altre partite (interessi, deposito cauzionale, bollo) compaiono nello scontrino della bolletta ma restano fuori dal confronto con l'offerta." },
+    text: "Nello scontrino l'etichetta e l'importo possono stare su righe diverse: abbina ogni importo alla sua riga guardando la pagina. Le altre partite (interessi, deposito cauzionale, bollo) compaiono nello scontrino della bolletta ma restano fuori dal confronto con l'offerta." },
   { id: "BILL_IMAGE_SCONTRINO_TRANSCRIPT", uses: ["BILL"], origin: "Tony 1/11, \"bisogna che anche quella letta da immagine possa essere letta allo stesso modo del pdf\"",
-    text: "Bolletta senza testo (foto o scansione): lo scontrino viene copiato riga per riga esattamente come stampato, senza calcoli né correzioni, e la copia passa per la stessa lettura del testo del PDF. La copia resta salvata con la bolletta." },
+    text: "Bolletta senza testo (foto o scansione): si legge come un PDF, copiando ogni riga dello scontrino esattamente come stampata, senza calcoli né correzioni." },
   { id: "BILL_PERIOD_MULTI_MONTH", uses: ["BILL"], origin: "Tony 2/11, \"manca il periodo di riferimento, ricorda che delle bollette possono essere riferite a due mesi di fornitura\"",
-    text: "Il periodo fatturato può essere di un mese o di più mesi (bimestrale) e va sempre letto: copialo come stampato (\"01/07/2026 - 31/08/2026\", \"dal 1 luglio al 31 agosto 2026\", \"luglio - agosto 2026\"). Se la lettura lo lascia vuoto, si legge dal testo del PDF; l'operatore lo conferma nel modulo." },
+    text: "Il periodo fatturato può essere di un mese o di più mesi (bimestrale) e va sempre letto: copialo come stampato (\"01/07/2026 - 31/08/2026\", \"dal 1 luglio al 31 agosto 2026\", \"luglio - agosto 2026\"). Se non lo trovi lascialo vuoto con il motivo: l'operatore lo completa nel modulo." },
   { id: "BILL_PRINTED_VOLTAGE", uses: ["BILL"], origin: "Tony 2/11, bolletta in media tensione (20.000 V) calcolata come bassa tensione",
     text: "La tensione di fornitura si legge sempre dalla riga stampata (\"Tensione nominale di alimentazione 20.000 V\", \"220 V - Bassa Tensione\"): fino a 1.000 V è bassa tensione (BT), fino a 35.000 V media tensione (MT), oltre è alta tensione. Non dedurla mai dalla potenza o dal tipo di cliente quando è stampata." },
   { id: "BILL_ONERI_WITHOUT_QUOTA", uses: ["BILL"], origin: "Tony 2/11, oneri ASOS e ARIM della pagina oneri senza quota",

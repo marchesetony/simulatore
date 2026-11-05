@@ -4,7 +4,7 @@ import { requestPrincipal } from "../../lib/auth/request";
 import { runtimeRepositories } from "../../lib/persistence/adapter";
 import { recordRuntimeAudit } from "../../lib/persistence/audit";
 import { AuthenticationError } from "../../lib/auth/errors";
-import { createAnthropicTwoStageBillSdkAdapter } from "../../lib/ingestion/anthropic-bill-sdk";
+import { createClaudeBillReader } from "../../lib/reading/bill-reader";
 import { MAX_UPLOAD_BYTES, uploadedFile } from "../../lib/foundation/large-upload";
 // createAnthropicBillSdkAdapter remains the legacy compatibility adapter; Bill routes use two-stage.
 import { attachOfficialPun, ensureOfficialPunForBill } from "../../lib/market/pun-reference";
@@ -156,7 +156,7 @@ export async function POST(request: Request): Promise<Response> {
       authenticated: true,
       localDev: process.env.FOUNDATION_LOCAL_DEV,
       audit,
-      structuredProviderFactory: () => createAnthropicTwoStageBillSdkAdapter(),
+      structuredProviderFactory: () => createClaudeBillReader(),
     });
     if (result.errorCode) {
       const code = boundedPublicCode(result.errorCode, "BILL_OPERATION_FAILED");

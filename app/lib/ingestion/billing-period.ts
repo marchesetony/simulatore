@@ -1,9 +1,9 @@
-import type { StructuredBillExtraction, StructuredBillPeriod } from "./structured-bill.ts";
+import type { StructuredBillPeriod } from "./structured-bill.ts";
 
 // Tony (2/11, "manca il periodo di riferimento, ricorda che delle bollette possono essere riferite a due mesi di fornitura
 // come questa"): a bill may cover one month or several, written in many ways ("01/07/2026 - 31/08/2026", "dal 1 luglio 2026
 // al 31 agosto 2026", "luglio - agosto 2026", "Luglio/Agosto 2026", "lug 2026 - ago 2026"). Every form is read the same way,
-// and when the reading leaves the period empty it is read from the PDF text.
+// Since 5/11/2026 it is never read from the PDF text: Claude reads it from the page.
 
 const MONTHS: Readonly<Record<string, number>> = {
   gennaio: 1, gen: 1, febbraio: 2, feb: 2, marzo: 3, mar: 3, aprile: 4, apr: 4, maggio: 5, mag: 5, giugno: 6, giu: 6,
@@ -64,36 +64,4 @@ export function parseItalianPeriod(input: string): StructuredBillPeriod | null {
     if (from && to && from < to) return { from, to, raw };
   }
   return null;
-}
-
-const DATE = `(?:\\d{1,2}[/.\\-]\\d{1,2}[/.\\-](?:\\d{4}|\\d{2})|\\d{1,2}\\s+${MONTH}\\s+\\d{4})`;
-const CANDIDATES = [
-  new RegExp(`(?:dal\\s+)?${DATE}\\s*(?:-|al|a)\\s*${DATE}`, "gi"),
-  new RegExp(`${MONTH}\\s+\\d{4}\\s*(?:-|/|al|e)\\s*${MONTH}\\s+\\d{4}`, "gi"),
-  new RegExp(`${MONTH}\\s*(?:-|/|e)\\s*${MONTH}\\s+\\d{4}`, "gi"),
-];
-const LABEL = /periodo|fatturat|fornitura|consumi|bolletta|fattura|competenza/i;
-
-/** The billing period printed in the bill's text: the first range on a row that names it (periodo, fornitura, bolletta…). */
-export function billingPeriodFromText(text: string | null): StructuredBillPeriod | null {
-  if (!text) return null;
-  const rows = text.split(/\r?\n/).map((row) => row.replace(/\s+/g, " ").trim()).filter(Boolean);
-  for (let index = 0; index < rows.length; index += 1) {
-    if (!LABEL.test(rows[index])) continue;
-    const window = `${rows[index]} ${rows[index + 1] ?? ""}`;
-    for (const pattern of CANDIDATES) {
-      for (const match of window.matchAll(pattern)) {
-        const period = parseItalianPeriod(match[0]);
-        if (period) return period;
-      }
-    }
-  }
-  return null;
-}
-
-/** Fills an empty billing period from the bill's text; a period already read is never changed. */
-export function withTextBillingPeriod(extraction: StructuredBillExtraction, text: string | null): StructuredBillExtraction {
-  if (extraction.billingPeriod.status === "FOUND" && extraction.billingPeriod.value) return extraction;
-  const period = billingPeriodFromText(text);
-  return period ? { ...extraction, billingPeriod: { value: period, status: "FOUND", confidence: 0.9, source: "DOCUMENT_AI" } } : extraction;
 }

@@ -879,6 +879,8 @@ export function extractBillFields(text: string): BillFields {
 }
 
 function applyDocumentGroundedMonthlyEvidence(bytes: Uint8Array, provided: StructuredBillExtraction): StructuredBillExtraction {
+  // Tony (5/11/2026): a bill read by the new reader is never patched with values parsed from the PDF text layer.
+  if (provided.reader === "CLAUDE_DIRETTO") return provided;
   // The formula table of the sale-of-energy cost, read straight from the PDF: the spread does not depend on the AI finding it.
   const documentPriceRows = (() => { try { return extractDocumentPriceRows(bytes); } catch { return []; } })();
   const documentOfferName = (() => { try { return extractDocumentOfferName(bytes); } catch { return null; } })();

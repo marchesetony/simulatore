@@ -1,8 +1,5 @@
-// @ts-expect-error Node's strip-only test runner requires the explicit extension.
-import { extractDocumentOfferBox, extractDocumentOfferName, extractDocumentPriceRows } from "../ingestion/document-numeric-evidence.ts";
 import type { PublicBillDocument } from "../foundation/real-bill";
-// @ts-expect-error Node's strip-only test runner requires the explicit extension.
-import { withDocumentOfferBox, type StructuredBillExtraction } from "../ingestion/structured-bill.ts";
+import type { StructuredBillExtraction } from "../ingestion/structured-bill.ts";
 import type { MarketArchiveRecord, MarketArchiveRepository } from "./types";
 // @ts-expect-error Node's strip-only test runner requires the explicit extension.
 import { compareMarketVersions } from "./service.ts";
@@ -12,14 +9,6 @@ import { buildBillAnalystReview } from "../foundation/bill-analyst-review.ts";
 import { attachBillRegulatoryAudit } from "../foundation/bill-public-audit.ts";
 // @ts-expect-error Node's strip-only test runner requires the explicit extension.
 import { estimateBillSpread } from "./bill-spread.ts";
-// @ts-expect-error Node's strip-only test runner requires the explicit extension.
-import { scontrinoSource, withPrintedScontrino } from "../ingestion/printed-scontrino.ts";
-// @ts-expect-error Node's strip-only test runner requires the explicit extension.
-import { withTextBillingPeriod } from "../ingestion/billing-period.ts";
-// @ts-expect-error Node's strip-only test runner requires the explicit extension.
-import { voltageFromText } from "../ingestion/printed-voltage.ts";
-// @ts-expect-error Node's strip-only test runner requires the explicit extension.
-import { pdfTextLayer } from "../regulatory-refresh/pdf-text.ts";
 
 export type PunTariffStructure = "MONO" | "F1_F2_F3";
 
@@ -140,40 +129,12 @@ export function officialPunInputFromPublicBill(document: Pick<PublicBillDocument
   return { tenantId: document.tenantId, vector: document.resolvedVector, billingPeriod: structuredPeriod ? { periodStart: structuredPeriod.from, periodEnd: structuredPeriod.to } : profilePeriod, structure: structureFromExtraction(document.structuredBill) };
 }
 
-/** Bills read before the formula table (or the offer name) was taken from the PDF get it now, in memory, so they need no re-upload. */
-export async function withDocumentPriceRows<T extends Pick<PublicBillDocument, "resolvedVector" | "structuredBill" | "fileName">>(document: T, read: () => Promise<Uint8Array>): Promise<T> {
-  const bill = document.structuredBill;
-  if (!bill) return document;
-  // An image bill: its stored scontrino transcript is applied again (Tony 1/11: read like a PDF).
-  if (!/\.pdf$/i.test(document.fileName)) return bill.scontrinoTranscript ? { ...document, structuredBill: withPrintedScontrino(bill, bill.scontrinoTranscript) } : document;
-  const needRows = document.resolvedVector === "EE" && bill.documentPriceRows === undefined;
-  // Bills read before the box dell'offerta was taken from the PDF get it (and the offer name again) now, with no re-upload.
-  const needBox = bill.documentOfferBox === undefined;
-  const needName = bill.documentOfferName === undefined || (needBox && !bill.documentOfferName);
-  try {
-    const bytes = await read();
-    const documentPriceRows = needRows ? extractDocumentPriceRows(bytes) : [];
-    const documentOfferName = needName ? extractDocumentOfferName(bytes) : bill.documentOfferName;
-    const withRows = { ...bill, ...(documentPriceRows.length ? { documentPriceRows } : {}), documentOfferName };
-    const withBox = needBox ? withDocumentOfferBox(withRows, extractDocumentOfferBox(bytes)) : withRows;
-    // Tony (1/11, Loomen): every bill, also the ones already archived, shows the scontrino exactly as printed in the PDF.
-    let text: string | null = null;
-    try { const layer = pdfTextLayer(bytes); text = layer.status === "AVAILABLE" ? layer.text : null; } catch { text = null; }
-    const structuredBill = withTextBillingPeriod(withPrintedScontrino(withBox, scontrinoSource(withBox, text)), text);
-    return withPrintedVoltageCheck(withReadBillingPeriodField({ ...document, structuredBill }), text);
-  } catch { return document; }
-}
-
-// Tony (2/11, "manca il periodo di riferimento… bollette… riferite a due mesi di fornitura"): a bill archived with an empty
-// "Periodo fatturato" shows the period read from its PDF text, for the agent to confirm in the review form.
-// Tony (2/11, J Fuel: "come mai ancora uguale"): a bill archived before the printed voltage was read keeps the voltage it was
-// read with (bassa tensione for a 20.000 V supply). The bill then says so, with the button to read it again from its PDF.
-export function withPrintedVoltageCheck<T extends { readonly structuredBill?: StructuredBillExtraction | null }>(document: T, text: string | null): T {
-  const printed = voltageFromText(text);
-  const normalized = (document as { readonly normalized?: { readonly supply?: { readonly voltageLevel?: string } } | null }).normalized;
-  const bill = document.structuredBill?.voltageLevel;
-  const read = normalized?.supply?.voltageLevel ?? (bill?.status === "FOUND" ? bill.value : null) ?? null;
-  return printed && read !== printed ? { ...document, printedVoltageMismatch: { printed, read } } : document;
+// Tony (5/11/2026, "cancellare e ripartire da zero"): a bill shows what Claude read from its pages (app/lib/reading/
+// bill-reader.ts). Nothing is added or replaced any more with values parsed from the PDF text layer (formula table, offer
+// box, scontrino, period, voltage): the read billing period only fills the review form.
+export async function withDocumentPriceRows<T extends Pick<PublicBillDocument, "resolvedVector" | "structuredBill" | "fileName">>(document: T, read?: () => Promise<Uint8Array>): Promise<T> {
+  void read;
+  return withReadBillingPeriodField(document);
 }
 
 export function withReadBillingPeriodField<T extends { readonly structuredBill?: StructuredBillExtraction | null }>(document: T): T {
