@@ -78,9 +78,10 @@ function unitOf(name: string, vector: string): string {
 function estimatedAnnual(document: BillDocumentModel): string | null {
   const billed = Number(document.fields.billedConsumption?.value);
   const dates = /(\d{4}-\d{2}-\d{2}).*?(\d{4}-\d{2}-\d{2})/.exec(document.fields.billingPeriod?.value ?? "");
-  if (!Number.isFinite(billed) || billed <= 0 || !dates) return null;
-  // Tony (30/10): the consumption history on the bill, when there is one, is the basis of the monthly average.
+  // Tony (30/10): the consumption history on the bill, when there is one, is the basis of the monthly average. Tony (5/11,
+  // BPower settembre billed at 0 kWh): a month billed at 0 kWh still gets the annual from the history it prints.
   const history = historyMonthTotals(document.structuredBill?.consumptionHistory);
+  if (!Number.isFinite(billed) || billed < 0 || (billed === 0 && !history.length) || !dates) return null;
   const annual = estimatedAnnualConsumption({ billed, periodStart: dates[1], periodEnd: dates[2], monthTotals: history.length ? history : null });
   return annual === null ? null : String(annual);
 }

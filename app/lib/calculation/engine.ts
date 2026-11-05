@@ -646,9 +646,11 @@ export async function calculatePreparedOffer(request: SimulationRequest, prepare
   const totalCommercial = totalMinor(commercialComponents);
   const totalRegulated = regulated === null ? null : totalMinor(regulatedComponents);
   const totalPlusRegulated = totalRegulated === null ? null : totalCommercial + totalRegulated;
-  if (totalQuantity.numerator <= BigInt(0)) fail("CALCULATION_ZERO_CONSUMPTION");
+  if (totalQuantity.numerator < BigInt(0)) fail("CALCULATION_ZERO_CONSUMPTION");
   const unit: "EUR_PER_KWH" | "EUR_PER_SMC" = request.vector === "EE" ? "EUR_PER_KWH" : "EUR_PER_SMC";
-  const unitCost = { amount: toDecimal(divide(rational(BigInt(totalCommercial), BigInt(100)), totalQuantity), 6), unit, currency: "EUR" as const };
+  // Tony (5/11/2026, BPower settembre: "Consumi fatturati in questo documento 0 kWh"): a month billed at 0 kWh is still
+  // simulated, on the fixed charges alone; the cost per kWh is then not meaningful and is shown as 0.
+  const unitCost = { amount: totalQuantity.numerator === BigInt(0) ? 0 : toDecimal(divide(rational(BigInt(totalCommercial), BigInt(100)), totalQuantity), 6), unit, currency: "EUR" as const };
   const marketData = prepared.markets.map(referenceOf);
   const normalizedInput = request;
   const domesticComplete = request.vector === "EE" && dependencies.trustedElectricityContext?.regulatoryCustomerScope === "DOMESTIC_RESIDENT_BT" && regulated !== null && isDomesticNetOfTaxCompleteComponents(regulated.includedComponents);
