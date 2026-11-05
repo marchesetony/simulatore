@@ -29,9 +29,12 @@ assert.equal(noAvailable.regulatoryCustomerScope, "NON_DOMESTIC_BT_BTA6");
 assert.equal(noAvailable.availablePowerKw, undefined);
 const small = trusted({ use: "Altri usi", residence: "Non applicabile", committed: "6 kW" });
 assert.equal(small.regulatoryCustomerScope, "NON_DOMESTIC_BT");
-assert.equal(small.regulatoryTariffClass, "BTA4");
+// Tony (5/11, DARVEPOST 3 kW billed at BTA2): BTA1-BTA5 distribution follows the committed power, as the oneri do.
+assert.equal(small.regulatoryTariffClass, "BTA3");
 assert.equal(small.regulatoryOneriTariffClass, "BTA3");
 assert.equal(trusted({ use: "Altri usi", residence: "Non applicabile", committed: "15 kW" }).regulatoryTariffClass, "BTA5");
+const threeKw = trusted({ use: "Altri usi", residence: "Non applicabile", committed: "3 kW", available: "3.3 kW" });
+assert.equal(threeKw.regulatoryTariffClass, "BTA2", "3 kW committed, 3,3 kW available: BTA2 as on the bill");
 console.log("OTHER_USE_MISSING_AVAILABLE_POWER_CLASS_FROM_COMMITTED=PASS");
 assert.equal(deriveBillDrivenContextAlerts({ vector: "EE", domestic: true, contractedPowerKw: 20 }).length, 1);
 console.log("DOMESTIC_HIGH_POWER_ALERT_STILL_WORKS=PASS");

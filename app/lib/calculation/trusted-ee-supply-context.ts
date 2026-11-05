@@ -203,10 +203,14 @@ export function buildTrustedElectricitySupplyContext(profile: BillSupplyProfile,
   const regulatoryCustomerScope = deriveRegulatoryCustomerScope(profile, voltageLevel, classPowerKw);
   const basis = regulatoryPowerBasis(profile, regulatoryCustomerScope, contractedPowerKw);
   const asos = selectAsosClass(profile, options);
-  const tariffClass = regulatoryCustomerScope === "NON_DOMESTIC_BT" && supplyUseCategory === "OTHER_USE" && classPowerKw !== undefined ? btaTariffClass(classPowerKw) : null;
-  // Tony (30/10, "ancora errori"): the oneri sub-rows read "per potenze impegnate inferiori o uguali a 1,5 kW" etc.,
-  // so oneri follow the committed power; distribution keeps the TIT class by available power.
-  const oneriTariffClass = tariffClass === null ? null : contractedPowerKw > 0 ? btaTariffClass(Math.min(contractedPowerKw, 16.5)) : tariffClass;
+  // Tony (5/11, DARVEPOST, BPower Azienda Protetta 3 kW: "perchè diversa la fattura dalla simulazione pur essendo la stessa
+  // cte"): the bill charges the BTA2 distribution power (31,1874 €/kW/anno, 4,0433 €/kW/mese with the oneri) and the
+  // distributors' 2026 sheets set BTA1-BTA5 by committed power; the available power (3,3 kW with the limiter) had put it in
+  // BTA3 (34,6720). BTA1-BTA5 follow the committed power, like the oneri sub-rows (Tony, 30/10); BTA6 stays "potenza
+  // disponibile oltre 16,5 kW".
+  const classOf = (power: number | undefined) => regulatoryCustomerScope === "NON_DOMESTIC_BT" && supplyUseCategory === "OTHER_USE" && power !== undefined ? btaTariffClass(Math.min(power, 16.5)) : null;
+  const tariffClass = classOf(contractedPowerKw > 0 ? contractedPowerKw : classPowerKw);
+  const oneriTariffClass = tariffClass;
   return {
     vector: "EE",
     contractedPowerKw,
