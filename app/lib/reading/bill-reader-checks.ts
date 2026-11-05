@@ -34,7 +34,10 @@ function quotaGroups(rows: readonly ScontrinoRow[]): Map<string, { total: number
 }
 
 /** The sum of the scontrino rows that make up the bill total (each quota once). */
-export function scontrinoSum(rows: readonly ScontrinoRow[]): number {
+export function scontrinoSum(all: readonly ScontrinoRow[]): number {
+  // Tony (5/11, DARVEPOST BPower): "Totale da pagare", canone TV and credits come after the Totale bolletta and are not in it.
+  const end = all.findIndex((row) => row.tipo === "TOTALE_BOLLETTA");
+  const rows = end >= 0 ? all.slice(0, end) : all;
   let sum = 0;
   for (const [, group] of quotaGroups(rows)) sum += group.total ?? group.shares.reduce((left, right) => left + right, 0);
   for (const row of rows) {

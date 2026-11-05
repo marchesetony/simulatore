@@ -107,4 +107,28 @@ const walk = (schema, path) => {
   if (schema.type === "array") walk(schema.items, `${path}[]`);
 };
 walk(BILL_READER_SCHEMA, "root");
+// Tony (5/11, DARVEPOST BPower, "Le righe dello scontrino sommano 212.42 € ma il totale bolletta è 106.21 €"): the
+// "Totale da pagare" printed after the Totale bolletta is not a row of the bill total, nor altre partite.
+const darvepost = parseBillReading({ ...minniti, tipoCliente: "ALTRI_USI", totaleBolletta: "106,21", consumoFatturato: "140", consumoF1: "", consumoF2: "", consumoF3: "", scontrino: [
+  row("Quota per consumi", "QUOTA_TOTALE", "CONSUMI", "47,03", { quantita: "140", unita: "kWh", prezzoMedio: "0,335929", unitaPrezzo: "€/kWh" }),
+  row("di cui spesa per la vendita di energia elettrica", "DI_CUI_VENDITA", "CONSUMI", "39,09"),
+  row("di cui spesa per la rete e gli oneri generali di sistema", "DI_CUI_RETE_ONERI", "CONSUMI", "7,94"),
+  row("Quota fissa e Quota potenza - 1 mese", "QUOTA_TOTALE", "FISSA", "18,74"),
+  row("di cui spesa per la vendita di energia elettrica", "DI_CUI_VENDITA", "FISSA", "15,00"),
+  row("di cui spesa per la rete e gli oneri generali di sistema", "DI_CUI_RETE_ONERI", "FISSA", "3,74"),
+  row("Quota potenza", "QUOTA_TOTALE", "POTENZA", "12,13"),
+  row("di cui spesa per la rete e gli oneri generali di sistema", "DI_CUI_RETE_ONERI", "POTENZA", "12,13"),
+  row("Altre partite - Interessi di mora", "ALTRE_PARTITE", "NESSUNA", "0,04"),
+  row("Altre partite - Spese di sollecito", "ALTRE_PARTITE", "NESSUNA", "9,00"),
+  row("Accise e IVA", "ACCISE_IVA", "NESSUNA", "19,27"),
+  row("Totale bolletta", "TOTALE_BOLLETTA", "NESSUNA", "106,21"),
+  row("Totale da pagare", "ALTRO", "NESSUNA", "106,21"),
+] });
+assert.equal(scontrinoSum(darvepost.scontrino).toFixed(2), "106.21");
+assert.ok(!codes(darvepost).includes("SCONTRINO_TOTAL"));
+const darvepostBill = toStructuredBill({ reading: darvepost, checks: [], reread: false });
+assert.ok(!darvepostBill.economicChargeLines.some((line) => line.code === "ALTRE_PARTITE" && /da pagare/i.test(line.description)));
+assert.ok(darvepostBill.economicChargeLines.some((line) => line.code === "AMOUNT_DUE"));
+assert.ok(minnitiTv(), "the TV licence is kept as canone, not altre partite");
+function minnitiTv() { return bill.economicChargeLines.some((line) => line.code === "CANONE_RAI" && line.amount === "9,00 €") && !bill.economicChargeLines.some((line) => line.code === "ALTRE_PARTITE"); }
 console.log("bill-reader smoke OK");

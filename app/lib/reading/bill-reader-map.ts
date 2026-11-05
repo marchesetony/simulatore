@@ -130,9 +130,18 @@ const QUOTA_LABEL = { CONSUMI: "Quota per consumi", FISSA: "Quota fissa", POTENZ
 /** The scontrino rows in the shape the receipt and the comparison read ("Quota per consumi - di cui spesa per la vendita"). */
 export function scontrinoLines(rows: readonly ScontrinoRow[]): StructuredBillEconomicChargeLine[] {
   const lines: StructuredBillEconomicChargeLine[] = [];
+  let afterTotal = false;
   for (const row of rows) {
     const amount = euro(row.importo);
     if (!amount) continue;
+    // Tony (5/11, DARVEPOST BPower): after the Totale bolletta come the amount to pay, the TV licence and credits: never
+    // altre partite of the bill.
+    if (afterTotal) {
+      if (row.tipo === "CANONE_TV" || /canone/i.test(row.etichetta)) lines.push({ code: "CANONE_RAI", description: row.etichetta || "Canone TV", amount, quantity: "", unit: "", unitPrice: "", periodRaw: "", status: "FOUND", documentEvidence: `pagina ${row.pagina}` });
+      else if (/da\s+pagare/i.test(row.etichetta)) lines.push({ code: "AMOUNT_DUE", description: row.etichetta, amount, quantity: "", unit: "", unitPrice: "", periodRaw: "", status: "FOUND", documentEvidence: `pagina ${row.pagina}` });
+      continue;
+    }
+    if (row.tipo === "TOTALE_BOLLETTA") afterTotal = true;
     const quota = /^quota/i.test(row.etichetta) && row.tipo === "QUOTA_TOTALE" ? row.etichetta.trim() : QUOTA_LABEL[row.quota];
     const base = { quantity: "", unit: "", unitPrice: "", periodRaw: "", status: "FOUND" as const, documentEvidence: `pagina ${row.pagina}` };
     const priceUnit = row.unitaPrezzo.trim();
@@ -142,6 +151,7 @@ export function scontrinoLines(rows: readonly ScontrinoRow[]): StructuredBillEco
       case "DI_CUI_RETE_ONERI": lines.push({ ...base, code: "NETWORK_SYSTEM", description: `${quota} - di cui spesa per la rete e gli oneri generali di sistema`, amount, unit: priceUnit, unitPrice: row.prezzoMedio, rawDescription: row.etichetta }); break;
       case "ENERGIA_REATTIVA": lines.push({ ...base, code: "OTHER_CHARGE", description: /reattiva/i.test(row.etichetta) ? row.etichetta : `Energia reattiva ${row.etichetta}`.trim(), amount, quantity: row.quantita, unit: row.unita || "kVArh", unitPrice: row.prezzoMedio }); break;
       case "ACCISE_IVA": lines.push({ ...base, code: "TAX_SUBTOTAL", description: row.etichetta || "Accise e IVA", amount }); break;
+      case "CANONE_TV": lines.push({ ...base, code: "CANONE_RAI", description: row.etichetta || "Canone TV", amount }); break;
       case "BONUS_SOCIALE": lines.push({ ...base, code: "BONUS", description: row.etichetta || "Bonus sociale", amount }); break;
       case "TOTALE_BOLLETTA": lines.push({ ...base, code: "BILL_TOTAL", description: row.etichetta || "Totale bolletta", amount }); break;
       default: lines.push({ ...base, code: "ALTRE_PARTITE", description: row.etichetta, amount }); break;
