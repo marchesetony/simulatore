@@ -128,7 +128,10 @@ const euro = (value: string): string => {
 const QUOTA_LABEL = { CONSUMI: "Quota per consumi", FISSA: "Quota fissa", POTENZA: "Quota potenza", NESSUNA: "" } as const;
 
 /** The scontrino rows in the shape the receipt and the comparison read ("Quota per consumi - di cui spesa per la vendita"). */
-export function scontrinoLines(rows: readonly ScontrinoRow[]): StructuredBillEconomicChargeLine[] {
+export function scontrinoLines(rows: readonly ScontrinoRow[], vector: BillReading["vettore"] = "EE"): StructuredBillEconomicChargeLine[] {
+  // Tony (5/11, DARVEPOST BPower: vendita 39,09 € shown as "Altre partite"): the bill-column classifier recognises the seller
+  // share by "vendita" + "energia", as the bill prints it ("di cui spesa per la vendita di energia elettrica").
+  const sellerShare = vector === "GAS" ? "di cui spesa per la vendita di gas naturale (materia energia)" : "di cui spesa per la vendita di energia elettrica";
   const lines: StructuredBillEconomicChargeLine[] = [];
   let afterTotal = false;
   for (const row of rows) {
@@ -142,12 +145,13 @@ export function scontrinoLines(rows: readonly ScontrinoRow[]): StructuredBillEco
       continue;
     }
     if (row.tipo === "TOTALE_BOLLETTA") afterTotal = true;
-    const quota = /^quota/i.test(row.etichetta) && row.tipo === "QUOTA_TOTALE" ? row.etichetta.trim() : QUOTA_LABEL[row.quota];
+    // The quota is named the same way on every bill ("Quota fissa e Quota potenza - 1 mese" would read as two quotas).
+    const quota = QUOTA_LABEL[row.quota];
     const base = { quantity: "", unit: "", unitPrice: "", periodRaw: "", status: "FOUND" as const, documentEvidence: `pagina ${row.pagina}` };
     const priceUnit = row.unitaPrezzo.trim();
     switch (row.tipo) {
       case "QUOTA_TOTALE": lines.push({ ...base, code: "OTHER_CHARGE", description: quota || row.etichetta, amount, quantity: row.quantita, unit: row.unita, unitPrice: row.prezzoMedio }); break;
-      case "DI_CUI_VENDITA": lines.push({ ...base, code: "OTHER_CHARGE", description: `${quota} - di cui spesa per la vendita`, amount, unit: priceUnit, unitPrice: row.prezzoMedio, rawDescription: row.etichetta }); break;
+      case "DI_CUI_VENDITA": lines.push({ ...base, code: "OTHER_CHARGE", description: `${quota} - ${sellerShare}`, amount, unit: priceUnit, unitPrice: row.prezzoMedio, rawDescription: row.etichetta }); break;
       case "DI_CUI_RETE_ONERI": lines.push({ ...base, code: "NETWORK_SYSTEM", description: `${quota} - di cui spesa per la rete e gli oneri generali di sistema`, amount, unit: priceUnit, unitPrice: row.prezzoMedio, rawDescription: row.etichetta }); break;
       case "ENERGIA_REATTIVA": lines.push({ ...base, code: "OTHER_CHARGE", description: /reattiva/i.test(row.etichetta) ? row.etichetta : `Energia reattiva ${row.etichetta}`.trim(), amount, quantity: row.quantita, unit: row.unita || "kVArh", unitPrice: row.prezzoMedio }); break;
       case "ACCISE_IVA": lines.push({ ...base, code: "TAX_SUBTOTAL", description: row.etichetta || "Accise e IVA", amount }); break;
@@ -171,7 +175,7 @@ export function toStructuredBill(outcome: ReaderOutcome): StructuredBillExtracti
   const priceRows = reading.valoriFormula.filter((row) => /kwh/i.test(row.unita) && italianNumber(row.valore) !== null).map((row) => ({ label: row.etichetta, unitPrice: row.valore.trim(), period: null, page: row.pagina }));
   return {
     ...merged,
-    economicChargeLines: [...scontrinoLines(reading.scontrino), ...merged.economicChargeLines],
+    economicChargeLines: [...scontrinoLines(reading.scontrino, reading.vettore), ...merged.economicChargeLines],
     documentOfferName: reading.offertaNome.trim() || null,
     documentOfferBox: Object.values(box).some(Boolean) ? box : null,
     documentPriceRows: priceRows,

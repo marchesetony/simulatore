@@ -131,4 +131,9 @@ assert.ok(!darvepostBill.economicChargeLines.some((line) => line.code === "ALTRE
 assert.ok(darvepostBill.economicChargeLines.some((line) => line.code === "AMOUNT_DUE"));
 assert.ok(minnitiTv(), "the TV licence is kept as canone, not altre partite");
 function minnitiTv() { return bill.economicChargeLines.some((line) => line.code === "CANONE_RAI" && line.amount === "9,00 €") && !bill.economicChargeLines.some((line) => line.code === "ALTRE_PARTITE"); }
+// Tony (5/11, DARVEPOST: "Altre partite + 39,09 €" in the bill column): the seller shares are classified as vendita.
+const { classifyBillEconomicComponent } = await import("../app/lib/foundation/bill-economic-analysis.ts");
+const shares = darvepostBill.economicChargeLines.filter((line) => / - di cui spesa per la vendita/.test(line.description));
+assert.deepEqual(shares.map((line) => classifyBillEconomicComponent(line.code, line.description)), ["SELLER_ENERGY_FEE", "SELLER_FIXED_FEE"]);
+assert.ok(darvepostBill.economicChargeLines.some((line) => line.description === "Quota fissa" && line.amount === "18,74 €"));
 console.log("bill-reader smoke OK");
