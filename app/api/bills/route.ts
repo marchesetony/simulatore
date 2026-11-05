@@ -10,7 +10,7 @@ import { MAX_UPLOAD_BYTES, uploadedFile } from "../../lib/foundation/large-uploa
 import { attachOfficialPun, ensureOfficialPunForBill } from "../../lib/market/pun-reference";
 import { billPunRefresh } from "../../lib/market-refresh/bill-pun";
 import { billInScope, billVisibilityScope } from "../../lib/foundation/bill-visibility";
-import { billTooOld } from "../../lib/foundation/bill-retention";
+import { billTooOld, deleteBillPermanently } from "../../lib/foundation/bill-retention";
 import { isBillFeature, resolveBillFeaturePermissions, sanitizeBillForFeatureAccess, type BillFeature } from "../../lib/foundation/bill-feature-permissions";
 
 const CORRELATION_ID = "foundation-bills";
@@ -110,6 +110,26 @@ export async function GET(request: Request): Promise<Response> {
     const publicDocuments = (approvedView ? documents.filter((document) => document.currentApprovedVersionId !== null).map(toPublicBillSummary).filter((document): document is NonNullable<typeof document> => document !== null) : await Promise.all(documents.filter((document) => document.currentApprovedVersionId === null).map(async (document) => sanitizeBillForFeatureAccess(await attachOfficialPun(toPublicDocument(document), repositories.marketArchiveRepository), access))))
       .sort((left, right) => left.createdAt.localeCompare(right.createdAt) || left.id.localeCompare(right.id));
     return Response.json({ documents: publicDocuments }, { headers: noStoreHeaders });
+  } catch (error) {
+    return listError(error);
+  }
+}
+
+// Tony (5/11): "cancella tutte le bollette in archivio e aggiungi anche un tasto per cancellare tutte le bollette".
+// Removes for good (record + PDF) every bill the user can see, old ones included.
+export async function DELETE(request: Request): Promise<Response> {
+  try {
+    const principal = await requestPrincipal(request, "WRITE");
+    const repositories = runtimeRepositories();
+    const scope = await billVisibilityScope(principal, repositories);
+    const documents = (await repositories.billRepository.list(principal.tenantId)).filter((document) => document.tenantId === principal.tenantId && billInScope(document, scope));
+    const audit = { async record(event: { readonly type: string; readonly documentId: string; readonly outcome: string }) { await recordRuntimeAudit({ principal, action: "BILL_DELETED_BY_USER", resourceType: "BILL", resourceId: event.documentId, outcome: event.outcome === "ALLOWED" ? "ALLOWED" : "DENIED", correlationId: CORRELATION_ID }); } };
+    let deleted = 0; let failed = 0;
+    for (const document of documents) {
+      try { await deleteBillPermanently({ tenantId: principal.tenantId, documentId: document.id, repositories: { bills: repositories.billRepository, storage: repositories.documentStorage, audit } }); deleted += 1; }
+      catch (error) { failed += 1; console.error(`[BILL_DELETE_ALL_FAILURE] id=${document.id} message=${error instanceof Error ? error.message.slice(0, 120) : "unknown"}`); }
+    }
+    return Response.json({ deleted, failed }, { headers: noStoreHeaders });
   } catch (error) {
     return listError(error);
   }

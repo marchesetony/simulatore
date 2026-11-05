@@ -923,6 +923,14 @@ export default function QuickQuoteFlow({ readonly, showExcluded = false }: { rea
     catch (cause) { setError(message(cause)); }
     finally { setDeleting(false); }
   };
+  // Tony (5/11): "aggiungi anche un tasto per cancellare tutte le bollette". Two clicks: Cancella tutte, then Conferma.
+  const [confirmAll, setConfirmAll] = useState(false);
+  const deleteAllBills = async () => {
+    setDeleting(true); setError(undefined);
+    try { const result = await requestJson<{ readonly deleted: number; readonly failed: number }>("/api/bills", { method: "DELETE" }); setConfirmAll(false); if (result.failed > 0) setError(`${result.failed} bollette non sono state cancellate: riprova.`); await loadArchive(); }
+    catch (cause) { setError(message(cause)); }
+    finally { setDeleting(false); }
+  };
 
   type Prepared = { readonly context: Context; readonly candidates: readonly Candidate[]; readonly unlisted?: readonly Unlisted[]; readonly canAuthorizeCte?: boolean };
   const emptyComparison = (context: Context): ComparisonModel => ({ comparisonId: "", fingerprint: "", tenantId: "", vector: context.vector, results: [], excludedOffers: [], ranking: [], warnings: [] });
@@ -1081,6 +1089,9 @@ export default function QuickQuoteFlow({ readonly, showExcluded = false }: { rea
           <select value="" onChange={(event) => { if (event.target.value) void openBill(event.target.value); }} disabled={Boolean(pending)} aria-label="Scegli la bolletta"><option value="">Scegli la bolletta</option>{billChoices(archive, billQuery).map((bill) => <option key={bill.id} value={bill.id}>{billLabel(bill)}</option>)}</select>
           <details className="quote-bill-manage"><summary>Cancella bollette caricate</summary>
             <p className="muted">Le bollette con data di oltre 4 mesi fa vengono eliminate in automatico.</p>
+            <div className="button-row">{confirmAll
+              ? <><span>Cancellare tutte le bollette caricate? Non si può annullare.</span><button className="button compact danger" type="button" onClick={() => void deleteAllBills()} disabled={readonly || deleting}>{deleting ? "Cancellazione…" : "Conferma: cancella tutte"}</button><button className="button compact secondary" type="button" onClick={() => setConfirmAll(false)} disabled={deleting}>Annulla</button></>
+              : <button className="button compact danger" type="button" onClick={() => setConfirmAll(true)} disabled={readonly || deleting}>Cancella tutte le bollette</button>}</div>
             <ul>{billChoices(archive, billQuery).map((bill) => <li key={bill.id}><span>{billLabel(bill)}</span>{deleteId === bill.id
               ? <span className="button-row"><button className="button compact danger" type="button" onClick={() => void deleteBill(bill.id)} disabled={readonly || deleting}>{deleting ? "Cancellazione…" : "Conferma"}</button><button className="button compact secondary" type="button" onClick={() => setDeleteId(null)} disabled={deleting}>Annulla</button></span>
               : <button className="button compact danger" type="button" onClick={() => setDeleteId(bill.id)} disabled={readonly || deleting}>Cancella</button>}</li>)}</ul>
