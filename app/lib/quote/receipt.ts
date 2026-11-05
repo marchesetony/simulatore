@@ -297,6 +297,25 @@ function quotasOf(input: QuoteReceiptInput, currentEnergy: number | null, offerE
     if ((key === "NETWORK" || key === "SYSTEM") && !hasOfficial) addDetail(quota, key, "offer", value);
     if (SELLER_GROUPS.has(line.group ?? "")) bill[quota].seller += value;
   }
+  // Tony (5/11, Plenitude 16,00 + 3,75 €/mese against BPower: "gli oneri non possono essere più alti quelli di bpower rispetto
+  // alla fattura reale"): the detail read had only the oneri of the quota fissa (1,33 €) and left out the rete (2,41 €). The bill
+  // column follows the quadro sintetico as printed (Tony, 1/11, "attenersi all'originale"): when a quota prints its "di cui
+  // spesa per la rete e gli oneri", that amount is the bill's rete e oneri of the quota, the oneri read stay and the rest is rete.
+  for (const quota of ["CONSUMPTION", "FIXED", "POWER"] as const) {
+    const printed = (input.analysis?.components ?? []).filter((line) => line.includedInReconciliation === false && !line.aggregate && billQuota(line) === quota && /^\s*quota\b[^\n]*\bdi cui spesa per la rete\b/i.test(line.description));
+    if (printed.length !== 1) continue;
+    const regulatedPrinted = amountOf(printed[0].amount);
+    if (regulatedPrinted === null) continue;
+    const read = cents(bill[quota].all - bill[quota].seller);
+    if (Math.abs(regulatedPrinted - read) <= 0.02) continue;
+    const system = detail[quota].get("SYSTEM")?.current ?? 0;
+    const network = cents(regulatedPrinted - Math.min(system, regulatedPrinted));
+    const entry = detail[quota].get("NETWORK") ?? { current: null, offer: null };
+    entry.current = network;
+    if (!hasOfficial) entry.offer = network;
+    detail[quota].set("NETWORK", entry);
+    bill[quota].all = cents(bill[quota].seller + regulatedPrinted);
+  }
   const offer = { CONSUMPTION: 0, FIXED: 0, POWER: 0, ONE_OFF: 0 };
   for (const component of sellerComponents(input)) {
     const value = signed(component); const quota = offerQuota(component);
