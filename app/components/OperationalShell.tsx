@@ -386,9 +386,28 @@ function OfficialRefresh({ platform, admin = true, onDone }: { readonly platform
   const [refresh, setRefresh] = useState<RefreshResult | null>(null);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string>();
-  async function refreshNow() { if (refreshing) return; setRefreshing(true); setError(undefined); try { setRefresh(await requestJson<RefreshResult>("/api/system/official-refresh", { method: "POST", body: "{}" })); onDone?.(); } catch (cause) { setError(uiError(cause)); } finally { setRefreshing(false); } }
+  const [progress, setProgress] = useState<string>();
+  // Tony (6/11, HTTP_504): one request per company and source, so none runs past the time limit.
+  async function refreshNow() {
+    if (refreshing) return; setRefreshing(true); setError(undefined); setRefresh(null);
+    try {
+      const plan = await requestJson<{ readonly tenants: readonly string[]; readonly sources: readonly (keyof Omit<RefreshResult["results"][number], "tenantId">)[] }>("/api/system/official-refresh");
+      const results: RefreshResult["results"][number][] = [];
+      for (const tenantId of plan.tenants) {
+        const entry: Record<string, unknown> = { tenantId };
+        for (const source of plan.sources) {
+          setProgress(tenantId + ": " + source.toUpperCase());
+          try { entry[source] = (await requestJson<{ readonly result: RefreshPart }>("/api/system/official-refresh", { method: "POST", body: JSON.stringify({ tenantId, source }) })).result; }
+          catch (cause) { entry[source] = { status: "FAILED", errors: [uiError(cause)] }; }
+        }
+        results.push(entry as RefreshResult["results"][number]);
+        setRefresh({ results: [...results] });
+      }
+      onDone?.();
+    } catch (cause) { setError(uiError(cause)); } finally { setRefreshing(false); setProgress(undefined); }
+  }
   const part = (label: string, value: RefreshPart) => label + (value.status === "SUCCESS" ? " aggiornato" : value.status === "ALREADY_RUNNING" ? " già in corso" : " con errori: " + value.errors.join(", "));
-  return <Card><div className="card-heading"><h3>Aggiornamento dati ufficiali</h3><button className="button primary" type="button" disabled={refreshing || !admin} onClick={() => void refreshNow()}>{refreshing ? "Aggiornamento in corso, può richiedere qualche minuto" : "Aggiorna ora per tutte le aziende"}</button></div><p className="muted">Scarica adesso PUN (GME), PSV, tariffe ARERA, mercato capacità mensile ARERA (delibere TIV), capacità e dispacciamento Terna e li salva in archivio per tutte le aziende. Lo stesso aggiornamento parte da solo ogni notte.{admin ? null : " Può avviarlo solo un amministratore dell'azienda."}</p>{error ? <ErrorState message={error} /> : null}{refresh ? <div className="data-list">{refresh.results.length === 0 ? <p>Nessuna azienda da aggiornare.</p> : refresh.results.map((item) => <DataLine key={item.tenantId} label={item.tenantId} value={[part("PUN", item.pun), part("PSV", item.psv), part("ARERA", item.arera), part("Terna", item.terna), ...(item.capacity ? [part("Capacità ARERA", item.capacity)] : []), ...(item.dispatching ? [part("Dispacciamento Terna", item.dispatching)] : [])].join(" · ")} />)}</div> : null}</Card>;
+  return <Card><div className="card-heading"><h3>Aggiornamento dati ufficiali</h3><button className="button primary" type="button" disabled={refreshing || !admin} onClick={() => void refreshNow()}>{refreshing ? "Aggiornamento in corso" + (progress ? " (" + progress + ")" : "") : "Aggiorna ora per tutte le aziende"}</button></div><p className="muted">Scarica adesso PUN (GME), PSV, tariffe ARERA, mercato capacità mensile ARERA (delibere TIV), capacità e dispacciamento Terna e li salva in archivio per tutte le aziende. Lo stesso aggiornamento parte da solo ogni notte.{admin ? null : " Può avviarlo solo un amministratore dell'azienda."}</p>{error ? <ErrorState message={error} /> : null}{refresh ? <div className="data-list">{refresh.results.length === 0 ? <p>Nessuna azienda da aggiornare.</p> : refresh.results.map((item) => <DataLine key={item.tenantId} label={item.tenantId} value={[part("PUN", item.pun), part("PSV", item.psv), part("ARERA", item.arera), part("Terna", item.terna), ...(item.capacity ? [part("Capacità ARERA", item.capacity)] : []), ...(item.dispatching ? [part("Dispacciamento Terna", item.dispatching)] : [])].join(" · ")} />)}</div> : null}</Card>;
 }
 
 
