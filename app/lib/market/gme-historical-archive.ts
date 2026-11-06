@@ -12,10 +12,12 @@ export const GME_PUN_TIMEZONE = "Europe/Rome";
 
 export const MAX_OUTER_ZIP_BYTES = 30 * 1024 * 1024;
 export const MAX_OUTER_ENTRY_COUNT = 8;
-export const MAX_OUTER_UNCOMPRESSED_BYTES = 40 * 1024 * 1024;
+// Tony (6/11, "PUN con errori: GME_ZIP_UNCOMPRESSED_LIMIT" from 2026-10): the yearly PT15 archive grows each month (15-minute rows,
+// XML compresses about 10x), so the limits cover a full year; only the entries read are decompressed.
+export const MAX_OUTER_UNCOMPRESSED_BYTES = 200 * 1024 * 1024;
 export const MAX_XLSX_BYTES = 25 * 1024 * 1024;
 export const MAX_XLSX_ENTRY_COUNT = 80;
-export const MAX_XLSX_UNCOMPRESSED_BYTES = 150 * 1024 * 1024;
+export const MAX_XLSX_UNCOMPRESSED_BYTES = 500 * 1024 * 1024;
 export const MAX_XML_BYTES = 30 * 1024 * 1024;
 export const MAX_ROW_BYTES = 250 * 1024;
 
@@ -43,7 +45,7 @@ export interface GmeHistoricalArchiveResult {
   readonly intervalCount: number;
 }
 
-type ZipLimits = { readonly maxBytes: number; readonly maxEntryCount: number; readonly maxUncompressedBytes: number };
+type ZipLimits = { readonly maxBytes: number; readonly maxEntryCount: number; readonly maxUncompressedBytes: number; readonly label?: string };
 type ZipEntry = { readonly name: string; readonly compressedSize: number; readonly uncompressedSize: number; readonly crc32: number };
 type XmlNode = Record<string, unknown>;
 
@@ -99,7 +101,7 @@ function validateZip(bytes: Uint8Array, limits: ZipLimits): readonly ZipEntry[] 
     names.add(name);
     if (uncompressedSize > limits.maxUncompressedBytes || compressedSize > limits.maxBytes) fail("GME_ZIP_ENTRY_SIZE_INVALID");
     totalUncompressed += uncompressedSize;
-    if (totalUncompressed > limits.maxUncompressedBytes) fail("GME_ZIP_UNCOMPRESSED_LIMIT");
+    if (totalUncompressed > limits.maxUncompressedBytes) fail(`GME_ZIP_UNCOMPRESSED_LIMIT${limits.label ? `:${limits.label}` : ""}`);
     entries.push({ name, compressedSize, uncompressedSize, crc32: uint32(bytes, offset + 16) });
     offset = next;
   }
@@ -262,9 +264,9 @@ export function aggregateGmePt15Intervals(input: { readonly tenantId: string; re
 
 function parseWorkbook(input: { readonly xlsxBytes: Uint8Array; readonly tenantId: string; readonly referenceMonths?: readonly string[]; readonly retrievedAt: string; readonly sourceUrl: string; readonly sourceSha256: string }): { readonly records: readonly ElectricityMonthlyPunRecord[]; readonly intervalCount: number } {
   if (input.xlsxBytes.length > MAX_XLSX_BYTES) fail("GME_XLSX_SIZE_INVALID");
-  validateZip(input.xlsxBytes, { maxBytes: MAX_XLSX_BYTES, maxEntryCount: MAX_XLSX_ENTRY_COUNT, maxUncompressedBytes: MAX_XLSX_UNCOMPRESSED_BYTES });
-  const files = unzipSync(input.xlsxBytes);
-  const get = (name: string): string => { const bytes = files[name]; if (!bytes) fail(`GME_XLSX_ENTRY_MISSING:${name}`); return textDecoder.decode(bytes); };
+  validateZip(input.xlsxBytes, { maxBytes: MAX_XLSX_BYTES, maxEntryCount: MAX_XLSX_ENTRY_COUNT, maxUncompressedBytes: MAX_XLSX_UNCOMPRESSED_BYTES, label: "XLSX" });
+  // Only the parts read are decompressed: the other worksheets of a full year would not fit in memory together.
+  const get = (name: string): string => { const bytes = unzipSync(input.xlsxBytes, { filter: (file) => file.name === name })[name]; if (!bytes) fail(`GME_XLSX_ENTRY_MISSING:${name}`); return textDecoder.decode(bytes); };
   const workbookXml = get("xl/workbook.xml");
   parseXml(workbookXml, "GME_WORKBOOK_XML_INVALID");
   const sheet = worksheetPath(workbookXml, get("xl/_rels/workbook.xml.rels"));
@@ -301,13 +303,12 @@ export async function loadGmeHistoricalPunRecords(input: { readonly tenantId: st
   if (response.status < 200 || response.status >= 300) fail(`GME_HISTORICAL_HTTP_${response.status}`);
   const archiveBytes = new Uint8Array(await response.arrayBuffer());
   const sourceSha256 = createHash("sha256").update(archiveBytes).digest("hex");
-  const outerEntries = validateZip(archiveBytes, { maxBytes: MAX_OUTER_ZIP_BYTES, maxEntryCount: MAX_OUTER_ENTRY_COUNT, maxUncompressedBytes: MAX_OUTER_UNCOMPRESSED_BYTES });
-  const outer = unzipSync(archiveBytes);
+  const outerEntries = validateZip(archiveBytes, { maxBytes: MAX_OUTER_ZIP_BYTES, maxEntryCount: MAX_OUTER_ENTRY_COUNT, maxUncompressedBytes: MAX_OUTER_UNCOMPRESSED_BYTES, label: "ARCHIVE" });
   const workbookEntries = outerEntries.filter((entry) => /\.xlsx$/i.test(entry.name));
   const candidates: { readonly name: string; readonly parsed: { readonly records: readonly ElectricityMonthlyPunRecord[]; readonly intervalCount: number } }[] = [];
   for (const workbookEntry of workbookEntries) {
     try {
-      const parsed = parseWorkbook({ xlsxBytes: outer[workbookEntry.name], tenantId: input.tenantId, referenceMonths: input.referenceMonths, retrievedAt: input.retrievedAt, sourceUrl: archiveUrl, sourceSha256 });
+      const parsed = parseWorkbook({ xlsxBytes: unzipSync(archiveBytes, { filter: (file) => file.name === workbookEntry.name })[workbookEntry.name], tenantId: input.tenantId, referenceMonths: input.referenceMonths, retrievedAt: input.retrievedAt, sourceUrl: archiveUrl, sourceSha256 });
       candidates.push({ name: workbookEntry.name, parsed });
     } catch (error) {
       if (error instanceof Error && /GME_(?:XML_EXTERNAL_ENTITY_BLOCKED|ZIP_)/.test(error.message)) throw error;
