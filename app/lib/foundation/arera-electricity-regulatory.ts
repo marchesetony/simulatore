@@ -243,9 +243,32 @@ export type AreraBta6SourceValues = {
   readonly fixed: RegulatoryValueRecord;
   readonly power: RegulatoryValueRecord;
   readonly energy: RegulatoryValueRecord;
-  readonly metering: RegulatoryValueRecord;
+  /** Full BT other-uses metering (TIME Tabelle 1+2). Missing when ARERA's TIME xlsx could not be read: never replaced by the partial MIS1 page value (Tony 6/11). */
+  readonly metering?: RegulatoryValueRecord;
+  readonly meteringError?: string;
   readonly transmission: RegulatoryValueRecord;
 };
+
+/** Error code shown to the platform owner as "Azione richiesta": the TIME tables must be downloaded from ARERA and uploaded by hand. */
+export const ARERA_TIME_TABLES_REQUIRED = "ARERA_TIME_TABLES_REQUIRED";
+
+/** TIME xlsx (metering tariffs MIS1 INS-RAV + RES): discovered among the measurement page attachments, else the 575/2025 file. */
+async function fetchOfficialBtaMetering(input: { readonly retrievedAt: string; readonly fetcher: AreraFetcher; readonly tenantId?: string; readonly requiredYear: number }): Promise<{ readonly metering?: RegulatoryValueRecord; readonly meteringError?: string }> {
+  const candidates: string[] = [];
+  try {
+    const page = await fetchOfficialAreraSource(ARERA_MEASUREMENT_PAGE, input.fetcher);
+    discoverAreraAttachments(new TextDecoder().decode(page.bytes), page.url).filter((item) => item.extension === "XLSX" && /TIME/i.test(item.url + " " + item.anchorText)).forEach((item) => candidates.push(item.url));
+  } catch { /* page unreachable: try the known file */ }
+  if (!candidates.includes(ARERA_575_TIME_TABLES_URL)) candidates.push(ARERA_575_TIME_TABLES_URL);
+  let lastError = "ARERA_TIME_UNREADABLE";
+  for (const url of candidates) {
+    try {
+      const file = await fetchOfficialAreraSource(url, input.fetcher);
+      return { metering: parseArera575Bta6MeasurementXlsx({ body: file.bytes, sourceReference: file.url, retrievedAt: input.retrievedAt, sourceSha256: sourceHash(file.bytes), tenantId: input.tenantId, requiredYear: input.requiredYear }) };
+    } catch (error) { lastError = error instanceof Error ? error.message : lastError; }
+  }
+  return { meteringError: `${ARERA_TIME_TABLES_REQUIRED}:${input.requiredYear}:${lastError}` };
+}
 
 function rowsFromCells(cells: readonly XlsxCell[]): readonly number[] {
   return [...new Set(cells.map((cell) => cell.row))].sort((a, b) => a - b);
@@ -334,32 +357,44 @@ export function parseArera575BtaUpTo165DistributionXlsx(input: { readonly body: 
   });
 }
 
-function bta6MeteringValue(body: Uint8Array): { readonly value: number; readonly year: number } {
+// Tony (5-6/11, quota fissa BPower 3,56 €/mese against 3,74 billed): the misura of "Altre utenze in bassa tensione" is
+// MIS1(INS-RAV) of TIME Tabella 1 plus MIS1(RES) of Tabella 2 (2026: 1.968,26 + 216,43 = 2.184,69 c€/POD/anno = 21,8469 €,
+// as the distributors bill it). Tabella 1 alone was 0,18 €/mese short. Both tables sit on the same sheet, each with its own
+// "Anno" header row; the MIS1 column of a year is the first one carrying that year in the header above the row.
+function bta6MeteringValue(body: Uint8Array, requiredYear?: number): { readonly value: number; readonly year: number; readonly parts: readonly number[] } {
   const shared = xlsxSharedStrings(body);
-  const cells = xlsxSheet(body, "xl/worksheets/sheet2.xml", shared);
-  const row = rowsFromCells(cells).find((rowNumber) => cells.some((cell) => cell.row === rowNumber && /^Altre utenze in bassa tensione$/i.test(clean(cell.value))));
-  if (row === undefined) throw new Error("ARERA_BTA6_METERING_ROW_MISSING");
+  const sheet = xlsxSheetNames(body).find((item) => /tabell/i.test(item.name))?.path ?? "xl/worksheets/sheet2.xml";
+  const cells = xlsxSheet(body, sheet, shared);
+  const labelRows = rowsFromCells(cells).filter((rowNumber) => cells.some((cell) => cell.row === rowNumber && /^Altre utenze in bassa tensione$/i.test(clean(cell.value))));
+  if (!labelRows.length) throw new Error("ARERA_BTA6_METERING_ROW_MISSING");
+  if (labelRows.length < 2) throw new Error("ARERA_TIME_MIS1_RES_ROW_MISSING");
   const columnNumber = (column: string): number => [...column].reduce((total, character) => total * 26 + character.charCodeAt(0) - 64, 0);
   const columnName = (value: number): string => { let result = ""; let current = value; while (current > 0) { const remainder = (current - 1) % 26; result = String.fromCharCode(65 + remainder) + result; current = Math.floor((current - 1) / 26); } return result; };
-  const yearColumns = new Map<number, number>();
-  for (const cell of cells) {
-    const match = /^Anno\s+(20\d{2})$/i.exec(clean(cell.value));
-    if (match && !yearColumns.has(Number(match[1]))) yearColumns.set(Number(match[1]), columnNumber(cell.column));
+  const yearColumnsAbove = (row: number): Map<number, number> => {
+    const header = cells.filter((cell) => cell.row < row && /^Anno\s+20\d{2}$/i.test(clean(cell.value)));
+    const headerRow = Math.max(...header.map((cell) => cell.row));
+    const columns = new Map<number, number>();
+    for (const cell of header.filter((item) => item.row === headerRow).sort((a, b) => columnNumber(a.column) - columnNumber(b.column))) {
+      const year = Number(/(20\d{2})/.exec(cell.value)?.[1]);
+      if (!columns.has(year)) columns.set(year, columnNumber(cell.column));
+    }
+    return columns;
+  };
+  const tables = labelRows.slice(0, 2).map((row) => ({ row, columns: yearColumnsAbove(row) }));
+  const years = [...tables[0].columns.keys()].sort((a, b) => b - a).filter((year) => requiredYear === undefined || year === requiredYear);
+  for (const year of years) {
+    const parts = tables.map((table) => { const column = table.columns.get(year); return column === undefined ? null : xlsxNumeric(cells, table.row, columnName(column)); });
+    if (parts.every((part): part is number => part !== null)) return { value: parts.reduce((total, part) => total + part, 0), year, parts };
   }
-  for (const [year, column] of [...yearColumns.entries()].sort(([left], [right]) => right - left)) {
-    const value = xlsxNumeric(cells, row, columnName(column));
-    if (value !== null) return { value, year };
-  }
-  const fallback = xlsxNumeric(cells, row, "E");
-  if (fallback === null) throw new Error("ARERA_BTA6_METERING_VALUE_MISSING");
-  return { value: fallback, year: annualYear(cells) };
+  throw new Error(requiredYear === undefined ? "ARERA_BTA6_METERING_VALUE_MISSING" : "SOURCE_YEAR_NOT_AVAILABLE");
 }
 
-export function parseArera575Bta6MeasurementXlsx(input: { readonly body: Uint8Array; readonly sourceReference?: string; readonly officialIdentifier?: string; readonly publicationDate?: string; readonly retrievedAt: string; readonly sourceSha256?: string; readonly tenantId?: string; readonly effectiveFrom?: string; readonly effectiveTo?: string | null }): RegulatoryValueRecord {
+export function parseArera575Bta6MeasurementXlsx(input: { readonly body: Uint8Array; readonly sourceReference?: string; readonly officialIdentifier?: string; readonly publicationDate?: string; readonly retrievedAt: string; readonly sourceSha256?: string; readonly tenantId?: string; readonly effectiveFrom?: string; readonly effectiveTo?: string | null; readonly requiredYear?: number }): RegulatoryValueRecord {
   const sourceReference = input.sourceReference ?? ARERA_575_TIME_TABLES_URL;
   const sourceSha256 = input.sourceSha256 ?? sourceHash(input.body);
-  const metering = bta6MeteringValue(input.body);
-  return createValue({ tenantId: input.tenantId ?? "tenant_local-demo", sourceType: "OFFICIAL_ATTACHMENT", sourceReference, officialIdentifier: input.officialIdentifier ?? `${ARERA_575_IDENTIFIER}:TIME:Tabella 1:MIS1`, publicationDate: input.publicationDate ?? "2025-12-30", retrievedAt: input.retrievedAt, effectiveFrom: input.effectiveFrom ?? `${metering.year}-01-01`, effectiveTo: input.effectiveTo === undefined ? `${metering.year + 1}-01-01` : input.effectiveTo, componentCode: "METERING_FIXED", customerScope: "NON_DOMESTIC_BT_BTA6", originalValue: metering.value, originalUnit: "CENT_EUR/POD/YEAR", applicationBasis: `TABELLE TIME Tabella 1 MIS1; tariffa ${metering.year} uniforme per l'intera categoria ufficiale Altre utenze in bassa tensione, sottoclasse BTA6`, sourceSha256 });
+  const metering = bta6MeteringValue(input.body, input.requiredYear);
+  const cents = (value: number) => value.toFixed(2).replace(".", ",");
+  return createValue({ tenantId: input.tenantId ?? "tenant_local-demo", sourceType: "OFFICIAL_ATTACHMENT", sourceReference, officialIdentifier: input.officialIdentifier ?? `${ARERA_575_IDENTIFIER}:TIME:Tabelle 1-2:MIS1`, publicationDate: input.publicationDate ?? "2025-12-30", retrievedAt: input.retrievedAt, effectiveFrom: input.effectiveFrom ?? `${metering.year}-01-01`, effectiveTo: input.effectiveTo === undefined ? `${metering.year + 1}-01-01` : input.effectiveTo, componentCode: "METERING_FIXED", customerScope: "NON_DOMESTIC_BT_BTA6", originalValue: Math.round(metering.value * 100) / 100, originalUnit: "CENT_EUR/POD/YEAR", applicationBasis: `TABELLE TIME Tabella 1 MIS1(INS-RAV) ${cents(metering.parts[0])} + Tabella 2 MIS1(RES) ${cents(metering.parts[1])} c€/POD/anno; tariffa ${metering.year} uniforme per l'intera categoria ufficiale Altre utenze in bassa tensione, sottoclasse BTA6`, sourceSha256 });
 }
 
 export function parseAreraBta6MeasurementHtml(input: { readonly html: string; readonly sourceReference?: string; readonly officialIdentifier?: string; readonly publicationDate?: string; readonly retrievedAt: string; readonly sourceSha256?: string; readonly tenantId?: string; readonly requiredYear?: number }): RegulatoryValueRecord {
@@ -459,12 +494,11 @@ export async function fetchOfficialBta6Sources(input: { readonly retrievedAt: st
     if (!(error instanceof Error) || !(error.message.includes("DISTRIBUTION_VALUE_MISSING") || error.message === "SOURCE_YEAR_NOT_AVAILABLE")) throw error;
     tit = await fetchOfficialAreraSource(ARERA_575_TIT_TABLES_URL, fetcher);
   }
-  const measurementPage = await fetchOfficialAreraSource(ARERA_MEASUREMENT_PAGE, fetcher);
+  const metering = await fetchOfficialBtaMetering({ retrievedAt: input.retrievedAt, fetcher, tenantId: input.tenantId, requiredYear });
   const transmission = await fetchOfficialAreraSource(ARERA_TRANSMISSION_PAGE, fetcher);
   const distribution = parseArera575Bta6DistributionXlsx({ body: tit.bytes, sourceReference: tit.url, officialIdentifier: `ARERA_TIT_ATTACHMENT:${new URL(tit.url).pathname.split("/").pop() ?? "current"}`, retrievedAt: input.retrievedAt, sourceSha256: sourceHash(tit.bytes), tenantId: input.tenantId, requiredYear });
-  const metering = parseAreraBta6MeasurementHtml({ html: new TextDecoder().decode(measurementPage.bytes), sourceReference: measurementPage.url, retrievedAt: input.retrievedAt, sourceSha256: sourceHash(measurementPage.bytes), tenantId: input.tenantId, requiredYear });
   const transmissionRecord = parseAreraBta6TransmissionHtml({ html: new TextDecoder().decode(transmission.bytes), sourceReference: transmission.url, retrievedAt: input.retrievedAt, sourceSha256: sourceHash(transmission.bytes), tenantId: input.tenantId, requiredYear });
-  return { fixed: distribution[0], power: distribution[1], energy: distribution[2], metering, transmission: transmissionRecord };
+  return { fixed: distribution[0], power: distribution[1], energy: distribution[2], ...metering, transmission: transmissionRecord };
 }
 
 export type AreraAttachment = { readonly url: string; readonly extension: "XLS" | "XLSX" | "CSV" | "PDF" | "HTML"; readonly anchorText: string };

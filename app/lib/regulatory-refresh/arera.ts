@@ -61,6 +61,7 @@ export function createAreraRegulatorySourceReader(input: { readonly fetcher?: Ar
       errors = [];
       ASOS_BTA1_5_DIAGNOSTICS.length = 0;
       const bta6 = await attempt("ARERA_BTA6", () => fetchOfficialBta6Sources({ tenantId, retrievedAt, fetcher: input.fetcher }));
+      if (bta6?.meteringError) errors.push(`ARERA_BTA_METERING:${bta6.meteringError}`);
       const upTo165 = await attempt("ARERA_BTA1_5", () => fetchOfficialBtaUpTo165Sources({ tenantId, retrievedAt, fetcher: input.fetcher }));
       upTo165?.errors.forEach((error) => errors.push(error));
       const cdispd = await attempt("ARERA_CDISPD", async () => {
