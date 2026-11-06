@@ -49,6 +49,9 @@ assert.deepEqual([...new Set(uc.map((record) => record.regulatoryVariant))], ["B
 const arim = parseArera588BtaUpTo165ArimTableRows({ rows: [["", "Altre utenze in bassa tensione con potenza disponibile superiore a 16,5 kW", "302.76", "345.24", "0.1614"], ["", "Altre utenze in bassa tensione con potenza disponibile fino a 16,5 kW", "1200", "", "2"]], retrievedAt: "2026-09-04T12:00:00.000Z", sourceSha256: "a".repeat(64) });
 assert.equal(arim.length, 15);
 assert.deepEqual(arim.filter((record) => record.regulatoryVariant === "BTA5").map((record) => [record.normalizedUnit, record.normalizedValue]), [["EUR/POD/YEAR", 12], ["EUR/KW/YEAR", 0], ["EUR/KWH", 0.02]]);
+// Tony (6/11, refresh errors in Dati di mercato): ARERA's sheets may write "16.5 kW" with a dot.
+const dotted = rows.map((row) => row.map((cell) => cell.replace("16,5", "16.5")));
+assert.deepEqual([...new Set(parseArera588BtaUpTo165Uc3Uc6TableRows({ rows: dotted, retrievedAt: "2026-09-04T12:00:00.000Z", sourceSha256: "a".repeat(64) }).map((record) => record.regulatoryVariant))], ["BTA1", "BTA2", "BTA3", "BTA4", "BTA5"]);
 assert.throws(() => parseArera588BtaUpTo165ArimTableRows({ rows: [rows[7]], retrievedAt: "2026-09-04T12:00:00.000Z", sourceSha256: "a".repeat(64) }), /ARERA_588_BTA1_5_ARIM_ROW_MISSING/);
 assert.throws(() => parseArera588BtaUpTo165Uc3Uc6TableRows({ rows: rows.slice(0, 5), retrievedAt: "2026-09-04T12:00:00.000Z", sourceSha256: "a".repeat(64) }), /ARERA_588_BTA1_5_UC3_UC6_CLASS_ROWS_MISSING/);
 

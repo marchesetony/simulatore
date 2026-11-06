@@ -1309,7 +1309,8 @@ export function parseArera588Bta6ArimXlsx(input: { readonly body: Uint8Array; re
 // of the other BT uses up to 16,5 kW, the same for classes BTA1-BTA5.
 // Tony (30/10, refresh errors ARERA_588_BTA1_5_*_VALUE_MISSING): the label may read "non superiore a 16,5 kW", and a table
 // title or note may name the same users: the row is the one that carries the values.
-const isBtaUpTo165Row = (label: string): boolean => { const text = clean(label); return /altre utenze in bassa tensione/i.test(text) && /16,5/.test(text) && !/(?<!non )superiore a 16,5/i.test(text); };
+// Tony (6/11, refresh errors in Dati di mercato): the ASOS sheets write "1.5 kW" and "16.5 kW" with a dot.
+const isBtaUpTo165Row = (label: string): boolean => { const text = clean(label); return /altre utenze in bassa tensione/i.test(text) && /16[,.]5/.test(text) && !/(?<!non )superiore a 16[,.]5/i.test(text); };
 // Tony (30/10, refresh errors): the ARERA tables split "lettera d) Altre utenze in bassa tensione con potenza disponibile fino
 // a 16,5 kW" into five rows "- per potenze impegnate inferiori o uguali a 1,5 kW", "... superiori a 1,5 kW e inferiori o
 // uguali a 3 kW", "... 3-6 kW", "... 6-10 kW", "... superiori a 10 kW": BTA1 to BTA5, in this order. A heading row that
@@ -1323,7 +1324,7 @@ const btaUpTo165ClassRows = (rows: readonly (readonly string[])[], hasValues: (r
     const classRows: (readonly string[])[] = [];
     for (let index = heading + 1; index < rows.length && index <= heading + 8; index += 1) {
       const label = clean(rows[index][1] ?? "");
-      if (/superiore a 16,5|lettera|illuminazione|media tensione|alta tensione/i.test(label) && !/impegnat/i.test(label)) break;
+      if (/superiore a 16[,.]5|lettera|illuminazione|media tensione|alta tensione/i.test(label) && !/impegnat/i.test(label)) break;
       if (hasValues(rows[index])) classRows.push(rows[index]);
     }
     if (classRows.length === BTA_UP_TO_16_5_CLASSES.length) return new Map(BTA_UP_TO_16_5_CLASSES.map((tariffClass, index) => [tariffClass, classRows[index]]));
