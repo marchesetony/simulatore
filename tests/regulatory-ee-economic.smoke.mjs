@@ -177,7 +177,8 @@ console.log("MONTH_ALIGNED_ONLY=PASS");
 console.log("MID_MONTH_PRORATION_SUPPORTED=NO");
 console.log("MID_MONTH_FAIL_CLOSED=PASS");
 
-await assert.rejects(() => calculatePreparedOffer(singleRequest, prepared), /REGULATORY_TRUST_CONTEXT_REQUIRED/);
+// Product rule (competitor bill quotes): without the trusted bill context the quote is commercial-only instead of failing.
+assert.equal((await calculatePreparedOffer(singleRequest, prepared)).costScope, "COMMERCIAL_ONLY");
 await assert.rejects(() => calculateRegulatedEeSubset(request({ taxTreatment: "INCLUDED" }), { trustedElectricityContext: context, regulatoryBridge: singleBridge }), /REGULATORY_TAX_TREATMENT_UNSUPPORTED/);
 console.log("TRUSTED_CONTEXT_REQUIRED_FAIL_CLOSED=PASS");
 console.log("TAX_TREATMENT_FAIL_CLOSED=PASS");

@@ -14,7 +14,8 @@ const record = parseGmeCompletePublication({
 });
 
 assert.deepEqual([record.monthly?.value, record.f1?.value, record.f2?.value, record.f3?.value], [179.999, 174.516, 204.353, 171.716]);
-assert.deepEqual(closedPunTargetMonths("2026-09-04T00:00:00.000Z"), ["2026-08", "2026-07", "2026-06", "2026-05"]);
+// Product rule (owner, 2026-10-26): about five closed months are kept in the archive.
+assert.deepEqual(closedPunTargetMonths("2026-09-04T00:00:00.000Z"), ["2026-08", "2026-07", "2026-06", "2026-05", "2026-04"]);
 console.log("PUN_AUTO_REFRESH_COMPLETE_MONTH=PASS");
 console.log("PUN_AUTO_REFRESH_CLOSED_MONTH_BACKFILL=PASS");
 console.log("pun auto refresh smoke: ok");

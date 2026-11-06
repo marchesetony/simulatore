@@ -76,7 +76,9 @@ export function comparisonCostOf(result: CalculationResult): ComparisonCostSelec
   if (result.costScope === "COMMERCIAL_PLUS_REGULATED_PARTIAL" && result.totalCommercialPlusRegulatedSubsetCost !== null) return { comparisonCost: result.totalCommercialPlusRegulatedSubsetCost, comparisonCostBasis: "COMMERCIAL_PLUS_REGULATED_PARTIAL", regulatedComponentsIncluded: canonicalComponentSet(result.regulatedComponentsIncluded) };
   return null;
 }
-export function comparisonCompletenessKey(result: CalculationResult): string | null { const selection = comparisonCostOf(result); if (selection === null) return null; const contractual = contractualCoverageKey(result); return `${selection.comparisonCostBasis}|${selection.regulatedComponentsIncluded.join(",")}${contractual === null ? "" : `|CONTRACTUAL=${contractual}`}`; }
+// A commercial-only comparison (competitor bill without the regulated context) ranks the seller's own costs:
+// how each CTE declares dispatching or capacity does not make it incomparable.
+export function comparisonCompletenessKey(result: CalculationResult): string | null { const selection = comparisonCostOf(result); if (selection === null) return null; const contractual = selection.comparisonCostBasis === "COMMERCIAL_ONLY" ? null : contractualCoverageKey(result); return `${selection.comparisonCostBasis}|${selection.regulatedComponentsIncluded.join(",")}${contractual === null ? "" : `|CONTRACTUAL=${contractual}`}`; }
 function compareResults(left: CalculationResult, right: CalculationResult): number {
   const leftCost = comparisonCostOf(left)?.comparisonCost.minorUnits ?? Number.MAX_SAFE_INTEGER;
   const rightCost = comparisonCostOf(right)?.comparisonCost.minorUnits ?? Number.MAX_SAFE_INTEGER;
@@ -115,17 +117,29 @@ export async function compareApprovedOffers(cteRepository: CteArchiveRepository,
   const records = [...await cteRepository.list(request.tenantId)].filter((record) => !dependencies.cteUsable || dependencies.cteUsable(record.archiveId)).sort((left, right) => compareText(left.archiveId, right.archiveId));
   const results: CalculationResult[] = [];
   const excludedOffers = [] as ReturnType<typeof exclusionFor>[];
-  for (const record of records) {
+  // Tony (1/11, "come si può velocizzare l'analisi?"): every CTE is simulated at the same time; the outcomes are then
+  // taken in the same archive order as before, so ranking, exclusions and the comparison fingerprint do not change.
+  const outcomes = await Promise.all(records.map(async (record) => {
     try {
-      const prepared = await prepareApprovedOffer(cteRepository, marketRepository, request, record.archiveId);
-      const result = await calculatePreparedOffer(request, prepared, dependencies);
+      const prepared = await prepareApprovedOffer(cteRepository, marketRepository, request, record.archiveId, dependencies.eligibilityOverriddenCteIds);
+      return { result: await calculatePreparedOffer(request, prepared, dependencies) };
+    } catch (error) { return { error }; }
+  }));
+  for (const [index, record] of records.entries()) {
+    const outcome = outcomes[index];
+    try {
+      if ("error" in outcome) throw outcome.error;
+      const result = outcome.result;
       const selection = comparisonCostOf(result);
       if (selection === null || (results.length > 0 && comparisonCompletenessKey(result) !== comparisonCompletenessKey(results[0]))) {
         excludedOffers.push(exclusionFor(record, "COMPARISON_INCOMPATIBLE", exclusionMessages.COMPARISON_INCOMPATIBLE));
       } else results.push(result);
     } catch (error) {
       const code = codeOf(error);
-      excludedOffers.push(exclusionFor(record, code, exclusionMessages[code]));
+      // An unmapped failure keeps its own reason next to the generic code, so the agent sees what blocked the offer.
+      const raw = error instanceof Error && error.message !== code ? error.message.slice(0, 160) : "";
+      if (raw) console.error(`[COMPARISON_EXCLUSION] archive=${record.archiveId} code=${code} cause=${raw}`);
+      excludedOffers.push(exclusionFor(record, code, raw ? `${exclusionMessages[code]} (${raw})` : exclusionMessages[code]));
     }
   }
   return buildComparisonResult(request, results, excludedOffers);

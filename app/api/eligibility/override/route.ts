@@ -1,6 +1,6 @@
 import { requestPrincipal } from "../../../lib/auth/request";
 import { runtimeRepositories } from "../../../lib/persistence/adapter";
-import { authorizeEligibilityOverride, eligibilityOverrideUiState, rejectEligibilityOverride, requestEligibilityOverride } from "../../../lib/eligibility/override";
+import { authorizeEligibilityOverride, eligibilityOverrideUiState, grantEligibilityOverride, rejectEligibilityOverride, requestEligibilityOverride } from "../../../lib/eligibility/override";
 import { prepareBillDrivenSimulation } from "../../../lib/calculation/bill-driven";
 
 export const runtime = "nodejs";
@@ -25,8 +25,8 @@ export async function GET(request: Request): Promise<Response> {
 export async function POST(request: Request): Promise<Response> {
   try {
     const body = await request.json() as Record<string, unknown>;
-    const action = body.action === "authorize" || body.action === "reject" ? body.action : "request";
-    const principal = await requestPrincipal(request, action === "request" ? "READ" : "WRITE");
+    const action = body.action === "authorize" || body.action === "reject" || body.action === "grant" ? body.action : "request";
+    const principal = await requestPrincipal(request, action === "request" || action === "grant" ? "READ" : "WRITE");
     const repositories = runtimeRepositories();
     if (action === "authorize") {
       const result = await authorizeEligibilityOverride(principal, repositories, text(body.overrideId, "OVERRIDE_ID_REQUIRED"), undefined, text(body.reason, "OVERRIDE_REASON_REQUIRED"));
@@ -43,6 +43,10 @@ export async function POST(request: Request): Promise<Response> {
     const candidate = prepared.candidates.find((item) => item.cteId === cteId || item.archiveId === cteId);
     if (!candidate || candidate.finalStatus !== "NOT_ELIGIBLE" || !candidate.overrideRequestable || !candidate.reasonCodes?.length) throw new Error("OVERRIDE_NOT_REQUESTABLE");
     if (prepared.context.billVersionId !== billVersionId) throw new Error("SOURCE_BILL_VERSION_MISMATCH");
+    if (action === "grant") {
+      const granted = await grantEligibilityOverride(principal, repositories, { billId, billVersionId, cteId: candidate.cteId, reason: text(body.reason, "OVERRIDE_REASON_REQUIRED"), originalMismatchReasons: candidate.reasonCodes });
+      return Response.json({ override: granted }, { status: 201, headers: HEADERS });
+    }
     const result = await requestEligibilityOverride(principal, repositories, {
       billId,
       billVersionId,

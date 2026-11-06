@@ -70,6 +70,12 @@ export class LocalCteArchiveRepository implements CteArchiveRepository {
     await atomicWriteJson(this.file, { schemaVersion: 1, records: [...records, structuredClone(record)] });
   }
 
+  async remove(tenantId: string, archiveId: string): Promise<void> {
+    assertTenantId(tenantId);
+    const store = await this.readStore();
+    await atomicWriteJson(this.file, { schemaVersion: 1, records: store.records.filter((candidate) => !(candidate.tenantId === tenantId && candidate.archiveId === archiveId)) });
+  }
+
   private async readStore(): Promise<CteArchiveStore> {
     const value = await readJsonFile<unknown>(this.file, { schemaVersion: 1, records: [] });
     if (typeof value !== "object" || value === null || Array.isArray(value)) throw new Error("ARCHIVE_STORE_CORRUPT");

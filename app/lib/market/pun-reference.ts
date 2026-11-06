@@ -1,5 +1,5 @@
 import type { PublicBillDocument } from "../foundation/real-bill";
-import type { StructuredBillExtraction } from "../ingestion/structured-bill";
+import type { StructuredBillExtraction } from "../ingestion/structured-bill.ts";
 import type { MarketArchiveRecord, MarketArchiveRepository } from "./types";
 // @ts-expect-error Node's strip-only test runner requires the explicit extension.
 import { compareMarketVersions } from "./service.ts";
@@ -7,6 +7,8 @@ import { compareMarketVersions } from "./service.ts";
 import { buildBillAnalystReview } from "../foundation/bill-analyst-review.ts";
 // @ts-expect-error Node's strip-only test runner requires the explicit extension.
 import { attachBillRegulatoryAudit } from "../foundation/bill-public-audit.ts";
+// @ts-expect-error Node's strip-only test runner requires the explicit extension.
+import { estimateBillSpread } from "./bill-spread.ts";
 
 export type PunTariffStructure = "MONO" | "F1_F2_F3";
 
@@ -127,9 +129,36 @@ export function officialPunInputFromPublicBill(document: Pick<PublicBillDocument
   return { tenantId: document.tenantId, vector: document.resolvedVector, billingPeriod: structuredPeriod ? { periodStart: structuredPeriod.from, periodEnd: structuredPeriod.to } : profilePeriod, structure: structureFromExtraction(document.structuredBill) };
 }
 
+// Tony (5/11/2026, "cancellare e ripartire da zero"): a bill shows what Claude read from its pages (app/lib/reading/
+// bill-reader.ts). Nothing is added or replaced any more with values parsed from the PDF text layer (formula table, offer
+// box, scontrino, period, voltage): the read billing period only fills the review form.
+export async function withDocumentPriceRows<T extends Pick<PublicBillDocument, "resolvedVector" | "structuredBill" | "fileName">>(document: T, read?: () => Promise<Uint8Array>): Promise<T> {
+  void read;
+  return withReadBillingPeriodField(document);
+}
+
+export function withReadBillingPeriodField<T extends { readonly structuredBill?: StructuredBillExtraction | null }>(document: T): T {
+  const fields = (document as { readonly fields?: PublicBillDocument["fields"] }).fields;
+  const period = document.structuredBill?.billingPeriod;
+  if (!fields || fields.billingPeriod.value || period?.status !== "FOUND" || !period.value) return document;
+  return { ...document, fields: { ...fields, billingPeriod: { value: `${period.value.from} - ${period.value.to}`, confidence: period.confidence, source: "document-ai", confirmed: false } } };
+}
+
+/** Fetches the official PUN of the bill months when the archive lacks them (the cron only runs in production). */
+export async function ensureOfficialPunForBill(document: Pick<PublicBillDocument, "tenantId" | "resolvedVector" | "normalized" | "structuredBill">, repository: MarketArchiveRepository, refresh: (() => Promise<unknown>) | null): Promise<void> {
+  const input = officialPunInputFromPublicBill(document);
+  const months = deriveInvoiceReferenceMonths(input.billingPeriod);
+  if (input.vector !== "EE" || months.length === 0 || !refresh) return;
+  const records = await repository.list(input.tenantId);
+  if (months.every((month) => records.some((record) => record.status === "APPROVED" && record.vector === "EE" && record.index === "PUN" && record.month === month && isOfficialPunSource(record)))) return;
+  try { await refresh(); } catch { /* A GME outage leaves the spread marked as not calculable. */ }
+}
+
 export async function attachOfficialPun(document: PublicBillDocument, repository: MarketArchiveRepository): Promise<PublicBillDocument> {
-  const invoicePunReferences = await resolveOfficialPunForBill(repository, officialPunInputFromPublicBill(document));
-  const next = { ...document, invoicePunReferences };
+  const input = officialPunInputFromPublicBill(document);
+  const invoicePunReferences = await resolveOfficialPunForBill(repository, input);
+  const currentSpread = input.vector === "EE" ? estimateBillSpread(document.structuredBill, deriveInvoiceReferenceMonths(input.billingPeriod), await repository.list(input.tenantId), isOfficialPunSource) : null;
+  const next = { ...document, invoicePunReferences, currentSpread };
   const rebuiltReview = buildBillAnalystReview(next);
   const billingAddress = document.analystReview.receipt.billingAddress;
   const reviewed = { ...next, analystReview: { ...rebuiltReview, receipt: { ...rebuiltReview.receipt, billingAddress: billingAddress.status === "FOUND" ? billingAddress : rebuiltReview.receipt.billingAddress } } };

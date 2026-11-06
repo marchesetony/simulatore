@@ -3,6 +3,8 @@ import { runtimeRepositories } from "../../../lib/persistence/adapter";
 import { prepareBillDrivenSimulation, NO_STORE_HEADERS } from "../../../lib/calculation/bill-driven";
 
 export const runtime = "nodejs";
+// The first quote on a new month may download the official GME/ARERA index.
+export const maxDuration = 120;
 
 export async function GET(request: Request): Promise<Response> {
   try {

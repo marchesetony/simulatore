@@ -84,6 +84,22 @@ console.log("ARERA_IMPORTER_FETCH_VERSIONING_IDEMPOTENCE=OK");
 
 const effective = resolveAreraEffectiveValue([...structured], "2026-07-15", "ASOS", "DOMESTIC_BT");
 assert.equal(effective?.componentCode, "ASOS");
+// Tony (30/10, upload "Caricamento bolletta non disponibile. (codice ARERA_EFFECTIVE_VALUE_CONFLICT)"): per-class tables share
+// code, scope and unit. The supply's own scope wins over the generic BT one, a value without variant over per-class ones,
+// a named variant picks its own, equal values are not a conflict; only different values for the same choice stay a conflict.
+{
+  const asos = effective;
+  const as = (changes) => ({ ...asos, ...changes });
+  assert.equal(resolveAreraEffectiveValue([as({ customerScope: "DOMESTIC_BT", normalizedValue: 1 }), as({ customerScope: "NON_DOMESTIC_BT", normalizedValue: 2 })], "2026-07-15", "ASOS", "NON_DOMESTIC_BT").normalizedValue, 2);
+  assert.equal(resolveAreraEffectiveValue([as({ customerScope: "NON_DOMESTIC_BT_BTA1_5", regulatoryVariant: "ASOS_CLASS_0_BTA2", normalizedValue: 3 }), as({ customerScope: "NON_DOMESTIC_BT_BTA1_5", regulatoryVariant: "ASOS_CLASS_1_BTA2", normalizedValue: 4 })], "2026-07-15", "ASOS", "NON_DOMESTIC_BT_BTA1_5", undefined, "ASOS_CLASS_1_BTA2").normalizedValue, 4);
+  assert.equal(resolveAreraEffectiveValue([as({ normalizedValue: 5 }), as({ normalizedValue: 5, id: "copy" })], "2026-07-15", "ASOS", "DOMESTIC_BT").normalizedValue, 5);
+  assert.equal(resolveAreraEffectiveValue([as({ normalizedValue: 6 }), as({ regulatoryVariant: "BTA2", normalizedValue: 7 })], "2026-07-15", "ASOS", "DOMESTIC_BT").normalizedValue, 6);
+  assert.throws(() => resolveAreraEffectiveValue([as({ regulatoryVariant: "BTA1", normalizedValue: 8 }), as({ regulatoryVariant: "BTA2", normalizedValue: 9 })], "2026-07-15", "ASOS", "DOMESTIC_BT"), /ARERA_EFFECTIVE_VALUE_CONFLICT/);
+  // The bill upload never stops on it: the line stays unverified.
+  const ambiguous = [as({ customerScope: "NON_DOMESTIC_BT", regulatoryVariant: "BTA1", normalizedValue: 8 }), as({ customerScope: "NON_DOMESTIC_BT", regulatoryVariant: "BTA2", normalizedValue: 9 })];
+  const audit = auditElectricityBill({ billId: "bill-ambiguous", versionId: "v1", vector: "EE", customerType: "NON_RESIDENTIAL", domesticResidenceStatus: "UNKNOWN", billingPeriod: { from: "2026-07-01", to: "2026-08-01" }, chargeLines: [{ code: "ASOS", description: "asos", quantity: "100", unit: "EUR/KWH", unitPrice: "0,08", amount: "8,00" }] }, { regulatoryReferences: ambiguous });
+  assert.equal(audit.lines?.[0]?.messageCode ?? audit.chargeLines?.[0]?.messageCode, "ARERA_VALUE_AMBIGUOUS_FOR_SUPPLY_CLASS");
+}
 console.log("EFFECTIVE_DATE_RESOLUTION=OK");
 
 const bill = { billId: "bill-test", versionId: "v4", vector: "EE", customerType: "RESIDENTIAL", domesticResidenceStatus: "UNKNOWN", billingPeriod: { from: "2026-07-01", to: "2026-08-01" }, chargeLines: [

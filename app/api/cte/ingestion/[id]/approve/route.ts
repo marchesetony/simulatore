@@ -19,8 +19,19 @@ export async function POST(request: Request, context: Context): Promise<Response
       actor: principal.userId,
       repository: repositories.cteArchives as CteIngestionRepository,
       archive: {
-        create: (input) => createCteArchive(repositories.cteArchiveRepository, input),
-        approve: (tenantId, archiveId, versionId, actor, decisionId, audit) => approveCteArchive(repositories.cteArchiveRepository, tenantId, archiveId, versionId, actor, decisionId, undefined, audit),
+        // A previous attempt may have created the archive record and then stopped: reuse it instead of failing as a duplicate.
+        create: async (input) => {
+          try { return await createCteArchive(repositories.cteArchiveRepository, input); } catch (error) {
+            const existing = error instanceof Error && error.message === "CTE_ARCHIVE_ALREADY_EXISTS" ? await repositories.cteArchiveRepository.get(input.tenantId, input.contract.cteId) : null;
+            if (existing && !existing.deletedAt) return existing;
+            throw error;
+          }
+        },
+        approve: async (tenantId, archiveId, versionId, actor, decisionId, audit) => {
+          const existing = await repositories.cteArchiveRepository.get(tenantId, archiveId);
+          if (existing?.currentApprovedVersionId === versionId) return existing;
+          return approveCteArchive(repositories.cteArchiveRepository, tenantId, archiveId, versionId, actor, decisionId, undefined, audit);
+        },
       },
       approvalAudit: async (event) => { await recordRuntimeAudit({ tenantId: event.tenantId, principal, action: "CTE_STATUS_CHANGE", resourceType: "CTE_ARCHIVE", resourceId: event.archiveId, outcome: "ALLOWED", correlationId: "cte-ocr-ingestion-v1", metadata: { cteId: event.cteId, versionId: event.versionId, previousState: event.previousState, newState: event.newState, actor: event.actor, timestamp: event.timestamp } }); },
     });

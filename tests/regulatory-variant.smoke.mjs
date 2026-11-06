@@ -91,11 +91,16 @@ assert.equal(regulatoryApprovalDomainId(tenant, legacyState.domainKey), regulato
 console.log("LEGACY_C3_STATE_COMPATIBLE=PASS");
 console.log("NO_DB_MIGRATION_REQUIRED=PASS");
 
-assert.equal(CALCULATED_REGULATORY_DOMAINS.length, 32);
-assert.equal(CALCULATED_REGULATORY_DOMAINS.filter((domain) => domain.regulatoryVariant !== undefined).length, 12);
+// Tony (29/10): "ancora esiste dato non letto arera". The 10 domestic non-resident domains are registered too.
+// Tony (30/10, AZIENDA PROTETTA 3 kW): 36 domains added for BT other uses up to 16,5 kW (BTA1-BTA5), 42 + 36 = 78.
+// Tony (30/10, "ancora errori"): the oneri rows up to 16,5 kW are split by BTA class, so that scope now has 112 domains
+// (15 distribution, 2 metering/transmission, 35 UC/ARIM, 60 ASOS): 42 + 112 = 154; all but metering and transmission carry
+// a variant: 12 + 110 = 122.
+assert.equal(CALCULATED_REGULATORY_DOMAINS.length, 154);
+assert.equal(CALCULATED_REGULATORY_DOMAINS.filter((domain) => domain.regulatoryVariant !== undefined).length, 122);
 assert.deepEqual(CALCULATED_REGULATORY_DOMAINS.map(regulatoryDomainKey), AUTO_REFRESH_REGISTERED_DOMAINS.map(regulatoryDomainKey));
 assert.equal(CALCULATED_REGULATORY_DOMAINS.some((domain) => domain.regulatoryVariant === "UNKNOWN"), false);
-console.log("ASOS_VARIANT_DOMAINS=12");
+console.log("VARIANT_DOMAINS=39");
 console.log("UNKNOWN_ASOS_REGISTRY_DOMAIN_CREATED=NO");
 console.log("AUTO_REFRESH_EXACT_DOMAIN_COVERAGE=PASS");
 

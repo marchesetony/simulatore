@@ -34,9 +34,10 @@ await assert.rejects(() => runPunMarketRefresh({ tenantId: "invalid-tenant", rep
 console.log("PUN_REFRESH_TENANT_GUARD=PASS");
 assert.equal(PUN_REFRESH_FREQUENCY, "DAILY");
 assert.equal(PUN_REFRESH_CRON, "15 4 * * *");
-assert.equal(MINIMUM_PUN_HISTORY_MONTHS, 4);
-assert.deepEqual(closedPunTargetMonths(now), ["2026-08", "2026-07", "2026-06", "2026-05"]);
-console.log("PUN_BACKFILL_MIN_4_MONTHS=PASS");
+// Product rule (owner, 2026-10-26): about five closed months of official PUN are kept.
+assert.equal(MINIMUM_PUN_HISTORY_MONTHS, 5);
+assert.deepEqual(closedPunTargetMonths(now), ["2026-08", "2026-07", "2026-06", "2026-05", "2026-04"]);
+console.log("PUN_BACKFILL_6_MONTHS=PASS");
 console.log("PUN_YEAR_INDEPENDENT=PASS");
 console.log("PUN_COMPLETE_REQUIRES_MONO_F1_F2_F3=PASS");
 
@@ -55,7 +56,7 @@ console.log("PUN_YEAR_INDEPENDENT_DISCOVERY=PASS");
 const areraOnlyDryRepositories = makeRepositories();
 const areraOnly = await runPunMarketRefresh({ tenantId: tenant, repositories: areraOnlyDryRepositories, sourceReader: { async load({ referenceMonth }) { return { arera: { record: recordFor({ month: referenceMonth, authority: "ARERA" }) } }; } }, now, runId: "pun-arera-fallback", trigger: "TEST", dryRun: true });
 assert.equal(areraOnly.status, "FAILED");
-assert.equal(areraOnly.monthsFailed, 4);
+assert.equal(areraOnly.monthsFailed, 5);
 console.log("ARERA_CANONICAL_FALLBACK_BLOCKED=PASS");
 console.log("PUN_SOURCE_CROSS_CHECK=PASS");
 
@@ -69,14 +70,14 @@ console.log("PUN_DRY_RUN_NO_WRITE=PASS");
 const firstRepositories = makeRepositories();
 const first = await runPunMarketRefresh({ tenantId: tenant, repositories: firstRepositories, sourceReader: sourceReader(), now, runId: "pun-initial", trigger: "TEST" });
 assert.equal(first.status, "SUCCESS");
-assert.equal(first.monthsCreated, 4);
-assert.equal(first.monthsComplete, 4);
-assert.equal((await firstRepositories.marketArchiveRepository.list(tenant)).filter((record) => record.status === "APPROVED").length, 4);
-console.log("PUN_APPROVED_COMPLETE_HISTORY_MONTHS=4");
+assert.equal(first.monthsCreated, 5);
+assert.equal(first.monthsComplete, 5);
+assert.equal((await firstRepositories.marketArchiveRepository.list(tenant)).filter((record) => record.status === "APPROVED").length, 5);
+console.log("PUN_APPROVED_COMPLETE_HISTORY_MONTHS=5");
 
 const second = await runPunMarketRefresh({ tenantId: tenant, repositories: firstRepositories, sourceReader: sourceReader(), now, runId: "pun-unchanged", trigger: "TEST" });
 assert.equal(second.status, "SUCCESS");
-assert.equal(second.monthsUnchanged, 4);
+assert.equal(second.monthsUnchanged, 5);
 assert.equal(second.monthsCreated, 0);
 assert.equal(second.monthsCorrected, 0);
 console.log("PUN_UNCHANGED_NO_NEW_VERSION=PASS");
@@ -106,12 +107,12 @@ const recoveryRepositories = makeRepositories();
 const missingMonth = await runPunMarketRefresh({ tenantId: tenant, repositories: recoveryRepositories, sourceReader: { async load({ referenceMonth }) { return referenceMonth === "2026-07" ? { gmeError: "GME_PT15_MONTH_MISSING:2026-07" } : { gme: { record: recordFor({ month: referenceMonth }) } }; } }, now, runId: "pun-missing-month", trigger: "TEST" });
 assert.equal(missingMonth.status, "PARTIAL_FAILURE");
 assert.equal(missingMonth.monthsFailed, 1);
-assert.equal((await recoveryRepositories.marketArchiveRepository.list(tenant)).length, 3);
+assert.equal((await recoveryRepositories.marketArchiveRepository.list(tenant)).length, 4);
 const recoveredMonth = await runPunMarketRefresh({ tenantId: tenant, repositories: recoveryRepositories, sourceReader: sourceReader(), now: "2026-09-05T00:00:00.000Z", runId: "pun-missing-month-recovery", trigger: "TEST" });
 assert.equal(recoveredMonth.status, "SUCCESS");
 assert.equal(recoveredMonth.monthsCreated, 1);
-assert.equal(recoveredMonth.monthsComplete, 4);
-assert.equal((await recoveryRepositories.marketArchiveRepository.list(tenant)).filter((record) => record.status === "APPROVED").length, 4);
+assert.equal(recoveredMonth.monthsComplete, 5);
+assert.equal((await recoveryRepositories.marketArchiveRepository.list(tenant)).filter((record) => record.status === "APPROVED").length, 5);
 console.log("PUN_MISSING_MONTH_RECOVERY=PASS");
 
 const lockRepositories = makeRepositories();
@@ -130,7 +131,8 @@ assert.equal(marketCronAuthorizationMatches(new Request("https://example.test", 
 assert.equal(marketCronAuthorizationMatches(new Request("https://example.test", { headers: { authorization: "Bearer wrong" } }), "qa-secret"), false);
 const vercel = JSON.parse(await readFile("vercel.json", "utf8"));
 assert.ok(vercel.crons.some((cron) => cron.path === "/api/cron/regulatory-refresh" && cron.schedule === "15 3 * * *"));
-assert.ok(vercel.crons.some((cron) => cron.path === "/api/cron/market-refresh" && cron.schedule === "15 4 * * *"));
+// Product rule (owner, 2026-10-26): PUN acquired every 15 days, after the official publication by the 10th.
+assert.ok(vercel.crons.some((cron) => cron.path === "/api/cron/market-refresh" && cron.schedule === "15 4 11,26 * *"));
 console.log("CRON_SECRET_PROTECTED=PASS");
 console.log("CRON_AUTH_TEST=PASS");
 console.log("DAILY_CRON_CONFIG=PASS");
@@ -139,3 +141,17 @@ console.log("REGULATORY_AUTO_REFRESH_REGRESSION=PASS");
 console.log("GAS_UNCHANGED=PASS");
 console.log("PSV_AUTO_REFRESH_ADDED=NO");
 console.log("market refresh smoke: ok");
+
+// Retention (owner, 2026-10-26): approved PUN older than five closed months leaves the active archive, recoverably.
+{
+  const retentionRepositories = makeRepositories();
+  await runPunMarketRefresh({ tenantId: tenant, repositories: retentionRepositories, sourceReader: sourceReader(), now: "2026-06-12T04:15:00.000Z", runId: "pun-retention-old", trigger: "TEST" });
+  const later = await runPunMarketRefresh({ tenantId: tenant, repositories: retentionRepositories, sourceReader: sourceReader(), now: now, runId: "pun-retention-new", trigger: "TEST" });
+  const all = await retentionRepositories.marketArchiveRepository.list(tenant);
+  const oldest = later.targetMonths.at(-1);
+  assert.ok(later.monthsRetired > 0);
+  assert.ok(all.filter((record) => record.status === "APPROVED").every((record) => record.month >= oldest));
+  const retired = all.filter((record) => record.month < oldest);
+  assert.ok(retired.length > 0 && retired.every((record) => record.status === "REJECTED" && record.history.at(-1).reason === "PUN_RETENTION_5_MONTHS"));
+  console.log("PUN_RETENTION_RECOVERABLE=PASS");
+}

@@ -4,7 +4,7 @@ import { runtimeRepositories } from "../../../lib/persistence/adapter.ts";
 // @ts-expect-error Node's strip-only test runner requires the explicit extension.
 import { configuredFoundationRetentionTenants, foundationRetentionCronAuthorizationMatches, foundationRetentionCronSecretConfigured } from "../../../lib/foundation/retention-config.ts";
 // @ts-expect-error Node's strip-only test runner requires the explicit extension.
-import { runBillRetention } from "../../../lib/foundation/bill-retention.ts";
+import { purgeOldBills, runBillRetention } from "../../../lib/foundation/bill-retention.ts";
 // @ts-expect-error Node's strip-only test runner requires the explicit extension.
 import { observeJob } from "../../../lib/automation/observability.ts";
 
@@ -19,6 +19,10 @@ export async function GET(request: Request): Promise<Response> {
     const results: Array<Record<string, unknown>> = [];
     for (const tenantId of configuredFoundationRetentionTenants()) {
       const observed = await observeJob({ repository: repositories.jobRuns, incidents: repositories.jobIncidents, tenantId, jobKey: "BILL_RETENTION", trigger: "CRON", now, operation: () => runBillRetention({ tenantId, repositories: { bills: repositories.billRepository, storage: repositories.documentStorage, audit: { async record(event) { const eventId = `bill-retention-${randomUUID()}`; await repositories.auditEvents.append({ recordId: eventId, tenantId: event.tenantId, payload: { schemaVersion: 1, eventId, tenantId: event.tenantId, action: `BILL_${event.type}`, resourceType: "BILL", resourceId: event.documentId, timestamp: now, outcome: event.outcome, correlationId: "bill-retention", metadata: {} }, now }); } } }, now }), summary: (result) => ({ scanned: result.scanned, deleted: result.deleted, failed: result.failed }) });
+      // Tony (31/10): bills dated more than 5 months ago are deleted automatically.
+      const retentionRepositories = { bills: repositories.billRepository, storage: repositories.documentStorage, audit: { async record(event: { readonly tenantId: string; readonly documentId: string; readonly outcome: "ALLOWED" | "DENIED" | "FAILED" }) { const eventId = `bill-age-purge-${randomUUID()}`; await repositories.auditEvents.append({ recordId: eventId, tenantId: event.tenantId, payload: { schemaVersion: 1, eventId, tenantId: event.tenantId, action: "BILL_DELETED_TOO_OLD", resourceType: "BILL", resourceId: event.documentId, timestamp: now, outcome: event.outcome, correlationId: "bill-retention", metadata: {} }, now }); } } };
+      const purged = await purgeOldBills({ tenantId, repositories: retentionRepositories, now });
+      results.push({ tenantId, job: "BILL_AGE_PURGE", ...purged });
       results.push((observed.value ?? { status: "ALREADY_RUNNING", runId: observed.run.payload.runId, tenantId }) as unknown as Record<string, unknown>);
     }
     const failed = results.some((result) => typeof result.failed === "number" && result.failed > 0);

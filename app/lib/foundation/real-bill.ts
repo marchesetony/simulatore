@@ -1,3 +1,5 @@
+// @ts-expect-error Node's strip-only test runner requires the explicit extension.
+import { readingHasScontrino } from "../ingestion/printed-scontrino.ts";
 import { randomUUID } from "node:crypto";
 import { mkdir, readFile, rm, unlink, writeFile } from "node:fs/promises";
 import path from "node:path";
@@ -9,7 +11,7 @@ import type { BillContract } from "../energy/types.ts";
 // @ts-expect-error Node's strip-only test runner requires the explicit extension.
 import { billErrorCode, billErrorField, isBillErrorCode, BillIngestionError, type BillErrorCode, type BillExtractionField } from "../ingestion/errors.ts";
 // @ts-expect-error Next runtime resolves explicit TypeScript extensions.
-import { normalizeStoredStructuredBillExtraction, structuredBillContract, structuredBillFields, validateStructuredBillExtraction, type StructuredBillExtraction, type StructuredBillExtractionProvider, type StructuredBillField } from "../ingestion/structured-bill.ts";
+import { normalizeStoredStructuredBillExtraction, structuredBillContract, structuredBillFields, validateStructuredBillExtraction, withDocumentOfferBox, type StructuredBillExtraction, type StructuredBillExtractionProvider, type StructuredBillField } from "../ingestion/structured-bill.ts";
 // @ts-expect-error Next runtime resolves explicit TypeScript extensions.
 import { resolveBillVectorFromEvidence, type ResolvedBillVector } from "../ingestion/vector-resolution.ts";
 import type { OfficialPunModel } from "../market/pun-reference";
@@ -22,7 +24,7 @@ import { mergeBillCoreAndAnalyst, stripBillAnalystData, type BillAnalystWireExtr
 // @ts-expect-error Node's strip-only test runner requires the explicit extension.
 import { buildBillAnalystReview, type BillAnalystReviewDTO } from "./bill-analyst-review.ts";
 // @ts-expect-error Node's strip-only test runner requires the explicit extension.
-import { extractDocumentMonthlyBandEvidence, reconcileMonthlyBandsWithDocumentEvidence } from "../ingestion/document-numeric-evidence.ts";
+import { extractDocumentMonthlyBandEvidence, extractDocumentPriceRows, extractDocumentOfferName, extractDocumentOfferBox, reconcileMonthlyBandsWithDocumentEvidence } from "../ingestion/document-numeric-evidence.ts";
 // @ts-expect-error Node's strip-only test runner requires the explicit extension.
 import { selectMonthlyBandsForBillingPeriod, type StructuredBillMonthlyBand } from "../ingestion/monthly-bands.ts";
 
@@ -97,7 +99,10 @@ export type BillApprovalRecord = {
 export type BillCorrectionOperation = { readonly operation: "correct"; readonly field: FieldName; readonly value: string; readonly versionId?: string };
 export type BillApprovalOperation = { readonly operation: "approve"; readonly versionId: string };
 export type BillConfirmFieldsOperation = { readonly operation: "confirm-fields"; readonly versionId: string; readonly fields: readonly FieldName[] };
-export type BillOperation = BillCorrectionOperation | BillApprovalOperation | BillConfirmFieldsOperation;
+/** Tony (1/11, "le bollette non riesci a leggerle"): a bill whose charge lines were not read (second reading failed) is read
+ *  again from its stored PDF, without uploading it again. */
+export type BillAnalystRereadOperation = { readonly operation: "reread-analyst"; readonly versionId: string };
+export type BillOperation = BillCorrectionOperation | BillApprovalOperation | BillConfirmFieldsOperation | BillAnalystRereadOperation;
 export type BillDocument = {
   readonly id: string;
   readonly tenantId: string;
@@ -164,8 +169,14 @@ export type PublicBillDocument = {
   readonly versions: readonly PublicBillVersion[];
   readonly normalized: PublicBillProfile | null;
   readonly structuredBill: StructuredBillExtraction | null;
+  /** The second reading (charge lines) failed: shown to every user, with the button to read them again (Tony, 1/11). */
+  readonly chargeLinesUnread?: boolean;
+  /** Tony (2/11, J Fuel 20.000 V read as BT): the voltage printed in the PDF differs from the one the bill was read with. */
+  readonly printedVoltageMismatch?: { readonly printed: "LV" | "MV" | "HV" | "EHV"; readonly read: string | null };
   readonly resolvedVector: ResolvedBillVector;
   readonly invoicePunReferences: OfficialPunModel;
+  /** Spread of the current supplier: applied energy price minus the official PUN (never printed on the bill). */
+  readonly currentSpread?: import("../market/bill-spread").BillCurrentSpread | null;
   readonly regulatoryAudit: BillRegulatoryAuditDTO | null;
   readonly featurePermissions?: BillFeatureAccessSnapshot;
   readonly verificationSummary?: BillVerificationSummary | null;
@@ -197,6 +208,10 @@ export interface DocumentStoragePort {
   store(tenantId: string, id: string, bytes: Uint8Array): Promise<string>;
   read(tenantId: string, id: string): Promise<Uint8Array>;
   remove(tenantId: string, id: string): Promise<void>;
+  /** Tony (31/10): "IL LIMITE DI 10 MB BISOGNA ALZARLO". The hosting caps a request body at about 4,5 MB, so a larger file
+   *  goes straight from the browser to storage through a signed upload URL, and the server takes it from there. */
+  createUploadTarget?(tenantId: string, uploadId: string): Promise<{ readonly signedUrl: string }>;
+  takeUpload?(tenantId: string, uploadId: string): Promise<Uint8Array>;
 }
 export interface TextExtractionPort {
   extract(bytes: Uint8Array): Promise<{ readonly text: string; readonly pages: number }>;
@@ -480,6 +495,8 @@ export function parseBillOperation(value: unknown): BillOperation | null {
   if (correction) return { operation: "correct", field: record.field as FieldName, value: record.value as string, versionId: record.versionId as string | undefined };
   const approval = record.operation === "approve" && typeof record.versionId === "string" && record.versionId.trim().length > 0;
   if (approval) return { operation: "approve", versionId: record.versionId as string };
+  const reread = record.operation === "reread-analyst" && typeof record.versionId === "string" && record.versionId.trim().length > 0 && Object.keys(record).every((key) => key === "operation" || key === "versionId");
+  if (reread) return { operation: "reread-analyst", versionId: record.versionId as string };
   return null;
 }
 
@@ -612,6 +629,9 @@ export function toPublicDocumentVersion(document: BillDocument, versionId: strin
       })),
     normalized: working.energyContract ? publicBillProfile(working.energyContract, working.fields) : null,
     structuredBill: working.structuredBill ?? null,
+    // Tony (1/11, "mancano i raffronti con lo scontrino della bolletta inserita"): also a reading that holds no charge line at
+    // all (second reading not run, or empty) offers the re-read, not only a failed one.
+    chargeLinesUnread: working.structuredBill ? (working.structuredBill.analystExtractionStatus === "FAILED" && !readingHasScontrino(working.structuredBill)) || (working.structuredBill.economicChargeLines?.length ?? 0) === 0 : false,
     resolvedVector,
     invoicePunReferences: [],
     regulatoryAudit: null,
@@ -796,8 +816,16 @@ export function validatePdf(fileName: string, contentType: string, bytes: Uint8A
   if (bytes.length > maxBytes) throw new Error("PDF_TOO_LARGE");
   if (contentType !== "application/pdf") throw new Error("PDF_MIME_INVALID");
   if (new TextDecoder("latin1").decode(bytes.slice(0, 5)) !== "%PDF-") throw new Error("PDF_SIGNATURE_INVALID");
-  if (!/^[\w .-]{1,120}\.pdf$/i.test(fileName)) throw new Error("PDF_FILENAME_INVALID");
-  return fileName.replace(/[^\w .-]/g, "_");
+  return safeUploadName(fileName, /\.pdf$/i);
+}
+
+// Tony (29/10, "Caricamento bolletta non disponibile"): a bill named the way people name files (accents, parentheses,
+// "n°", long names) is still a bill. Only a path is refused; every other name is kept readable and made safe for storage.
+function safeUploadName(fileName: string, extension: RegExp): string {
+  if (/[\\/]/.test(fileName) || fileName.includes("..") || !extension.test(fileName)) throw new Error("PDF_FILENAME_INVALID");
+  const dot = fileName.lastIndexOf(".");
+  const base = fileName.slice(0, dot).normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[^\w .-]/g, "_").trim().slice(0, 120) || "bolletta";
+  return `${base}${fileName.slice(dot).toLowerCase()}`;
 }
 
 export function validateBillDocument(fileName: string, contentType: string, bytes: Uint8Array, maxBytes: number): string {
@@ -808,8 +836,7 @@ export function validateBillDocument(fileName: string, contentType: string, byte
   const signature = contentType === "image/jpeg" ? bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff : contentType === "image/png" ? Buffer.from(bytes.slice(0, 8)).equals(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a])) : false;
   if (!signature) throw new Error("PDF_SIGNATURE_INVALID");
   const extension = contentType === "image/jpeg" ? /\.(?:jpe?g)$/i : /\.png$/i;
-  if (!extension.test(fileName) || !/^[\w .-]{1,120}\.(?:jpe?g|png)$/i.test(fileName)) throw new Error("PDF_FILENAME_INVALID");
-  return fileName.replace(/[^\w .-]/g, "_");
+  return safeUploadName(fileName, extension);
 }
 
 function extracted(value: string | null, confidence: number): ExtractedField {
@@ -851,7 +878,15 @@ export function extractBillFields(text: string): BillFields {
   return result;
 }
 
-function applyDocumentGroundedMonthlyEvidence(bytes: Uint8Array, extraction: StructuredBillExtraction): StructuredBillExtraction {
+function applyDocumentGroundedMonthlyEvidence(bytes: Uint8Array, provided: StructuredBillExtraction): StructuredBillExtraction {
+  // Tony (5/11/2026): a bill read by the new reader is never patched with values parsed from the PDF text layer.
+  if (provided.reader === "CLAUDE_DIRETTO") return provided;
+  // The formula table of the sale-of-energy cost, read straight from the PDF: the spread does not depend on the AI finding it.
+  const documentPriceRows = (() => { try { return extractDocumentPriceRows(bytes); } catch { return []; } })();
+  const documentOfferName = (() => { try { return extractDocumentOfferName(bytes); } catch { return null; } })();
+  const withRows: StructuredBillExtraction = documentPriceRows.length ? { ...provided, documentPriceRows } : provided;
+  const documentOfferBox = (() => { try { return extractDocumentOfferBox(bytes); } catch { return null; } })();
+  const extraction: StructuredBillExtraction = withDocumentOfferBox({ ...withRows, documentOfferName }, documentOfferBox);
   const documentEvidence = extractDocumentMonthlyBandEvidence(bytes);
   const hasProviderMonthlyBands = Array.isArray(extraction.monthlyBands) && extraction.monthlyBands.length > 0;
   if (documentEvidence.status !== "AVAILABLE") return hasProviderMonthlyBands ? { ...extraction, monthlyBandDocumentEvidenceStatus: documentEvidence.status } : extraction;
@@ -1288,12 +1323,23 @@ function normalizeLegacyDocuments(value: readonly unknown[]): readonly BillDocum
  * fresh Analyst result. The old Analyst arrays are intentionally discarded:
  * an Analyst Refresh is a replacement, not an append operation.
  */
+/** The stored file's type, from its first bytes (the document keeps no content type of its own). */
+export function storedBillContentType(bytes: Uint8Array): "application/pdf" | "image/jpeg" | "image/png" | null {
+  if (bytes[0] === 0x25 && bytes[1] === 0x50 && bytes[2] === 0x44 && bytes[3] === 0x46) return "application/pdf";
+  if (bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff) return "image/jpeg";
+  if (bytes[0] === 0x89 && bytes[1] === 0x50 && bytes[2] === 0x4e && bytes[3] === 0x47) return "image/png";
+  return null;
+}
+
 export function createAnalystRefreshVersion(input: {
   readonly document: BillDocument;
   readonly tenantId: string;
   readonly sourceVersionId: string;
-  readonly analyst: BillAnalystWireExtraction;
+  /** null: the second reading failed again; the stored reading is kept and only refined (printed scontrino). */
+  readonly analyst: BillAnalystWireExtraction | null;
   readonly at: string;
+  /** Applied to the new reading before it is stored (the scontrino read from the PDF text, Tony 1/11). */
+  readonly refine?: (extraction: StructuredBillExtraction) => StructuredBillExtraction;
 }): BillDocument {
   validateTenantId(input.tenantId);
   if (input.document.tenantId !== input.tenantId) throw new Error("TENANT_ACCESS_DENIED");
@@ -1304,7 +1350,8 @@ export function createAnalystRefreshVersion(input: {
   validateStructuredBillExtraction(previous.structuredBill);
 
   const currentCore: StructuredBillExtraction = stripBillAnalystData(previous.structuredBill);
-  const newStructuredBill = mergeBillCoreAndAnalyst(currentCore, input.analyst, { analystExtractionStatus: "EXTRACTED" });
+  const merged = input.analyst ? mergeBillCoreAndAnalyst(currentCore, input.analyst, { analystExtractionStatus: "EXTRACTED" }) : previous.structuredBill;
+  const newStructuredBill = input.refine ? input.refine(merged) : merged;
 
   const versionId = randomUUID();
   const energyContract = structuredBillContract({ extraction: newStructuredBill, tenantId: input.tenantId, billId: input.document.id, versionId });

@@ -1,4 +1,6 @@
 // @ts-expect-error Node's strip-only test runner requires the explicit extension.
+import { completeSupplyProfile } from "../ingestion/supply-profile-completion.ts";
+// @ts-expect-error Node's strip-only test runner requires the explicit extension.
 import { toPublicApprovedDocument, type BillRepository, type PublicBillDocument } from "../foundation/real-bill.ts";
 // @ts-expect-error Node's strip-only test runner requires the explicit extension.
 import { buildBillSupplyProfile, validateBillSupplyProfile } from "../ingestion/bill-supply-profile.ts";
@@ -8,10 +10,15 @@ import { validateStructuredBillExtraction } from "../ingestion/structured-bill.t
 import { resolveBillVectorFromEvidence } from "../ingestion/vector-resolution.ts";
 import type { CustomerResidency, CustomerType } from "../energy/types";
 import type { ElectricitySimulationRequest } from "./types";
+import type { BillPeakEnergy, CurrentSupplyOffer } from "./engine";
+// @ts-expect-error Node's strip-only test runner requires the explicit extension.
+import { ONE_OFF_BILL_LINE } from "../quote/same-offer.ts";
 // @ts-expect-error Node's strip-only test runner requires the explicit extension.
 import { buildTrustedElectricitySupplyContext, type ElectricitySupplyContext, type TrustedElectricitySupplyContextError } from "./trusted-ee-supply-context.ts";
 // @ts-expect-error Node's strip-only test runner requires the explicit extension.
 import { buildTrustedElectricityFiscalContext, type TrustedElectricityFiscalContext } from "./trusted-ee-fiscal-context.ts";
+// @ts-expect-error Node's strip-only test runner requires the explicit extension.
+import { billIndexStructure } from "../market/bill-spread.ts";
 
 export class SourceBillContextError extends Error {
   readonly code: string;
@@ -83,9 +90,9 @@ async function resolveApprovedSourceBillContext(
   if (!approvedVersionId) return fail("SOURCE_BILL_NOT_APPROVED");
   if (request.sourceBill.version !== approvedVersionId) return fail("SOURCE_BILL_VERSION_MISMATCH");
   const approved = publicApproved(document, approvedVersionId);
-  const profile = profileFromApprovedStructuredBill(approved);
   const structuredBill = approved.structuredBill;
   if (!structuredBill) return fail("SOURCE_BILL_TRUST_CONTEXT_UNAVAILABLE");
+  const profile = completeSupplyProfile(profileFromApprovedStructuredBill(approved), structuredBill);
   let supplyContext: ElectricitySupplyContext;
   try {
     supplyContext = buildTrustedElectricitySupplyContext(profile, {
@@ -97,13 +104,44 @@ async function resolveApprovedSourceBillContext(
   return { supplyContext, structuredBill, billId: document.id, approvedVersionId };
 }
 
+// Technical readings that refine regulated charges (supply use, BTA6 power basis) but are often missing on a competitor bill.
+const OPTIONAL_TRUST_CODES = /^(BTA6_|SUPPLY_USE|POWER_|AVAILABLE_POWER|CONTRACTED_POWER|REGULATORY_SCOPE|VOLTAGE_LEVEL|DOMESTIC_)/;
+
 export async function resolveTrustedElectricityContextFromSourceBill(
   billRepository: Pick<BillRepository, "get">,
   tenantId: string,
   request: ElectricitySimulationRequest,
 ): Promise<ElectricitySupplyContext | null> {
-  const resolved = await resolveApprovedSourceBillContext(billRepository, tenantId, request);
-  return resolved?.supplyContext ?? null;
+  return (await resolveTrustedElectricityContextWithReason(billRepository, tenantId, request)).context;
+}
+
+/** Same as above, plus the code of the reading that was missing when no context could be built, so the quote can say why. */
+export async function resolveTrustedElectricityContextWithReason(
+  billRepository: Pick<BillRepository, "get">,
+  tenantId: string,
+  request: ElectricitySimulationRequest,
+): Promise<{ readonly context: ElectricitySupplyContext | null; readonly reason: string | null; readonly currentOffer?: CurrentSupplyOffer; readonly billPeakEnergy?: BillPeakEnergy }> {
+  try {
+    const resolved = await resolveApprovedSourceBillContext(billRepository, tenantId, request);
+    return { context: resolved?.supplyContext ?? null, reason: resolved ? null : "SOURCE_BILL_MISSING", ...await currentOfferOf(billRepository, tenantId, request) };
+  } catch (error) {
+    // Without those readings the quote still runs on the generic electricity charges instead of failing.
+    if (error instanceof SourceBillContextError && OPTIONAL_TRUST_CODES.test(error.code)) return { context: null, reason: error.code, ...await currentOfferOf(billRepository, tenantId, request) };
+    throw error;
+  }
+}
+
+/** The source bill's supplier and offer, and whether it charges a one-off fee (only the first bill of a contract does). */
+async function currentOfferOf(billRepository: Pick<BillRepository, "get">, tenantId: string, request: ElectricitySimulationRequest): Promise<{ readonly currentOffer?: CurrentSupplyOffer; readonly billPeakEnergy?: BillPeakEnergy }> {
+  if (!request.sourceBill) return {};
+  try {
+    const document = await billRepository.get(tenantId, request.sourceBill.billId);
+    const bill = document && document.tenantId === tenantId ? toPublicApprovedDocument(document)?.structuredBill : null;
+    if (!bill) return {};
+    const found = (field: { readonly status: string; readonly value: unknown } | undefined) => field?.status === "FOUND" && typeof field.value === "string" ? field.value : null;
+    const offer = [found(bill.offerCode), found(bill.offerName), bill.documentOfferName ?? null].filter((value): value is string => !!value?.trim()).join(" ") || null;
+    return { currentOffer: { supplier: found(bill.supplier), offer, oneOffBilled: bill.economicChargeLines.some((line) => ONE_OFF_BILL_LINE.test(`${line.description} ${line.rawDescription ?? ""}`)), indexStructure: billIndexStructure(bill) }, ...peakEnergyOf(bill) };
+  } catch { return {}; }
 }
 
 export async function resolveTrustedElectricityFiscalContextFromSourceBill(
@@ -123,4 +161,19 @@ export async function resolveTrustedElectricityFiscalContextFromSourceBill(
       approvedBillBinding: { billId: resolved.billId, approvedVersionId: resolved.approvedVersionId },
     },
   });
+}
+
+const kwhNumber = (value: string): number | null => {
+  const text = value.replace(/kwh/gi, "").replace(/\s/g, "");
+  const normalized = text.includes(",") ? text.replace(/\./g, "").replace(",", ".") : /^\d{1,3}(?:\.\d{3})+$/.test(text) ? text.replace(/\./g, "") : text;
+  const number = /^\d+(?:\.\d+)?$/.test(normalized) ? Number(normalized) : NaN;
+  return Number.isFinite(number) && number >= 0 ? number : null;
+};
+
+/** Tony (30/10): "errore su come calcolare il capacity". The kWh the approved bill prints in Terna's peak hours and in the
+ *  other hours, read only from the bill's documentary facts (never from the request). Both must be there. */
+export function peakEnergyOf(bill: Pick<NonNullable<PublicBillDocument["structuredBill"]>, "extendedFacts">): { readonly billPeakEnergy?: BillPeakEnergy } {
+  const read = (code: string) => { const fact = bill.extendedFacts.find((item) => item.code === code && item.status === "FOUND" && item.value.trim() !== ""); return fact ? kwhNumber(fact.value) : null; };
+  const peakKwh = read("ENERGY_PEAK_KWH"); const offPeakKwh = read("ENERGY_OFF_PEAK_KWH");
+  return peakKwh !== null && offPeakKwh !== null && peakKwh + offPeakKwh > 0 ? { billPeakEnergy: { peakKwh, offPeakKwh } } : {};
 }
