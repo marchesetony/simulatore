@@ -22,11 +22,12 @@ async function platformOwner(request: Request): Promise<boolean> {
 }
 
 /** Official ARERA tables the app needs and that are missing from the archive: the platform owner sees them as "Azione richiesta" (Tony, 6/11). */
+// Every company administrator sees the alert (Tony, 6/11 "non vedo", logged in as a company); only the platform uploads.
 export async function GET(request: Request): Promise<Response> {
-  if (!(await platformOwner(request))) return denied();
+  let principal;
+  try { principal = await requestPrincipal(request, "ADMIN"); } catch { return denied(); }
   const repositories = runtimeRepositories();
-  const tenants = await officialDataTenants(() => configuredMarketRefreshTenants(), repositories.companies);
-  const tenantId = tenants[0];
+  const tenantId = isPlatformOwner(principal) ? (await officialDataTenants(() => configuredMarketRefreshTenants(), repositories.companies))[0] : principal.tenantId;
   if (!tenantId) return Response.json({ alerts: [] }, { headers });
   const approved = await new ProductionRegulatoryPersistenceBridge(repositories.regulatoryValues, repositories.approvalDomains).list(tenantId);
   const stored = await repositories.regulatoryRefreshState.get(tenantId, deterministicRecordId("regulatory-refresh-state", tenantId, "regulatory-refresh"));
