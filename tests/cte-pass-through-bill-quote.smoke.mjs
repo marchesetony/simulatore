@@ -76,7 +76,7 @@ const large = await calculatePreparedOffer(request(true), prepared, deps(0.0105,
 assert.deepEqual(byKind(large, "CAPACITY_MARKET"), [5, 4.7]);
 assert.ok(!large.warnings.includes("OFFICIAL_VALUE_MISSING:CAPACITY_MARKET:PEAK_HOUR_KWH_MISSING"));
 assert.ok(!large.warnings.includes("OFFICIAL_VALUE_MISSING:CAPACITY_MARKET:OFFICIAL_VALUE_MISSING"));
-// A CTE that prints no regulated value gets the very same regulated charge.
+// A CTE that states only its Capacity Market libero and prints no regulated capacity value.
 const noStated = structuredClone(prepared); noStated.offer.capacityMarketSchedule = noStated.offer.capacityMarketSchedule.filter((entry) => entry.mode === "FIXED_VALUE");
 const noStatedQuote = await calculatePreparedOffer(request(true), noStated, deps(0.0105, 0.004275, 98));
 // Tony (3/11, Atlante delle voci): a CTE that states only its Capacity Market libero does not make the regulated charge
