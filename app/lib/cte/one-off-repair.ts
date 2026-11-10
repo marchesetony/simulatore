@@ -51,6 +51,7 @@ export function withOneOffRepair(repository: CteArchiveRepository, readings: Sto
     ...repository,
     get: async (tenantId, archiveId) => { const record = await repository.get(tenantId, archiveId); return record ? repairArchiveRecord(record, readings) : null; },
     list: async (tenantId) => Promise.all((await repository.list(tenantId)).map((record) => repairArchiveRecord(record, readings))),
+    ...(repository.listWithExclusions ? { listWithExclusions: async (tenantId: string) => { const result = await repository.listWithExclusions!(tenantId); return { records: await Promise.all(result.records.map((record) => repairArchiveRecord(record, readings))), excluded: result.excluded }; } } : {}),
     // Versions are immutable once stored: a save writes back the stored contract of every repaired version, never the repair.
     save: async (record, capability) => {
       const stored = await repository.get(record.tenantId, record.archiveId);

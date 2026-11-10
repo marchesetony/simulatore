@@ -3,7 +3,7 @@ import { validateCommercialAdjustment } from "../commercial-adjustment.ts";
 import type { CteContract } from "../types";
 // @ts-expect-error Node's strip-only test runner requires the explicit extension.
 import { validateCteContract } from "../validation.ts";
-import type { CteArchiveApproval, CteArchiveHistoryEvent, CteArchiveRecord, CteArchiveStatus, CteCommercialStatus } from "./types";
+import type { CteArchiveApproval, CteArchiveExclusion, CteArchiveHistoryEvent, CteArchiveListResult, CteArchiveRecord, CteArchiveStatus, CteCommercialStatus } from "./types";
 
 export class CteArchiveValidationError extends Error {
   readonly code: string;
@@ -24,6 +24,45 @@ const statusValues: readonly CteArchiveStatus[] = ["DRAFT", "REVIEWED", "APPROVE
 const commercialStatusValues: readonly CteCommercialStatus[] = ["ACTIVE", "BLOCKED", "DELETED"];
 const nullableDateTime = (value: unknown, code: string): string | null => value === undefined || value === null ? null : dateTime(value, code);
 const nullableActor = (value: unknown, code: string): string | null => value === undefined || value === null ? null : nonEmpty(value, code);
+
+/** A single stored CTE that cannot be read: always an explicit error, never an empty result. */
+export class CteArchiveRecordUnreadableError extends Error {
+  readonly code = "CTE_ARCHIVE_RECORD_UNREADABLE";
+  readonly tenantId: string;
+  readonly archiveId: string;
+  readonly reason: string;
+  constructor(tenantId: string, archiveId: string, reason: string) {
+    super(`CTE_ARCHIVE_RECORD_UNREADABLE:${reason}`);
+    this.name = "CteArchiveRecordUnreadableError";
+    this.tenantId = tenantId; this.archiveId = archiveId; this.reason = reason;
+  }
+}
+
+/** The validator's error code, kept only when it is a plain code: a free-text message could carry document content. */
+export function storedCteErrorCode(error: unknown): string {
+  const code = typeof error === "object" && error !== null ? (error as { code?: unknown }).code : undefined;
+  return typeof code === "string" && /^[A-Z0-9_:.-]{1,160}$/.test(code) ? code : "CTE_ARCHIVE_RECORD_INVALID";
+}
+
+/**
+ * Tony (9/11/2026, "lettura tollerante, scrittura rigorosa"): each stored CTE is validated on its own, so one unreadable
+ * record no longer stops the company's archive list and the simulations that read it. Only the pure validation is caught:
+ * a connection, authorization or database error happens before this function and still fails the read.
+ */
+export function readStoredCteArchives(entries: ReadonlyArray<{ readonly tenantId: string; readonly archiveId: string; readonly payload: unknown }>): CteArchiveListResult {
+  const records: CteArchiveRecord[] = [];
+  const excluded: CteArchiveExclusion[] = [];
+  for (const entry of entries) {
+    try { records.push(validateStoredCteArchive(entry.payload)); }
+    catch (error) { excluded.push({ tenantId: entry.tenantId, archiveId: entry.archiveId, code: storedCteErrorCode(error) }); }
+  }
+  return { records, excluded };
+}
+
+/** Server log of the excluded CTEs: tenant, archive id and error code only. */
+export function logExcludedCteArchives(excluded: ReadonlyArray<CteArchiveExclusion>): void {
+  for (const item of excluded) console.warn(`[CTE_ARCHIVE_RECORD_EXCLUDED] tenant=${item.tenantId} archive=${item.archiveId} code=${item.code}`);
+}
 
 export function assertTenantId(tenantId: unknown): asserts tenantId is string {
   if (typeof tenantId !== "string" || !/^tenant_[a-z0-9-]+$/.test(tenantId)) fail("TENANT_ACCESS_DENIED");

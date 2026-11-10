@@ -70,9 +70,24 @@ export interface CteArchiveRecord {
   readonly commercialAdjustment?: CteCommercialAdjustment | null;
 }
 
+/** A stored CTE left out of a list because it cannot be read: identifiers and error code only, never its content. */
+export interface CteArchiveExclusion {
+  readonly tenantId: string;
+  readonly archiveId: string;
+  readonly code: string;
+}
+
+export interface CteArchiveListResult {
+  readonly records: ReadonlyArray<CteArchiveRecord>;
+  readonly excluded: ReadonlyArray<CteArchiveExclusion>;
+}
+
 export interface CteArchiveRepository {
   get(tenantId: string, archiveId: string): Promise<CteArchiveRecord | null>;
+  /** Tolerant: an unreadable CTE is left out (see listWithExclusions) instead of failing the whole tenant's archive. */
   list(tenantId: string): Promise<ReadonlyArray<CteArchiveRecord>>;
+  /** Tony (9/11/2026, "lettura tollerante, scrittura rigorosa"): the readable CTEs plus a summary of the excluded ones. */
+  listWithExclusions?(tenantId: string): Promise<CteArchiveListResult>;
   save(record: CteArchiveRecord, capability?: symbol): Promise<void>;
   /** Removes the CTE for good; only the company archive purge uses it (Tony, 31/10, "pulizia totale"). */
   remove?(tenantId: string, archiveId: string): Promise<void>;

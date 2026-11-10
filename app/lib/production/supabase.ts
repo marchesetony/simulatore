@@ -17,11 +17,11 @@ import { PERSISTENCE_SCHEMA_VERSION } from "../persistence/types.ts";
 import type { BillDocument, BillRepository, BillVersion, DocumentStoragePort } from "../foundation/real-bill.ts";
 // @ts-expect-error Node's strip-only test runner requires the explicit extension.
 import { validateStoredDocument } from "../foundation/real-bill.ts";
-import type { CteArchiveRecord, CteArchiveRepository } from "../cte/archive/types.ts";
+import type { CteArchiveListResult, CteArchiveRecord, CteArchiveRepository } from "../cte/archive/types.ts";
 // @ts-expect-error Node's strip-only test runner requires the explicit extension.
 import { CTE_ARCHIVE_APPROVAL_CAPABILITY } from "../cte/archive/types.ts";
 // @ts-expect-error Node's strip-only test runner requires the explicit extension.
-import { validateStoredCteArchive } from "../cte/archive/validation.ts";
+import { CteArchiveRecordUnreadableError, logExcludedCteArchives, readStoredCteArchives, storedCteErrorCode, validateStoredCteArchive } from "../cte/archive/validation.ts";
 import type { MarketArchiveRecord, MarketArchiveRepository } from "../market/types.ts";
 // @ts-expect-error Node's strip-only test runner requires the explicit extension.
 import { validateStoredMarketArchive } from "../market/validation.ts";
@@ -251,9 +251,14 @@ class SupabaseCteArchiveRepository implements CteArchiveRepository {
   private readonly records: SupabaseRecordRepository<CteArchiveRecord>;
   constructor(client: ProviderClient) { this.records = new SupabaseRecordRepository(client, "cte-archives"); }
   async remove(tenantId: string, archiveId: string): Promise<void> { const record = await this.records.get(tenantId, archiveId); if (record) await this.records.delete({ tenantId, recordId: archiveId, expectedVersion: record.version }); }
-  async get(tenantId: string, archiveId: string): Promise<CteArchiveRecord | null> { const record = await this.records.get(tenantId, archiveId); return record ? validateStoredCteArchive(record.payload) : null; }
-  async list(tenantId: string): Promise<ReadonlyArray<CteArchiveRecord>> { const records = await this.records.list(tenantId); return records.map((record) => validateStoredCteArchive(record.payload)); }
-  async save(record: CteArchiveRecord, capability?: symbol): Promise<void> { const valid = validateStoredCteArchive(record); const previous = await this.records.get(valid.tenantId, valid.archiveId); const previousArchive = previous ? validateStoredCteArchive(previous.payload) : null; if (valid.currentApprovedVersionId !== (previousArchive?.currentApprovedVersionId ?? null) && capability !== CTE_ARCHIVE_APPROVAL_CAPABILITY) throw new Error("CTE_APPROVAL_WORKFLOW_REQUIRED"); await this.records.put({ tenantId: valid.tenantId, recordId: valid.archiveId, payload: valid, expectedVersion: previous?.version }); }
+  // Tony (9/11/2026, "lettura tollerante, scrittura rigorosa"): a single read of an unreadable CTE is an explicit error;
+  // the list leaves it out and reports it, so the company's other CTEs and simulations keep working. Database,
+  // connection and authorization errors are raised by `this.records` before validation and still fail the call.
+  async get(tenantId: string, archiveId: string): Promise<CteArchiveRecord | null> { const record = await this.records.get(tenantId, archiveId); return record ? this.strict(tenantId, archiveId, record.payload) : null; }
+  async listWithExclusions(tenantId: string): Promise<CteArchiveListResult> { const records = await this.records.list(tenantId); const result = readStoredCteArchives(records.map((record) => ({ tenantId, archiveId: record.recordId, payload: record.payload }))); logExcludedCteArchives(result.excluded); return result; }
+  async list(tenantId: string): Promise<ReadonlyArray<CteArchiveRecord>> { return (await this.listWithExclusions(tenantId)).records; }
+  private strict(tenantId: string, archiveId: string, payload: unknown): CteArchiveRecord { try { return validateStoredCteArchive(payload); } catch (error) { throw new CteArchiveRecordUnreadableError(tenantId, archiveId, storedCteErrorCode(error)); } }
+  async save(record: CteArchiveRecord, capability?: symbol): Promise<void> { const valid = validateStoredCteArchive(record); const previous = await this.records.get(valid.tenantId, valid.archiveId); const previousArchive = previous ? this.strict(valid.tenantId, valid.archiveId, previous.payload) : null; if (valid.currentApprovedVersionId !== (previousArchive?.currentApprovedVersionId ?? null) && capability !== CTE_ARCHIVE_APPROVAL_CAPABILITY) throw new Error("CTE_APPROVAL_WORKFLOW_REQUIRED"); await this.records.put({ tenantId: valid.tenantId, recordId: valid.archiveId, payload: valid, expectedVersion: previous?.version }); }
 }
 
 class SupabaseMarketArchiveRepository implements MarketArchiveRepository {
