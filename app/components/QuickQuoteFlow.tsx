@@ -5,7 +5,7 @@ import type { ProposalPresentation } from "../lib/proposal/presentation";
 import { areraNote, billedMonths, offerScontrino, pairScontrini, type ScontrinoLine, type ScontrinoPairRow } from "../lib/quote/offer-scontrino";
 import { EmptyState, ErrorState, LoadingState } from "./UiStates";
 import { BillReadDetails, type CalculatedFact } from "./BillReadDetails";
-import { billForReading, billReadSections } from "../lib/ui/bill-read-details";
+import { billForReading, billReadSections, printedContractValues } from "../lib/ui/bill-read-details";
 import { BillArchivePicker } from "./BillArchivePicker";
 import { requestBillDelete, approvedBillEntry, archiveLoadError, canDeleteBills, deleteConfirmText, deleteReportText, deleteSelectedBills, deleteSummaryText, pendingBillEntry, type ArchiveList, type BillArchiveEntry, type BillDeleteReport } from "../lib/ui/bill-archive";
 import { downloadExport, MAX_UPLOAD_BYTES, requestJson, requestUpload, toUiError, UiApiError } from "../lib/ui/client";
@@ -43,7 +43,6 @@ const FIELDS: readonly { readonly name: string; readonly label: string }[] = [
   { name: "customerName", label: "Intestatario" }, { name: "supplier", label: "Fornitore attuale" }, { name: "pod", label: "POD / PDR" }, { name: "billingPeriod", label: "Periodo fatturato" },
   { name: "billedConsumption", label: "Consumo fatturato" }, { name: "annualConsumption", label: "Consumo annuo" }, { name: "totalAmount", label: "Totale bolletta" },
 ];
-const ABSENT_LABEL: Readonly<Record<string, string>> = { consumoAnnuo: "Consumo annuo", consumoFatturato: "Consumo fatturato", periodoDal: "Periodo fatturato", periodoAl: "Periodo fatturato", periodoStampato: "Periodo fatturato", totaleBolletta: "Totale bolletta" };
 const NUMERIC_FIELDS = new Set(["billedConsumption", "annualConsumption", "totalAmount"]);
 const ISO_DATE = /(\d{4})-(\d{2})-(\d{2})/g;
 const IT_DATE = /(\d{1,2})\/(\d{1,2})\/(\d{4})/g;
@@ -330,22 +329,27 @@ function billChoices(archive: readonly ApprovedBillSummaryModel[], query: string
 // Tony (10/11/2026): "Dati letti" shows what the bill prints (BillReadDetails); what the simulator derives or calculates
 // from it (segment, price classification, GME PUN, spread from the PUN, PCV used in the comparison) is listed apart, so a
 // calculated value is never presented as read.
+// Tony (10/11/2026, "semplificazione"): a simulator value already printed on the bill is not repeated; it is listed only where
+// the bill does not print it, or prints something else (the PCV used in the comparison), always labelled as calculated.
 function calculatedFacts(bill: BillDocumentModel): readonly CalculatedFact[] {
   // Same reading as the search for CTEs, so "Domestico non residente" shows Consumer here too (Tony, 28/10).
   const type = bill.structuredBill ? customerTypeOf(bill.structuredBill) : null;
   const pcv = monthlyPcv(bill);
+  const printed = printedContractValues(bill);
   const gas = bill.resolvedVector === "GAS";
   const index = gas ? "PSV" : "PUN";
+  const pcvShown = pcv === null ? printed.monthlyPcv === null : printed.monthlyPcv === null || Math.abs(printed.monthlyPcv - pcv) >= 0.005;
   return [
     { label: "Segmento cliente", value: type === "RESIDENTIAL" ? <span className="cte-segment-consumer">Consumer</span> : type === "NON_RESIDENTIAL" ? <span className="cte-segment-business">Business</span> : "Non determinato", note: "Classificazione del simulatore" },
     ...(withoutOfferBox(bill) ? [{ label: "Box dell'offerta", value: NOT_IN_DETAIL, note: "Fattura di dettaglio" }] : []),
-    { label: "Tipo di prezzo", value: priceType(bill), note: "Classificazione del simulatore" },
+    ...(printed.priceType ? [] : [{ label: "Tipo di prezzo", value: priceType(bill), note: "Classificazione del simulatore: tipologia non stampata" }]),
     ...(indexedBill(bill) && !gas ? [{ label: "PUN GME del mese di riferimento", value: referencePun(bill), note: "Dall'archivio GME, non dalla fattura" }] : []),
     ...(indexedBill(bill) ? [
-      { label: `Spread sul ${index} (calcolato)`, value: gas ? "Non calcolato per il gas" : billSpread(bill), note: "Prezzo dell'energia letto meno il PUN GME: non è lo spread contrattuale stampato" },
-      { label: `Struttura del ${index}`, value: gas ? "Mensile" : punStructure(bill), note: "Classificazione del simulatore" },
+      // The printed spread comes first (contract section); the one calculated from the PUN only when the bill does not print it.
+      ...(printed.spread ? [] : [{ label: `Spread sul ${index} (calcolato)`, value: gas ? "Non calcolato per il gas" : billSpread(bill), note: "Prezzo dell'energia letto meno il PUN GME: lo spread contrattuale non è stampato" }]),
+      ...(printed.priceStructure ? [] : [{ label: `Struttura del ${index}`, value: gas ? "Mensile" : punStructure(bill), note: "Classificazione del simulatore: struttura non stampata" }]),
     ] : []),
-    { label: "PCV mensile usata nel confronto", value: pcv === null ? "Non determinata" : `${EURO.format(pcv)} al mese`, note: "Calcolata dalle righe lette" },
+    ...(pcvShown ? [{ label: "PCV mensile usata nel confronto", value: pcv === null ? "Non determinata" : `${EURO.format(pcv)} al mese`, note: printed.monthlyPcv === null ? "Calcolata dalle righe lette" : `Calcolata dalle righe lette: diversa dalla PCV stampata (${EURO.format(printed.monthlyPcv)} al mese)` }] : []),
   ];
 }
 
@@ -909,6 +913,7 @@ export default function QuickQuoteFlow({ readonly, showExcluded = false }: { rea
   const [deleting, setDeleting] = useState(false);
   const [draft, setDraft] = useState<BillDocumentModel | null>(null);
   const [values, setValues] = useState<Readonly<Record<string, string>>>({});
+  const [correctionOpen, setCorrectionOpen] = useState(false);
   const [quote, setQuote] = useState<Quote | null>(null);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   // Tony (1/11): "bisogna mostrare solo le più vantaggiose non quelle più care, tranne se scelte con motivazione".
@@ -1019,6 +1024,13 @@ export default function QuickQuoteFlow({ readonly, showExcluded = false }: { rea
     await loadOffers(quote.context.billId);
   };
 
+  // The editable fields start from what was read (the same bill data every role sees) and are unfolded only when one is empty.
+  const startReview = (document: BillDocumentModel) => {
+    const next = readValues(billForReading(document));
+    setValues(next);
+    setCorrectionOpen(FIELDS.some((field) => !(next[field.name] ?? "").trim()));
+  };
+
   const upload = async (event: ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0]; event.target.value = "";
     if (!file || readonly || pending) return;
@@ -1028,7 +1040,7 @@ export default function QuickQuoteFlow({ readonly, showExcluded = false }: { rea
       const document = (await requestUpload<{ readonly document: BillDocumentModel }>("/api/bills", file)).document;
       if (document.status === "FAILED" || document.status === "PROVIDER_NOT_CONFIGURED") throw new Error("BILL_READ_FAILED");
       setDraft(document);
-      setValues(readValues(document));
+      startReview(document);
       setStep("review");
     } catch (cause) { setError(cause instanceof Error && cause.message === "BILL_READ_FAILED" ? "Non siamo riusciti a leggere la bolletta. Riprova con un PDF più nitido." : withDetail(cause)); } finally { setPending(undefined); }
   };
@@ -1043,7 +1055,7 @@ export default function QuickQuoteFlow({ readonly, showExcluded = false }: { rea
       const document = (await requestJson<{ readonly document: BillDocumentModel }>(`/api/bills/${encodeURIComponent(billId)}`, { method: "PATCH", body: JSON.stringify({ operation: "reread-analyst", versionId: current.currentVersionId }) })).document;
       setQuote(null); setProposal(null);
       setDraft(document);
-      setValues(readValues(document));
+      startReview(document);
       setStep("review");
     } catch (cause) { setError(`La nuova lettura delle voci non è riuscita. ${message(cause)}`); } finally { setPending(undefined); }
   };
@@ -1062,7 +1074,7 @@ export default function QuickQuoteFlow({ readonly, showExcluded = false }: { rea
     try {
       const document = (await requestJson<{ readonly document: BillDocumentModel }>(`/api/bills/${encodeURIComponent(billId)}`)).document;
       setDraft(document);
-      setValues(readValues(document));
+      startReview(document);
       setStep("review");
     } catch (cause) { setError(message(cause)); } finally { setPending(undefined); }
   };
@@ -1071,7 +1083,7 @@ export default function QuickQuoteFlow({ readonly, showExcluded = false }: { rea
   const confirm = async () => {
     if (!draft || readonly || pending) return;
     const missing = FIELDS.filter((field) => !(values[field.name] ?? "").trim());
-    if (missing.length) { setError(`Completa: ${missing.map((field) => field.label).join(", ")}.`); return; }
+    if (missing.length) { setCorrectionOpen(true); setError(`Completa: ${missing.map((field) => field.label).join(", ")}.`); return; }
     setPending("confirm"); setError(undefined);
     try {
       let current = draft;
@@ -1095,6 +1107,7 @@ export default function QuickQuoteFlow({ readonly, showExcluded = false }: { rea
   // Tony (10/11/2026): "Dati letti" shows the bill data to every user who may open the bill; the full reading stays behind
   // "Dettaglio tecnico" (structuredBill is null without it), so the screen reads the bill view the server sends to everyone.
   const readBill = draft ? billForReading(draft) : null;
+  const missingValues = FIELDS.some((field) => !(values[field.name] ?? "").trim());
 
   const visibleOffers = quote ? quote.offers.filter((offer) => !costlierThanBill(offer, quote.context, quote.bill) || chosen[offer.calculation.calculationId] !== undefined) : [];
   const hiddenOffers = quote ? quote.offers.filter((offer) => !visibleOffers.includes(offer)) : [];
@@ -1156,9 +1169,14 @@ export default function QuickQuoteFlow({ readonly, showExcluded = false }: { rea
       {analystRetry(draft)}
       {/* Tony (5/11/2026): what does not add up after the reading, or is not printed, is said here instead of a wrong number. */}
       {readBill?.structuredBill?.readingChecks?.length ? <div className="warning-text" role="status"><strong>Da controllare sulla bolletta</strong><ul>{readBill.structuredBill.readingChecks.map((check) => <li key={check}>{check}</li>)}</ul></div> : null}
-      {readBill?.structuredBill?.readingAbsent?.some((item) => /consumoAnnuo|consumoFatturato|periodo|totaleBolletta/.test(item.field)) ? <p className="muted">{readBill.structuredBill.readingAbsent.filter((item) => /consumoAnnuo|consumoFatturato|periodo|totaleBolletta/.test(item.field)).map((item) => `${ABSENT_LABEL[item.field] ?? item.field}: ${item.reason}`).join(" · ")}</p> : null}
       {readBill ? <BillReadDetails sections={billReadSections(readBill)} calculated={calculatedFacts(readBill)} /> : null}
-      <div className="form-grid">{FIELDS.map((field) => <label className="form-field" key={field.name}><span className="form-label">{field.label}{unitOf(field.name, draft.resolvedVector)}{field.name === "annualConsumption" && !draft.fields.annualConsumption?.value && values.annualConsumption ? historyMonthTotals(readBill?.structuredBill?.consumptionHistory).length ? " · media dello storico consumi × 12" : " · media mensile × 12" : ""}</span><input value={values[field.name] ?? ""} onChange={(event) => setValues((current) => ({ ...current, [field.name]: event.target.value }))} disabled={Boolean(pending)} /></label>)}</div>
+      {/* Tony (10/11/2026, "semplificazione"): the values above are the ones confirmed; the editable fields stay (they are what
+          "Cerca le CTE utilizzabili" confirms or corrects) but are folded, and open on their own when one must be filled in. */}
+      <details className="bill-read-correct" open={correctionOpen} onToggle={(event) => setCorrectionOpen(event.currentTarget.open)}>
+        <summary>{missingValues ? "Completa i dati mancanti" : "Correggi i dati letti"}</summary>
+        <p className="muted">Sono i valori letti sopra, usati per la ricerca delle CTE: modificali solo se vedi un errore.</p>
+        <div className="form-grid">{FIELDS.map((field) => <label className="form-field" key={field.name}><span className="form-label">{field.label}{unitOf(field.name, draft.resolvedVector)}{field.name === "annualConsumption" && !draft.fields.annualConsumption?.value && values.annualConsumption ? historyMonthTotals(readBill?.structuredBill?.consumptionHistory).length ? " · media dello storico consumi × 12" : " · media mensile × 12" : ""}</span><input value={values[field.name] ?? ""} onChange={(event) => setValues((current) => ({ ...current, [field.name]: event.target.value }))} disabled={Boolean(pending)} /></label>)}</div>
+      </details>
       <div className="button-row"><button className="button primary" type="button" onClick={() => void confirm()} disabled={readonly || Boolean(pending)}>{pending === "confirm" ? "Ricerca in corso" : "Cerca le CTE utilizzabili"}</button></div>
     </section> : null}
     {step === "offers" ? pending === "offers" ? <LoadingState label="Calcolo delle offerte per questa bolletta" /> : quote ? <>

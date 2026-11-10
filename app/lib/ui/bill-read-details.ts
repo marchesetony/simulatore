@@ -102,21 +102,25 @@ function technicalSection(bill: Bill): BillReadSection {
     rows.push(row(bill, "Potenza disponibile", power(profile?.powerAvailable), ["potenzaDisponibileKw"], { review: profile?.powerAvailable.status === "NEEDS_REVIEW" }));
     rows.push(row(bill, "Potenza massima prelevata", power(profile?.powerMaximumDrawn), ["potenzaMassimaPrelevataKw"], { review: profile?.powerMaximumDrawn.status === "NEEDS_REVIEW" }));
   }
-  rows.push(row(bill, "Consumo complessivo fatturato", gas ? kwh(sb?.smcConsumption, "Smc") ?? kwh(sb?.billedConsumption, "Smc") : kwh(sb?.billedConsumption), gas ? ["consumoSmc", "consumoFatturato"] : ["consumoFatturato"], { review: needsReview(sb?.billedConsumption) }));
+  const billedRow = row(bill, "Consumo complessivo fatturato", gas ? kwh(sb?.smcConsumption, "Smc") ?? kwh(sb?.billedConsumption, "Smc") : kwh(sb?.billedConsumption), gas ? ["consumoSmc", "consumoFatturato"] : ["consumoFatturato"], { review: needsReview(sb?.billedConsumption) });
+  const bandRows: BillReadRow[] = [];
+  let bandNote: string | null = null;
   if (!gas) {
     const bands = [sb?.f1Consumption, sb?.f2Consumption, sb?.f3Consumption] as const;
-    bands.forEach((field, index) => rows.push(row(bill, `Consumo F${index + 1}`, kwh(field), [`consumoF${index + 1}`], { review: needsReview(field) })));
-    // Tony (10/11, F1+F2+F3 = 2.672,08 against F0 2.672,07): the read values stay as printed; the sum is shown as calculated,
-    // with its gap from the billed total. The calculation keeps using F1, F2 and F3 (structured-bill.ts), unchanged.
+    bands.forEach((field, index) => bandRows.push(row(bill, `Consumo F${index + 1}`, kwh(field), [`consumoF${index + 1}`], { review: needsReview(field) })));
+    // Tony (10/11, F1+F2+F3 = 2.672,08 against F0 2.672,07): the read values stay as printed. Tony (10/11, "semplificazione"):
+    // the sum is not a second total; a gap from the billed consumption is a discreet note on it. The calculation keeps using
+    // F1, F2 and F3 (structured-bill.ts), unchanged.
     const values = bands.map((field) => fieldText(field)).map((text) => text === null ? null : Number(text));
     if (values.every((value): value is number => value !== null && Number.isFinite(value))) {
       const decimals = Math.max(...values.map((value) => (String(value).split(".")[1] ?? "").length));
       const sum = Number(values.reduce((total, value) => total + value, 0).toFixed(decimals));
       const billedText = fieldText(sb?.billedConsumption);
       const gap = billedText === null ? null : Number((sum - Number(billedText)).toFixed(decimals));
-      rows.push({ label: "Somma F1 + F2 + F3", value: `${italianDecimal(sum)} kWh`, state: "CALCULATED", note: gap === null ? "Calcolata dai consumi per fascia" : gap === 0 ? "Calcolata: coincide con il consumo fatturato" : `Calcolata: scostamento di ${italianDecimal(gap)} kWh rispetto al consumo fatturato` });
+      bandNote = gap === null ? `F1 + F2 + F3 = ${italianDecimal(sum)} kWh (calcolata)` : gap === 0 ? null : `F1 + F2 + F3 = ${italianDecimal(sum)} kWh: scostamento di ${italianDecimal(gap)} kWh (calcolato)`;
     }
   }
+  rows.push(bandNote ? { ...billedRow, note: billedRow.note ? `${billedRow.note} · ${bandNote}` : bandNote } : billedRow, ...bandRows);
   rows.push(row(bill, "Consumo annuo dichiarato", kwh(sb?.annualConsumption, gas ? "Smc" : "kWh"), ["consumoAnnuo"], { review: needsReview(sb?.annualConsumption) }));
   return { id: "TECHNICAL", title: "Caratteristiche tecniche", rows };
 }
@@ -183,24 +187,48 @@ function economicsSection(bill: Bill): BillReadSection {
   rows.push(money("Accise", excise, "Righe di accisa del dettaglio"));
   rows.push(money("IVA", vat, "Righe IVA del dettaglio"));
   if (excise === null && vat === null && printed?.taxes != null) rows.push(money("Accise e IVA", printed.taxes, "Quadro sintetico, come stampato (insieme)"));
-  rows.push(printedTotal === null ? { label: "Totale fatturato", value: NOT_IN_BILL, state: "ABSENT" } : { label: "Totale fatturato", value: euro(printedTotal), state: "READ" });
   const taxes = excise !== null || vat !== null ? (excise ?? 0) + (vat ?? 0) : printed?.taxes ?? null;
+  // Tony (10/11, "semplificazione"): the total appears once; the sum of the printed components is a note on it only when it
+  // does not match.
+  let totalNote: string | null = null;
   if (printed?.seller != null && printed.networkAndSystem != null && taxes !== null && printedTotal !== null) {
-    const sum = round2(printed.seller + printed.networkAndSystem + taxes);
-    const gap = round2(sum - printedTotal);
-    rows.push(calc("Somma delle componenti stampate", sum, gap === 0 ? "Calcolata: coincide con il totale fatturato" : `Calcolata: differenza di ${euro(gap)} dal totale fatturato (altre partite, bonus o canone non inclusi)`));
+    const gap = round2(round2(printed.seller + printed.networkAndSystem + taxes) - printedTotal);
+    if (gap !== 0) totalNote = `Le componenti stampate sommano ${euro(round2(printed.seller + printed.networkAndSystem + taxes))}: differenza di ${euro(gap)} (altre partite, bonus o canone non inclusi; calcolata)`;
   }
-  // The simulator's own grouping, shown apart and labelled: it may place a seller charge printed under rete elsewhere.
+  rows.push(printedTotal === null ? { label: "Totale fatturato", value: NOT_IN_BILL, state: "ABSENT" } : { label: "Totale fatturato", value: euro(printedTotal), state: "READ", ...(totalNote ? { note: totalNote } : {}) });
+  // The simulator's own grouping, shown apart and labelled, only where it differs from what the bill prints (Tony, 10/11,
+  // "solo le differenze rilevanti"): it may place a seller charge printed under rete elsewhere.
   const normalized: BillReadRow[] = [];
   if (totals) {
     const seller = [totals.sellerEnergyTotal, totals.sellerCommercializationTotal, totals.sellerOtherTotal].filter((value): value is number => value !== null);
-    const add = (label: string, value: number | null) => { if (value !== null) normalized.push({ label: `${label} (classificazione del simulatore)`, value: euro(value), state: "CALCULATED", note: "Raggruppamento normalizzato delle righe lette, non stampato in fattura" }); };
-    add("Vendita", seller.length ? round2(seller.reduce((total, value) => total + value, 0)) : null);
-    add("Rete e trasporto", totals.regulatedNetworkTotal);
-    add("Oneri generali di sistema", totals.systemChargesTotal);
-    add("Accise e IVA", totals.taxTotal);
+    const network = printed?.networkAndSystem != null && oneri !== null ? round2(printed.networkAndSystem - oneri) : null;
+    const add = (label: string, value: number | null, printedValue: number | null | undefined) => {
+      if (value === null || (printedValue !== null && printedValue !== undefined && Math.abs(round2(value - printedValue)) < 0.01)) return;
+      normalized.push({ label: `${label} (classificazione del simulatore)`, value: euro(value), state: "CALCULATED", note: printedValue === null || printedValue === undefined ? "Raggruppamento normalizzato delle righe lette, non stampato in fattura" : `Raggruppamento normalizzato delle righe lette: in fattura ${euro(printedValue)}` });
+    };
+    add("Vendita", seller.length ? round2(seller.reduce((total, value) => total + value, 0)) : null, printed?.seller);
+    add("Rete e trasporto", totals.regulatedNetworkTotal, network);
+    add("Oneri generali di sistema", totals.systemChargesTotal, oneri);
+    add("Accise e IVA", totals.taxTotal, taxes);
   }
-  return { id: "ECONOMICS", title: "Ripartizione economica della fattura", rows: [...rows, ...normalized], ...(normalized.length ? { note: "Le prime righe sono i valori stampati in fattura; quelle marcate \"classificazione del simulatore\" sono il raggruppamento usato per il confronto e possono differire dalla fattura." } : {}) };
+  return { id: "ECONOMICS", title: "Ripartizione economica della fattura", rows: [...rows, ...normalized], ...(normalized.length ? { note: "Le righe marcate \"classificazione del simulatore\" sono il raggruppamento usato per il confronto dove differisce dalla fattura; le altre sono i valori stampati." } : {}) };
+}
+
+/** What the bill prints for the contract, so the screen adds a simulator value only where the bill does not print it or prints
+ *  something else (Tony, 10/11/2026, "semplificazione"). */
+export function printedContractValues(bill: Bill): { readonly priceType: string | null; readonly priceStructure: string | null; readonly spread: string | null; readonly monthlyPcv: number | null } {
+  const box = bill.structuredBill?.documentOfferBox ?? null;
+  const perMonth = /mese|month/i;
+  const pcvLine = lines(bill, ...PCV_CODES).find((line) => perMonth.test(`${line.rawUnit || line.unit}`) && amountOf(line.rawUnitPrice || line.unitPrice) !== null);
+  const pcvFact = fact(bill, "PCV", "COMMERCIALIZATION_FIXED_FEE", "SELLER_FIXED_FEE");
+  const pcvUnit = bill.structuredBill?.extendedFacts.find((item) => item.code === "PCV")?.unit ?? "";
+  const monthlyPcv = pcvLine ? amountOf(pcvLine.rawUnitPrice || pcvLine.unitPrice) : pcvFact && (!pcvUnit || perMonth.test(pcvUnit)) ? amountOf(pcvFact.value) : null;
+  return {
+    priceType: fact(bill, "PRICE_MECHANISM_RAW")?.value ?? box?.offerType ?? null,
+    priceStructure: fact(bill, "PRICE_TIME_STRUCTURE_RAW")?.value ?? box?.priceStructure ?? null,
+    spread: fact(bill, "SPREAD")?.value ?? box?.spread ?? null,
+    monthlyPcv,
+  };
 }
 
 /** The bill as "Dati letti" reads it: the full reading when the user has "Dettaglio tecnico", otherwise the bill view the

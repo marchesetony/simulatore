@@ -511,6 +511,9 @@ button:focus-visible,a:focus-visible,input:focus-visible,select:focus-visible,te
 .bill-read-section { padding:12px; border-radius:10px; background:var(--surface-2, #f6f7f9); }
 .bill-read-section h4 { margin:0 0 8px; font-size:14px; }
 .bill-read-section > .muted { margin:0 0 8px; font-size:12px; }
+.bill-read-correct { margin:0 0 12px; }
+.bill-read-correct > summary { cursor:pointer; font-weight:600; font-size:14px; padding:6px 0; }
+.bill-read-correct > .muted { margin:4px 0 8px; font-size:12px; }
 .bill-read-state { font-size:10px; text-transform:uppercase; letter-spacing:.03em; margin-left:4px; }
 .bill-read-note { display:block; font-size:11px; font-weight:400; color:var(--muted, #667085); margin-top:2px; }
 .bill-read-absent dd, .bill-read-not_read dd { font-weight:400; color:var(--muted, #667085); }

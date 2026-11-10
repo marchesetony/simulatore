@@ -3,7 +3,7 @@ import { readFile } from "node:fs/promises";
 import { parseBillReading } from "../app/lib/reading/bill-reader.ts";
 import { toStructuredBill } from "../app/lib/reading/bill-reader-map.ts";
 import { buildBillAnalystReview } from "../app/lib/foundation/bill-analyst-review.ts";
-import { billReadSections, italianDecimal, NOT_IN_BILL, NOT_READ } from "../app/lib/ui/bill-read-details.ts";
+import { billReadSections, italianDecimal, NOT_IN_BILL, NOT_READ, printedContractValues } from "../app/lib/ui/bill-read-details.ts";
 
 // Tony (10/11/2026, fattura EE20369/2026): "Dati letti" must show what the reading already holds, in four sections, and say
 // for each value whether it was read, is not printed, must be checked or was calculated. Synthetic bill with the same
@@ -80,15 +80,15 @@ assert.equal(rowOf(sections, "TECHNICAL", "Potenza impegnata").value, "15,0 kW")
 assert.equal(rowOf(sections, "TECHNICAL", "Potenza massima prelevata").value, "15,0 kW");
 // 2. Missing data: declared not printed by the reader.
 assert.deepEqual(rowOf(sections, "TECHNICAL", "Potenza disponibile"), { label: "Potenza disponibile", value: NOT_IN_BILL, state: "ABSENT", note: "non stampato" });
-// 6. F0, F1, F2, F3 kept as read; the sum is calculated and its gap shown.
+// 6. F0, F1, F2, F3 kept as read. Tony (10/11, "semplificazione"): the sum is not a second total, its gap is a discreet note.
 assert.equal(rowOf(sections, "TECHNICAL", "Consumo complessivo fatturato").value, "2.672,07 kWh");
+assert.match(rowOf(sections, "TECHNICAL", "Consumo complessivo fatturato").note, /F1 \+ F2 \+ F3 = 2\.672,08 kWh: scostamento di 0,01 kWh \(calcolato\)/);
 assert.equal(rowOf(sections, "TECHNICAL", "Consumo F1").value, "1.791,02 kWh");
 assert.equal(rowOf(sections, "TECHNICAL", "Consumo F2").value, "354,44 kWh");
 assert.equal(rowOf(sections, "TECHNICAL", "Consumo F3").value, "526,62 kWh");
-const bandSum = rowOf(sections, "TECHNICAL", "Somma F1 + F2 + F3");
-assert.equal(bandSum.value, "2.672,08 kWh");
-assert.equal(bandSum.state, "CALCULATED");
-assert.match(bandSum.note, /scostamento di 0,01 kWh/);
+assert.equal(rowOf(sections, "TECHNICAL", "Somma F1 + F2 + F3"), undefined, "no second consumption total");
+const matching = { ...structuredBill, f3Consumption: { ...structuredBill.f3Consumption, value: 526.61 } };
+assert.equal(rowOf(billReadSections(billOf(matching)), "TECHNICAL", "Consumo complessivo fatturato").note, undefined, "no note when F1+F2+F3 matches");
 assert.equal(structuredBill.billedConsumption.value, 2672.07, "the billed total is not altered");
 assert.deepEqual([structuredBill.f1Consumption.value, structuredBill.f2Consumption.value, structuredBill.f3Consumption.value], [1791.02, 354.44, 526.62]);
 assert.equal(rowOf(sections, "TECHNICAL", "Consumo annuo dichiarato").value, "29.306 kWh");
@@ -118,14 +118,19 @@ assert.equal(network.state, "CALCULATED", "the network share is a difference: la
 assert.equal(rowOf(sections, "ECONOMICS", "Oneri generali di sistema").value, "114,92 €");
 assert.equal(rowOf(sections, "ECONOMICS", "Accise").value, "33,40 €");
 assert.equal(rowOf(sections, "ECONOMICS", "IVA").value, "221,09 €");
-assert.equal(rowOf(sections, "ECONOMICS", "Totale fatturato").value, "1.226,06 €");
-const check = rowOf(sections, "ECONOMICS", "Somma delle componenti stampate");
-assert.equal(check.value, "1.226,06 €");
-assert.match(check.note, /coincide con il totale fatturato/);
-const normalized = economics.filter((item) => /classificazione del simulatore/.test(item.label));
-assert.ok(normalized.length >= 3, "the simulator's grouping is shown apart");
-assert.ok(normalized.every((item) => item.state === "CALCULATED"));
-assert.match(section(sections, "ECONOMICS").note, /possono differire dalla fattura/);
+assert.deepEqual(rowOf(sections, "ECONOMICS", "Totale fatturato"), { label: "Totale fatturato", value: "1.226,06 €", state: "READ" }, "the components add up: the total once, no note");
+assert.equal(rowOf(sections, "ECONOMICS", "Somma delle componenti stampate"), undefined, "the total is not repeated");
+// 8. The simulator's grouping only where it differs from what the bill prints, always labelled.
+const normalized = economics.filter((item) => /classificazione del simulatore/.test(item.label)).map(plain);
+assert.deepEqual(normalized.map((item) => item.label), ["Vendita (classificazione del simulatore)", "Rete e trasporto (classificazione del simulatore)"], "equal groupings (oneri, accise e IVA) are not repeated");
+assert.ok(normalized.every((item) => item.state === "CALCULATED" && /in fattura \d/.test(item.note)));
+assert.match(section(sections, "ECONOMICS").note, /dove differisce dalla fattura/);
+// 1, 2, 7. No value shown twice: one row per label in the whole screen.
+const labels = sections.flatMap((entry) => entry.rows.map((item) => item.label));
+assert.deepEqual(labels.filter((label, index) => labels.indexOf(label) !== index), []);
+for (const label of ["Intestatario", "Fornitore attuale", "POD", "Periodo fatturato", "Totale fatturato", "Consumo complessivo fatturato"]) assert.equal(labels.filter((item) => item === label).length, 1, label);
+// 5, 6. What the bill prints for the contract, so the screen adds a calculated value only where it is missing or different.
+assert.deepEqual(printedContractValues(billOf(structuredBill)), { priceType: "a prezzo variabile", priceStructure: "a fasce", spread: "0,012 €/kWh", monthlyPcv: 10.3925 });
 
 // 3. Read and calculated are never mixed: every calculated row says so.
 for (const item of sections.flatMap((entry) => entry.rows)) if (item.state === "CALCULATED") assert.match(item.note ?? "", /Calcolat|Somma|classificazione|Raggruppamento|Dedott/i, item.label);
@@ -177,6 +182,17 @@ assert.match(flow, /<BillReadDetails sections=\{billReadSections\(readBill\)\} c
 assert.match(flow, /\{ name: "customerName", label: "Intestatario" \}, \{ name: "supplier", label: "Fornitore attuale" \}/);
 assert.match(flow, /<BillSummary context=\{quote\.context\} bill=\{quote\.bill\} \/>/);
 assert.match(flow, /label: `Spread sul \$\{index\} \(calcolato\)`/, "the calculated spread stays labelled as calculated");
+// Tony (10/11/2026, "semplificazione"): the printed spread first; calculated price type, structure, spread and PCV only when
+// the bill does not print them (or prints a different PCV); the editable fields folded, opened when one is empty.
+assert.match(flow, /\.\.\.\(printed\.spread \? \[\] : \[\{ label: `Spread sul \$\{index\} \(calcolato\)`/);
+assert.match(flow, /\.\.\.\(printed\.priceType \? \[\] : \[\{ label: "Tipo di prezzo"/);
+assert.match(flow, /\.\.\.\(printed\.priceStructure \? \[\] : \[\{ label: `Struttura del \$\{index\}`/);
+assert.match(flow, /const pcvShown = pcv === null \? printed\.monthlyPcv === null : printed\.monthlyPcv === null \|\| Math\.abs\(printed\.monthlyPcv - pcv\) >= 0\.005;/);
+assert.match(flow, /<details className="bill-read-correct" open=\{correctionOpen\} onToggle=\{\(event\) => setCorrectionOpen\(event\.currentTarget\.open\)\}>/);
+assert.match(flow, /setCorrectionOpen\(FIELDS\.some\(\(field\) => !\(next\[field\.name\] \?\? ""\)\.trim\(\)\)\)/, "opened when a field to confirm is empty");
+assert.match(flow, /if \(missing\.length\) \{ setCorrectionOpen\(true\);/, "and when the search finds one missing");
+assert.equal((flow.match(/startReview\(document\);/g) ?? []).length, 3, "upload, archive and re-read open the review the same way");
+assert.doesNotMatch(flow, /readingAbsent\?\.some/, "the 'not printed' reasons are said once, on their rows");
 const component = await readFile("app/components/BillReadDetails.tsx", "utf8");
 assert.match(component, /Valori calcolati o classificati dal simulatore/);
 assert.match(component, /READ: "Letto", ABSENT: "Non presente", REVIEW: "Da verificare", CALCULATED: "Calcolato", NOT_READ: "Non letto"/);
