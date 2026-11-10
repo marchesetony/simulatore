@@ -169,6 +169,8 @@ export type PublicBillDocument = {
   readonly versions: readonly PublicBillVersion[];
   readonly normalized: PublicBillProfile | null;
   readonly structuredBill: StructuredBillExtraction | null;
+  /** What the bill prints, for "Dati letti": sent to every user who may open the bill (bill-reading-view.ts). */
+  readonly billReading?: StructuredBillExtraction | null;
   /** The second reading (charge lines) failed: shown to every user, with the button to read them again (Tony, 1/11). */
   readonly chargeLinesUnread?: boolean;
   /** Tony (2/11, J Fuel 20.000 V read as BT): the voltage printed in the PDF differs from the one the bill was read with. */

@@ -172,7 +172,8 @@ assert.equal(italianDecimal(-0.01), "-0,01");
 
 // 8. The screen: sections in "Dati letti", the seven confirmable fields and the offers step unchanged.
 const flow = await readFile("app/components/QuickQuoteFlow.tsx", "utf8");
-assert.match(flow, /<BillReadDetails sections=\{billReadSections\(draft\)\} calculated=\{calculatedFacts\(draft\)\} \/>/);
+// Tony (10/11/2026, visibilità per ruolo): the screen reads the bill view every user who may open the bill receives.
+assert.match(flow, /<BillReadDetails sections=\{billReadSections\(readBill\)\} calculated=\{calculatedFacts\(readBill\)\} \/>/);
 assert.match(flow, /\{ name: "customerName", label: "Intestatario" \}, \{ name: "supplier", label: "Fornitore attuale" \}/);
 assert.match(flow, /<BillSummary context=\{quote\.context\} bill=\{quote\.bill\} \/>/);
 assert.match(flow, /label: `Spread sul \$\{index\} \(calcolato\)`/, "the calculated spread stays labelled as calculated");

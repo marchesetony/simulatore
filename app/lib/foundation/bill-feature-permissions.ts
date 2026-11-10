@@ -4,6 +4,8 @@ import type { FoundationMembershipRecord, TenantRecordRepository } from "../pers
 // @ts-expect-error Node's strip-only test runner requires the explicit extension.
 import { deterministicRecordId } from "../persistence/types.ts";
 import type { PublicBillDocument } from "./real-bill.ts";
+// @ts-expect-error Node's strip-only test runner requires the explicit extension.
+import { billReadingView } from "./bill-reading-view.ts";
 import type { BillHierarchyRole, BillVisibilityScope } from "./bill-visibility.ts";
 
 export const BILL_FEATURES = [
@@ -156,6 +158,8 @@ export function sanitizeBillForFeatureAccess(document: PublicBillDocument, acces
     ...document,
     featurePermissions: access,
     structuredBill: technical ? document.structuredBill : null,
+    // Tony (10/11/2026): the bill data of "Dati letti" go to everyone who may open the bill, whatever "Dettaglio tecnico" says.
+    billReading: billReadingView(document.structuredBill),
     invoicePunReferences: regulatory ? document.invoicePunReferences : [],
     regulatoryAudit: regulatory ? document.regulatoryAudit : null,
     verificationSummary: fullSummary,

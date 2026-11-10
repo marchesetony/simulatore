@@ -5,7 +5,7 @@ import type { ProposalPresentation } from "../lib/proposal/presentation";
 import { areraNote, billedMonths, offerScontrino, pairScontrini, type ScontrinoLine, type ScontrinoPairRow } from "../lib/quote/offer-scontrino";
 import { EmptyState, ErrorState, LoadingState } from "./UiStates";
 import { BillReadDetails, type CalculatedFact } from "./BillReadDetails";
-import { billReadSections } from "../lib/ui/bill-read-details";
+import { billForReading, billReadSections } from "../lib/ui/bill-read-details";
 import { BillArchivePicker } from "./BillArchivePicker";
 import { requestBillDelete, approvedBillEntry, archiveLoadError, canDeleteBills, deleteConfirmText, deleteReportText, deleteSelectedBills, deleteSummaryText, pendingBillEntry, type ArchiveList, type BillArchiveEntry, type BillDeleteReport } from "../lib/ui/bill-archive";
 import { downloadExport, MAX_UPLOAD_BYTES, requestJson, requestUpload, toUiError, UiApiError } from "../lib/ui/client";
@@ -1092,6 +1092,10 @@ export default function QuickQuoteFlow({ readonly, showExcluded = false }: { rea
     } catch (cause) { setError(message(cause)); setPending(undefined); }
   };
 
+  // Tony (10/11/2026): "Dati letti" shows the bill data to every user who may open the bill; the full reading stays behind
+  // "Dettaglio tecnico" (structuredBill is null without it), so the screen reads the bill view the server sends to everyone.
+  const readBill = draft ? billForReading(draft) : null;
+
   const visibleOffers = quote ? quote.offers.filter((offer) => !costlierThanBill(offer, quote.context, quote.bill) || chosen[offer.calculation.calculationId] !== undefined) : [];
   const hiddenOffers = quote ? quote.offers.filter((offer) => !visibleOffers.includes(offer)) : [];
   const selected = visibleOffers.find((offer) => offer.calculation.calculationId === selectedId) ?? null;
@@ -1151,10 +1155,10 @@ export default function QuickQuoteFlow({ readonly, showExcluded = false }: { rea
       <h3>Dati letti dalla bolletta</h3><p className="muted">Li usiamo per trovare le CTE adatte. Se vedi un errore evidente puoi correggerlo, altrimenti prosegui.</p>
       {analystRetry(draft)}
       {/* Tony (5/11/2026): what does not add up after the reading, or is not printed, is said here instead of a wrong number. */}
-      {draft.structuredBill?.readingChecks?.length ? <div className="warning-text" role="status"><strong>Da controllare sulla bolletta</strong><ul>{draft.structuredBill.readingChecks.map((check) => <li key={check}>{check}</li>)}</ul></div> : null}
-      {draft.structuredBill?.readingAbsent?.some((item) => /consumoAnnuo|consumoFatturato|periodo|totaleBolletta/.test(item.field)) ? <p className="muted">{draft.structuredBill.readingAbsent.filter((item) => /consumoAnnuo|consumoFatturato|periodo|totaleBolletta/.test(item.field)).map((item) => `${ABSENT_LABEL[item.field] ?? item.field}: ${item.reason}`).join(" · ")}</p> : null}
-      <BillReadDetails sections={billReadSections(draft)} calculated={calculatedFacts(draft)} />
-      <div className="form-grid">{FIELDS.map((field) => <label className="form-field" key={field.name}><span className="form-label">{field.label}{unitOf(field.name, draft.resolvedVector)}{field.name === "annualConsumption" && !draft.fields.annualConsumption?.value && values.annualConsumption ? historyMonthTotals(draft.structuredBill?.consumptionHistory).length ? " · media dello storico consumi × 12" : " · media mensile × 12" : ""}</span><input value={values[field.name] ?? ""} onChange={(event) => setValues((current) => ({ ...current, [field.name]: event.target.value }))} disabled={Boolean(pending)} /></label>)}</div>
+      {readBill?.structuredBill?.readingChecks?.length ? <div className="warning-text" role="status"><strong>Da controllare sulla bolletta</strong><ul>{readBill.structuredBill.readingChecks.map((check) => <li key={check}>{check}</li>)}</ul></div> : null}
+      {readBill?.structuredBill?.readingAbsent?.some((item) => /consumoAnnuo|consumoFatturato|periodo|totaleBolletta/.test(item.field)) ? <p className="muted">{readBill.structuredBill.readingAbsent.filter((item) => /consumoAnnuo|consumoFatturato|periodo|totaleBolletta/.test(item.field)).map((item) => `${ABSENT_LABEL[item.field] ?? item.field}: ${item.reason}`).join(" · ")}</p> : null}
+      {readBill ? <BillReadDetails sections={billReadSections(readBill)} calculated={calculatedFacts(readBill)} /> : null}
+      <div className="form-grid">{FIELDS.map((field) => <label className="form-field" key={field.name}><span className="form-label">{field.label}{unitOf(field.name, draft.resolvedVector)}{field.name === "annualConsumption" && !draft.fields.annualConsumption?.value && values.annualConsumption ? historyMonthTotals(readBill?.structuredBill?.consumptionHistory).length ? " · media dello storico consumi × 12" : " · media mensile × 12" : ""}</span><input value={values[field.name] ?? ""} onChange={(event) => setValues((current) => ({ ...current, [field.name]: event.target.value }))} disabled={Boolean(pending)} /></label>)}</div>
       <div className="button-row"><button className="button primary" type="button" onClick={() => void confirm()} disabled={readonly || Boolean(pending)}>{pending === "confirm" ? "Ricerca in corso" : "Cerca le CTE utilizzabili"}</button></div>
     </section> : null}
     {step === "offers" ? pending === "offers" ? <LoadingState label="Calcolo delle offerte per questa bolletta" /> : quote ? <>

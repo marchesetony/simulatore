@@ -199,6 +199,8 @@ export interface BillDocumentModel {
   readonly fields: Readonly<Record<string, { readonly value: string | null; readonly confidence: number; readonly source: string; readonly confirmed: boolean }>>;
   readonly normalized: import("../foundation/real-bill").PublicBillProfile | null;
   readonly structuredBill: import("../ingestion/structured-bill").StructuredBillExtraction | null;
+  /** What the bill prints, for "Dati letti": present for every user who may open the bill. */
+  readonly billReading?: import("../ingestion/structured-bill").StructuredBillExtraction | null;
   readonly chargeLinesUnread?: boolean;
   readonly printedVoltageMismatch?: { readonly printed: "LV" | "MV" | "HV" | "EHV"; readonly read: string | null };
   readonly resolvedVector: "EE" | "GAS" | "UNKNOWN";

@@ -203,6 +203,12 @@ function economicsSection(bill: Bill): BillReadSection {
   return { id: "ECONOMICS", title: "Ripartizione economica della fattura", rows: [...rows, ...normalized], ...(normalized.length ? { note: "Le prime righe sono i valori stampati in fattura; quelle marcate \"classificazione del simulatore\" sono il raggruppamento usato per il confronto e possono differire dalla fattura." } : {}) };
 }
 
+/** The bill as "Dati letti" reads it: the full reading when the user has "Dettaglio tecnico", otherwise the bill view the
+ *  server sends to every user who may open the bill (foundation/bill-reading-view.ts). Tony, 10/11/2026. */
+export function billForReading<T extends Pick<BillDocumentModel, "structuredBill" | "billReading">>(bill: T): T {
+  return bill.structuredBill ? bill : { ...bill, structuredBill: bill.billReading ?? null };
+}
+
 /** The four sections of "Dati letti" for one bill; `calculated` are the screen's derived values (PUN, spread from the PUN). */
 export function billReadSections(bill: Bill, calculated: readonly BillReadRow[] = []): readonly BillReadSection[] {
   if (!bill.structuredBill) return [];
