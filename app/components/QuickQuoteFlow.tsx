@@ -6,7 +6,9 @@ import { areraNote, billedMonths, offerScontrino, pairScontrini, type ScontrinoL
 import { EmptyState, ErrorState, LoadingState } from "./UiStates";
 import { BillReadDetails, type CalculatedFact } from "./BillReadDetails";
 import { billReadSections } from "../lib/ui/bill-read-details";
-import { downloadExport, MAX_UPLOAD_BYTES, requestJson, requestUpload, toUiError } from "../lib/ui/client";
+import { BillArchivePicker } from "./BillArchivePicker";
+import { approvedBillEntry, archiveLoadError, pendingBillEntry, type ArchiveList } from "../lib/ui/bill-archive";
+import { downloadExport, MAX_UPLOAD_BYTES, requestJson, requestUpload, toUiError, UiApiError } from "../lib/ui/client";
 import { buildQuoteReceipt, effectiveBillSpread, isSameOffer, regulatedVerification, sameOfferDifferences, type QuoteReceipt, type RegulatedDomain } from "../lib/quote/receipt";
 import { annualSaving, annualSavingUnderDiscount } from "../lib/quote/annual-saving";
 import { customerTypeOf } from "../lib/ingestion/customer-type";
@@ -916,8 +918,24 @@ export default function QuickQuoteFlow({ readonly, showExcluded = false }: { rea
   const keepPresentation = useCallback((presentation: ProposalPresentation) => { presentationRef.current = presentation; }, []);
   const today = new Date().toISOString().slice(0, 10);
 
-  const loadArchive = useCallback(async () => { try { const result = await requestJson<{ readonly documents: readonly ApprovedBillSummaryModel[] }>("/api/bills?view=approved"); setArchive(result.documents); } catch { setArchive([]); } }, []);
-  useEffect(() => { void loadArchive(); }, [loadArchive]);
+  // Tony (10/11/2026): bills to complete (not approved) and bills already available (approved), loaded separately from the
+  // same tenant- and branch-scoped server lists; a list that cannot be loaded says so instead of disappearing.
+  const [pendingBills, setPendingBills] = useState<ArchiveList>({ status: "loading" });
+  const [approvedBills, setApprovedBills] = useState<ArchiveList>({ status: "loading" });
+  const loadArchive = useCallback(async () => {
+    const failure = (cause: unknown): ArchiveList => ({ status: "error", message: archiveLoadError(cause instanceof UiApiError ? cause.code : null) });
+    setPendingBills({ status: "loading" }); setApprovedBills({ status: "loading" });
+    await Promise.all([
+      requestJson<{ readonly documents: readonly ApprovedBillSummaryModel[] }>("/api/bills?view=approved")
+        .then((result) => { setArchive(result.documents); setApprovedBills({ status: "ready", entries: result.documents.map(approvedBillEntry) }); })
+        .catch((cause: unknown) => { setArchive([]); setApprovedBills(failure(cause)); }),
+      requestJson<{ readonly documents: readonly BillDocumentModel[] }>("/api/bills")
+        .then((result) => setPendingBills({ status: "ready", entries: result.documents.filter((document) => document.currentApprovedVersionId === null).map(pendingBillEntry) }))
+        .catch((cause: unknown) => setPendingBills(failure(cause))),
+    ]);
+  }, []);
+  // Reloaded every time the operator is back on the first step, so a bill uploaded and left unconfirmed is listed.
+  useEffect(() => { if (step === "bill") void loadArchive(); }, [step, loadArchive]);
   // Tony (31/10): "serve un tasto cancella le bollette". Two clicks: Cancella, then Conferma.
   const deleteBill = async (billId: string) => {
     setDeleting(true); setError(undefined);
@@ -1085,11 +1103,11 @@ export default function QuickQuoteFlow({ readonly, showExcluded = false }: { rea
     {step === "bill" ? <section className="ui-card quote-upload">
       {pending === "upload" || pending === "open" ? <LoadingState label={pending === "open" ? "Apertura della bolletta" : "Lettura della bolletta in corso"} /> : <>
         <label className="button primary quote-upload-button">Carica bolletta (PDF)<input className="visually-hidden" type="file" accept="application/pdf" onChange={(event) => void upload(event)} disabled={readonly || Boolean(pending)} /></label>
-        {archive.length ? <div className="form-field"><span className="form-label">Oppure usa una bolletta già caricata</span>
+        <div className="form-field"><span className="form-label">Oppure riprendi una bolletta già caricata</span>
           {/* Tony (31/10): "inserire un campo ricerca, e elencare in ordine alfabetico crescente". */}
-          <input type="search" value={billQuery} onChange={(event) => setBillQuery(event.target.value)} placeholder="Cerca per intestatario, fornitore o file" aria-label="Cerca bolletta" disabled={Boolean(pending)} />
-          <select value="" onChange={(event) => { if (event.target.value) void openBill(event.target.value); }} disabled={Boolean(pending)} aria-label="Scegli la bolletta"><option value="">Scegli la bolletta</option>{billChoices(archive, billQuery).map((bill) => <option key={bill.id} value={bill.id}>{billLabel(bill)}</option>)}</select>
-          <details className="quote-bill-manage"><summary>Cancella bollette caricate</summary>
+          <input type="search" value={billQuery} onChange={(event) => setBillQuery(event.target.value)} placeholder="Cerca per intestatario, POD, periodo o fornitore" aria-label="Cerca bolletta" disabled={Boolean(pending)} />
+          <BillArchivePicker pendingBills={pendingBills} approvedBills={approvedBills} query={billQuery} disabled={Boolean(pending)} onOpen={(id) => void openBill(id)} onRetry={() => void loadArchive()} />
+          {archive.length ? <details className="quote-bill-manage"><summary>Cancella bollette caricate</summary>
             <p className="muted">Le bollette con data di oltre 4 mesi fa vengono eliminate in automatico.</p>
             <div className="button-row">{confirmAll
               ? <><span>Cancellare tutte le bollette caricate? Non si può annullare.</span><button className="button compact danger" type="button" onClick={() => void deleteAllBills()} disabled={readonly || deleting}>{deleting ? "Cancellazione…" : "Conferma: cancella tutte"}</button><button className="button compact secondary" type="button" onClick={() => setConfirmAll(false)} disabled={deleting}>Annulla</button></>
@@ -1097,7 +1115,7 @@ export default function QuickQuoteFlow({ readonly, showExcluded = false }: { rea
             <ul>{billChoices(archive, billQuery).map((bill) => <li key={bill.id}><span>{billLabel(bill)}</span>{deleteId === bill.id
               ? <span className="button-row"><button className="button compact danger" type="button" onClick={() => void deleteBill(bill.id)} disabled={readonly || deleting}>{deleting ? "Cancellazione…" : "Conferma"}</button><button className="button compact secondary" type="button" onClick={() => setDeleteId(null)} disabled={deleting}>Annulla</button></span>
               : <button className="button compact danger" type="button" onClick={() => setDeleteId(bill.id)} disabled={readonly || deleting}>Cancella</button>}</li>)}</ul>
-          </details></div> : null}
+          </details> : null}</div>
       </>}
     </section> : null}
     {step === "review" && draft ? <section className="ui-card">
