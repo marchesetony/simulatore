@@ -506,6 +506,16 @@ button:focus-visible,a:focus-visible,input:focus-visible,select:focus-visible,te
 .quote-excluded ul { margin:8px 0 0; padding-left:18px; display:grid; gap:4px; }
 .quote-excluded em { font-style:normal; color:#b54708; font-weight:600; margin-left:6px; }
 .quote-contract-facts { margin:6px 0 16px; padding:12px; border-radius:10px; background:var(--surface-2, #f6f7f9); }
+/* "Dati letti" in sections (Tony, 10/11/2026): read, not printed, to check and calculated values look different. */
+.bill-read-details { display:grid; gap:12px; margin:6px 0 16px; }
+.bill-read-section { padding:12px; border-radius:10px; background:var(--surface-2, #f6f7f9); }
+.bill-read-section h4 { margin:0 0 8px; font-size:14px; }
+.bill-read-section > .muted { margin:0 0 8px; font-size:12px; }
+.bill-read-state { font-size:10px; text-transform:uppercase; letter-spacing:.03em; margin-left:4px; }
+.bill-read-note { display:block; font-size:11px; font-weight:400; color:var(--muted, #667085); margin-top:2px; }
+.bill-read-absent dd, .bill-read-not_read dd { font-weight:400; color:var(--muted, #667085); }
+.bill-read-review dd { color:#b54708; }
+.bill-read-calculated dd { font-style:italic; }
 .quote-warning { margin:12px 0 0; color:#b54708; font-weight:600; }
 .quote-detail { margin:16px 0 0; }
 .quote-detail summary { cursor:pointer; font-weight:700; padding:8px 0; }

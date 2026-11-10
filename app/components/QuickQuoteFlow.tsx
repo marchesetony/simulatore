@@ -4,6 +4,8 @@ import { isValidElement, useCallback, useEffect, useRef, useState, type ChangeEv
 import type { ProposalPresentation } from "../lib/proposal/presentation";
 import { areraNote, billedMonths, offerScontrino, pairScontrini, type ScontrinoLine, type ScontrinoPairRow } from "../lib/quote/offer-scontrino";
 import { EmptyState, ErrorState, LoadingState } from "./UiStates";
+import { BillReadDetails, type CalculatedFact } from "./BillReadDetails";
+import { billReadSections } from "../lib/ui/bill-read-details";
 import { downloadExport, MAX_UPLOAD_BYTES, requestJson, requestUpload, toUiError } from "../lib/ui/client";
 import { buildQuoteReceipt, effectiveBillSpread, isSameOffer, regulatedVerification, sameOfferDifferences, type QuoteReceipt, type RegulatedDomain } from "../lib/quote/receipt";
 import { annualSaving, annualSavingUnderDiscount } from "../lib/quote/annual-saving";
@@ -323,28 +325,26 @@ function billChoices(archive: readonly ApprovedBillSummaryModel[], query: string
     .slice().sort((a, b) => a.title.localeCompare(b.title, "it", { sensitivity: "base" }) || billLabel(a).localeCompare(billLabel(b), "it"));
 }
 
-function BillContractFacts({ bill }: { readonly bill: BillDocumentModel }): ReactNode {
-  const receipt = bill.analystReview.receipt;
+// Tony (10/11/2026): "Dati letti" shows what the bill prints (BillReadDetails); what the simulator derives or calculates
+// from it (segment, price classification, GME PUN, spread from the PUN, PCV used in the comparison) is listed apart, so a
+// calculated value is never presented as read.
+function calculatedFacts(bill: BillDocumentModel): readonly CalculatedFact[] {
   // Same reading as the search for CTEs, so "Domestico non residente" shows Consumer here too (Tony, 28/10).
   const type = bill.structuredBill ? customerTypeOf(bill.structuredBill) : null;
-  const offerName = bill.analystReview.receipt.offerName.value?.trim() || bill.structuredBill?.documentOfferName?.trim() || null;
-  const offerCode = bill.analystReview.receipt.offerCode.value?.trim() || null;
-  const start = italianDate(receipt.contractStartDate.value ?? factValue(bill, "CONTRACT_START_DATE")) ?? italianDate(receipt.economicConditionsStartDate.value ?? factValue(bill, "ECONOMIC_CONDITIONS_START_DATE"));
   const pcv = monthlyPcv(bill);
-  const noBox = withoutOfferBox(bill);
-  const rows: readonly (readonly [string, ReactNode])[] = [
-    ["Tipo contratto", type === "RESIDENTIAL" ? <span className="cte-segment-consumer">Consumer</span> : type === "NON_RESIDENTIAL" ? <span className="cte-segment-business">Business</span> : "Non indicato"],
-    // Tony (28/10): "dovevamo vedere anche il nome della cte utilizzata".
-    ["Offerta attuale (CTE)", offerName ? (offerCode && offerCode !== offerName ? `${offerName} · codice ${offerCode}` : offerName) : offerCode ?? (noBox ? NOT_IN_DETAIL : "Non indicata")],
-    ["Attivo dal", start ?? (noBox ? "Non riportato nella fattura di dettaglio" : "Non indicato")],
-    // Tony (28/10): "nella scadenza mettere solo data e nessun altro testo".
-    ["Scadenza", billExpiry(bill) ?? (noBox ? "Non riportata nella fattura di dettaglio" : "Non indicata")],
-    ["Tipo di prezzo", priceType(bill)],
-    ...(indexedBill(bill) && bill.resolvedVector !== "GAS" ? [["PUN GME del mese di riferimento", referencePun(bill)] as const] : []),
-    ...(indexedBill(bill) ? [[`Spread sul ${bill.resolvedVector === "GAS" ? "PSV" : "PUN"} (calcolato)`, bill.resolvedVector === "GAS" ? "Non calcolato per il gas" : billSpread(bill)] as const, [`Struttura del ${bill.resolvedVector === "GAS" ? "PSV" : "PUN"}`, bill.resolvedVector === "GAS" ? "Mensile" : punStructure(bill)] as const] : []),
-    ["PCV mensile (quota fissa vendita)", pcv === null ? "Non indicata" : `${EURO.format(pcv)} al mese`],
+  const gas = bill.resolvedVector === "GAS";
+  const index = gas ? "PSV" : "PUN";
+  return [
+    { label: "Segmento cliente", value: type === "RESIDENTIAL" ? <span className="cte-segment-consumer">Consumer</span> : type === "NON_RESIDENTIAL" ? <span className="cte-segment-business">Business</span> : "Non determinato", note: "Classificazione del simulatore" },
+    ...(withoutOfferBox(bill) ? [{ label: "Box dell'offerta", value: NOT_IN_DETAIL, note: "Fattura di dettaglio" }] : []),
+    { label: "Tipo di prezzo", value: priceType(bill), note: "Classificazione del simulatore" },
+    ...(indexedBill(bill) && !gas ? [{ label: "PUN GME del mese di riferimento", value: referencePun(bill), note: "Dall'archivio GME, non dalla fattura" }] : []),
+    ...(indexedBill(bill) ? [
+      { label: `Spread sul ${index} (calcolato)`, value: gas ? "Non calcolato per il gas" : billSpread(bill), note: "Prezzo dell'energia letto meno il PUN GME: non è lo spread contrattuale stampato" },
+      { label: `Struttura del ${index}`, value: gas ? "Mensile" : punStructure(bill), note: "Classificazione del simulatore" },
+    ] : []),
+    { label: "PCV mensile usata nel confronto", value: pcv === null ? "Non determinata" : `${EURO.format(pcv)} al mese`, note: "Calcolata dalle righe lette" },
   ];
-  return <dl className="quote-bill-grid quote-contract-facts">{rows.map(([label, value]) => <div key={label}><dt>{label}</dt><dd>{value}</dd></div>)}</dl>;
 }
 
 // The year the savings are projected on: the annual consumption printed on the bill, or the billed period averaged over 365 days.
@@ -1106,7 +1106,7 @@ export default function QuickQuoteFlow({ readonly, showExcluded = false }: { rea
       {/* Tony (5/11/2026): what does not add up after the reading, or is not printed, is said here instead of a wrong number. */}
       {draft.structuredBill?.readingChecks?.length ? <div className="warning-text" role="status"><strong>Da controllare sulla bolletta</strong><ul>{draft.structuredBill.readingChecks.map((check) => <li key={check}>{check}</li>)}</ul></div> : null}
       {draft.structuredBill?.readingAbsent?.some((item) => /consumoAnnuo|consumoFatturato|periodo|totaleBolletta/.test(item.field)) ? <p className="muted">{draft.structuredBill.readingAbsent.filter((item) => /consumoAnnuo|consumoFatturato|periodo|totaleBolletta/.test(item.field)).map((item) => `${ABSENT_LABEL[item.field] ?? item.field}: ${item.reason}`).join(" · ")}</p> : null}
-      <BillContractFacts bill={draft} />
+      <BillReadDetails sections={billReadSections(draft)} calculated={calculatedFacts(draft)} />
       <div className="form-grid">{FIELDS.map((field) => <label className="form-field" key={field.name}><span className="form-label">{field.label}{unitOf(field.name, draft.resolvedVector)}{field.name === "annualConsumption" && !draft.fields.annualConsumption?.value && values.annualConsumption ? historyMonthTotals(draft.structuredBill?.consumptionHistory).length ? " · media dello storico consumi × 12" : " · media mensile × 12" : ""}</span><input value={values[field.name] ?? ""} onChange={(event) => setValues((current) => ({ ...current, [field.name]: event.target.value }))} disabled={Boolean(pending)} /></label>)}</div>
       <div className="button-row"><button className="button primary" type="button" onClick={() => void confirm()} disabled={readonly || Boolean(pending)}>{pending === "confirm" ? "Ricerca in corso" : "Cerca le CTE utilizzabili"}</button></div>
     </section> : null}
