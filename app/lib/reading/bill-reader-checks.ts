@@ -18,6 +18,12 @@ export function italianNumber(value: string | null | undefined): number | null {
 
 const cents = (value: number) => Math.round(value * 100);
 
+// Tony (10/11/2026, fattura EE20369/2026: "Distribuzione fissa 49,02 Eurocent/mese → € 0,49"): a unit price printed in euro
+// cents (Eurocent/mese, c€/kWh, centesimi di euro/kW) is divided by 100 before quantity × price is compared with the amount.
+// Only the check converts it: the value and the unit read from the bill are kept as printed.
+const CENT_UNIT = /c\s*€|\bc\.?\s*eur|cent(?:esim[oi])?\b|eurocent/i;
+export function unitPriceInEuro(price: number, unit: string): number { return CENT_UNIT.test(unit) ? price / 100 : price; }
+
 export interface ReadingCheck { readonly code: string; readonly message: string }
 
 function quotaGroups(rows: readonly ScontrinoRow[]): Map<string, { total: number | null; shares: number[] }> {
@@ -101,7 +107,7 @@ export function checkBillReading(reading: BillReading): readonly ReadingCheck[] 
     if (quantity === null || price === null || amount === null || quantity === 0 || /%/.test(row.unit)) continue;
     // "kW per mesi × €/kW/mese" prints the kW only: the months are not in the quantity, so only same-unit rows are checked.
     if (/\/\s*kW\s*\/\s*mese/i.test(row.unit)) continue;
-    const expected = quantity * price;
+    const expected = quantity * unitPriceInEuro(price, row.unit);
     // The average price of the scontrino is rounded: 0,5% or 2 cents of tolerance.
     if (Math.abs(cents(expected) - cents(amount)) > Math.max(2, Math.abs(cents(amount)) * 0.005)) {
       checks.push({ code: "PRODUCT", message: `"${row.label}": ${row.quantity} × ${row.price} = ${expected.toFixed(2)} € ma l'importo letto è ${row.amount} €.` });
