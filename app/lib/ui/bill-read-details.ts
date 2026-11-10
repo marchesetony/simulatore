@@ -8,8 +8,17 @@ import type { SupplyProfileField } from "../ingestion/bill-supply-profile";
 // difference made here is labelled as calculated. Nothing is read again and nothing is inferred.
 
 export type BillReadState = "READ" | "ABSENT" | "REVIEW" | "CALCULATED" | "NOT_READ";
-export interface BillReadRow { readonly label: string; readonly value: string; readonly state: BillReadState; readonly note?: string }
-export interface BillReadSection { readonly id: "SUPPLY" | "TECHNICAL" | "CONTRACT" | "ECONOMICS"; readonly title: string; readonly rows: readonly BillReadRow[]; readonly note?: string }
+export interface BillReadRow {
+  readonly label: string; readonly value: string; readonly state: BillReadState; readonly note?: string;
+  /** Tony (10/11/2026, "ottimizzazione grafica"): shown under "Altri dettagli" of its section, never dropped. */
+  readonly secondary?: boolean;
+  /** The note is part of the value (a gap, a mismatch): shown next to it, not only on demand. */
+  readonly noteShown?: boolean;
+  /** "SIMULATOR": the simulator's own grouping where it differs from the bill, listed apart in its section. */
+  readonly group?: "SIMULATOR";
+}
+export type BillReadSectionId = "SUPPLY" | "TECHNICAL" | "CONTRACT" | "ECONOMICS";
+export interface BillReadSection { readonly id: BillReadSectionId; readonly title: string; readonly rows: readonly BillReadRow[]; readonly note?: string }
 
 export const NOT_IN_BILL = "Non presente nella fattura";
 export const TO_CHECK = "Da verificare";
@@ -117,7 +126,7 @@ function technicalSection(bill: Bill): BillReadSection {
       const sum = Number(values.reduce((total, value) => total + value, 0).toFixed(decimals));
       const billedText = fieldText(sb?.billedConsumption);
       const gap = billedText === null ? null : Number((sum - Number(billedText)).toFixed(decimals));
-      bandNote = gap === null ? `F1 + F2 + F3 = ${italianDecimal(sum)} kWh (calcolata)` : gap === 0 ? null : `F1 + F2 + F3 = ${italianDecimal(sum)} kWh: scostamento di ${italianDecimal(gap)} kWh (calcolato)`;
+      bandNote = gap === null ? `F1 + F2 + F3 = ${italianDecimal(sum)} kWh (calcolata)` : gap === 0 ? null : `F1 + F2 + F3 = ${italianDecimal(sum)} kWh, scostamento ${italianDecimal(gap)} kWh (calcolato)`;
     }
   }
   rows.push(bandNote ? { ...billedRow, note: billedRow.note ? `${billedRow.note} · ${bandNote}` : bandNote } : billedRow, ...bandRows);
@@ -240,5 +249,61 @@ export function billForReading<T extends Pick<BillDocumentModel, "structuredBill
 /** The four sections of "Dati letti" for one bill; `calculated` are the screen's derived values (PUN, spread from the PUN). */
 export function billReadSections(bill: Bill, calculated: readonly BillReadRow[] = []): readonly BillReadSection[] {
   if (!bill.structuredBill) return [];
-  return [supplySection(bill), technicalSection(bill), contractSection(bill, calculated), economicsSection(bill)];
+  return [supplySection(bill), technicalSection(bill), contractSection(bill, calculated), economicsSection(bill)].map(compactSection);
+}
+
+// Tony (10/11/2026, "ottimizzazione grafica dati letti"): four compact sections with short labels; every value stays, the
+// secondary ones (not printed, zero, auxiliary) move under "Altri dettagli". Only labels, order and visibility change here:
+// the values are the ones built above.
+const SECTION_TITLE: Readonly<Record<BillReadSectionId, string>> = { SUPPLY: "Fornitura", TECHNICAL: "Consumi e potenza", CONTRACT: "Contratto attuale", ECONOMICS: "Costi della bolletta" };
+const SHORT_LABEL: Readonly<Record<string, string>> = {
+  "Fornitore attuale": "Fornitore", "Periodo fatturato": "Periodo", "Tipologia cliente": "Uso", "Indirizzo della fornitura": "Indirizzo",
+  "Consumo complessivo fatturato": "Consumo totale (F0)", "Consumo F1": "F1", "Consumo F2": "F2", "Consumo F3": "F3", "Consumo annuo dichiarato": "Consumo annuo",
+  "Potenza massima prelevata": "Potenza massima", "Tensione di alimentazione": "Tensione",
+  "Tipologia prezzo": "Prezzo", "Struttura del prezzo": "Fasce", "Spread contrattuale (stampato)": "Spread", "PCV / commercializzazione": "PCV",
+  "Decorrenza condizioni economiche": "Decorrenza condizioni", "Attivazione fornitura": "Attivazione", "Scadenza condizioni economiche": "Scadenza condizioni",
+  "Spesa per la vendita di energia": "Vendita", "di cui spesa per la rete e il trasporto": "Rete e trasporto", "Oneri generali di sistema": "Oneri di sistema",
+  "Spesa per la rete e gli oneri generali di sistema": "Rete e oneri (stampati insieme)", "Totale fatturato": "Totale fattura",
+};
+const ORDER: Readonly<Record<BillReadSectionId, readonly string[]>> = {
+  SUPPLY: ["Intestatario", "Fornitore", "POD", "PDR", "Periodo", "Uso"],
+  TECHNICAL: ["Consumo totale (F0)", "F1", "F2", "F3", "Consumo annuo", "Potenza impegnata", "Potenza massima"],
+  CONTRACT: ["Offerta", "Prezzo", "Fasce", "Indice", "Spread", "PCV", "Scadenza condizioni", "Scadenza contratto"],
+  ECONOMICS: ["Vendita", "Rete e trasporto", "Oneri di sistema", "Accise", "IVA", "Accise e IVA", "Totale fattura"],
+};
+const isZero = (value: string) => { const amounts = [...value.matchAll(/-?\d[\d.]*,\d+|-?\d+(?:\.\d+)?/g)].map((match) => amountOf(match[0])); return amounts.length > 0 && amounts.every((amount) => amount === 0); };
+
+function secondaryRow(id: BillReadSectionId, row: BillReadRow, rows: readonly BillReadRow[]): boolean {
+  const label = row.label;
+  if (row.group === "SIMULATOR") return false;
+  if (id === "SUPPLY") return label === "Mercato" || label === "Indirizzo";
+  if (id === "TECHNICAL") {
+    // Tension and available power only when they add something: a low-voltage supply, or the same power as the committed one.
+    if (label === "Tensione") return row.state !== "REVIEW" && (row.state !== "READ" || /bassa tensione|\bBT\b/i.test(row.value));
+    if (label === "Potenza disponibile") return row.state !== "READ" || row.value === rows.find((item) => item.label === "Potenza impegnata")?.value;
+    return false;
+  }
+  if (id === "CONTRACT") {
+    if (label === "Decorrenza condizioni" || label === "Attivazione") return true;
+    if (ORDER.CONTRACT.includes(label)) return false;
+    // Other commercial charges: in view unless zero.
+    return isZero(row.value);
+  }
+  // Rete and oneri printed together stay available once they are shown apart.
+  if (label === "Rete e oneri (stampati insieme)") return rows.some((item) => item.label === "Rete e trasporto") && rows.some((item) => item.label === "Oneri di sistema" && item.state !== "ABSENT");
+  return row.state === "ABSENT" && label !== "Totale fattura";
+}
+
+function compactSection(section: BillReadSection): BillReadSection {
+  const renamed = section.rows.map((row): BillReadRow => {
+    if (/ \(classificazione del simulatore\)$/.test(row.label)) return { ...row, label: row.label.replace(/ \(classificazione del simulatore\)$/, ""), group: "SIMULATOR", ...(row.note ? { note: row.note.replace(/^Raggruppamento normalizzato delle righe lette: /, "") } : {}) };
+    const label = SHORT_LABEL[row.label] ?? row.label;
+    const noteShown = (label === "Consumo totale (F0)" || label === "Totale fattura") && Boolean(row.note);
+    return { ...row, label, ...(noteShown ? { noteShown } : {}) };
+  });
+  const order = ORDER[section.id];
+  const rank = (row: BillReadRow) => { const index = order.indexOf(row.label); return index < 0 ? order.length : index; };
+  const rows = renamed.map((row) => ({ ...row, ...(secondaryRow(section.id, row, renamed) ? { secondary: true } : {}) }))
+    .map((row, index) => ({ row, index })).sort((a, b) => rank(a.row) - rank(b.row) || a.index - b.index).map((item) => item.row);
+  return { id: section.id, title: SECTION_TITLE[section.id], rows };
 }

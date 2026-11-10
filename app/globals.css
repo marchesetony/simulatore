@@ -507,18 +507,25 @@ button:focus-visible,a:focus-visible,input:focus-visible,select:focus-visible,te
 .quote-excluded em { font-style:normal; color:#b54708; font-weight:600; margin-left:6px; }
 .quote-contract-facts { margin:6px 0 16px; padding:12px; border-radius:10px; background:var(--surface-2, #f6f7f9); }
 /* "Dati letti" in sections (Tony, 10/11/2026): read, not printed, to check and calculated values look different. */
-.bill-read-details { display:grid; gap:12px; margin:6px 0 16px; }
-.bill-read-section { padding:12px; border-radius:10px; background:var(--surface-2, #f6f7f9); }
-.bill-read-section h4 { margin:0 0 8px; font-size:14px; }
-.bill-read-section > .muted { margin:0 0 8px; font-size:12px; }
+.bill-read-details { display:grid; grid-template-columns:repeat(auto-fit,minmax(min(100%,340px),1fr)); gap:10px; margin:4px 0 12px; }
+.bill-read-legend { grid-column:1 / -1; margin:0; font-size:11px; }
+.bill-read-section { padding:10px 12px; border-radius:10px; background:var(--surface-2, #f6f7f9); min-width:0; }
+.bill-read-section h4 { margin:0 0 6px; font-size:13px; }
+.bill-read-grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(130px,1fr)); gap:6px 12px; margin:0; }
+.bill-read-grid dt { font-size:11px; color:var(--muted, #667085); }
+.bill-read-grid dd { margin:1px 0 0; font-size:13px; font-weight:700; overflow-wrap:anywhere; }
+.bill-read-mark { margin-left:2px; color:var(--navy, #1d3557); font-weight:700; }
+.bill-read-note { display:block; font-size:11px; font-weight:400; color:var(--muted, #667085); margin-top:1px; }
+.bill-read-absent dd, .bill-read-not_read dd { font-weight:400; color:var(--muted, #667085); }
+.bill-read-review dd, .bill-read-review .bill-read-note { color:#b54708; }
+.bill-read-simulator { margin-top:8px; padding-top:6px; border-top:1px solid #e4e7ec; }
+.bill-read-subtitle { margin:0 0 4px; font-size:11px; font-weight:700; color:var(--muted, #667085); }
+.bill-read-more { margin-top:6px; }
+.bill-read-more > summary { cursor:pointer; font-size:12px; font-weight:600; color:var(--navy, #1d3557); padding:8px 0; min-height:32px; }
+.bill-read-more > .bill-read-grid { margin-top:4px; }
 .bill-read-correct { margin:0 0 12px; }
 .bill-read-correct > summary { cursor:pointer; font-weight:600; font-size:14px; padding:6px 0; }
 .bill-read-correct > .muted { margin:4px 0 8px; font-size:12px; }
-.bill-read-state { font-size:10px; text-transform:uppercase; letter-spacing:.03em; margin-left:4px; }
-.bill-read-note { display:block; font-size:11px; font-weight:400; color:var(--muted, #667085); margin-top:2px; }
-.bill-read-absent dd, .bill-read-not_read dd { font-weight:400; color:var(--muted, #667085); }
-.bill-read-review dd { color:#b54708; }
-.bill-read-calculated dd { font-style:italic; }
 .quote-warning { margin:12px 0 0; color:#b54708; font-weight:600; }
 .quote-detail { margin:16px 0 0; }
 .quote-detail summary { cursor:pointer; font-weight:700; padding:8px 0; }

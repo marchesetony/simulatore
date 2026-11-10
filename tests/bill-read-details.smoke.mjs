@@ -67,42 +67,43 @@ const rowOf = (all, id, label) => plain(section(all, id).rows.find((item) => ite
 assert.deepEqual(sections.map((item) => item.id), ["SUPPLY", "TECHNICAL", "CONTRACT", "ECONOMICS"]);
 
 // A. Identificazione fornitura.
-assert.deepEqual(rowOf(sections, "SUPPLY", "Fornitore attuale"), { label: "Fornitore attuale", value: "VENDITORE DI PROVA S.R.L.", state: "READ" });
+assert.deepEqual(rowOf(sections, "SUPPLY", "Fornitore"), { label: "Fornitore", value: "VENDITORE DI PROVA S.R.L.", state: "READ" });
 assert.equal(rowOf(sections, "SUPPLY", "POD").value, "IT000E00000000");
-assert.equal(rowOf(sections, "SUPPLY", "Tipologia cliente").value, "altri usi");
+assert.equal(rowOf(sections, "SUPPLY", "Uso").value, "altri usi");
 assert.equal(rowOf(sections, "SUPPLY", "Mercato").value, "MERCATO LIBERO");
-assert.equal(rowOf(sections, "SUPPLY", "Periodo fatturato").value, "01/09/2026 - 30/09/2026");
-assert.equal(rowOf(sections, "SUPPLY", "Indirizzo della fornitura"), undefined, "the reader does not read the address: no row is invented");
+assert.equal(rowOf(sections, "SUPPLY", "Periodo").value, "01/09/2026 - 30/09/2026");
+assert.equal(rowOf(sections, "SUPPLY", "Indirizzo"), undefined, "the reader does not read the address: no row is invented");
 
 // B. Caratteristiche tecniche, with the precision printed.
-assert.equal(rowOf(sections, "TECHNICAL", "Tensione di alimentazione").value, "380,0 V · bassa tensione (BT)");
+assert.equal(rowOf(sections, "TECHNICAL", "Tensione").value, "380,0 V · bassa tensione (BT)");
 assert.equal(rowOf(sections, "TECHNICAL", "Potenza impegnata").value, "15,0 kW");
-assert.equal(rowOf(sections, "TECHNICAL", "Potenza massima prelevata").value, "15,0 kW");
+assert.equal(rowOf(sections, "TECHNICAL", "Potenza massima").value, "15,0 kW");
 // 2. Missing data: declared not printed by the reader.
-assert.deepEqual(rowOf(sections, "TECHNICAL", "Potenza disponibile"), { label: "Potenza disponibile", value: NOT_IN_BILL, state: "ABSENT", note: "non stampato" });
+assert.deepEqual(rowOf(sections, "TECHNICAL", "Potenza disponibile"), { label: "Potenza disponibile", value: NOT_IN_BILL, state: "ABSENT", note: "non stampato", secondary: true });
 // 6. F0, F1, F2, F3 kept as read. Tony (10/11, "semplificazione"): the sum is not a second total, its gap is a discreet note.
-assert.equal(rowOf(sections, "TECHNICAL", "Consumo complessivo fatturato").value, "2.672,07 kWh");
-assert.match(rowOf(sections, "TECHNICAL", "Consumo complessivo fatturato").note, /F1 \+ F2 \+ F3 = 2\.672,08 kWh: scostamento di 0,01 kWh \(calcolato\)/);
-assert.equal(rowOf(sections, "TECHNICAL", "Consumo F1").value, "1.791,02 kWh");
-assert.equal(rowOf(sections, "TECHNICAL", "Consumo F2").value, "354,44 kWh");
-assert.equal(rowOf(sections, "TECHNICAL", "Consumo F3").value, "526,62 kWh");
+assert.equal(rowOf(sections, "TECHNICAL", "Consumo totale (F0)").value, "2.672,07 kWh");
+assert.match(rowOf(sections, "TECHNICAL", "Consumo totale (F0)").note, /F1 \+ F2 \+ F3 = 2\.672,08 kWh, scostamento 0,01 kWh \(calcolato\)/);
+assert.equal(rowOf(sections, "TECHNICAL", "Consumo totale (F0)").noteShown, true, "the gap is shown next to F0");
+assert.equal(rowOf(sections, "TECHNICAL", "F1").value, "1.791,02 kWh");
+assert.equal(rowOf(sections, "TECHNICAL", "F2").value, "354,44 kWh");
+assert.equal(rowOf(sections, "TECHNICAL", "F3").value, "526,62 kWh");
 assert.equal(rowOf(sections, "TECHNICAL", "Somma F1 + F2 + F3"), undefined, "no second consumption total");
 const matching = { ...structuredBill, f3Consumption: { ...structuredBill.f3Consumption, value: 526.61 } };
-assert.equal(rowOf(billReadSections(billOf(matching)), "TECHNICAL", "Consumo complessivo fatturato").note, undefined, "no note when F1+F2+F3 matches");
+assert.equal(rowOf(billReadSections(billOf(matching)), "TECHNICAL", "Consumo totale (F0)").note, undefined, "no note when F1+F2+F3 matches");
 assert.equal(structuredBill.billedConsumption.value, 2672.07, "the billed total is not altered");
 assert.deepEqual([structuredBill.f1Consumption.value, structuredBill.f2Consumption.value, structuredBill.f3Consumption.value], [1791.02, 354.44, 526.62]);
-assert.equal(rowOf(sections, "TECHNICAL", "Consumo annuo dichiarato").value, "29.306 kWh");
+assert.equal(rowOf(sections, "TECHNICAL", "Consumo annuo").value, "29.306 kWh");
 
 // C. Contratto. 4. The printed spread is shown as printed; the PCV as printed with its unit.
 assert.equal(rowOf(sections, "CONTRACT", "Offerta").value, "OFFERTA DI PROVA · codice CODICEPROVA01");
-assert.equal(rowOf(sections, "CONTRACT", "Decorrenza condizioni economiche").value, "01/05/2026");
+assert.equal(rowOf(sections, "CONTRACT", "Decorrenza condizioni").value, "01/05/2026");
 assert.equal(rowOf(sections, "CONTRACT", "Scadenza contratto").value, "Contratto a tempo indeterminato");
-assert.deepEqual(rowOf(sections, "CONTRACT", "Scadenza condizioni economiche"), { label: "Scadenza condizioni economiche", value: NOT_IN_BILL, state: "ABSENT", note: "stampato 'n.d.' nel Box: nessuna data" });
-assert.equal(rowOf(sections, "CONTRACT", "Tipologia prezzo").value, "a prezzo variabile");
-assert.equal(rowOf(sections, "CONTRACT", "Struttura del prezzo").value, "a fasce");
+assert.deepEqual(rowOf(sections, "CONTRACT", "Scadenza condizioni"), { label: "Scadenza condizioni", value: NOT_IN_BILL, state: "ABSENT", note: "stampato 'n.d.' nel Box: nessuna data" });
+assert.equal(rowOf(sections, "CONTRACT", "Prezzo").value, "a prezzo variabile");
+assert.equal(rowOf(sections, "CONTRACT", "Fasce").value, "a fasce");
 assert.equal(rowOf(sections, "CONTRACT", "Indice").value, "PUN");
-assert.deepEqual(rowOf(sections, "CONTRACT", "Spread contrattuale (stampato)"), { label: "Spread contrattuale (stampato)", value: "0,012 €/kWh", state: "READ" });
-const pcv = rowOf(sections, "CONTRACT", "PCV / commercializzazione");
+assert.deepEqual(rowOf(sections, "CONTRACT", "Spread"), { label: "Spread", value: "0,012 €/kWh", state: "READ" });
+const pcv = rowOf(sections, "CONTRACT", "PCV");
 assert.equal(pcv.state, "READ");
 assert.equal(pcv.value, "10,392500 €/POD/mese · importo 10,39 €");
 assert.equal(rowOf(sections, "CONTRACT", "Quota variabile smart (CVS)").value, "0,007713 €/kWh · importo 20,61 €");
@@ -110,63 +111,83 @@ assert.equal(rowOf(sections, "CONTRACT", "Quota variabile voci di trasporto").va
 
 // D. Economics. 5. Printed values and the simulator's grouping are separate and labelled.
 const economics = section(sections, "ECONOMICS").rows;
-assert.equal(rowOf(sections, "ECONOMICS", "Spesa per la vendita di energia").value, "722,35 €");
-assert.equal(rowOf(sections, "ECONOMICS", "Spesa per la rete e gli oneri generali di sistema").value, "249,22 €");
-const network = rowOf(sections, "ECONOMICS", "di cui spesa per la rete e il trasporto");
+assert.equal(rowOf(sections, "ECONOMICS", "Vendita").value, "722,35 €");
+assert.equal(rowOf(sections, "ECONOMICS", "Rete e oneri (stampati insieme)").value, "249,22 €");
+const network = rowOf(sections, "ECONOMICS", "Rete e trasporto");
 assert.equal(network.value, "134,30 €");
 assert.equal(network.state, "CALCULATED", "the network share is a difference: labelled calculated");
-assert.equal(rowOf(sections, "ECONOMICS", "Oneri generali di sistema").value, "114,92 €");
+assert.equal(rowOf(sections, "ECONOMICS", "Oneri di sistema").value, "114,92 €");
 assert.equal(rowOf(sections, "ECONOMICS", "Accise").value, "33,40 €");
 assert.equal(rowOf(sections, "ECONOMICS", "IVA").value, "221,09 €");
-assert.deepEqual(rowOf(sections, "ECONOMICS", "Totale fatturato"), { label: "Totale fatturato", value: "1.226,06 €", state: "READ" }, "the components add up: the total once, no note");
+assert.deepEqual(rowOf(sections, "ECONOMICS", "Totale fattura"), { label: "Totale fattura", value: "1.226,06 €", state: "READ" }, "the components add up: the total once, no note");
 assert.equal(rowOf(sections, "ECONOMICS", "Somma delle componenti stampate"), undefined, "the total is not repeated");
 // 8. The simulator's grouping only where it differs from what the bill prints, always labelled.
-const normalized = economics.filter((item) => /classificazione del simulatore/.test(item.label)).map(plain);
-assert.deepEqual(normalized.map((item) => item.label), ["Vendita (classificazione del simulatore)", "Rete e trasporto (classificazione del simulatore)"], "equal groupings (oneri, accise e IVA) are not repeated");
-assert.ok(normalized.every((item) => item.state === "CALCULATED" && /in fattura \d/.test(item.note)));
-assert.match(section(sections, "ECONOMICS").note, /dove differisce dalla fattura/);
+const normalized = economics.filter((item) => item.group === "SIMULATOR").map(plain);
+assert.deepEqual(normalized.map((item) => item.label), ["Vendita", "Rete e trasporto"], "equal groupings (oneri, accise e IVA) are not repeated");
+assert.ok(normalized.every((item) => item.state === "CALCULATED" && /^in fattura \d/.test(item.note)));
 // 1, 2, 7. No value shown twice: one row per label in the whole screen.
-const labels = sections.flatMap((entry) => entry.rows.map((item) => item.label));
+// Tony (10/11/2026, "ottimizzazione grafica"): the four compact sections, short labels, the bill's values once; the
+// simulator's different groupings listed apart in their own block.
+assert.deepEqual(sections.map((item) => item.title), ["Fornitura", "Consumi e potenza", "Contratto attuale", "Costi della bolletta"]);
+const labels = sections.flatMap((entry) => entry.rows.filter((item) => item.group !== "SIMULATOR").map((item) => item.label));
 assert.deepEqual(labels.filter((label, index) => labels.indexOf(label) !== index), []);
-for (const label of ["Intestatario", "Fornitore attuale", "POD", "Periodo fatturato", "Totale fatturato", "Consumo complessivo fatturato"]) assert.equal(labels.filter((item) => item === label).length, 1, label);
+for (const label of ["Intestatario", "Fornitore", "POD", "Periodo", "Totale fattura", "Consumo totale (F0)"]) assert.equal(labels.filter((item) => item === label).length, 1, label);
+// No information lost: the secondary values are still in their section, under "Altri dettagli".
+const secondary = (id) => section(sections, id).rows.filter((item) => item.secondary).map((item) => `${item.label}=${plain(item).value}`);
+assert.deepEqual(secondary("SUPPLY"), ["Mercato=MERCATO LIBERO"]);
+assert.deepEqual(secondary("TECHNICAL"), ["Tensione=380,0 V · bassa tensione (BT)", `Potenza disponibile=${NOT_IN_BILL}`], "low voltage and an unprinted available power are secondary");
+assert.deepEqual(secondary("CONTRACT"), [`Attivazione=${NOT_READ}`, "Decorrenza condizioni=01/05/2026"]);
+assert.deepEqual(secondary("ECONOMICS"), ["Rete e oneri (stampati insieme)=249,22 €"], "rete and oneri printed together, once shown apart");
+for (const label of ["Intestatario", "Fornitore", "POD", "Periodo", "Consumo totale (F0)", "F1", "F2", "F3", "Potenza impegnata", "Potenza massima", "Prezzo", "Fasce", "Indice", "Spread", "PCV", "Scadenza condizioni", "Scadenza contratto", "Vendita", "Rete e trasporto", "Oneri di sistema", "Accise", "IVA", "Totale fattura"]) {
+  const found = sections.flatMap((entry) => entry.rows).find((item) => item.label === label && item.group !== "SIMULATOR");
+  assert.ok(found && !found.secondary, `${label} is in view`);
+}
+// A zero commercial charge goes under "Altri dettagli"; a medium-voltage supply keeps its tension in view.
+const zeroLines = structuredBill.economicChargeLines.map((line) => /smart/i.test(`${line.rawDescription ?? ""} ${line.description}`) ? { ...line, amount: "0", rawAmount: "0,00", unitPrice: "0", rawUnitPrice: "0,000000" } : line);
+const zeroRow = rowOf(billReadSections(billOf({ ...structuredBill, economicChargeLines: zeroLines })), "CONTRACT", "Quota variabile smart (CVS)");
+assert.equal(zeroRow.secondary, true, "a zero charge is not in view");
+assert.equal(rowOf(sections, "CONTRACT", "Quota variabile smart (CVS)").secondary, undefined, "a charge with an amount stays in view");
+const mv = { ...structuredBill, voltageLevel: { ...structuredBill.voltageLevel, value: "MV" }, supplyProfile: { ...structuredBill.supplyProfile, nominalVoltage: { ...structuredBill.supplyProfile.nominalVoltage, rawValue: "15.000 V" } } };
+assert.equal(rowOf(billReadSections(billOf(mv)), "TECHNICAL", "Tensione").secondary, undefined, "medium voltage stays in view");
 // 5, 6. What the bill prints for the contract, so the screen adds a calculated value only where it is missing or different.
 assert.deepEqual(printedContractValues(billOf(structuredBill)), { priceType: "a prezzo variabile", priceStructure: "a fasce", spread: "0,012 €/kWh", monthlyPcv: 10.3925 });
 
 // 3. Read and calculated are never mixed: every calculated row says so.
-for (const item of sections.flatMap((entry) => entry.rows)) if (item.state === "CALCULATED") assert.match(item.note ?? "", /Calcolat|Somma|classificazione|Raggruppamento|Dedott/i, item.label);
+// The simulator's groupings are under their own heading ("Classificazione del simulatore, dove diversa dalla fattura").
+for (const item of sections.flatMap((entry) => entry.rows)) if (item.state === "CALCULATED" && item.group !== "SIMULATOR") assert.match(item.note ?? "", /Calcolat|Somma|classificazione|Raggruppamento|Dedott/i, item.label);
 
 // 3. "Da verificare" only when the data mark it.
 const uncertain = { ...structuredBill, f2Consumption: { ...structuredBill.f2Consumption, status: "NEEDS_REVIEW" } };
-const uncertainRow = rowOf(billReadSections(billOf(uncertain)), "TECHNICAL", "Consumo F2");
+const uncertainRow = rowOf(billReadSections(billOf(uncertain)), "TECHNICAL", "F2");
 assert.equal(uncertainRow.state, "REVIEW");
 assert.equal(uncertainRow.value, "354,44 kWh", "the value stays as read");
-assert.equal(rowOf(sections, "TECHNICAL", "Consumo F2").state, "READ");
+assert.equal(rowOf(sections, "TECHNICAL", "F2").state, "READ");
 
 // 2. Not read and not declared absent: "Non letto", never "Non presente nella fattura".
 const bare = parseBillReading({ ...reading, potenzaMassimaPrelevataKw: "", mercato: "", spread: "", assenti: [] });
 const bareSections = billReadSections(billOf(toStructuredBill({ reading: bare, checks: [], reread: false })));
-assert.deepEqual(rowOf(bareSections, "TECHNICAL", "Potenza massima prelevata"), { label: "Potenza massima prelevata", value: NOT_READ, state: "NOT_READ" });
-assert.equal(rowOf(bareSections, "CONTRACT", "Spread contrattuale (stampato)").value, NOT_READ);
+assert.deepEqual(rowOf(bareSections, "TECHNICAL", "Potenza massima"), { label: "Potenza massima", value: NOT_READ, state: "NOT_READ" });
+assert.equal(rowOf(bareSections, "CONTRACT", "Spread").value, NOT_READ);
 assert.equal(rowOf(bareSections, "TECHNICAL", "Potenza disponibile").state, "NOT_READ");
 
 // Conditions without an end date are not a contract without an end date.
 const openConditions = parseBillReading({ ...reading, scadenzaCondizioni: "tempo indeterminato", scadenzaContratto: "", assenti: [{ campo: "scadenzaContratto", motivo: "non stampato" }] });
 const openSections = billReadSections(billOf(toStructuredBill({ reading: openConditions, checks: [], reread: false })));
-assert.equal(rowOf(openSections, "CONTRACT", "Scadenza condizioni economiche").value, "Condizioni economiche a tempo indeterminato");
+assert.equal(rowOf(openSections, "CONTRACT", "Scadenza condizioni").value, "Condizioni economiche a tempo indeterminato");
 assert.equal(rowOf(openSections, "CONTRACT", "Scadenza contratto").value, NOT_IN_BILL);
 
 // 7. Other bill types: a household summary bill (no detail rows) and a gas bill.
 const household = parseBillReading({ ...reading, tipoCliente: "DOMESTICO", tipoClienteStampato: "Domestico residente", tensioneStampata: "", dettaglio: [], scontrino: reading.scontrino, pcvMensile: "", assenti: [] });
 const householdSections = billReadSections(billOf(toStructuredBill({ reading: household, checks: [], reread: false })));
-assert.equal(rowOf(householdSections, "SUPPLY", "Tipologia cliente").value, "Domestico residente");
-assert.equal(rowOf(householdSections, "TECHNICAL", "Tensione di alimentazione").value, "Bassa tensione (BT)");
+assert.equal(rowOf(householdSections, "SUPPLY", "Uso").value, "Domestico residente");
+assert.equal(rowOf(householdSections, "TECHNICAL", "Tensione").value, "Bassa tensione (BT)");
 assert.equal(rowOf(householdSections, "ECONOMICS", "Accise e IVA").value, "254,49 €", "without detail rows the printed 'Accise e IVA' is shown as printed");
-assert.equal(rowOf(householdSections, "ECONOMICS", "Oneri generali di sistema").state, "ABSENT");
+assert.equal(rowOf(householdSections, "ECONOMICS", "Oneri di sistema").state, "ABSENT");
 const gas = parseBillReading({ ...reading, vettore: "GAS", pod: "", pdr: "01234567890123", consumoFatturato: "120", consumoSmc: "120", consumoF1: "", consumoF2: "", consumoF3: "", consumoAnnuo: "1.400", dettaglio: [], assenti: [] });
 const gasSections = billReadSections(billOf(toStructuredBill({ reading: gas, checks: [], reread: false }), "GAS"), []);
 assert.equal(rowOf(gasSections, "SUPPLY", "PDR").value, "01234567890123");
-assert.equal(rowOf(gasSections, "TECHNICAL", "Consumo complessivo fatturato").value, "120 Smc");
-assert.equal(rowOf(gasSections, "TECHNICAL", "Consumo F1"), undefined);
+assert.equal(rowOf(gasSections, "TECHNICAL", "Consumo totale (F0)").value, "120 Smc");
+assert.equal(rowOf(gasSections, "TECHNICAL", "F1"), undefined);
 assert.equal(rowOf(gasSections, "TECHNICAL", "Potenza impegnata"), undefined);
 // A bill read before the structured reading existed shows no sections, as before.
 assert.deepEqual(billReadSections({ fields: {}, structuredBill: null, analystReview: review(null), resolvedVector: "EE" }), []);
@@ -181,12 +202,14 @@ const flow = await readFile("app/components/QuickQuoteFlow.tsx", "utf8");
 assert.match(flow, /<BillReadDetails sections=\{billReadSections\(readBill\)\} calculated=\{calculatedFacts\(readBill\)\} \/>/);
 assert.match(flow, /\{ name: "customerName", label: "Intestatario" \}, \{ name: "supplier", label: "Fornitore attuale" \}/);
 assert.match(flow, /<BillSummary context=\{quote\.context\} bill=\{quote\.bill\} \/>/);
-assert.match(flow, /label: `Spread sul \$\{index\} \(calcolato\)`/, "the calculated spread stays labelled as calculated");
+// Tony (10/11/2026, "ottimizzazione grafica"): the calculated values carry the legend's asterisk, in the section they belong to.
+assert.match(flow, /section: "CONTRACT" as const, label: `Spread sul \$\{index\}`/, "the calculated spread is a calculated fact of the contract");
+assert.match(flow, /section: "CONTRACT" as const, secondary: true, label: "PUN GME del mese di riferimento"/, "the GME PUN stays, under Altri dettagli");
 // Tony (10/11/2026, "semplificazione"): the printed spread first; calculated price type, structure, spread and PCV only when
 // the bill does not print them (or prints a different PCV); the editable fields folded, opened when one is empty.
-assert.match(flow, /\.\.\.\(printed\.spread \? \[\] : \[\{ label: `Spread sul \$\{index\} \(calcolato\)`/);
-assert.match(flow, /\.\.\.\(printed\.priceType \? \[\] : \[\{ label: "Tipo di prezzo"/);
-assert.match(flow, /\.\.\.\(printed\.priceStructure \? \[\] : \[\{ label: `Struttura del \$\{index\}`/);
+assert.match(flow, /\.\.\.\(printed\.spread \? \[\] : \[\{ section: "CONTRACT" as const, label: `Spread sul \$\{index\}`/);
+assert.match(flow, /\.\.\.\(printed\.priceType \? \[\] : \[\{ section: "CONTRACT" as const, label: "Tipo di prezzo"/);
+assert.match(flow, /\.\.\.\(printed\.priceStructure \? \[\] : \[\{ section: "CONTRACT" as const, label: `Struttura del \$\{index\}`/);
 assert.match(flow, /const pcvShown = pcv === null \? printed\.monthlyPcv === null : printed\.monthlyPcv === null \|\| Math\.abs\(printed\.monthlyPcv - pcv\) >= 0\.005;/);
 assert.match(flow, /<details className="bill-read-correct" open=\{correctionOpen\} onToggle=\{\(event\) => setCorrectionOpen\(event\.currentTarget\.open\)\}>/);
 assert.match(flow, /setCorrectionOpen\(FIELDS\.some\(\(field\) => !\(next\[field\.name\] \?\? ""\)\.trim\(\)\)\)/, "opened when a field to confirm is empty");
@@ -194,7 +217,10 @@ assert.match(flow, /if \(missing\.length\) \{ setCorrectionOpen\(true\);/, "and 
 assert.equal((flow.match(/startReview\(document\);/g) ?? []).length, 3, "upload, archive and re-read open the review the same way");
 assert.doesNotMatch(flow, /readingAbsent\?\.some/, "the 'not printed' reasons are said once, on their rows");
 const component = await readFile("app/components/BillReadDetails.tsx", "utf8");
-assert.match(component, /Valori calcolati o classificati dal simulatore/);
-assert.match(component, /READ: "Letto", ABSENT: "Non presente", REVIEW: "Da verificare", CALCULATED: "Calcolato", NOT_READ: "Non letto"/);
+assert.match(component, /calcolato dal simulatore · gli altri valori sono quelli stampati in fattura/, "one legend instead of a label on every row");
+assert.match(component, /<span className="visually-hidden"> \(calcolato dal simulatore\)<\/span>/, "the asterisk is read out by screen readers");
+assert.match(component, /<summary>Altri dettagli \(\{more\.length\}\)<\/summary>/, "secondary values one click away");
+assert.match(component, /Classificazione del simulatore, dove diversa dalla fattura/);
+assert.match(component, /review && !note \? <small className="bill-read-note">da verificare<\/small>/, "an uncertain value still says so");
 
 console.log("bill-read-details OK");

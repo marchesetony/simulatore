@@ -340,16 +340,16 @@ function calculatedFacts(bill: BillDocumentModel): readonly CalculatedFact[] {
   const index = gas ? "PSV" : "PUN";
   const pcvShown = pcv === null ? printed.monthlyPcv === null : printed.monthlyPcv === null || Math.abs(printed.monthlyPcv - pcv) >= 0.005;
   return [
-    { label: "Segmento cliente", value: type === "RESIDENTIAL" ? <span className="cte-segment-consumer">Consumer</span> : type === "NON_RESIDENTIAL" ? <span className="cte-segment-business">Business</span> : "Non determinato", note: "Classificazione del simulatore" },
-    ...(withoutOfferBox(bill) ? [{ label: "Box dell'offerta", value: NOT_IN_DETAIL, note: "Fattura di dettaglio" }] : []),
-    ...(printed.priceType ? [] : [{ label: "Tipo di prezzo", value: priceType(bill), note: "Classificazione del simulatore: tipologia non stampata" }]),
-    ...(indexedBill(bill) && !gas ? [{ label: "PUN GME del mese di riferimento", value: referencePun(bill), note: "Dall'archivio GME, non dalla fattura" }] : []),
+    { section: "SUPPLY", label: "Segmento cliente", value: type === "RESIDENTIAL" ? <span className="cte-segment-consumer">Consumer</span> : type === "NON_RESIDENTIAL" ? <span className="cte-segment-business">Business</span> : "Non determinato", note: "Classificazione del simulatore" },
+    ...(withoutOfferBox(bill) ? [{ section: "CONTRACT" as const, label: "Box dell'offerta", value: NOT_IN_DETAIL, note: "Fattura di dettaglio" }] : []),
+    ...(printed.priceType ? [] : [{ section: "CONTRACT" as const, label: "Tipo di prezzo", value: priceType(bill), note: "Classificazione del simulatore: tipologia non stampata" }]),
+    ...(indexedBill(bill) && !gas ? [{ section: "CONTRACT" as const, secondary: true, label: "PUN GME del mese di riferimento", value: referencePun(bill), note: "Dall'archivio GME, non dalla fattura" }] : []),
     ...(indexedBill(bill) ? [
       // The printed spread comes first (contract section); the one calculated from the PUN only when the bill does not print it.
-      ...(printed.spread ? [] : [{ label: `Spread sul ${index} (calcolato)`, value: gas ? "Non calcolato per il gas" : billSpread(bill), note: "Prezzo dell'energia letto meno il PUN GME: lo spread contrattuale non è stampato" }]),
-      ...(printed.priceStructure ? [] : [{ label: `Struttura del ${index}`, value: gas ? "Mensile" : punStructure(bill), note: "Classificazione del simulatore: struttura non stampata" }]),
+      ...(printed.spread ? [] : [{ section: "CONTRACT" as const, label: `Spread sul ${index}`, value: gas ? "Non calcolato per il gas" : billSpread(bill), note: "Prezzo dell'energia letto meno il PUN GME: lo spread contrattuale non è stampato" }]),
+      ...(printed.priceStructure ? [] : [{ section: "CONTRACT" as const, label: `Struttura del ${index}`, value: gas ? "Mensile" : punStructure(bill), note: "Classificazione del simulatore: struttura non stampata" }]),
     ] : []),
-    ...(pcvShown ? [{ label: "PCV mensile usata nel confronto", value: pcv === null ? "Non determinata" : `${EURO.format(pcv)} al mese`, note: printed.monthlyPcv === null ? "Calcolata dalle righe lette" : `Calcolata dalle righe lette: diversa dalla PCV stampata (${EURO.format(printed.monthlyPcv)} al mese)` }] : []),
+    ...(pcvShown ? [{ section: "CONTRACT" as const, label: "PCV mensile usata nel confronto", value: pcv === null ? "Non determinata" : `${EURO.format(pcv)} al mese`, note: printed.monthlyPcv === null ? "Calcolata dalle righe lette" : `Calcolata dalle righe lette: diversa dalla PCV stampata (${EURO.format(printed.monthlyPcv)} al mese)` }] : []),
   ];
 }
 
@@ -1165,7 +1165,7 @@ export default function QuickQuoteFlow({ readonly, showExcluded = false }: { rea
       </>}
     </section> : null}
     {step === "review" && draft ? <section className="ui-card">
-      <h3>Dati letti dalla bolletta</h3><p className="muted">Li usiamo per trovare le CTE adatte. Se vedi un errore evidente puoi correggerlo, altrimenti prosegui.</p>
+      <h3>Dati letti dalla bolletta</h3><p className="muted">Usati per trovare le CTE adatte.</p>
       {analystRetry(draft)}
       {/* Tony (5/11/2026): what does not add up after the reading, or is not printed, is said here instead of a wrong number. */}
       {readBill?.structuredBill?.readingChecks?.length ? <div className="warning-text" role="status"><strong>Da controllare sulla bolletta</strong><ul>{readBill.structuredBill.readingChecks.map((check) => <li key={check}>{check}</li>)}</ul></div> : null}
