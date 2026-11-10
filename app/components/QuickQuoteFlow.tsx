@@ -7,7 +7,7 @@ import { EmptyState, ErrorState, LoadingState } from "./UiStates";
 import { BillReadDetails, type CalculatedFact } from "./BillReadDetails";
 import { billReadSections } from "../lib/ui/bill-read-details";
 import { BillArchivePicker } from "./BillArchivePicker";
-import { approvedBillEntry, archiveLoadError, pendingBillEntry, type ArchiveList } from "../lib/ui/bill-archive";
+import { requestBillDelete, approvedBillEntry, archiveLoadError, canDeleteBills, deleteConfirmText, deleteReportText, deleteSelectedBills, deleteSummaryText, pendingBillEntry, type ArchiveList, type BillArchiveEntry, type BillDeleteReport } from "../lib/ui/bill-archive";
 import { downloadExport, MAX_UPLOAD_BYTES, requestJson, requestUpload, toUiError, UiApiError } from "../lib/ui/client";
 import { buildQuoteReceipt, effectiveBillSpread, isSameOffer, regulatedVerification, sameOfferDifferences, type QuoteReceipt, type RegulatedDomain } from "../lib/quote/receipt";
 import { annualSaving, annualSavingUnderDiscount } from "../lib/quote/annual-saving";
@@ -936,6 +936,33 @@ export default function QuickQuoteFlow({ readonly, showExcluded = false }: { rea
   }, []);
   // Reloaded every time the operator is back on the first step, so a bill uploaded and left unconfirmed is listed.
   useEffect(() => { if (step === "bill") void loadArchive(); }, [step, loadArchive]);
+  // Tony (10/11/2026): selective deletion from "Bollette archiviate". Nothing is deleted before the dedicated confirmation;
+  // each bill goes through DELETE /api/bills/[id] and its real outcome is listed.
+  // The deletion controls follow the role the server verified (same rule as DELETE /api/bills/[id]); the server still
+  // decides for every document.
+  const [canDelete, setCanDelete] = useState(false);
+  useEffect(() => { void requestJson<{ readonly role?: string | null }>("/api/foundation/context").then((context) => setCanDelete(canDeleteBills(context.role))).catch(() => setCanDelete(false)); }, []);
+  const [selectedBills, setSelectedBills] = useState<ReadonlySet<string>>(new Set());
+  const [confirmSelected, setConfirmSelected] = useState(false);
+  const [deletingSelected, setDeletingSelected] = useState(false);
+  const [deleteReports, setDeleteReports] = useState<readonly BillDeleteReport[]>([]);
+  const archivedEntries: readonly BillArchiveEntry[] = [...(pendingBills.status === "ready" ? pendingBills.entries : []), ...(approvedBills.status === "ready" ? approvedBills.entries : [])];
+  const selectedEntries = archivedEntries.filter((entry) => selectedBills.has(entry.id));
+  const archivedCount = pendingBills.status === "ready" && approvedBills.status === "ready" ? archivedEntries.length : null;
+  // A selection only ever holds bills of the lists just loaded.
+  useEffect(() => { const ids = new Set([...(pendingBills.status === "ready" ? pendingBills.entries : []), ...(approvedBills.status === "ready" ? approvedBills.entries : [])].map((entry) => entry.id)); setSelectedBills((current) => { const next = new Set([...current].filter((id) => ids.has(id))); return next.size === current.size ? current : next; }); }, [pendingBills, approvedBills]);
+  const toggleBill = (id: string) => { setConfirmSelected(false); setSelectedBills((current) => { const next = new Set(current); if (next.has(id)) next.delete(id); else next.add(id); return next; }); };
+  const toggleBills = (ids: readonly string[], select: boolean) => { setConfirmSelected(false); setSelectedBills((current) => { const next = new Set(current); for (const id of ids) { if (select) next.add(id); else next.delete(id); } return next; }); };
+  const deleteSelected = async () => {
+    if (!canDelete || readonly || deletingSelected || !confirmSelected || !selectedEntries.length) return;
+    setDeletingSelected(true); setError(undefined);
+    try {
+      const reports = await deleteSelectedBills(selectedEntries, (id) => requestBillDelete(id));
+      setDeleteReports(reports);
+      setSelectedBills(new Set(reports.filter((report) => report.result !== "DELETED").map((report) => report.id)));
+      await loadArchive();
+    } finally { setConfirmSelected(false); setDeletingSelected(false); }
+  };
   // Tony (31/10): "serve un tasto cancella le bollette". Two clicks: Cancella, then Conferma.
   const deleteBill = async (billId: string) => {
     setDeleting(true); setError(undefined);
@@ -943,14 +970,8 @@ export default function QuickQuoteFlow({ readonly, showExcluded = false }: { rea
     catch (cause) { setError(message(cause)); }
     finally { setDeleting(false); }
   };
-  // Tony (5/11): "aggiungi anche un tasto per cancellare tutte le bollette". Two clicks: Cancella tutte, then Conferma.
-  const [confirmAll, setConfirmAll] = useState(false);
-  const deleteAllBills = async () => {
-    setDeleting(true); setError(undefined);
-    try { const result = await requestJson<{ readonly deleted: number; readonly failed: number }>("/api/bills", { method: "DELETE" }); setConfirmAll(false); if (result.failed > 0) setError(`${result.failed} bollette non sono state cancellate: riprova.`); await loadArchive(); }
-    catch (cause) { setError(message(cause)); }
-    finally { setDeleting(false); }
-  };
+  // Tony (10/11/2026): the legacy "Cancella tutte" (5/11) is disabled, in the screen and on the server (DELETE /api/bills
+  // answers 410 without deleting): bills are deleted only one by one, after selection and confirmation.
 
   type Prepared = { readonly context: Context; readonly candidates: readonly Candidate[]; readonly unlisted?: readonly Unlisted[]; readonly canAuthorizeCte?: boolean };
   const emptyComparison = (context: Context): ComparisonModel => ({ comparisonId: "", fingerprint: "", tenantId: "", vector: context.vector, results: [], excludedOffers: [], ranking: [], warnings: [] });
@@ -1103,19 +1124,27 @@ export default function QuickQuoteFlow({ readonly, showExcluded = false }: { rea
     {step === "bill" ? <section className="ui-card quote-upload">
       {pending === "upload" || pending === "open" ? <LoadingState label={pending === "open" ? "Apertura della bolletta" : "Lettura della bolletta in corso"} /> : <>
         <label className="button primary quote-upload-button">Carica bolletta (PDF)<input className="visually-hidden" type="file" accept="application/pdf" onChange={(event) => void upload(event)} disabled={readonly || Boolean(pending)} /></label>
-        <div className="form-field"><span className="form-label">Oppure riprendi una bolletta già caricata</span>
+        {/* Tony (10/11/2026): "Bollette archiviate" is a collapsible section, closed when the page opens. */}
+        <details className="form-field bill-archive-panel"><summary className="form-label">Bollette archiviate{archivedCount !== null ? ` (${archivedCount})` : ""}</summary>
+          <p className="muted">Riprendi una bolletta già caricata senza ripetere il caricamento del PDF.</p>
           {/* Tony (31/10): "inserire un campo ricerca, e elencare in ordine alfabetico crescente". */}
           <input type="search" value={billQuery} onChange={(event) => setBillQuery(event.target.value)} placeholder="Cerca per intestatario, POD, periodo o fornitore" aria-label="Cerca bolletta" disabled={Boolean(pending)} />
-          <BillArchivePicker pendingBills={pendingBills} approvedBills={approvedBills} query={billQuery} disabled={Boolean(pending)} onOpen={(id) => void openBill(id)} onRetry={() => void loadArchive()} />
-          {archive.length ? <details className="quote-bill-manage"><summary>Cancella bollette caricate</summary>
+          <BillArchivePicker pendingBills={pendingBills} approvedBills={approvedBills} query={billQuery} disabled={Boolean(pending) || deletingSelected} onOpen={(id) => void openBill(id)} onRetry={() => void loadArchive()} canDelete={canDelete && !readonly} selected={selectedBills} onToggle={toggleBill} onToggleMany={toggleBills} />
+          {canDelete && !readonly && selectedEntries.length ? <div className="bill-archive-delete" role="group" aria-label="Cancellazione delle bollette selezionate">
+            {confirmSelected ? <>
+              <p className="warning-text"><strong>{deleteConfirmText(selectedEntries.length)}</strong></p>
+              <p className="muted">Le bollette da cui è stata creata una proposta non vengono cancellate: l&apos;esito indica quante proposte eliminare prima dalla sezione «Proposte».</p>
+              <ul>{selectedEntries.map((entry) => <li key={entry.id}>{entry.holder} · POD {entry.pod} · {entry.period}{entry.invoiceNumber ? ` · Fattura ${entry.invoiceNumber}` : ""} · ID {entry.shortId} · {entry.stateLabel}</li>)}</ul>
+              <div className="button-row"><button className="button compact danger" type="button" onClick={() => void deleteSelected()} disabled={deletingSelected}>{deletingSelected ? "Cancellazione…" : `Conferma: cancella ${selectedEntries.length === 1 ? "1 bolletta" : `${selectedEntries.length} bollette`}`}</button><button className="button compact secondary" type="button" onClick={() => setConfirmSelected(false)} disabled={deletingSelected}>Annulla</button></div>
+            </> : <div className="button-row"><button className="button compact danger" type="button" onClick={() => { setDeleteReports([]); setConfirmSelected(true); }} disabled={Boolean(pending)}>Cancella selezionate ({selectedEntries.length})</button><button className="button compact secondary" type="button" onClick={() => setSelectedBills(new Set())}>Deseleziona</button></div>}
+          </div> : null}
+          {deleteReports.length ? <div className="bill-archive-report" role="status"><p><strong>{deleteSummaryText(deleteReports)}</strong></p><ul>{deleteReports.map((report) => <li key={report.id} className={report.result === "DELETED" ? "inline-success" : "warning-text"}>{report.label}: {deleteReportText(report)}</li>)}</ul></div> : null}
+          {canDelete && !readonly && archive.length ? <details className="quote-bill-manage"><summary>Cancella bollette caricate</summary>
             <p className="muted">Le bollette con data di oltre 4 mesi fa vengono eliminate in automatico.</p>
-            <div className="button-row">{confirmAll
-              ? <><span>Cancellare tutte le bollette caricate? Non si può annullare.</span><button className="button compact danger" type="button" onClick={() => void deleteAllBills()} disabled={readonly || deleting}>{deleting ? "Cancellazione…" : "Conferma: cancella tutte"}</button><button className="button compact secondary" type="button" onClick={() => setConfirmAll(false)} disabled={deleting}>Annulla</button></>
-              : <button className="button compact danger" type="button" onClick={() => setConfirmAll(true)} disabled={readonly || deleting}>Cancella tutte le bollette</button>}</div>
             <ul>{billChoices(archive, billQuery).map((bill) => <li key={bill.id}><span>{billLabel(bill)}</span>{deleteId === bill.id
               ? <span className="button-row"><button className="button compact danger" type="button" onClick={() => void deleteBill(bill.id)} disabled={readonly || deleting}>{deleting ? "Cancellazione…" : "Conferma"}</button><button className="button compact secondary" type="button" onClick={() => setDeleteId(null)} disabled={deleting}>Annulla</button></span>
               : <button className="button compact danger" type="button" onClick={() => setDeleteId(bill.id)} disabled={readonly || deleting}>Cancella</button>}</li>)}</ul>
-          </details> : null}</div>
+          </details> : null}</details>
       </>}
     </section> : null}
     {step === "review" && draft ? <section className="ui-card">

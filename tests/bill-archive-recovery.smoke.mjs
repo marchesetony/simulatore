@@ -33,7 +33,8 @@ console.log("BILL_ARCHIVE_PENDING=PASS");
 const approved = approvedBillEntry(approvedSummary());
 assert.deepEqual({ holder: approved.holder, pod: approved.pod, period: approved.period, state: approved.state, label: approved.stateLabel, openable: approved.openable },
   { holder: "ALFA PROVA SPA", pod: "IT000E11111111", period: "01/08/2026 - 31/08/2026", state: "APPROVED", label: "Approvata", openable: true });
-assert.equal(archiveEntryLabel(approved), "ALFA PROVA SPA · POD IT000E11111111 · 01/08/2026 - 31/08/2026 · Approvata");
+// Tony (10/11/2026, fasi A+B): the label also carries the short archive ID (and the invoice number when read).
+assert.equal(archiveEntryLabel(approved), "ALFA PROVA SPA · POD IT000E11111111 · 01/08/2026 - 31/08/2026 · ID billappr · Approvata");
 assert.equal(approvedBillEntry(approvedSummary({ supplyReference: null, period: { periodStart: null, periodEnd: null } })).pod, "Non letto");
 assert.equal(periodLabel(null, null, "dal 01/09/2026 al 30/09/2026"), "dal 01/09/2026 al 30/09/2026", "a period not in ISO form is shown as read");
 console.log("BILL_ARCHIVE_APPROVED=PASS");
@@ -106,6 +107,6 @@ const unapprovedRepo = { async get() { return { id: "bill-pending-1", tenantId: 
 await assert.rejects(() => resolveTrustedElectricityContextFromSourceBill(unapprovedRepo, "tenant_prova-a", { sourceBill: { billId: "bill-pending-1", version: "v1" } }), (error) => error.code === "SOURCE_BILL_NOT_APPROVED");
 console.log("BILL_ARCHIVE_NO_SIMULATION_UNAPPROVED=PASS");
 
-// "Cancella tutte" is unchanged in this step (the server also deletes bills not listed: see report).
-assert.match(flow, /Cancellare tutte le bollette caricate\? Non si può annullare\./);
+// Tony (10/11/2026, messa in sicurezza): the legacy "Cancella tutte" is disabled (see bill-archive-delete.smoke.mjs).
+assert.doesNotMatch(flow, /Cancellare tutte le bollette caricate\? Non si può annullare\./);
 console.log("bill archive recovery OK");

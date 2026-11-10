@@ -10,7 +10,7 @@ import { MAX_UPLOAD_BYTES, uploadedFile } from "../../lib/foundation/large-uploa
 import { attachOfficialPun, ensureOfficialPunForBill } from "../../lib/market/pun-reference";
 import { billPunRefresh } from "../../lib/market-refresh/bill-pun";
 import { billInScope, billVisibilityScope } from "../../lib/foundation/bill-visibility";
-import { billTooOld, deleteBillPermanently } from "../../lib/foundation/bill-retention";
+import { billTooOld } from "../../lib/foundation/bill-retention";
 import { isBillFeature, resolveBillFeaturePermissions, sanitizeBillForFeatureAccess, type BillFeature } from "../../lib/foundation/bill-feature-permissions";
 
 const CORRELATION_ID = "foundation-bills";
@@ -116,23 +116,11 @@ export async function GET(request: Request): Promise<Response> {
 }
 
 // Tony (5/11): "cancella tutte le bollette in archivio e aggiungi anche un tasto per cancellare tutte le bollette".
-// Removes for good (record + PDF) every bill the user can see, old ones included.
-export async function DELETE(request: Request): Promise<Response> {
-  try {
-    const principal = await requestPrincipal(request, "WRITE");
-    const repositories = runtimeRepositories();
-    const scope = await billVisibilityScope(principal, repositories);
-    const documents = (await repositories.billRepository.list(principal.tenantId)).filter((document) => document.tenantId === principal.tenantId && billInScope(document, scope));
-    const audit = { async record(event: { readonly type: string; readonly documentId: string; readonly outcome: string }) { await recordRuntimeAudit({ principal, action: "BILL_DELETED_BY_USER", resourceType: "BILL", resourceId: event.documentId, outcome: event.outcome === "ALLOWED" ? "ALLOWED" : "DENIED", correlationId: CORRELATION_ID }); } };
-    let deleted = 0; let failed = 0;
-    for (const document of documents) {
-      try { await deleteBillPermanently({ tenantId: principal.tenantId, documentId: document.id, repositories: { bills: repositories.billRepository, storage: repositories.documentStorage, audit } }); deleted += 1; }
-      catch (error) { failed += 1; console.error(`[BILL_DELETE_ALL_FAILURE] id=${document.id} message=${error instanceof Error ? error.message.slice(0, 120) : "unknown"}`); }
-    }
-    return Response.json({ deleted, failed }, { headers: noStoreHeaders });
-  } catch (error) {
-    return listError(error);
-  }
+export async function DELETE(): Promise<Response> {
+  // Tony (10/11/2026): the legacy "Cancella tutte" is disabled. It deleted the whole visible scope without per-document
+  // checks (bills linked to proposals, outcome per document), so it is refused for everyone, without reading or deleting
+  // anything; bills are deleted one by one through DELETE /api/bills/[id].
+  return Response.json({ deleted: 0, failed: 0, error: { code: "BILL_DELETE_ALL_DISABLED", message: messageFor("BILL_DELETE_ALL_DISABLED"), correlationId: CORRELATION_ID } }, { status: 410, headers: noStoreHeaders });
 }
 
 export async function POST(request: Request): Promise<Response> {
@@ -180,6 +168,8 @@ export async function POST(request: Request): Promise<Response> {
 function messageFor(code: string): string {
   if (code.startsWith("BILL_OCR_")) return billOcrUserMessage(code);
   switch (code) {
+    case "BILL_DELETE_ALL_DISABLED":
+      return "La cancellazione di tutte le bollette è disattivata: selezionale e cancellale una per una.";
     case "BILL_VECTOR_UNKNOWN":
     case "BILL_EXTRACTION_REQUIRED_FIELD_MISSING":
     case "BILL_EXTRACTION_VALUE_INVALID":

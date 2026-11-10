@@ -626,3 +626,11 @@ button:focus-visible,a:focus-visible,input:focus-visible,select:focus-visible,te
 .bill-archive-read_failed { color: #b42318; }
 .bill-archive-approved { color: #067647; }
 @media (max-width: 640px) { .bill-archive-row { grid-template-columns: 1fr; } }
+/* Tony (10/11/2026): collapsible "Bollette archiviate", selection and per-document deletion outcome. */
+.bill-archive-panel > summary { cursor: pointer; font-weight: 600; padding: .4rem 0; }
+.bill-archive-item.selectable { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: .5rem; align-items: center; }
+.bill-archive-item.selectable > small { grid-column: 2; }
+.bill-archive-ids { grid-column: 1 / -1; font-size: .75rem; opacity: .75; }
+.bill-archive-select-all { display: flex; gap: .4rem; align-items: center; font-size: .85rem; margin: .25rem 0; }
+.bill-archive-delete, .bill-archive-report { margin-top: .75rem; padding: .6rem .75rem; border: 1px solid var(--border, #d0d5dd); border-radius: 8px; }
+.bill-archive-delete ul, .bill-archive-report ul { margin: .25rem 0 .5rem; padding-left: 1.1rem; font-size: .85rem; }

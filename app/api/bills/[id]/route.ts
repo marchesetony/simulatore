@@ -15,6 +15,7 @@ import { attachOfficialPun, ensureOfficialPunForBill, withDocumentPriceRows } fr
 import { billPunRefresh } from "../../../lib/market-refresh/bill-pun";
 import { deleteBillPermanently } from "../../../lib/foundation/bill-retention";
 import { billVisibilityScope, getBillInScope } from "../../../lib/foundation/bill-visibility";
+import { billDeleteDecision, proposalsFromBill } from "../../../lib/foundation/bill-delete";
 import { isBillFeature, resolveBillFeaturePermissions, sanitizeBillForFeatureAccess, type BillFeature } from "../../../lib/foundation/bill-feature-permissions";
 import { createClaudeBillReader } from "../../../lib/reading/bill-reader";
 import { readingHasScontrino } from "../../../lib/ingestion/printed-scontrino";
@@ -136,13 +137,21 @@ export async function DELETE(request: Request, context: { params: Promise<{ id: 
   try {
     const principal = await requestPrincipal(request, "WRITE");
     const repositories = runtimeRepositories();
-    const document = await getBillInScope(principal, repositories, id);
-    if (!document) return Response.json({ deleted: true }, { headers: NO_STORE_HEADERS });
-    if (document.lifecycleState === "DELETED") return Response.json({ deleted: true }, { headers: NO_STORE_HEADERS });
+    // Tony (10/11/2026): the outcome is real for each document. A bill missing, already deleted or of another tenant (read
+    // with the user's tenant only) is "not found"; one of the tenant outside the user's commercial branch is "forbidden"; one a
+    // proposal was built from is kept, because deleting it would hide that proposal from directors and agents.
+    const stored = await repositories.billRepository.get(principal.tenantId, id);
+    const document = stored ? await getBillInScope(principal, repositories, id) : null;
+    const linkedProposals = document ? proposalsFromBill(await repositories.proposals.list(principal.tenantId), principal.tenantId, document.id) : 0;
+    const decision = billDeleteDecision({ tenantId: principal.tenantId, stored, inScope: document !== null, linkedProposals });
+    if (decision.outcome !== "ALLOWED" || !document) {
+      const code = decision.code ?? "DOCUMENT_NOT_FOUND";
+      return Response.json({ id, outcome: decision.outcome, ...(decision.linkedProposals ? { linkedProposals: decision.linkedProposals } : {}), error: { code, message: messageFor(code), correlationId: CORRELATION_ID } }, { status: decision.status, headers: NO_STORE_HEADERS });
+    }
     // Tony (31/10): "serve un tasto cancella le bollette". Any bill the user can see and edit is removed for good.
     const audit = { async record(event: { readonly type: string; readonly documentId: string; readonly outcome: string }) { await recordRuntimeAudit({ principal, action: "BILL_DELETED_BY_USER", resourceType: "BILL", resourceId: event.documentId, outcome: event.outcome === "ALLOWED" ? "ALLOWED" : "DENIED", correlationId: CORRELATION_ID }); } };
     await deleteBillPermanently({ tenantId: principal.tenantId, documentId: document.id, repositories: { bills: repositories.billRepository, storage: repositories.documentStorage, audit } });
-    return Response.json({ deleted: true }, { headers: NO_STORE_HEADERS });
+    return Response.json({ deleted: true, id: document.id, outcome: "DELETED" }, { headers: NO_STORE_HEADERS });
   } catch (error) {
     const code = publicErrorCode(error);
     return deny(code, messageFor(code), statusFor(code));
@@ -166,6 +175,8 @@ const INTERNAL_TO_PUBLIC_CODE: Readonly<Record<string, string>> = {
   BILL_OPERATION_INVALID: "BILL_OPERATION_INVALID",
   DOCUMENT_NOT_FOUND: "DOCUMENT_NOT_FOUND",
   BILL_APPROVED_DELETE_FORBIDDEN: "BILL_APPROVED_DELETE_FORBIDDEN",
+  BILL_DELETE_FORBIDDEN: "BILL_DELETE_FORBIDDEN",
+  BILL_LINKED_TO_PROPOSALS: "BILL_LINKED_TO_PROPOSALS",
   BILL_RETENTION_NOT_DUE: "BILL_RETENTION_NOT_DUE",
   BILL_DELETE_UNAVAILABLE: "BILL_DELETE_UNAVAILABLE",
   AUTHENTICATION_REQUIRED: "AUTHENTICATION_REQUIRED",
@@ -187,13 +198,18 @@ function statusFor(code: string): number {
   if (code === "AUTH_CONFIGURATION_INVALID" || code === "AUTH_ADAPTER_UNAVAILABLE" || code === "AUTH_AUDIT_UNAVAILABLE") return 503;
   if (code === "BILL_REPOSITORY_CAS_UNAVAILABLE" || code === "BILL_REPOSITORY_BUSY") return 503;
   if (["DOCUMENT_NOT_FOUND"].includes(code)) return 404;
-  if (["BILL_APPROVED_DELETE_FORBIDDEN", "BILL_RETENTION_NOT_DUE"].includes(code)) return 409;
+  if (code === "BILL_DELETE_FORBIDDEN") return 403;
+  if (["BILL_APPROVED_DELETE_FORBIDDEN", "BILL_RETENTION_NOT_DUE", "BILL_LINKED_TO_PROPOSALS"].includes(code)) return 409;
   if (["DOCUMENT_VERSION_NOT_CURRENT", "DOCUMENT_VERSION_STALE", "DOCUMENT_VERSION_ALREADY_APPROVED", "DOCUMENT_NO_CHANGES", "METADATA_INVALID"].includes(code)) return 409;
   return 400;
 }
 
 function messageFor(code: string): string {
   switch (code) {
+    case "BILL_DELETE_FORBIDDEN":
+      return "The bill is outside your commercial branch";
+    case "BILL_LINKED_TO_PROPOSALS":
+      return "A proposal was built from this bill";
     case "APPROVAL_REQUIRED_FIELDS_MISSING":
       return "Required bill fields are missing";
     case "APPROVAL_FIELDS_UNCONFIRMED":
