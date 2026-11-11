@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useRef, useState, type ChangeEvent, type ReactNode } from "react";
 import { EmptyState, ErrorState, FormField, LoadingState } from "./UiStates";
 import { MAX_UPLOAD_BYTES, requestJson, requestUpload, toUiError } from "../lib/ui/client";
-import { formatBillDisplayPeriod, formatDisplayDate, formatEuro, formatNumber, statusLabel } from "../lib/ui/format";
+import { formatBillDisplayPeriod, formatDisplayDate, formatEuro, formatKwh, formatNumber, statusLabel } from "../lib/ui/format";
 import type { ApprovedBillSummaryModel, BillDocumentModel, SimulationDraft } from "../lib/ui/models";
 import type { BillAnalystReviewDTO, BillAnalystReviewField } from "../lib/foundation/bill-analyst-review";
 import type { BillRegulatoryAuditDTO } from "../lib/foundation/bill-regulatory-audit";
@@ -60,6 +60,8 @@ function fieldValue(field: BillAnalystReviewField<unknown>): string | null {
 }
 function rowsFrom(definitions: readonly ReviewDefinition[]): DisplayRow[] {
   return definitions.flatMap(([, label, field, unit]) => {
+    // Tony (11/11/2026): consumption in kWh without decimals; the field keeps its value.
+    if (unit === "kWh" && typeof field.value === "number" && fieldValue(field)) return [{ label, value: <>{formatKwh(field.value).replace(/ kWh$/, "")}<span className="bill-audit-unit"> kWh</span></> }];
     const value = fieldValue(field);
     return value ? [{ label, value: <>{value}{unit ? <span className="bill-audit-unit"> {unit}</span> : null}</> }] : [];
   });
@@ -162,7 +164,7 @@ function LegacyEnergyReceiptCompact({ review }: { readonly review: BillAnalystRe
   const prior = totals.priorBalanceTotal;
   const rows: DisplayRow[] = [
     { label: "Periodo", value: formatBillDisplayPeriod(review.dates.billingPeriodStart.value, review.dates.billingPeriodEnd.value) || "Non determinabile" },
-    { label: "Consumi", value: review.consumption.billed.value === null ? "Non determinabile" : `${formatNumber(review.consumption.billed.value)} kWh` },
+    { label: "Consumi", value: review.consumption.billed.value === null ? "Non determinabile" : formatKwh(review.consumption.billed.value) },
     { label: "Vendita energia", value: totals.sellerEnergyTotal === null && totals.sellerCommercializationTotal === null ? "Da verificare" : formatEuro((totals.sellerEnergyTotal ?? 0) + (totals.sellerCommercializationTotal ?? 0)) },
     { label: "Rete e oneri", value: formatEuro((totals.regulatedNetworkTotal ?? 0) + (totals.systemChargesTotal ?? 0)) },
     { label: "Imposte", value: totals.taxTotal === null ? "Da verificare" : formatEuro(totals.taxTotal) },
@@ -497,7 +499,7 @@ function LegacyDocumentHeader({ bill, approved }: { readonly bill: BillDocumentM
   const total = review.economics.economicAnalysis.totals.billTotal ?? componentNumber(review.economics.total.value);
   const amountDue = review.economics.economicAnalysis.totals.amountDue ?? review.economics.economicAnalysis.totals.currentPeriodTotal ?? total;
   const consumption = review.consumption.billed.value;
-  return <div className="bill-audit-document-header"><div><p className="eyebrow">SCONTRINO DELL&apos;ENERGIA</p><h3>{review.document.fileName}</h3><p>{review.customer.name.value ?? "Intestatario non presente in bolletta"}{review.receipt.invoiceNumber.value ? ` · Fattura ${review.receipt.invoiceNumber.value}` : ""}{review.dates.billDueDate.value ? ` · Scadenza ${review.dates.billDueDate.value}` : ""}</p></div><div className="bill-audit-document-meta"><div><span>Periodo</span><strong>{formatBillDisplayPeriod(review.dates.billingPeriodStart.value, review.dates.billingPeriodEnd.value) || "Da verificare"}</strong></div><div><span>Consumo</span><strong>{consumption === null || consumption === undefined ? "Da verificare" : `${formatNumber(consumption)} kWh`}</strong></div><div><span>Totale bolletta</span><strong>{total === null ? "Da verificare" : formatEuro(total)}</strong></div><div><span>Totale da pagare</span><strong>{amountDue === null ? "Da verificare" : formatEuro(amountDue)}</strong></div><div><span>Versione</span><strong>v{review.document.versionNumber}</strong></div><div><span>Stato revisione</span><strong>{approved ? "Approvata" : reviewStatus(review.document.status)}</strong></div></div></div>;
+  return <div className="bill-audit-document-header"><div><p className="eyebrow">SCONTRINO DELL&apos;ENERGIA</p><h3>{review.document.fileName}</h3><p>{review.customer.name.value ?? "Intestatario non presente in bolletta"}{review.receipt.invoiceNumber.value ? ` · Fattura ${review.receipt.invoiceNumber.value}` : ""}{review.dates.billDueDate.value ? ` · Scadenza ${review.dates.billDueDate.value}` : ""}</p></div><div className="bill-audit-document-meta"><div><span>Periodo</span><strong>{formatBillDisplayPeriod(review.dates.billingPeriodStart.value, review.dates.billingPeriodEnd.value) || "Da verificare"}</strong></div><div><span>Consumo</span><strong>{consumption === null || consumption === undefined ? "Da verificare" : formatKwh(consumption)}</strong></div><div><span>Totale bolletta</span><strong>{total === null ? "Da verificare" : formatEuro(total)}</strong></div><div><span>Totale da pagare</span><strong>{amountDue === null ? "Da verificare" : formatEuro(amountDue)}</strong></div><div><span>Versione</span><strong>v{review.document.versionNumber}</strong></div><div><span>Stato revisione</span><strong>{approved ? "Approvata" : reviewStatus(review.document.status)}</strong></div></div></div>;
 }
 
 function DocumentHeader({ bill, approved }: { readonly bill: BillDocumentModel; readonly approved: boolean }): ReactNode {

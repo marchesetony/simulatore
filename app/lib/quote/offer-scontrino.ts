@@ -1,4 +1,6 @@
 import type { QuoteReceipt, QuoteReceiptQuota } from "./receipt";
+// @ts-expect-error Node's strip-only test runner requires the explicit extension.
+import { formatKwh } from "../ui/format.ts";
 
 // Tony (1/11, "queste le voci che dobbiamo avere visibili nell'offerta come una fattura reale, poi il dettaglio con il
 // paragone"): the new offer is shown first as the ARERA "Scontrino dell'energia" (Bolletta 2.0 facsimile, Figura 1):
@@ -42,7 +44,8 @@ export function offerScontrino(input: { readonly quotas: readonly QuoteReceiptQu
   if (consumption && consumption.offer !== null) {
     const per = (amount: number) => input.quantity && input.quantity > 0 ? `${PRICE.format(amount / input.quantity)} €/${unit}` : undefined;
     lines.push({ kind: "section", label: "Quota per consumi", amount: null });
-    lines.push({ kind: "main", label: "", quantity: input.quantity ? `${QUANTITY.format(input.quantity)} ${unit}` : undefined, price: per(consumption.offer), amount: consumption.offer });
+    // Tony (11/11/2026): kWh without decimals on the scontrino (screen and proposal PDF); the €/kWh uses the exact quantity.
+    lines.push({ kind: "main", label: "", quantity: input.quantity ? (unit === "kWh" ? formatKwh(input.quantity) : `${QUANTITY.format(input.quantity)} ${unit}`) : undefined, price: per(consumption.offer), amount: consumption.offer });
     split(consumption, per);
   }
   const fixed = quota("FIXED"); const power = quota("POWER");

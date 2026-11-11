@@ -82,24 +82,34 @@ assert.equal(rowOf(sections, "TECHNICAL", "Potenza massima").value, "15,0 kW");
 // 2. Missing data: declared not printed by the reader.
 assert.deepEqual(rowOf(sections, "TECHNICAL", "Potenza disponibile"), { label: "Potenza disponibile", value: NOT_IN_BILL, state: "ABSENT", note: "non stampato", secondary: true });
 // 6. F0, F1, F2, F3 kept as read. Tony (10/11, "semplificazione"): the sum is not a second total, its gap is a discreet note.
-assert.equal(rowOf(sections, "TECHNICAL", "Consumo totale (F0)").value, "2.672,07 kWh");
+// Tony (11/11/2026, "visualizzazione consumi"): kWh shown without decimals, mathematically rounded; the data keep the value.
+assert.equal(rowOf(sections, "TECHNICAL", "Consumo totale (F0)").value, "2.672 kWh");
 // Tony (11/11/2026, "pulizia finale"): a gap within the tolerance of the reading check (1 kWh) is not written next to F0; it
 // stays on the value (on demand). A gap above the tolerance stays in view as a warning.
-assert.match(rowOf(sections, "TECHNICAL", "Consumo totale (F0)").note, /F1 \+ F2 \+ F3 = 2\.672,08 kWh, scostamento 0,01 kWh entro la tolleranza \(calcolato\)/);
+assert.match(rowOf(sections, "TECHNICAL", "Consumo totale (F0)").note, /F1 \+ F2 \+ F3 = 2\.672 kWh, scostamento 0,01 kWh entro la tolleranza \(calcolato\)/);
 assert.equal(rowOf(sections, "TECHNICAL", "Consumo totale (F0)").noteShown, undefined, "a gap within the tolerance is not in view");
 assert.equal(BANDS_SUM_TOLERANCE_KWH, 1, "the tolerance of the reading check is unchanged");
 const farBands = { ...structuredBill, f3Consumption: { ...structuredBill.f3Consumption, value: 530.62 } };
 const farF0 = rowOf(billReadSections(billOf(farBands)), "TECHNICAL", "Consumo totale (F0)");
 assert.equal(farF0.noteShown, true, "a gap above the tolerance stays in view");
-assert.match(farF0.note, /^Attenzione: F1 \+ F2 \+ F3 = 2\.676,08 kWh, scostamento di 4,01 kWh dal consumo totale, oltre la tolleranza di 1 kWh \(calcolato\)$/);
-assert.equal(farF0.value, "2.672,07 kWh", "F0 stays as printed");
+assert.match(farF0.note, /^Attenzione: F1 \+ F2 \+ F3 = 2\.676 kWh, scostamento di 4,01 kWh dal consumo totale, oltre la tolleranza di 1 kWh \(calcolato\)$/);
+assert.equal(farF0.value, "2.672 kWh", "F0 is shown rounded, never replaced by the sum");
 const atTolerance = { ...structuredBill, f3Consumption: { ...structuredBill.f3Consumption, value: 527.61 } };
 assert.equal(rowOf(billReadSections(billOf(atTolerance)), "TECHNICAL", "Consumo totale (F0)").noteShown, undefined, "1 kWh exactly is within the tolerance, as in the reading check");
 const noTotal = { ...structuredBill, billedConsumption: { ...structuredBill.billedConsumption, status: "NOT_FOUND", value: null } };
 assert.equal(rowOf(billReadSections(billOf(noTotal)), "TECHNICAL", "Consumo totale (F0)").noteShown, true, "without a printed total the sum of the bands stays in view");
-assert.equal(rowOf(sections, "TECHNICAL", "F1").value, "1.791,02 kWh");
-assert.equal(rowOf(sections, "TECHNICAL", "F2").value, "354,44 kWh");
-assert.equal(rowOf(sections, "TECHNICAL", "F3").value, "526,62 kWh");
+assert.equal(rowOf(sections, "TECHNICAL", "F1").value, "1.791 kWh");
+assert.equal(rowOf(sections, "TECHNICAL", "F2").value, "354 kWh");
+assert.equal(rowOf(sections, "TECHNICAL", "F3").value, "527 kWh", "526,62 rounds up");
+// The gap keeps two decimals (a consistency check, Tony 11/11/2026), also when the bands are printed with one.
+const oneDecimal = { ...structuredBill, f3Consumption: { ...structuredBill.f3Consumption, value: 526.7 } };
+assert.match(rowOf(billReadSections(billOf(oneDecimal)), "TECHNICAL", "Consumo totale (F0)").note, /F1 \+ F2 \+ F3 = 2\.672 kWh, scostamento 0,09 kWh entro la tolleranza/);
+// The total is the printed F0, never the sum of the rounded bands: 1.791 + 354 + 527 = 2.672 here, but a bill whose rounded
+// bands add up to 1 kWh more still shows its own total.
+const roundedApart = { ...structuredBill, billedConsumption: { ...structuredBill.billedConsumption, value: 2671.6 }, f1Consumption: { ...structuredBill.f1Consumption, value: 1790.5 }, f2Consumption: { ...structuredBill.f2Consumption, value: 354.5 }, f3Consumption: { ...structuredBill.f3Consumption, value: 526.6 } };
+const roundedApartRows = billReadSections(billOf(roundedApart));
+assert.deepEqual(["Consumo totale (F0)", "F1", "F2", "F3"].map((label) => rowOf(roundedApartRows, "TECHNICAL", label).value), ["2.672 kWh", "1.791 kWh", "355 kWh", "527 kWh"]);
+assert.equal(roundedApart.billedConsumption.value, 2671.6, "the reading keeps the full value");
 assert.equal(rowOf(sections, "TECHNICAL", "Somma F1 + F2 + F3"), undefined, "no second consumption total");
 const matching = { ...structuredBill, f3Consumption: { ...structuredBill.f3Consumption, value: 526.61 } };
 assert.equal(rowOf(billReadSections(billOf(matching)), "TECHNICAL", "Consumo totale (F0)").note, undefined, "no note when F1+F2+F3 matches");
@@ -188,7 +198,7 @@ for (const item of sections.flatMap((entry) => entry.rows)) if (item.state === "
 const uncertain = { ...structuredBill, f2Consumption: { ...structuredBill.f2Consumption, status: "NEEDS_REVIEW" } };
 const uncertainRow = rowOf(billReadSections(billOf(uncertain)), "TECHNICAL", "F2");
 assert.equal(uncertainRow.state, "REVIEW");
-assert.equal(uncertainRow.value, "354,44 kWh", "the value stays as read");
+assert.equal(uncertainRow.value, "354 kWh", "the value stays as read, shown without decimals");
 assert.equal(rowOf(sections, "TECHNICAL", "F2").state, "READ");
 
 // 2. Not read and not declared absent: "Non letto", never "Non presente nella fattura".

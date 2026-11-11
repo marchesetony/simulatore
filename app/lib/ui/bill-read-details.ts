@@ -2,6 +2,7 @@ import type { BillDocumentModel } from "./models";
 import type { StructuredBillEconomicChargeLine, StructuredBillField } from "../ingestion/structured-bill";
 import type { SupplyProfileField } from "../ingestion/bill-supply-profile";
 import { BANDS_SUM_TOLERANCE_KWH } from "../reading/bill-reader-checks";
+import { formatKwh } from "./format";
 
 // Tony (10/11/2026, fattura EE20369/2026: the 17 values were read and saved but "Dati letti" did not show them): the screen
 // shows what the reading already holds, in four sections. A value read from the bill is shown as read; a value the reader
@@ -69,7 +70,10 @@ function fact(bill: Bill, ...codes: readonly string[]): { readonly value: string
   return null;
 }
 const profileText = (field: SupplyProfileField | undefined) => field && (field.status === "FOUND" || field.status === "NEEDS_REVIEW") && field.rawValue?.trim() ? field.rawValue.trim() : null;
-const kwh = (field: StructuredBillField<number> | undefined, unit = "kWh") => { const text = fieldText(field); return text === null ? null : `${italianDecimal(Number(text))} ${unit}`; };
+// Tony (11/11/2026): kWh without decimals; Smc as printed.
+const kwh = (field: StructuredBillField<number> | undefined, unit = "kWh") => { const text = fieldText(field); return text === null ? null : unit === "kWh" ? formatKwh(Number(text)) : `${italianDecimal(Number(text))} ${unit}`; };
+// The F1 + F2 + F3 gap is a consistency check, not a consumption: two decimals (Tony, 11/11/2026).
+const GAP = new Intl.NumberFormat("it-IT", { minimumFractionDigits: 2, maximumFractionDigits: 2, useGrouping: "always" });
 const lines = (bill: Bill, ...codes: readonly string[]): readonly StructuredBillEconomicChargeLine[] => (bill.structuredBill?.economicChargeLines ?? []).filter((line) => codes.includes(line.code));
 const sumOf = (items: readonly StructuredBillEconomicChargeLine[]): number | null => { const values = items.map((line) => amountOf(line.rawAmount || line.amount)).filter((value): value is number => value !== null); return values.length ? round2(values.reduce((total, value) => total + value, 0)) : null; };
 
@@ -97,7 +101,7 @@ function supplySection(bill: Bill): BillReadSection {
 }
 
 // Without a billed total the sum of the bands is the only total: it stays in view.
-const gapUnknown = (note: string) => /kWh \(calcolata\)$/.test(note);
+const gapUnknown = (note: string) => / \(calcolata\)$/.test(note);
 
 function technicalSection(bill: Bill): BillReadSection {
   const sb = bill.structuredBill;
@@ -133,9 +137,9 @@ function technicalSection(bill: Bill): BillReadSection {
       const gap = billedText === null ? null : Number((sum - Number(billedText)).toFixed(decimals));
       // Tony (11/11/2026, "pulizia finale"): a gap within the tolerance of the reading check (BANDS_SUM, 1 kWh) is no longer
       // written next to F0, it stays available on the value; a gap above it stays in view as a warning.
-      if (gap === null) bandNote = `F1 + F2 + F3 = ${italianDecimal(sum)} kWh (calcolata)`;
-      else if (Math.abs(gap) > BANDS_SUM_TOLERANCE_KWH) { bandNote = `Attenzione: F1 + F2 + F3 = ${italianDecimal(sum)} kWh, scostamento di ${italianDecimal(gap)} kWh dal consumo totale, oltre la tolleranza di ${italianDecimal(BANDS_SUM_TOLERANCE_KWH)} kWh (calcolato)`; bandWarning = true; }
-      else if (gap !== 0) bandNote = `F1 + F2 + F3 = ${italianDecimal(sum)} kWh, scostamento ${italianDecimal(gap)} kWh entro la tolleranza (calcolato)`;
+      if (gap === null) bandNote = `F1 + F2 + F3 = ${formatKwh(sum)} (calcolata)`;
+      else if (Math.abs(gap) > BANDS_SUM_TOLERANCE_KWH) { bandNote = `Attenzione: F1 + F2 + F3 = ${formatKwh(sum)}, scostamento di ${GAP.format(gap)} kWh dal consumo totale, oltre la tolleranza di ${italianDecimal(BANDS_SUM_TOLERANCE_KWH)} kWh (calcolato)`; bandWarning = true; }
+      else if (gap !== 0) bandNote = `F1 + F2 + F3 = ${formatKwh(sum)}, scostamento ${GAP.format(gap)} kWh entro la tolleranza (calcolato)`;
     }
   }
   rows.push(bandNote ? { ...billedRow, note: billedRow.note ? `${billedRow.note} · ${bandNote}` : bandNote, ...(bandWarning || gapUnknown(bandNote) ? { noteShown: true } : {}) } : billedRow, ...bandRows);

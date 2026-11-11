@@ -137,7 +137,7 @@ try {
     const expected = id === bill.id ? reference : billReadSections(billForReading(await openFromArchive(admin, id)));
     assert.deepEqual(sections, expected, `${label}: the same four sections as the administrator`);
     const rows = sections.flatMap((section) => section.rows.map((row) => `${row.label}=${row.value}`)).join("\n");
-    for (const expectedRow of [/^F1=1\.791,02/m, /^F2=354,44/m, /^F3=526,62/m, /^Potenza impegnata=15/m, /^PCV=/m, /^Spread=/m, /^Fasce=/m, /^Totale fattura=1\.226,06/m]) assert.match(rows, expectedRow, `${label}: ${expectedRow}`);
+    for (const expectedRow of [/^F1=1\.791 kWh$/m, /^F2=354 kWh$/m, /^F3=527 kWh$/m, /^Potenza impegnata=15/m, /^PCV=/m, /^Spread=/m, /^Fasce=/m, /^Totale fattura=1\.226,06/m]) assert.match(rows, expectedRow, `${label}: ${expectedRow}`);
     const view = billForReading(shown).structuredBill;
     assert.deepEqual(view.economicChargeLines, full.structuredBill.economicChargeLines, `${label}: economic components for the calculated values (PCV, price structure)`);
     assert.deepEqual(view.extendedFacts, full.structuredBill.extendedFacts, `${label}: printed facts (offer, index, spread)`);

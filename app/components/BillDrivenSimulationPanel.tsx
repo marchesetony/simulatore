@@ -4,6 +4,7 @@ import { QUOTE_WINDOW_MONTHS, quoteWindowStart, supplyPeriodTooOld } from "../li
 import { useCallback, useEffect, useState, type ReactNode } from "react";
 import { EmptyState, ErrorState, LoadingState } from "./UiStates";
 import { requestJson, toUiError } from "../lib/ui/client";
+import { formatKwh } from "../lib/ui/format";
 import type { ApprovedBillSummaryModel, BillDocumentModel, CalculationModel, ComparisonModel, CteApprovedArchiveSummaryModel, SimulationDraft } from "../lib/ui/models";
 
 type BillLoadState = "loading" | "ready" | "error";
@@ -204,7 +205,7 @@ function BillSummary({ bill, draft, context }: { readonly bill: BillDocumentMode
     {offer ? <div className="data-line"><span>Offerta attuale</span><strong>{offer}</strong></div> : null}
     {pricing ? <div className="data-line"><span>Tipo prezzo</span><strong>{pricing}</strong></div> : null}
     {timeBands ? <div className="data-line"><span>Struttura oraria</span><strong>{timeBands}</strong></div> : null}
-    {draft.vector === "EE" ? <div className="data-list"><div className="data-line"><span>F1</span><strong>{formatQuantity(context.consumption.period.f1)} kWh</strong></div><div className="data-line"><span>F2</span><strong>{formatQuantity(context.consumption.period.f2)} kWh</strong></div><div className="data-line"><span>F3</span><strong>{formatQuantity(context.consumption.period.f3)} kWh</strong></div><div className="data-line"><span>Consumo annuo</span><strong>{formatQuantity(context.consumption.annual)} kWh</strong></div></div> : <div className="data-list"><div className="data-line"><span>Consumo periodo</span><strong>{formatQuantity(context.consumption.period.smc)} Smc</strong></div><div className="data-line"><span>Consumo annuo</span><strong>{formatQuantity(context.consumption.annual)} Smc</strong></div></div>}
+    {draft.vector === "EE" ? <div className="data-list"><div className="data-line"><span>F1</span><strong>{context.consumption.period.f1 === null ? "Non rilevato" : formatKwh(context.consumption.period.f1)}</strong></div><div className="data-line"><span>F2</span><strong>{context.consumption.period.f2 === null ? "Non rilevato" : formatKwh(context.consumption.period.f2)}</strong></div><div className="data-line"><span>F3</span><strong>{context.consumption.period.f3 === null ? "Non rilevato" : formatKwh(context.consumption.period.f3)}</strong></div><div className="data-line"><span>Consumo annuo</span><strong>{context.consumption.annual === null ? "Non rilevato" : formatKwh(context.consumption.annual)}</strong></div></div> : <div className="data-list"><div className="data-line"><span>Consumo periodo</span><strong>{formatQuantity(context.consumption.period.smc)} Smc</strong></div><div className="data-line"><span>Consumo annuo</span><strong>{formatQuantity(context.consumption.annual)} Smc</strong></div></div>}
     {draft.vector === "EE" ? <div className="data-line"><span>Tensione / potenza</span><strong>{powerSummaryFor(context)}</strong></div> : null}
     <div className="data-line"><span>Scadenza contratto</span><strong>{expiry ? formatItalianDate(expiry) : "Non rilevata"}</strong></div>
     <div className="data-line"><span>Totale bolletta</span><strong>{formatMoneyValue(invoiceTotal)}</strong></div>

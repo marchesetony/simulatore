@@ -5,6 +5,7 @@ import type { ProposalPresentation } from "../lib/proposal/presentation";
 import { areraNote, billedMonths, offerScontrino, pairScontrini, type ScontrinoLine, type ScontrinoPairRow } from "../lib/quote/offer-scontrino";
 import { EmptyState, ErrorState, LoadingState } from "./UiStates";
 import { BillReadDetails, type CalculatedFact } from "./BillReadDetails";
+import { formatKwh } from "../lib/ui/format";
 import { billForReading, billReadSections, printedContractValues, segmentRepeatsUse } from "../lib/ui/bill-read-details";
 import { BillArchivePicker } from "./BillArchivePicker";
 import { requestBillDelete, approvedBillEntry, archiveLoadError, canDeleteBills, deleteConfirmText, deleteReportText, deleteSelectedBills, deleteSummaryText, pendingBillEntry, type ArchiveList, type BillArchiveEntry, type BillDeleteReport } from "../lib/ui/bill-archive";
@@ -485,7 +486,7 @@ function NoOfferReasons({ quote, shown = [], onAuthorize }: { readonly quote: Qu
     const eligible = candidate.finalStatus === "ELIGIBLE" || candidate.finalStatus === "ELIGIBLE_BY_OVERRIDE";
     const annual = quote.context.consumption?.annual ?? null;
     const threshold = (candidate.reasonCodes ?? []).includes("CONSUMPTION_THRESHOLD_MISMATCH") || candidate.compatibilityReason === "CONSUMPTION_NOT_ELIGIBLE"
-      ? ` (consumo annuo della bolletta ${annual === null ? "non letto" : `${QUANTITY.format(annual)} ${quote.context.vector === "EE" ? "kWh" : "Smc"}`}${candidate.scope?.consumption ? `, la CTE richiede ${candidate.scope.consumption}` : ""})` : "";
+      ? ` (consumo annuo della bolletta ${annual === null ? "non letto" : (quote.context.vector === "EE" ? formatKwh(annual) : `${QUANTITY.format(annual)} Smc`)}${candidate.scope?.consumption ? `, la CTE richiede ${candidate.scope.consumption}` : ""})` : "";
     const reasons = eligible
       ? excluded ? [`calcolo non riuscito: ${EXCLUSION_LABEL[excluded.code] ?? excluded.code}${/\(([^)]+)\)$/.exec(excluded.message)?.[1] ? ` (${/\(([^)]+)\)$/.exec(excluded.message)?.[1]})` : ""}`] : candidate.calculationReadiness !== "READY" ? [REASON_LABEL[candidate.calculationReadiness] ?? candidate.calculationReadiness] : ["calcolo non eseguito"]
       : [...new Set([...(candidate.reasonCodes ?? []), candidate.compatibilityReason].filter((code): code is string => Boolean(code)).map((code) => REASON_LABEL[code] ?? code))].map((label) => label === REASON_LABEL.CONSUMPTION_NOT_ELIGIBLE ? `${label}${threshold}` : label);
@@ -519,7 +520,7 @@ function costLines(calculation: CalculationModel): readonly CostLine[] {
     const inputs = component.formulaInputs ?? {};
     const sign = component.sign === "DISCOUNT" ? -1 : 1;
     const base = { key: `${index}:${component.label}`, amount: sign * component.amount.amount };
-    const kwh = (value: unknown) => { const n = num(value); return n === null ? "—" : `${QUANTITY.format(n)} kWh`; };
+    const kwh = (value: unknown) => { const n = num(value); return n === null ? "—" : formatKwh(n); };
     switch (component.formulaId) {
       case "EE_PUN_MWH_TO_KWH_PLUS_SPREAD": {
         const pun = num(inputs.punEurPerMwh); const spread = num(inputs.spreadPerKwh);
@@ -555,7 +556,7 @@ function costLines(calculation: CalculationModel): readonly CostLine[] {
         // months it covers and its monthly amount (156 €/POD/anno = 13,00 €/mese).
         if (unit === "EUR_PER_POD" && inputs.feePeriod === "YEAR" && quantity !== null && rate !== null) return { ...base, label: component.label, quantity: `${QUANTITY.format(Math.round(quantity * 12 * 100) / 100)} mesi`, rate: `${CENTS.format(rate / 12)} €/mese (${CENTS.format(rate)} €/POD all'anno)` };
         const label = component.formulaId.startsWith("CONTRACTUAL_PASS_THROUGH") ? `${inputs.kind === "DISPATCHING" ? "Dispacciamento" : inputs.kind === "CAPACITY_MARKET" ? "Mercato della capacità" : "Altri corrispettivi"} (da CTE)` : component.formulaId.startsWith("IMBALANCE") ? `Sbilanciamento · ${component.label}` : component.label;
-        return { ...base, label, quantity: quantity === null ? "—" : `${QUANTITY.format(quantity)} ${BASIS_UNIT[unit] ?? (component.formulaId.endsWith("MONTHS") ? "mesi" : "")}`.trim(), rate: rate === null ? "—" : `${unit === "EUR_PER_KWH" || unit === "EUR_PER_SMC" ? RATE.format(rate) : CENTS.format(rate)} ${FEE_UNIT[unit] ?? "€"}` };
+        return { ...base, label, quantity: quantity === null ? "—" : unit === "EUR_PER_KWH" ? formatKwh(quantity) : `${QUANTITY.format(quantity)} ${BASIS_UNIT[unit] ?? (component.formulaId.endsWith("MONTHS") ? "mesi" : "")}`.trim(), rate: rate === null ? "—" : `${unit === "EUR_PER_KWH" || unit === "EUR_PER_SMC" ? RATE.format(rate) : CENTS.format(rate)} ${FEE_UNIT[unit] ?? "€"}` };
       }
     }
   });
@@ -807,7 +808,7 @@ function Receipt({ offer: quoted, today, business, context, bill, onPresentation
   const period = context.consumption?.period;
   const unitName = context.vector === "GAS" ? "Smc" : "kWh";
   const periodQuantity = !period ? null : context.vector === "GAS" ? period.smc : [period.f1, period.f2, period.f3].every((value) => value === null) ? null : (period.f1 ?? 0) + (period.f2 ?? 0) + (period.f3 ?? 0);
-  const bands = context.vector === "EE" && period && [period.f1, period.f2, period.f3].some((value) => value !== null && value > 0) ? (["F1", "F2", "F3"] as const).map((name, index) => `${name} ${QUANTITY.format([period.f1, period.f2, period.f3][index] ?? 0)}`).join(", ") : "";
+  const bands = context.vector === "EE" && period && [period.f1, period.f2, period.f3].some((value) => value !== null && value > 0) ? (["F1", "F2", "F3"] as const).map((name, index) => `${name} ${formatKwh([period.f1, period.f2, period.f3][index] ?? 0).replace(/ kWh$/, "")}`).join(", ") : "";
   const PER_UNIT_KEYS = new Set(["ENERGY", "ENERGY_ONLY", "LOSSES", "COMMERCIALIZATION", "DISPATCHING", "CAPACITY", "CAPACITY_CTE", "IMBALANCE", "CONSUMPTION"]);
   const perUnit = (key: string, amount: number): ReactNode => periodQuantity && periodQuantity > 0 && PER_UNIT_KEYS.has(key) ? <small className="muted quote-unit-price">{UNIT_PRICE.format(amount / periodQuantity)} €/{unitName}</small> : null;
   // Same saving per kWh (or Smc) as on the bill, simulated over 12 months of the annual consumption.
@@ -861,7 +862,7 @@ function Receipt({ offer: quoted, today, business, context, bill, onPresentation
     {/* Scontrino (Tony, 26/10): materia energia, trasporto e gestione del contatore, oneri di sistema, imposte e accise aggregated first,
         then every charge they contain (energia, dispacciamento, capacity, sbilanciamento, PCV, Flex, accise, IVA…) on its own line. */}
     <div className="responsive-table"><table className="quote-scontrino">
-      <caption>Periodo della bolletta: {date(context.billingPeriod.periodStart)} – {date(lastSuppliedDay(context.billingPeriod.periodEnd))} · {periodQuantity !== null ? `${QUANTITY.format(periodQuantity)} ${unitName}${bands ? ` (${bands})` : ""} per entrambe le colonne${context.vector === "EE" ? ", al netto delle perdite; i prezzi per kWh comprendono le perdite" : ""}` : "stessi consumi per entrambe le colonne"}</caption>
+      <caption>Periodo della bolletta: {date(context.billingPeriod.periodStart)} – {date(lastSuppliedDay(context.billingPeriod.periodEnd))} · {periodQuantity !== null ? `${context.vector === "GAS" ? `${QUANTITY.format(periodQuantity)} ${unitName}` : formatKwh(periodQuantity)}${bands ? ` (${bands})` : ""} per entrambe le colonne${context.vector === "EE" ? ", al netto delle perdite; i prezzi per kWh comprendono le perdite" : ""}` : "stessi consumi per entrambe le colonne"}</caption>
       <thead><tr><th scope="col">Voce</th><th scope="col">Bolletta attuale{currentOffer ? <small>{context.currentSupplier} · {currentOffer}</small> : null}</th><th scope="col">CTE simulata<small>{offer.supplier} · {offer.offerName}</small></th><th scope="col">Differenza</th></tr></thead>
       <tbody>{receipt.rows.flatMap((row) => [<tr key={row.key} className={`quote-section-row${row.difference != null && Math.abs(row.difference) >= 0.01 ? " changed" : ""}`}>
         <th scope="row">{row.label}<VerificationNote bill={bill} rowKey={row.key} receipt={receipt} /></th><td>{euro(row.current)}</td><td>{euro(row.offer)}</td><td className={difference(row.difference ?? null)}>{signedEuro(row.difference ?? null)}</td>
