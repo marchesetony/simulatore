@@ -5,7 +5,7 @@ import type { ProposalPresentation } from "../lib/proposal/presentation";
 import { areraNote, billedMonths, offerScontrino, pairScontrini, type ScontrinoLine, type ScontrinoPairRow } from "../lib/quote/offer-scontrino";
 import { EmptyState, ErrorState, LoadingState } from "./UiStates";
 import { BillReadDetails, type CalculatedFact } from "./BillReadDetails";
-import { billForReading, billReadSections, printedContractValues } from "../lib/ui/bill-read-details";
+import { billForReading, billReadSections, printedContractValues, segmentRepeatsUse } from "../lib/ui/bill-read-details";
 import { BillArchivePicker } from "./BillArchivePicker";
 import { requestBillDelete, approvedBillEntry, archiveLoadError, canDeleteBills, deleteConfirmText, deleteReportText, deleteSelectedBills, deleteSummaryText, pendingBillEntry, type ArchiveList, type BillArchiveEntry, type BillDeleteReport } from "../lib/ui/bill-archive";
 import { downloadExport, MAX_UPLOAD_BYTES, requestJson, requestUpload, toUiError, UiApiError } from "../lib/ui/client";
@@ -340,7 +340,8 @@ function calculatedFacts(bill: BillDocumentModel): readonly CalculatedFact[] {
   const index = gas ? "PSV" : "PUN";
   const pcvShown = pcv === null ? printed.monthlyPcv === null : printed.monthlyPcv === null || Math.abs(printed.monthlyPcv - pcv) >= 0.005;
   return [
-    { section: "SUPPLY", label: "Segmento cliente", value: type === "RESIDENTIAL" ? <span className="cte-segment-consumer">Consumer</span> : type === "NON_RESIDENTIAL" ? <span className="cte-segment-business">Business</span> : "Non determinato", note: "Classificazione del simulatore" },
+    // Tony (11/11/2026, "pulizia finale"): under "Altri dettagli" when it repeats the use printed on the bill.
+    { section: "SUPPLY", ...(segmentRepeatsUse(bill, type) ? { secondary: true } : {}), label: "Segmento cliente", value: type === "RESIDENTIAL" ? <span className="cte-segment-consumer">Consumer</span> : type === "NON_RESIDENTIAL" ? <span className="cte-segment-business">Business</span> : "Non determinato", note: "Classificazione del simulatore" },
     ...(withoutOfferBox(bill) ? [{ section: "CONTRACT" as const, label: "Box dell'offerta", value: NOT_IN_DETAIL, note: "Fattura di dettaglio" }] : []),
     ...(printed.priceType ? [] : [{ section: "CONTRACT" as const, label: "Tipo di prezzo", value: priceType(bill), note: "Classificazione del simulatore: tipologia non stampata" }]),
     ...(indexedBill(bill) && !gas ? [{ section: "CONTRACT" as const, secondary: true, label: "PUN GME del mese di riferimento", value: referencePun(bill), note: "Dall'archivio GME, non dalla fattura" }] : []),

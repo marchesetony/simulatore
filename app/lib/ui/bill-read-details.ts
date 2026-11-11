@@ -1,6 +1,7 @@
 import type { BillDocumentModel } from "./models";
 import type { StructuredBillEconomicChargeLine, StructuredBillField } from "../ingestion/structured-bill";
 import type { SupplyProfileField } from "../ingestion/bill-supply-profile";
+import { BANDS_SUM_TOLERANCE_KWH } from "../reading/bill-reader-checks";
 
 // Tony (10/11/2026, fattura EE20369/2026: the 17 values were read and saved but "Dati letti" did not show them): the screen
 // shows what the reading already holds, in four sections. A value read from the bill is shown as read; a value the reader
@@ -95,6 +96,9 @@ function supplySection(bill: Bill): BillReadSection {
   return { id: "SUPPLY", title: "Identificazione fornitura", rows };
 }
 
+// Without a billed total the sum of the bands is the only total: it stays in view.
+const gapUnknown = (note: string) => /kWh \(calcolata\)$/.test(note);
+
 function technicalSection(bill: Bill): BillReadSection {
   const sb = bill.structuredBill;
   const profile = sb?.supplyProfile ?? bill.analystReview.supplyProfile ?? undefined;
@@ -114,6 +118,7 @@ function technicalSection(bill: Bill): BillReadSection {
   const billedRow = row(bill, "Consumo complessivo fatturato", gas ? kwh(sb?.smcConsumption, "Smc") ?? kwh(sb?.billedConsumption, "Smc") : kwh(sb?.billedConsumption), gas ? ["consumoSmc", "consumoFatturato"] : ["consumoFatturato"], { review: needsReview(sb?.billedConsumption) });
   const bandRows: BillReadRow[] = [];
   let bandNote: string | null = null;
+  let bandWarning = false;
   if (!gas) {
     const bands = [sb?.f1Consumption, sb?.f2Consumption, sb?.f3Consumption] as const;
     bands.forEach((field, index) => bandRows.push(row(bill, `Consumo F${index + 1}`, kwh(field), [`consumoF${index + 1}`], { review: needsReview(field) })));
@@ -126,10 +131,14 @@ function technicalSection(bill: Bill): BillReadSection {
       const sum = Number(values.reduce((total, value) => total + value, 0).toFixed(decimals));
       const billedText = fieldText(sb?.billedConsumption);
       const gap = billedText === null ? null : Number((sum - Number(billedText)).toFixed(decimals));
-      bandNote = gap === null ? `F1 + F2 + F3 = ${italianDecimal(sum)} kWh (calcolata)` : gap === 0 ? null : `F1 + F2 + F3 = ${italianDecimal(sum)} kWh, scostamento ${italianDecimal(gap)} kWh (calcolato)`;
+      // Tony (11/11/2026, "pulizia finale"): a gap within the tolerance of the reading check (BANDS_SUM, 1 kWh) is no longer
+      // written next to F0, it stays available on the value; a gap above it stays in view as a warning.
+      if (gap === null) bandNote = `F1 + F2 + F3 = ${italianDecimal(sum)} kWh (calcolata)`;
+      else if (Math.abs(gap) > BANDS_SUM_TOLERANCE_KWH) { bandNote = `Attenzione: F1 + F2 + F3 = ${italianDecimal(sum)} kWh, scostamento di ${italianDecimal(gap)} kWh dal consumo totale, oltre la tolleranza di ${italianDecimal(BANDS_SUM_TOLERANCE_KWH)} kWh (calcolato)`; bandWarning = true; }
+      else if (gap !== 0) bandNote = `F1 + F2 + F3 = ${italianDecimal(sum)} kWh, scostamento ${italianDecimal(gap)} kWh entro la tolleranza (calcolato)`;
     }
   }
-  rows.push(bandNote ? { ...billedRow, note: billedRow.note ? `${billedRow.note} · ${bandNote}` : bandNote } : billedRow, ...bandRows);
+  rows.push(bandNote ? { ...billedRow, note: billedRow.note ? `${billedRow.note} · ${bandNote}` : bandNote, ...(bandWarning || gapUnknown(bandNote) ? { noteShown: true } : {}) } : billedRow, ...bandRows);
   rows.push(row(bill, "Consumo annuo dichiarato", kwh(sb?.annualConsumption, gas ? "Smc" : "kWh"), ["consumoAnnuo"], { review: needsReview(sb?.annualConsumption) }));
   return { id: "TECHNICAL", title: "Caratteristiche tecniche", rows };
 }
@@ -141,6 +150,24 @@ function lineText(line: StructuredBillEconomicChargeLine): string {
   const unit = unitText((line.rawUnit || line.unit).trim());
   const amount = amountOf(line.rawAmount || line.amount);
   return [price ? `${price}${unit ? ` ${unit}` : ""}` : "", amount === null ? "" : `importo ${euro(amount)}`].filter(Boolean).join(" · ");
+}
+
+// Tony (11/11/2026, "pulizia finale"): the PCV is shown as a monthly amount with two decimals ("10,39 €/mese"); the unit price
+// as printed ("10,392500 €/POD/mese · importo 10,39 €") stays under "Altri dettagli". Only a single monthly PCV is rounded.
+const PER_MONTH = /\/\s*(?:pod\s*\/\s*)?mese\b|al\s+mese|mensil/i;
+function pcvRows(bill: Bill, pcvLines: readonly StructuredBillEconomicChargeLine[], pcvFact: { readonly value: string; readonly review: boolean } | null, pcvUnit: string | undefined): BillReadRow[] {
+  const PRINTED = "PCV stampata (valore unitario)";
+  if (pcvLines.length) {
+    const printed: BillReadRow = { label: "PCV / commercializzazione", value: pcvLines.map(lineText).join("; "), state: "READ", note: pcvLines.map((line) => line.rawDescription || line.description).join("; ") };
+    const single = pcvLines.length === 1 ? pcvLines[0] : null;
+    const price = single ? amountOf(single.rawUnitPrice || single.unitPrice) : null;
+    if (!single || price === null || !PER_MONTH.test(single.rawUnit || single.unit)) return [printed];
+    return [{ ...printed, value: `${euro(round2(price))}/mese` }, { ...printed, label: PRINTED }];
+  }
+  const printed = row(bill, "PCV / commercializzazione", pcvFact ? `${pcvFact.value}${pcvUnit ? ` ${unitText(pcvUnit)}` : ""}` : null, ["pcvMensile"], { review: pcvFact?.review });
+  const price = pcvFact ? amountOf(pcvFact.value) : null;
+  if (!pcvFact || price === null || !pcvUnit || !PER_MONTH.test(pcvUnit)) return [printed];
+  return [{ ...printed, value: `${euro(round2(price))}/mese` }, { ...printed, label: PRINTED }];
 }
 
 function contractSection(bill: Bill, calculated: readonly BillReadRow[]): BillReadSection {
@@ -165,9 +192,7 @@ function contractSection(bill: Bill, calculated: readonly BillReadRow[]): BillRe
     row(bill, "Indice", fact(bill, "INDEX_NAME")?.value ?? box?.indexName ?? null, ["indice"]),
     // Tony (10/11): the printed spread is shown as printed, never replaced by the one calculated from the PUN.
     row(bill, "Spread contrattuale (stampato)", fact(bill, "SPREAD")?.value ?? box?.spread ?? null, ["spread"]),
-    pcvLines.length
-      ? { label: "PCV / commercializzazione", value: pcvLines.map(lineText).join("; "), state: "READ", note: pcvLines.map((line) => line.rawDescription || line.description).join("; ") }
-      : row(bill, "PCV / commercializzazione", pcvFact ? `${pcvFact.value}${pcvUnit ? ` ${unitText(pcvUnit)}` : ""}` : null, ["pcvMensile"], { review: pcvFact?.review }),
+    ...pcvRows(bill, pcvLines, pcvFact, pcvUnit),
     ...lines(bill, ...COMMERCIAL_CODES).map((line): BillReadRow => ({ label: line.rawDescription || line.description, value: lineText(line), state: line.status === "NEEDS_REVIEW" ? "REVIEW" : "READ", note: line.status === "NEEDS_REVIEW" ? TO_CHECK : "Altro corrispettivo commerciale letto" })),
     ...calculated,
   ];
@@ -240,6 +265,15 @@ export function printedContractValues(bill: Bill): { readonly priceType: string 
   };
 }
 
+/** Tony (11/11/2026, "pulizia finale"): the simulator's customer segment repeats the use printed on the bill ("altri usi" →
+ *  Business, "domestico" → Consumer); then it moves under "Altri dettagli". A segment that differs from the use stays in view. */
+export function segmentRepeatsUse(bill: Bill, segment: "RESIDENTIAL" | "NON_RESIDENTIAL" | null): boolean {
+  const profile = bill.structuredBill?.supplyProfile ?? bill.analystReview.supplyProfile ?? undefined;
+  const use = profile?.supplyUseCategory;
+  if (!segment || !use || !profileText(use)) return false;
+  return segment === "RESIDENTIAL" ? use.normalizedValue === "DOMESTIC" : ["OTHER_USE", "PUBLIC_LIGHTING", "PUBLIC_EV_CHARGING"].includes(use.normalizedValue);
+}
+
 /** The bill as "Dati letti" reads it: the full reading when the user has "Dettaglio tecnico", otherwise the bill view the
  *  server sends to every user who may open the bill (foundation/bill-reading-view.ts). Tony, 10/11/2026. */
 export function billForReading<T extends Pick<BillDocumentModel, "structuredBill" | "billReading">>(bill: T): T {
@@ -263,13 +297,13 @@ const SHORT_LABEL: Readonly<Record<string, string>> = {
   "Tipologia prezzo": "Prezzo", "Struttura del prezzo": "Fasce", "Spread contrattuale (stampato)": "Spread", "PCV / commercializzazione": "PCV",
   "Decorrenza condizioni economiche": "Decorrenza condizioni", "Attivazione fornitura": "Attivazione", "Scadenza condizioni economiche": "Scadenza condizioni",
   "Spesa per la vendita di energia": "Vendita", "di cui spesa per la rete e il trasporto": "Rete e trasporto", "Oneri generali di sistema": "Oneri di sistema",
-  "Spesa per la rete e gli oneri generali di sistema": "Rete e oneri (stampati insieme)", "Totale fatturato": "Totale fattura",
+  "Spesa per la rete e gli oneri generali di sistema": "Rete e oneri di sistema", "Totale fatturato": "Totale fattura",
 };
 const ORDER: Readonly<Record<BillReadSectionId, readonly string[]>> = {
   SUPPLY: ["Intestatario", "Fornitore", "POD", "PDR", "Periodo", "Uso"],
   TECHNICAL: ["Consumo totale (F0)", "F1", "F2", "F3", "Consumo annuo", "Potenza impegnata", "Potenza massima"],
   CONTRACT: ["Offerta", "Prezzo", "Fasce", "Indice", "Spread", "PCV", "Scadenza condizioni", "Scadenza contratto"],
-  ECONOMICS: ["Vendita", "Rete e trasporto", "Oneri di sistema", "Accise", "IVA", "Accise e IVA", "Totale fattura"],
+  ECONOMICS: ["Vendita", "Rete e oneri di sistema", "Accise", "IVA", "Accise e IVA", "Totale fattura", "Rete e trasporto", "Oneri di sistema"],
 };
 const isZero = (value: string) => { const amounts = [...value.matchAll(/-?\d[\d.]*,\d+|-?\d+(?:\.\d+)?/g)].map((match) => amountOf(match[0])); return amounts.length > 0 && amounts.every((amount) => amount === 0); };
 
@@ -284,22 +318,24 @@ function secondaryRow(id: BillReadSectionId, row: BillReadRow, rows: readonly Bi
     return false;
   }
   if (id === "CONTRACT") {
-    if (label === "Decorrenza condizioni" || label === "Attivazione") return true;
+    if (label === "Decorrenza condizioni" || label === "Attivazione" || label === "PCV stampata (valore unitario)") return true;
     if (ORDER.CONTRACT.includes(label)) return false;
     // Other commercial charges: in view unless zero.
     return isZero(row.value);
   }
-  // Rete and oneri printed together stay available once they are shown apart.
-  if (label === "Rete e oneri (stampati insieme)") return rows.some((item) => item.label === "Rete e trasporto") && rows.some((item) => item.label === "Oneri di sistema" && item.state !== "ABSENT");
-  return row.state === "ABSENT" && label !== "Totale fattura";
+  // Tony (11/11/2026, "pulizia finale"): the economic summary shows the bill's values only; what is calculated here (rete
+  // as a difference, oneri as a sum of the detail rows) and what is not printed stay under "Altri dettagli".
+  return (row.state === "ABSENT" || row.state === "CALCULATED") && label !== "Totale fattura";
 }
 
 function compactSection(section: BillReadSection): BillReadSection {
   const renamed = section.rows.map((row): BillReadRow => {
     if (/ \(classificazione del simulatore\)$/.test(row.label)) return { ...row, label: row.label.replace(/ \(classificazione del simulatore\)$/, ""), group: "SIMULATOR", ...(row.note ? { note: row.note.replace(/^Raggruppamento normalizzato delle righe lette: /, "") } : {}) };
     const label = SHORT_LABEL[row.label] ?? row.label;
-    const noteShown = (label === "Consumo totale (F0)" || label === "Totale fattura") && Boolean(row.note);
-    return { ...row, label, ...(noteShown ? { noteShown } : {}) };
+    // F0 decides its own (only a gap above the tolerance, or the sum when no total is printed); the total's note is a mismatch.
+    const { noteShown: shown, ...rest } = row;
+    const noteShown = label === "Consumo totale (F0)" ? Boolean(shown) : label === "Totale fattura" && Boolean(row.note);
+    return { ...rest, label, ...(noteShown ? { noteShown } : {}) };
   });
   const order = ORDER[section.id];
   const rank = (row: BillReadRow) => { const index = order.indexOf(row.label); return index < 0 ? order.length : index; };

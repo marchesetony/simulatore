@@ -3,7 +3,8 @@ import { readFile } from "node:fs/promises";
 import { parseBillReading } from "../app/lib/reading/bill-reader.ts";
 import { toStructuredBill } from "../app/lib/reading/bill-reader-map.ts";
 import { buildBillAnalystReview } from "../app/lib/foundation/bill-analyst-review.ts";
-import { billReadSections, italianDecimal, NOT_IN_BILL, NOT_READ, printedContractValues } from "../app/lib/ui/bill-read-details.ts";
+import { billReadSections, italianDecimal, NOT_IN_BILL, NOT_READ, printedContractValues, segmentRepeatsUse } from "../app/lib/ui/bill-read-details.ts";
+import { BANDS_SUM_TOLERANCE_KWH } from "../app/lib/reading/bill-reader-checks.ts";
 
 // Tony (10/11/2026, fattura EE20369/2026): "Dati letti" must show what the reading already holds, in four sections, and say
 // for each value whether it was read, is not printed, must be checked or was calculated. Synthetic bill with the same
@@ -82,8 +83,20 @@ assert.equal(rowOf(sections, "TECHNICAL", "Potenza massima").value, "15,0 kW");
 assert.deepEqual(rowOf(sections, "TECHNICAL", "Potenza disponibile"), { label: "Potenza disponibile", value: NOT_IN_BILL, state: "ABSENT", note: "non stampato", secondary: true });
 // 6. F0, F1, F2, F3 kept as read. Tony (10/11, "semplificazione"): the sum is not a second total, its gap is a discreet note.
 assert.equal(rowOf(sections, "TECHNICAL", "Consumo totale (F0)").value, "2.672,07 kWh");
-assert.match(rowOf(sections, "TECHNICAL", "Consumo totale (F0)").note, /F1 \+ F2 \+ F3 = 2\.672,08 kWh, scostamento 0,01 kWh \(calcolato\)/);
-assert.equal(rowOf(sections, "TECHNICAL", "Consumo totale (F0)").noteShown, true, "the gap is shown next to F0");
+// Tony (11/11/2026, "pulizia finale"): a gap within the tolerance of the reading check (1 kWh) is not written next to F0; it
+// stays on the value (on demand). A gap above the tolerance stays in view as a warning.
+assert.match(rowOf(sections, "TECHNICAL", "Consumo totale (F0)").note, /F1 \+ F2 \+ F3 = 2\.672,08 kWh, scostamento 0,01 kWh entro la tolleranza \(calcolato\)/);
+assert.equal(rowOf(sections, "TECHNICAL", "Consumo totale (F0)").noteShown, undefined, "a gap within the tolerance is not in view");
+assert.equal(BANDS_SUM_TOLERANCE_KWH, 1, "the tolerance of the reading check is unchanged");
+const farBands = { ...structuredBill, f3Consumption: { ...structuredBill.f3Consumption, value: 530.62 } };
+const farF0 = rowOf(billReadSections(billOf(farBands)), "TECHNICAL", "Consumo totale (F0)");
+assert.equal(farF0.noteShown, true, "a gap above the tolerance stays in view");
+assert.match(farF0.note, /^Attenzione: F1 \+ F2 \+ F3 = 2\.676,08 kWh, scostamento di 4,01 kWh dal consumo totale, oltre la tolleranza di 1 kWh \(calcolato\)$/);
+assert.equal(farF0.value, "2.672,07 kWh", "F0 stays as printed");
+const atTolerance = { ...structuredBill, f3Consumption: { ...structuredBill.f3Consumption, value: 527.61 } };
+assert.equal(rowOf(billReadSections(billOf(atTolerance)), "TECHNICAL", "Consumo totale (F0)").noteShown, undefined, "1 kWh exactly is within the tolerance, as in the reading check");
+const noTotal = { ...structuredBill, billedConsumption: { ...structuredBill.billedConsumption, status: "NOT_FOUND", value: null } };
+assert.equal(rowOf(billReadSections(billOf(noTotal)), "TECHNICAL", "Consumo totale (F0)").noteShown, true, "without a printed total the sum of the bands stays in view");
 assert.equal(rowOf(sections, "TECHNICAL", "F1").value, "1.791,02 kWh");
 assert.equal(rowOf(sections, "TECHNICAL", "F2").value, "354,44 kWh");
 assert.equal(rowOf(sections, "TECHNICAL", "F3").value, "526,62 kWh");
@@ -105,14 +118,26 @@ assert.equal(rowOf(sections, "CONTRACT", "Indice").value, "PUN");
 assert.deepEqual(rowOf(sections, "CONTRACT", "Spread"), { label: "Spread", value: "0,012 €/kWh", state: "READ" });
 const pcv = rowOf(sections, "CONTRACT", "PCV");
 assert.equal(pcv.state, "READ");
-assert.equal(pcv.value, "10,392500 €/POD/mese · importo 10,39 €");
+// Tony (11/11/2026, "pulizia finale"): the monthly amount with two decimals; the printed unit price under "Altri dettagli".
+assert.equal(pcv.value, "10,39 €/mese");
+assert.equal(pcv.secondary, undefined);
+assert.deepEqual(rowOf(sections, "CONTRACT", "PCV stampata (valore unitario)"), { label: "PCV stampata (valore unitario)", value: "10,392500 €/POD/mese · importo 10,39 €", state: "READ", note: "Commercializzazione e vendita", secondary: true });
+const factPcv = parseBillReading({ ...reading, dettaglio: reading.dettaglio.filter((line) => line.voce !== "PCV") });
+const factPcvBill = toStructuredBill({ reading: factPcv, checks: [], reread: false });
+const factPcvRows = billReadSections(billOf(factPcvBill)).flatMap((item) => item.rows).filter((item) => /PCV/.test(item.label)).map(plain);
+assert.deepEqual(factPcvRows.map((item) => `${item.label}=${item.value}${item.secondary ? " (dettagli)" : ""}`), ["PCV=10,39 €/mese", "PCV stampata (valore unitario)=10,392500 €/mese (dettagli)"], "the printed PCV without a detail row, rounded the same way");
+// A PCV that is not monthly (or more than one PCV line) stays as printed, with no rounding.
+const perKwhPcv = parseBillReading({ ...reading, dettaglio: reading.dettaglio.map((line) => line.voce === "PCV" ? { ...line, quantita: "2.672,07", unita: "kWh", prezzo: "0,003900", unitaPrezzo: "Euro/KWH", importo: "10,42" } : line) });
+const perKwhRows = billReadSections(billOf(toStructuredBill({ reading: perKwhPcv, checks: [], reread: false }))).flatMap((item) => item.rows).filter((item) => /PCV/.test(item.label)).map(plain);
+assert.deepEqual(perKwhRows.map((item) => `${item.label}=${item.value}`), ["PCV=0,003900 €/kWh · importo 10,42 €"]);
+assert.equal(printedContractValues(billOf(structuredBill)).monthlyPcv, 10.3925, "the PCV in the data and in the comparison keeps its printed precision");
 assert.equal(rowOf(sections, "CONTRACT", "Quota variabile smart (CVS)").value, "0,007713 €/kWh · importo 20,61 €");
 assert.equal(rowOf(sections, "CONTRACT", "Quota variabile voci di trasporto").value, "0,010000 €/kWh · importo 26,72 €");
 
 // D. Economics. 5. Printed values and the simulator's grouping are separate and labelled.
 const economics = section(sections, "ECONOMICS").rows;
 assert.equal(rowOf(sections, "ECONOMICS", "Vendita").value, "722,35 €");
-assert.equal(rowOf(sections, "ECONOMICS", "Rete e oneri (stampati insieme)").value, "249,22 €");
+assert.equal(rowOf(sections, "ECONOMICS", "Rete e oneri di sistema").value, "249,22 €");
 const network = rowOf(sections, "ECONOMICS", "Rete e trasporto");
 assert.equal(network.value, "134,30 €");
 assert.equal(network.state, "CALCULATED", "the network share is a difference: labelled calculated");
@@ -136,9 +161,12 @@ for (const label of ["Intestatario", "Fornitore", "POD", "Periodo", "Totale fatt
 const secondary = (id) => section(sections, id).rows.filter((item) => item.secondary).map((item) => `${item.label}=${plain(item).value}`);
 assert.deepEqual(secondary("SUPPLY"), ["Mercato=MERCATO LIBERO"]);
 assert.deepEqual(secondary("TECHNICAL"), ["Tensione=380,0 V · bassa tensione (BT)", `Potenza disponibile=${NOT_IN_BILL}`], "low voltage and an unprinted available power are secondary");
-assert.deepEqual(secondary("CONTRACT"), [`Attivazione=${NOT_READ}`, "Decorrenza condizioni=01/05/2026"]);
-assert.deepEqual(secondary("ECONOMICS"), ["Rete e oneri (stampati insieme)=249,22 €"], "rete and oneri printed together, once shown apart");
-for (const label of ["Intestatario", "Fornitore", "POD", "Periodo", "Consumo totale (F0)", "F1", "F2", "F3", "Potenza impegnata", "Potenza massima", "Prezzo", "Fasce", "Indice", "Spread", "PCV", "Scadenza condizioni", "Scadenza contratto", "Vendita", "Rete e trasporto", "Oneri di sistema", "Accise", "IVA", "Totale fattura"]) {
+assert.deepEqual(secondary("CONTRACT"), [`Attivazione=${NOT_READ}`, "Decorrenza condizioni=01/05/2026", "PCV stampata (valore unitario)=10,392500 €/POD/mese · importo 10,39 €"]);
+// Tony (11/11/2026, "pulizia finale"): the economic summary in view holds the bill's values only; rete as a difference and
+// oneri as a sum of the detail rows are under "Altri dettagli".
+assert.deepEqual(secondary("ECONOMICS"), ["Rete e trasporto=134,30 €", "Oneri di sistema=114,92 €"], "calculated economic values one click away");
+assert.ok(section(sections, "ECONOMICS").rows.filter((item) => !item.secondary && item.group !== "SIMULATOR").every((item) => item.state === "READ"), "only printed values in the economic summary");
+for (const label of ["Intestatario", "Fornitore", "POD", "Periodo", "Consumo totale (F0)", "F1", "F2", "F3", "Potenza impegnata", "Potenza massima", "Prezzo", "Fasce", "Indice", "Spread", "PCV", "Scadenza condizioni", "Scadenza contratto", "Vendita", "Rete e oneri di sistema", "Accise", "IVA", "Totale fattura"]) {
   const found = sections.flatMap((entry) => entry.rows).find((item) => item.label === label && item.group !== "SIMULATOR");
   assert.ok(found && !found.secondary, `${label} is in view`);
 }
@@ -180,6 +208,15 @@ assert.equal(rowOf(openSections, "CONTRACT", "Scadenza contratto").value, NOT_IN
 const household = parseBillReading({ ...reading, tipoCliente: "DOMESTICO", tipoClienteStampato: "Domestico residente", tensioneStampata: "", dettaglio: [], scontrino: reading.scontrino, pcvMensile: "", assenti: [] });
 const householdSections = billReadSections(billOf(toStructuredBill({ reading: household, checks: [], reread: false })));
 assert.equal(rowOf(householdSections, "SUPPLY", "Uso").value, "Domestico residente");
+// Tony (11/11/2026, "pulizia finale"): the segment moves under "Altri dettagli" only when it repeats the printed use.
+const householdBill = billOf(toStructuredBill({ reading: household, checks: [], reread: false }));
+assert.equal(segmentRepeatsUse(householdBill, "RESIDENTIAL"), true, "Domestico → Consumer repeats the use");
+assert.equal(segmentRepeatsUse(householdBill, "NON_RESIDENTIAL"), false, "a segment different from the use stays in view");
+assert.equal(segmentRepeatsUse(billOf(structuredBill), "NON_RESIDENTIAL"), true, "altri usi → Business repeats the use");
+assert.equal(segmentRepeatsUse(billOf(structuredBill), "RESIDENTIAL"), false);
+assert.equal(segmentRepeatsUse(billOf(structuredBill), null), false, "an undetermined segment stays in view");
+const noUse = parseBillReading({ ...reading, tipoClienteStampato: "", tipoCliente: "ALTRI_USI" });
+assert.equal(segmentRepeatsUse(billOf(toStructuredBill({ reading: noUse, checks: [], reread: false })), "NON_RESIDENTIAL"), false, "without a printed use the segment stays in view");
 assert.equal(rowOf(householdSections, "TECHNICAL", "Tensione").value, "Bassa tensione (BT)");
 assert.equal(rowOf(householdSections, "ECONOMICS", "Accise e IVA").value, "254,49 €", "without detail rows the printed 'Accise e IVA' is shown as printed");
 assert.equal(rowOf(householdSections, "ECONOMICS", "Oneri di sistema").state, "ABSENT");
@@ -220,7 +257,9 @@ const component = await readFile("app/components/BillReadDetails.tsx", "utf8");
 assert.match(component, /calcolato dal simulatore · gli altri valori sono quelli stampati in fattura/, "one legend instead of a label on every row");
 assert.match(component, /<span className="visually-hidden"> \(calcolato dal simulatore\)<\/span>/, "the asterisk is read out by screen readers");
 assert.match(component, /<summary>Altri dettagli \(\{more\.length\}\)<\/summary>/, "secondary values one click away");
-assert.match(component, /Classificazione del simulatore, dove diversa dalla fattura/);
+// Tony (11/11/2026, "pulizia finale"): the simulator's different classification folded under its own heading.
+assert.match(component, /<details className="bill-read-simulator">\s*<summary>Classificazione del simulatore: differenze dalla fattura \(\{simulator\.length\}\)<\/summary>/);
+assert.match(flow, /\{ section: "SUPPLY", \.\.\.\(segmentRepeatsUse\(bill, type\) \? \{ secondary: true \} : \{\}\), label: "Segmento cliente"/, "the segment under Altri dettagli when it repeats the use");
 assert.match(component, /review && !note \? <small className="bill-read-note">da verificare<\/small>/, "an uncertain value still says so");
 
 console.log("bill-read-details OK");

@@ -35,6 +35,9 @@ export function productAmountMatches(quantity: number | null, price: number | nu
   return Math.abs(cents(expected) - cents(amount)) <= Math.max(2, Math.abs(cents(amount)) * 0.005);
 }
 
+/** F1 + F2 + F3 against the billed consumption: a gap above 1 kWh is reported (BANDS_SUM). "Dati letti" uses the same value. */
+export const BANDS_SUM_TOLERANCE_KWH = 1;
+
 export interface ReadingCheck { readonly code: string; readonly message: string }
 
 function quotaGroups(rows: readonly ScontrinoRow[]): Map<string, { total: number | null; shares: number[] }> {
@@ -77,7 +80,7 @@ export function checkBillReading(reading: BillReading): readonly ReadingCheck[] 
   if (reading.vettore === "EE") {
     const f = [reading.consumoF1, reading.consumoF2, reading.consumoF3].map(italianNumber);
     const total = italianNumber(reading.consumoFatturato);
-    if (f.every((value) => value !== null) && total !== null && Math.abs((f[0]! + f[1]! + f[2]!) - total) > 1) {
+    if (f.every((value) => value !== null) && total !== null && Math.abs((f[0]! + f[1]! + f[2]!) - total) > BANDS_SUM_TOLERANCE_KWH) {
       checks.push({ code: "BANDS_SUM", message: `F1 ${reading.consumoF1} + F2 ${reading.consumoF2} + F3 ${reading.consumoF3} non dà il consumo fatturato ${reading.consumoFatturato} kWh: rileggi i consumi per fascia e il totale.` });
     }
     if ((total === null || total <= 0) && !f.every((value) => value !== null && value >= 0)) {

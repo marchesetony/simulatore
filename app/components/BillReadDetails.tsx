@@ -5,6 +5,7 @@ import type { BillReadRow, BillReadSection, BillReadSectionId } from "../lib/ui/
 // was calculated. Tony (10/11/2026, "ottimizzazione grafica"): compact grid, short labels, no "Letto" on every row: a value
 // is the printed one unless it carries the asterisk of the legend (calculated by the simulator) or "da verificare"; the
 // secondary values (not printed, zero, auxiliary such as the GME PUN) stay one click away under "Altri dettagli".
+// Tony (11/11/2026, "pulizia finale"): the simulator's different classification is folded too, under its own heading.
 
 export interface CalculatedFact { readonly label: string; readonly value: ReactNode; readonly note: string; readonly section: BillReadSectionId; readonly secondary?: boolean }
 
@@ -41,10 +42,10 @@ export function BillReadDetails({ sections, calculated = [] }: { readonly sectio
       return <section key={section.id} className="bill-read-section" aria-label={section.title}>
         <h4>{section.title}</h4>
         <dl className="bill-read-grid">{main.map((entry) => <Item key={entry.key} entry={entry} detailed={false} />)}</dl>
-        {simulator.length ? <div className="bill-read-simulator">
-          <p className="bill-read-subtitle">Classificazione del simulatore, dove diversa dalla fattura</p>
+        {simulator.length ? <details className="bill-read-simulator">
+          <summary>Classificazione del simulatore: differenze dalla fattura ({simulator.length})</summary>
           <dl className="bill-read-grid">{simulator.map((entry) => <Item key={entry.key} entry={{ ...entry, noteShown: true }} detailed={false} />)}</dl>
-        </div> : null}
+        </details> : null}
         {more.length ? <details className="bill-read-more">
           <summary>Altri dettagli ({more.length})</summary>
           <dl className="bill-read-grid">{more.map((entry) => <Item key={entry.key} entry={entry} detailed />)}</dl>
