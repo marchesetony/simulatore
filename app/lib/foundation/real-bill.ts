@@ -1,5 +1,7 @@
 // @ts-expect-error Node's strip-only test runner requires the explicit extension.
 import { readingHasScontrino } from "../ingestion/printed-scontrino.ts";
+// @ts-expect-error Node's strip-only test runner requires the explicit extension.
+import { withCurrentReadingChecks } from "../reading/stored-reading-checks.ts";
 import { randomUUID } from "node:crypto";
 import { mkdir, readFile, rm, unlink, writeFile } from "node:fs/promises";
 import path from "node:path";
@@ -630,7 +632,8 @@ export function toPublicDocumentVersion(document: BillDocument, versionId: strin
         approvedAt: approvalRecordFor(document, version.versionId)?.approvedAt ?? null,
       })),
     normalized: working.energyContract ? publicBillProfile(working.energyContract, working.fields) : null,
-    structuredBill: working.structuredBill ?? null,
+    // Tony (11/11/2026): the stored checks are shown as the current check sees them; the stored reading is not changed.
+    structuredBill: working.structuredBill ? withCurrentReadingChecks(working.structuredBill) : null,
     // Tony (1/11, "mancano i raffronti con lo scontrino della bolletta inserita"): also a reading that holds no charge line at
     // all (second reading not run, or empty) offers the re-read, not only a failed one.
     chargeLinesUnread: working.structuredBill ? (working.structuredBill.analystExtractionStatus === "FAILED" && !readingHasScontrino(working.structuredBill)) || (working.structuredBill.economicChargeLines?.length ?? 0) === 0 : false,

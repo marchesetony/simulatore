@@ -24,6 +24,17 @@ const cents = (value: number) => Math.round(value * 100);
 const CENT_UNIT = /c\s*€|\bc\.?\s*eur|cent(?:esim[oi])?\b|eurocent/i;
 export function unitPriceInEuro(price: number, unit: string): number { return CENT_UNIT.test(unit) ? price / 100 : price; }
 
+/** The quantity × price check of one printed row: true when it adds up, false when it does not, null when it cannot be checked
+ *  (a number missing, quantity zero, a percentage, or "€/kW/mese" whose months are not in the quantity). */
+export function productAmountMatches(quantity: number | null, price: number | null, unit: string, amount: number | null): boolean | null {
+  if (quantity === null || price === null || amount === null || quantity === 0 || /%/.test(unit)) return null;
+  // "kW per mesi × €/kW/mese" prints the kW only: the months are not in the quantity, so only same-unit rows are checked.
+  if (/\/\s*kW\s*\/\s*mese/i.test(unit)) return null;
+  const expected = quantity * unitPriceInEuro(price, unit);
+  // The average price of the scontrino is rounded: 0,5% or 2 cents of tolerance.
+  return Math.abs(cents(expected) - cents(amount)) <= Math.max(2, Math.abs(cents(amount)) * 0.005);
+}
+
 export interface ReadingCheck { readonly code: string; readonly message: string }
 
 function quotaGroups(rows: readonly ScontrinoRow[]): Map<string, { total: number | null; shares: number[] }> {
@@ -104,12 +115,8 @@ export function checkBillReading(reading: BillReading): readonly ReadingCheck[] 
     ...reading.dettaglio.map((row) => ({ label: row.descrizione, quantity: row.quantita, price: row.prezzo, amount: row.importo, unit: row.unitaPrezzo }))];
   for (const row of productChecks) {
     const quantity = italianNumber(row.quantity); const price = italianNumber(row.price); const amount = italianNumber(row.amount);
-    if (quantity === null || price === null || amount === null || quantity === 0 || /%/.test(row.unit)) continue;
-    // "kW per mesi × €/kW/mese" prints the kW only: the months are not in the quantity, so only same-unit rows are checked.
-    if (/\/\s*kW\s*\/\s*mese/i.test(row.unit)) continue;
-    const expected = quantity * unitPriceInEuro(price, row.unit);
-    // The average price of the scontrino is rounded: 0,5% or 2 cents of tolerance.
-    if (Math.abs(cents(expected) - cents(amount)) > Math.max(2, Math.abs(cents(amount)) * 0.005)) {
+    if (productAmountMatches(quantity, price, row.unit, amount) === false) {
+      const expected = quantity! * unitPriceInEuro(price!, row.unit);
       checks.push({ code: "PRODUCT", message: `"${row.label}": ${row.quantity} × ${row.price} = ${expected.toFixed(2)} € ma l'importo letto è ${row.amount} €.` });
     }
   }
