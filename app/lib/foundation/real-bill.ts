@@ -241,7 +241,10 @@ export interface AuditSink {
 }
 
 export const fieldNames: readonly FieldName[] = ["supplier", "pod", "customerName", "billingPeriod", "annualConsumption", "billedConsumption", "totalAmount"];
-export const requiredFieldNames: readonly FieldName[] = fieldNames;
+// Tony (12/11/2026, "CONSUMO ANNUO STIMATO", regole 5 e 6): the annual consumption is required only when the bill prints it.
+// A bill without it is approved with the field empty; the estimate is computed apart (calculation/annual-consumption.ts) and
+// never saved as a correction of the bill's data.
+export const requiredFieldNames: readonly FieldName[] = fieldNames.filter((field) => field !== "annualConsumption");
 const extractionStatuses: readonly ExtractionStatus[] = ["EXTRACTED", "OCR_PROVIDER_REQUIRED", "FAILED", "REVIEW_REQUIRED"];
 const fieldSources: readonly ExtractedField["source"][] = ["embedded-text", "document-ai", "manual", "unavailable"];
 const versionOrigins: readonly BillVersion["origin"][] = ["INGESTION", "MANUAL_REVIEW"];

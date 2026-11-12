@@ -3,6 +3,8 @@ import type { StructuredBillEconomicChargeLine, StructuredBillField } from "../i
 import type { SupplyProfileField } from "../ingestion/bill-supply-profile";
 import { BANDS_SUM_TOLERANCE_KWH } from "../reading/bill-reader-checks";
 import { formatKwh } from "./format";
+import { ANNUAL_ESTIMATE_LABEL } from "../calculation/annual-consumption";
+import { annualEstimateOrigin, billAnnualConsumption, quantityText } from "./annual-consumption";
 
 // Tony (10/11/2026, fattura EE20369/2026: the 17 values were read and saved but "Dati letti" did not show them): the screen
 // shows what the reading already holds, in four sections. A value read from the bill is shown as read; a value the reader
@@ -144,6 +146,10 @@ function technicalSection(bill: Bill): BillReadSection {
   }
   rows.push(bandNote ? { ...billedRow, note: billedRow.note ? `${billedRow.note} · ${bandNote}` : bandNote, ...(bandWarning || gapUnknown(bandNote) ? { noteShown: true } : {}) } : billedRow, ...bandRows);
   rows.push(row(bill, "Consumo annuo dichiarato", kwh(sb?.annualConsumption, gas ? "Smc" : "kWh"), ["consumoAnnuo"], { review: needsReview(sb?.annualConsumption) }));
+  // Tony (12/11/2026, "CONSUMO ANNUO STIMATO"): without a declared value, the estimate is a row of its own, labelled, with
+  // its origin and the months or the period used; the declared row above stays as the bill prints it.
+  const annual = billAnnualConsumption(bill);
+  if (annual.status === "ESTIMATED" && annual.value !== null) rows.push({ label: ANNUAL_ESTIMATE_LABEL, value: quantityText(annual.value, gas ? "Smc" : "kWh"), state: "CALCULATED", note: `Calcolato: ${annualEstimateOrigin(annual, gas ? "Smc" : "kWh")}`, noteShown: true });
   return { id: "TECHNICAL", title: "Caratteristiche tecniche", rows };
 }
 
@@ -305,7 +311,7 @@ const SHORT_LABEL: Readonly<Record<string, string>> = {
 };
 const ORDER: Readonly<Record<BillReadSectionId, readonly string[]>> = {
   SUPPLY: ["Intestatario", "Fornitore", "POD", "PDR", "Periodo", "Uso"],
-  TECHNICAL: ["Consumo totale (F0)", "F1", "F2", "F3", "Consumo annuo", "Potenza impegnata", "Potenza massima"],
+  TECHNICAL: ["Consumo totale (F0)", "F1", "F2", "F3", "Consumo annuo", ANNUAL_ESTIMATE_LABEL, "Potenza impegnata", "Potenza massima"],
   CONTRACT: ["Offerta", "Prezzo", "Fasce", "Indice", "Spread", "PCV", "Scadenza condizioni", "Scadenza contratto"],
   ECONOMICS: ["Vendita", "Rete e oneri di sistema", "Accise", "IVA", "Accise e IVA", "Totale fattura", "Rete e trasporto", "Oneri di sistema"],
 };

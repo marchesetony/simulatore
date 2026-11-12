@@ -1,9 +1,7 @@
 // @ts-expect-error Node's strip-only test runner requires the explicit extension.
 import { completeSupplyProfile } from "../ingestion/supply-profile-completion.ts";
 // @ts-expect-error Node's strip-only test runner requires the explicit extension.
-import { estimatedAnnualConsumption } from "./annual-consumption.ts";
-// @ts-expect-error Node's strip-only test runner requires the explicit extension.
-import { historyMonthTotals } from "../ingestion/consumption-history.ts";
+import { resolveAnnualConsumption, type AnnualConsumption } from "./annual-consumption.ts";
 // @ts-expect-error Node's strip-only test runner requires the explicit extension.
 import { assertSimulationWithinLimits, canAuthorizeCte, cteUsability, loadHierarchyAccess } from "../hierarchy/service.ts";
 // @ts-expect-error Node's strip-only test runner requires the explicit extension.
@@ -459,15 +457,17 @@ function annualConsumptionWithin(rule: AnnualRule, annual: number | null): boole
 }
 /**
  * Annual consumption from the bill; when it does not print it, the average monthly consumption times 12 (Tony 29/10), on
- * the bill's consumption history when it shows one (Tony 30/10), else on the months billed.
+ * the bill's consumption history when it shows a valid one (Tony 30/10), else on the months billed (Tony 12/11, opzione B).
+ * The estimate keeps its origin and full precision (annual-consumption.ts) and is never the declared value.
  */
-export function annualConsumptionOf(context: Pick<BillDrivenSimulationContext, "vector" | "consumption" | "billingPeriod">): number | null {
-  if (context.consumption.annual !== null) return context.consumption.annual;
+export function annualConsumptionDetailOf(context: Pick<BillDrivenSimulationContext, "vector" | "consumption" | "billingPeriod">): AnnualConsumption {
   const period = context.consumption.period;
   const billed = context.vector === "EE" ? (period.f1 ?? 0) + (period.f2 ?? 0) + (period.f3 ?? 0) : period.smc ?? 0;
-  const history = historyMonthTotals(context.consumption.history);
-  const monthTotals = history.length ? history : context.vector === "EE" ? context.consumption.monthlyProfile?.map((month) => month.f1 + month.f2 + month.f3) ?? null : null;
-  return estimatedAnnualConsumption({ billed, periodStart: context.billingPeriod.periodStart, periodEnd: context.billingPeriod.periodEnd, monthTotals });
+  const billedMonthTotals = context.vector === "EE" ? context.consumption.monthlyProfile?.map((month) => ({ month: month.month, quantity: month.f1 + month.f2 + month.f3 })) ?? null : null;
+  return resolveAnnualConsumption({ declared: context.consumption.annual, billed, periodStart: context.billingPeriod.periodStart, periodEnd: context.billingPeriod.periodEnd, history: context.consumption.history ?? null, billedMonthTotals });
+}
+export function annualConsumptionOf(context: Pick<BillDrivenSimulationContext, "vector" | "consumption" | "billingPeriod">): number | null {
+  return annualConsumptionDetailOf(context).value;
 }
 
 async function evaluateCte(repository: BillDrivenRepositories["marketArchiveRepository"], context: BillDrivenSimulationContext, record: CteArchiveRecord, version: CteArchiveVersion, taxTreatment?: TaxInclusionState, asOf = new Date().toISOString().slice(0, 10)): Promise<CteEligibilityCandidate> {

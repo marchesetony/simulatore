@@ -27,7 +27,8 @@ assert.match(flow, /unit === "EUR_PER_KWH" \? formatKwh\(quantity\)/, "kWh of th
 assert.match(flow, /formatKwh\(\[period\.f1, period\.f2, period\.f3\]\[index\] \?\? 0\)/, "F1, F2, F3 of the comparison");
 assert.match(flow, /: formatKwh\(periodQuantity\)\}/, "the period total, rounded from the exact sum");
 assert.match(flow, /const periodQuantity = .*\(period\.f1 \?\? 0\) \+ \(period\.f2 \?\? 0\) \+ \(period\.f3 \?\? 0\);/, "the sum is made on the exact values");
-assert.match(flow, /quote\.context\.vector === "EE" \? formatKwh\(annual\)/, "annual consumption in the CTE exclusion reason");
+// Tony (12/11/2026, "CONSUMO ANNUO STIMATO"): the reason shows the declared or the labelled estimate, whole kWh (quantityText).
+assert.match(flow, /annualConsumptionLine\(annual, quote\.context\.vector === "EE" \? "kWh" : "Smc"\)/, "annual consumption in the CTE exclusion reason");
 const panel = await readFile("app/components/BillOperationalPanel.tsx", "utf8");
 assert.match(panel, /if \(unit === "kWh" && typeof field\.value === "number" && fieldValue\(field\)\) return \[\{ label, value: <>\{formatKwh\(field\.value\)/, "Bollette › consumi");
 assert.match(panel, /"Non determinabile" : formatKwh\(review\.consumption\.billed\.value\)/);

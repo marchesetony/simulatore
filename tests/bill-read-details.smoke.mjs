@@ -259,7 +259,8 @@ assert.match(flow, /\.\.\.\(printed\.priceType \? \[\] : \[\{ section: "CONTRACT
 assert.match(flow, /\.\.\.\(printed\.priceStructure \? \[\] : \[\{ section: "CONTRACT" as const, label: `Struttura del \$\{index\}`/);
 assert.match(flow, /const pcvShown = pcv === null \? printed\.monthlyPcv === null : printed\.monthlyPcv === null \|\| Math\.abs\(printed\.monthlyPcv - pcv\) >= 0\.005;/);
 assert.match(flow, /<details className="bill-read-correct" open=\{correctionOpen\} onToggle=\{\(event\) => setCorrectionOpen\(event\.currentTarget\.open\)\}>/);
-assert.match(flow, /setCorrectionOpen\(FIELDS\.some\(\(field\) => !\(next\[field\.name\] \?\? ""\)\.trim\(\)\)\)/, "opened when a field to confirm is empty");
+// Tony (12/11/2026, "CONSUMO ANNUO STIMATO"): the annual consumption is optional, so an empty one does not open the form.
+assert.match(flow, /setCorrectionOpen\(reviewSubmission\(FIELDS\.map\(\(field\) => field\.name\), next, document\.fields\)\.missing\.length > 0\)/, "opened when a field to confirm is empty");
 assert.match(flow, /if \(missing\.length\) \{ setCorrectionOpen\(true\);/, "and when the search finds one missing");
 assert.equal((flow.match(/startReview\(document\);/g) ?? []).length, 3, "upload, archive and re-read open the review the same way");
 assert.doesNotMatch(flow, /readingAbsent\?\.some/, "the 'not printed' reasons are said once, on their rows");

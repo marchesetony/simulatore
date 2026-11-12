@@ -5,8 +5,9 @@ import { annualConsumptionOf } from "../app/lib/calculation/bill-driven.ts";
 const period = { periodStart: "2026-06-01", periodEnd: "2026-07-31" };
 assert.equal(annualConsumptionOf({ vector: "EE", billingPeriod: period, consumption: { annual: 17520, period: { f1: 1, f2: 1, f3: 1, smc: null } } }), 17520);
 // Tony (29/10): "bisogna fare la media dei consumi che vengono menzionati in bolletta e moltiplicare per 12". Two months
-// billed (1.131,12 kWh) are 565,56 kWh a month, 6.787 kWh a year (was 6.768 on days × 365).
-assert.equal(annualConsumptionOf({ vector: "EE", billingPeriod: period, consumption: { annual: null, period: { f1: 500, f2: 300, f3: 331.12, smc: null } } }), 6787);
+// billed (1.131,12 kWh) are 565,56 kWh a month, 6.786,72 kWh a year (was 6.768 on days × 365). Tony (12/11/2026, regola 7):
+// full precision in the calculation, rounded only on screen (was 6.787).
+assert.ok(Math.abs(annualConsumptionOf({ vector: "EE", billingPeriod: period, consumption: { annual: null, period: { f1: 500, f2: 300, f3: 331.12, smc: null } } }) - 6786.72) < 1e-9);
 // CAMELOT SRL: 52 kWh billed from 1 September to 1 October is one month, 624 kWh a year (was 612).
 assert.equal(annualConsumptionOf({ vector: "EE", billingPeriod: { periodStart: "2026-09-01", periodEnd: "2026-10-01" }, consumption: { annual: null, period: { f1: 21, f2: 15, f3: 16, smc: null } } }), 624);
 // When the bill lists its months, their average is the monthly consumption.
@@ -24,7 +25,8 @@ assert.equal(annualConsumptionOf({ vector: "EE", billingPeriod: { periodStart: "
 assert.equal(annualConsumptionOf({ vector: "EE", billingPeriod: period, consumption: { annual: 17520, period: { f1: 1, f2: 1, f3: 1, smc: null }, history } }), 17520);
 
 const { normalizeConsumptionHistory } = await import("../app/lib/ingestion/consumption-history.ts");
-assert.deepEqual(normalizeConsumptionHistory([{ month: "2026-02", quantity: 10 }, { month: "2026-01", quantity: 5 }, { month: "2026-02", quantity: 99 }]), [{ month: "2026-01", quantity: 5 }, { month: "2026-02", quantity: 10 }]);
+// Tony (12/11/2026): a month repeated with different values is kept, never dropped silently (was: the first value only).
+assert.deepEqual(normalizeConsumptionHistory([{ month: "2026-02", quantity: 10 }, { month: "2026-01", quantity: 5 }, { month: "2026-02", quantity: 99 }]), [{ month: "2026-01", quantity: 5 }, { month: "2026-02", quantity: 10 }, { month: "2026-02", quantity: 99 }]);
 assert.throws(() => normalizeConsumptionHistory([{ month: "2026-13", quantity: 1 }]), /CONSUMPTION_HISTORY_INVALID/);
 
 // The reading asks the AI for the history and keeps it on the bill.

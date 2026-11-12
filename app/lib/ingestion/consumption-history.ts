@@ -21,20 +21,21 @@ export const CONSUMPTION_HISTORY_WIRE_SCHEMA = {
   },
 } as const;
 
-/** Validated history, one entry per month in calendar order; throws on a malformed entry. */
+/**
+ * Validated history in calendar order; throws on a malformed entry. Tony (12/11/2026, "non scartare silenziosamente mesi
+ * duplicati o contraddittori"): a month repeated with the same value is kept once (the same consumption is never counted
+ * twice); a month repeated with different values keeps every value, so the estimate sees the contradiction
+ * (calculation/annual-consumption.ts, assessConsumptionHistory) and does not use the history.
+ */
 export function normalizeConsumptionHistory(value: unknown): readonly ConsumptionHistoryMonth[] {
   if (!Array.isArray(value) || value.length > MAX_MONTHS) throw new Error("CONSUMPTION_HISTORY_INVALID");
-  const byMonth = new Map<string, number>();
+  const byMonth = new Map<string, number[]>();
   for (const item of value) {
     if (typeof item !== "object" || item === null || Array.isArray(item)) throw new Error("CONSUMPTION_HISTORY_INVALID");
     const { month, quantity } = item as Record<string, unknown>;
     if (typeof month !== "string" || !MONTH.test(month) || typeof quantity !== "number" || !Number.isFinite(quantity) || quantity < 0) throw new Error("CONSUMPTION_HISTORY_INVALID");
-    if (!byMonth.has(month)) byMonth.set(month, quantity);
+    const values = byMonth.get(month) ?? [];
+    if (!values.includes(quantity)) byMonth.set(month, [...values, quantity]);
   }
-  return [...byMonth.entries()].sort(([left], [right]) => left.localeCompare(right)).map(([month, quantity]) => ({ month, quantity }));
-}
-
-/** The latest twelve months with a consumption, the basis of the monthly average. */
-export function historyMonthTotals(history: readonly ConsumptionHistoryMonth[] | null | undefined): readonly number[] {
-  return (history ?? []).filter((item) => item.quantity > 0).slice(-12).map((item) => item.quantity);
+  return [...byMonth.entries()].sort(([left], [right]) => left.localeCompare(right)).flatMap(([month, quantities]) => quantities.map((quantity) => ({ month, quantity })));
 }

@@ -14,8 +14,9 @@ import { buildQuoteReceipt, comparisonAnalysis, effectiveBillSpread, isSameOffer
 import { annualSaving, annualSavingUnderDiscount } from "../lib/quote/annual-saving";
 import { customerTypeOf } from "../lib/ingestion/customer-type";
 import { exclusionRank } from "../lib/quote/exclusion-order";
-import { estimatedAnnualConsumption } from "../lib/calculation/annual-consumption";
-import { historyMonthTotals } from "../lib/ingestion/consumption-history";
+import { ANNUAL_ESTIMATE_LABEL, resolveAnnualConsumption, type AnnualConsumption } from "../lib/calculation/annual-consumption";
+import { annualConsumptionLine, annualEstimateOrigin, billAnnualConsumption, quantityText } from "../lib/ui/annual-consumption";
+import { reviewSubmission } from "../lib/ui/bill-review-submission";
 import type { ApprovedBillSummaryModel, BillDocumentModel, CalculationModel, ComparisonModel, ProposalModel } from "../lib/ui/models";
 
 type Step = "bill" | "review" | "offers";
@@ -23,7 +24,7 @@ type Pending = "upload" | "open" | "confirm" | "offers" | "proposal" | "reread";
 type Context = {
   readonly billId: string; readonly billVersionId: string; readonly vector: "EE" | "GAS"; readonly customerType: "RESIDENTIAL" | "NON_RESIDENTIAL";
   readonly supply: { readonly pod: string | null; readonly pdr: string | null; readonly voltageLevel: "LV" | "MV" | "HV" | "EHV" | null; readonly contractedPowerKw?: number | null; readonly availablePowerKw?: number | null; readonly maximumDrawnPowerKw?: number | null };
-  readonly consumption?: { readonly annual: number | null; readonly period: { readonly f1: number | null; readonly f2: number | null; readonly f3: number | null; readonly smc: number | null }; readonly monthlyProfile?: readonly { readonly f1: number; readonly f2: number; readonly f3: number }[] | null; readonly history?: readonly { readonly month: string; readonly quantity: number }[] };
+  readonly consumption?: { readonly annual: number | null; readonly period: { readonly f1: number | null; readonly f2: number | null; readonly f3: number | null; readonly smc: number | null }; readonly monthlyProfile?: readonly { readonly month?: string; readonly f1: number; readonly f2: number; readonly f3: number }[] | null; readonly history?: readonly { readonly month: string; readonly quantity: number }[] };
   readonly currentOffer?: { readonly name: string | null; readonly code: string | null };
   readonly billingPeriod: { readonly periodStart: string; readonly periodEnd: string };
   readonly currentSupplier: string;
@@ -78,21 +79,9 @@ function unitOf(name: string, vector: string): string {
   if (name === "billedConsumption" || name === "annualConsumption") return vector === "GAS" ? " (Smc)" : " (kWh)";
   return name === "totalAmount" ? " (€)" : "";
 }
-// When the bill does not print the annual consumption, it is the average monthly consumption on the bill times 12.
-function estimatedAnnual(document: BillDocumentModel): string | null {
-  const billed = Number(document.fields.billedConsumption?.value);
-  const dates = /(\d{4}-\d{2}-\d{2}).*?(\d{4}-\d{2}-\d{2})/.exec(document.fields.billingPeriod?.value ?? "");
-  // Tony (30/10): the consumption history on the bill, when there is one, is the basis of the monthly average. Tony (5/11,
-  // BPower settembre billed at 0 kWh): a month billed at 0 kWh still gets the annual from the history it prints.
-  const history = historyMonthTotals(document.structuredBill?.consumptionHistory);
-  if (!Number.isFinite(billed) || billed < 0 || (billed === 0 && !history.length) || !dates) return null;
-  const annual = estimatedAnnualConsumption({ billed, periodStart: dates[1], periodEnd: dates[2], monthTotals: history.length ? history : null });
-  return annual === null ? null : String(annual);
-}
 function readValues(document: BillDocumentModel): Record<string, string> {
-  const values = Object.fromEntries(FIELDS.map((field) => [field.name, toDisplay(field.name, document.fields[field.name]?.value)]));
-  if (!values.annualConsumption?.trim()) { const estimate = estimatedAnnual(document); if (estimate) values.annualConsumption = toDisplay("annualConsumption", estimate); }
-  return values;
+  // Tony (12/11/2026, "CONSUMO ANNUO STIMATO"): only what the bill says; an estimate is never put in the declared field.
+  return Object.fromEntries(FIELDS.map((field) => [field.name, toDisplay(field.name, document.fields[field.name]?.value)]));
 }
 const MAX_BILL_BYTES = MAX_UPLOAD_BYTES;
 const DATE = new Intl.DateTimeFormat("it-IT", { day: "numeric", month: "long", year: "numeric", timeZone: "UTC" });
@@ -356,21 +345,23 @@ function calculatedFacts(bill: BillDocumentModel): readonly CalculatedFact[] {
 }
 
 // The year the savings are projected on: the annual consumption printed on the bill, or the billed period averaged over 365 days.
-type AnnualBasis = { readonly billed: number; readonly annual: number; readonly estimated: boolean };
+type AnnualBasis = { readonly billed: number; readonly annual: number; readonly estimated: boolean; readonly detail: AnnualConsumption };
+// Tony (12/11/2026, "CONSUMO ANNUO STIMATO", opzione B): declared, else the valid history, else the billed period; never invented.
+function contextAnnual(context: Context): AnnualConsumption {
+  const period = context.consumption?.period;
+  const billed = context.vector === "EE" ? (period?.f1 ?? 0) + (period?.f2 ?? 0) + (period?.f3 ?? 0) : period?.smc ?? 0;
+  const billedMonthTotals = context.vector === "EE" ? context.consumption?.monthlyProfile?.map((month, index) => ({ month: month.month ?? String(index), quantity: month.f1 + month.f2 + month.f3 })) ?? null : null;
+  return resolveAnnualConsumption({ declared: context.consumption?.annual ?? null, billed, periodStart: context.billingPeriod.periodStart, periodEnd: context.billingPeriod.periodEnd, history: context.consumption?.history ?? null, billedMonthTotals });
+}
 function annualBasis(context: Context): AnnualBasis | null {
   const period = context.consumption?.period;
   const billed = context.vector === "EE" ? (period?.f1 ?? 0) + (period?.f2 ?? 0) + (period?.f3 ?? 0) : period?.smc ?? 0;
   if (billed <= 0) return null;
-  const printed = context.consumption?.annual;
-  if (printed != null && printed > 0) return { billed, annual: printed, estimated: false };
-  const history = historyMonthTotals(context.consumption?.history);
-  const monthTotals = history.length ? history : context.vector === "EE" ? context.consumption?.monthlyProfile?.map((month) => month.f1 + month.f2 + month.f3) ?? null : null;
-  const annual = estimatedAnnualConsumption({ billed, periodStart: context.billingPeriod.periodStart, periodEnd: context.billingPeriod.periodEnd, monthTotals });
-  return annual === null ? null : { billed, annual, estimated: true };
+  const detail = contextAnnual(context);
+  return detail.value === null ? null : { billed, annual: detail.value, estimated: detail.status === "ESTIMATED", detail };
 }
 function estimatedFromPeriod(context: Context, ee: boolean): string {
-  const basis = annualBasis(context);
-  return basis?.estimated ? `${amount(basis.annual, ee ? "kWh" : "Smc")} (media mensile × 12)` : "—";
+  return annualConsumptionLine(contextAnnual(context), ee ? "kWh" : "Smc");
 }
 
 // How far the read lines are from the bill total, so a wrong reading is visible at once.
@@ -397,7 +388,7 @@ function BillSummary({ context, bill }: { readonly context: Context; readonly bi
     ["Scadenza contratto", billExpiry(bill) ?? "Non indicata in bolletta"],
     ["Periodo fatturato", `${date(context.billingPeriod.periodStart)} – ${date(lastSuppliedDay(context.billingPeriod.periodEnd))}`],
     ["Consumo del periodo", ee ? `F1 ${amount(period?.f1, "kWh")} · F2 ${amount(period?.f2, "kWh")} · F3 ${amount(period?.f3, "kWh")}` : amount(period?.smc, "Smc")],
-    ["Consumo annuo", context.consumption?.annual != null ? amount(context.consumption.annual, ee ? "kWh" : "Smc") : estimatedFromPeriod(context, ee)],
+    ["Consumo annuo", estimatedFromPeriod(context, ee)],
   ];
   return <section className="ui-card quote-bill-summary"><h3>Dati della bolletta usati per la scelta</h3>
     <dl className="quote-bill-grid">{rows.map(([label, value]) => <div key={label}><dt>{label}</dt><dd>{value}</dd></div>)}</dl>
@@ -484,14 +475,15 @@ function NoOfferReasons({ quote, shown = [], onAuthorize }: { readonly quote: Qu
   const evaluated = candidates.map((candidate) => {
     const excluded = quote.comparison.excludedOffers.find((item) => item.archiveId === candidate.archiveId);
     const eligible = candidate.finalStatus === "ELIGIBLE" || candidate.finalStatus === "ELIGIBLE_BY_OVERRIDE";
-    const annual = quote.context.consumption?.annual ?? null;
+    // Tony (12/11/2026, regola 9): the CTE threshold is checked on the estimate too, and says so.
+    const annual = contextAnnual(quote.context);
     const threshold = (candidate.reasonCodes ?? []).includes("CONSUMPTION_THRESHOLD_MISMATCH") || candidate.compatibilityReason === "CONSUMPTION_NOT_ELIGIBLE"
-      ? ` (consumo annuo della bolletta ${annual === null ? "non letto" : (quote.context.vector === "EE" ? formatKwh(annual) : `${QUANTITY.format(annual)} Smc`)}${candidate.scope?.consumption ? `, la CTE richiede ${candidate.scope.consumption}` : ""})` : "";
+      ? ` (consumo annuo della bolletta ${annualConsumptionLine(annual, quote.context.vector === "EE" ? "kWh" : "Smc")}${candidate.scope?.consumption ? `, la CTE richiede ${candidate.scope.consumption}` : ""})` : "";
     const reasons = eligible
       ? excluded ? [`calcolo non riuscito: ${EXCLUSION_LABEL[excluded.code] ?? excluded.code}${/\(([^)]+)\)$/.exec(excluded.message)?.[1] ? ` (${/\(([^)]+)\)$/.exec(excluded.message)?.[1]})` : ""}`] : candidate.calculationReadiness !== "READY" ? [REASON_LABEL[candidate.calculationReadiness] ?? candidate.calculationReadiness] : ["calcolo non eseguito"]
       : [...new Set([...(candidate.reasonCodes ?? []), candidate.compatibilityReason].filter((code): code is string => Boolean(code)).map((code) => REASON_LABEL[code] ?? code))].map((label) => label === REASON_LABEL.CONSUMPTION_NOT_ELIGIBLE ? `${label}${threshold}` : label);
     const authorizable = Boolean(quote.canAuthorizeCte && onAuthorize && candidate.finalStatus === "NOT_ELIGIBLE" && candidate.overrideRequestable);
-    return { key: candidate.archiveId, name: `${candidate.supplier} · ${candidate.offer.name || candidate.offer.code}`, reasons, authorizable, rank: exclusionRank({ reasonCodes: [...(candidate.reasonCodes ?? []), candidate.compatibilityReason ?? ""], customer: candidate.scope?.customer ?? null, consumption: candidate.scope?.consumption ?? null }, quote.context.customerType === "NON_RESIDENTIAL", annual) };
+    return { key: candidate.archiveId, name: `${candidate.supplier} · ${candidate.offer.name || candidate.offer.code}`, reasons, authorizable, rank: exclusionRank({ reasonCodes: [...(candidate.reasonCodes ?? []), candidate.compatibilityReason ?? ""], customer: candidate.scope?.customer ?? null, consumption: candidate.scope?.consumption ?? null }, quote.context.customerType === "NON_RESIDENTIAL", annual.value) };
   });
   // Tony (1/11): "devono essere ordinate per tipologia se la bolletta è business prima le business ordinate da quella adeguata
   // per vincoli sui consumi e a seguire le meno convenienti". CTEs of the bill's customer type first; among them the ones whose
@@ -826,7 +818,9 @@ function Receipt({ offer: quoted, today, business, context, bill, onPresentation
   const same = isSameOffer({ billSupplier: context.currentSupplier, billOffer: currentOffer, offerSupplier: offer.supplier, offerCode: offer.calculation.sourceCte.offerCode, offerName: offer.offerName });
   const headline = same ? (saving >= 0 ? "Stessa CTE della bolletta: la bolletta addebita più di quanto prevede la CTE" : "Stessa CTE della bolletta: la bolletta addebita meno di quanto prevede la CTE") : saving >= 0 ? "Risparmio sulla bolletta caricata" : "Costo in più sulla bolletta caricata";
   const note = basis && annualSaving !== null && !same ? annualGapNote(offer, context, bill, saving, annualSaving, basis) : "";
-  const basisLabel = basis ? `Simulato su 12 mesi con ${amount(basis.annual, unit)} di consumo annuo${basis.estimated ? " stimato dalla bolletta" : " letto in bolletta"}${note ? `. ${note}` : ""}` : "";
+  // Tony (12/11/2026, regola 10): an annual saving on an estimated consumption says so, here and in the proposal.
+  const basisText = basis ? basis.estimated ? `Risparmio annuo calcolato su consumi stimati: ${quantityText(basis.annual, unit)}, ${ANNUAL_ESTIMATE_LABEL}, ${annualEstimateOrigin(basis.detail, unit)}` : `Simulato su 12 mesi con ${quantityText(basis.annual, unit)} di consumo annuo dichiarato in bolletta` : "";
+  const basisLabel = basis ? `${basisText}${note ? `. ${note}` : ""}` : "";
   const scontrino = offerScontrino({ quotas: receipt.quotas, offerTotal: receipt.status === "COMPLETE" ? receipt.offerTotal : null, taxesIncluded: receipt.taxesIncluded, vector: context.vector, quantity: periodQuantity, months: billedMonths(context.billingPeriod.periodStart, context.billingPeriod.periodEnd), powerKw: powerQuotaKw(context), discount: receipt.rows.find((row) => row.key === "ENERGY")?.details?.find((item) => item.key === "COMPANY_DISCOUNT")?.offer ?? null });
   // Tony (2/11, "siamo sicuri che quelli di hera siano uguali a bpower, sono stati verificati con la delibera arera del
   // trimestre?"): the scontrino says where the offer's rete e oneri come from and how the bill stands against ARERA.
@@ -844,7 +838,7 @@ function Receipt({ offer: quoted, today, business, context, bill, onPresentation
       <strong>{euro(Math.abs(saving))}{receipt.savingsPercent !== null ? ` (${PERCENT.format(Math.abs(receipt.savingsPercent))}%)` : ""}</strong>
     </div> : null}
     {annualSaving !== null && basis && !same ? <div className={annualSaving >= 0 ? "quote-saving annual" : "quote-saving annual negative"}>
-      <span>{annualSaving >= 0 ? "Risparmio annuo previsto" : "Costo in più annuo previsto"}<small>Simulato su 12 mesi con {amount(basis.annual, unit)} di consumo annuo{basis.estimated ? " stimato: media mensile della bolletta × 12" : " letto in bolletta"}{note ? `. ${note}` : ""}</small>
+      <span>{annualSaving >= 0 ? "Risparmio annuo previsto" : "Costo in più annuo previsto"}<small>{basisLabel}</small>
         {/* Annual saving in euro and in percent with both annual costs, as the scheda sintetica's spesa annua (Codice art. 19; Tony, 29/10). */}
         {annualCurrent ? <small>Spesa annua attuale {euro(annualCurrent)} · con la nuova offerta {euro(annualCurrent - annualSaving)}{receipt.taxesIncluded ? " (imposte comprese)" : " (imposte escluse)"}</small> : null}</span>
       <strong>{euro(Math.abs(annualSaving))}{annualCurrent ? ` (${PERCENT.format(Math.abs(annualSaving / annualCurrent * 100))}%)` : ""}</strong>
@@ -1030,7 +1024,7 @@ export default function QuickQuoteFlow({ readonly, showExcluded = false }: { rea
   const startReview = (document: BillDocumentModel) => {
     const next = readValues(billForReading(document));
     setValues(next);
-    setCorrectionOpen(FIELDS.some((field) => !(next[field.name] ?? "").trim()));
+    setCorrectionOpen(reviewSubmission(FIELDS.map((field) => field.name), next, document.fields).missing.length > 0);
   };
 
   const upload = async (event: ChangeEvent<HTMLInputElement>) => {
@@ -1084,7 +1078,8 @@ export default function QuickQuoteFlow({ readonly, showExcluded = false }: { rea
   // Confirms what was read, saves what the user corrected, approves the bill and moves on to the offers.
   const confirm = async () => {
     if (!draft || readonly || pending) return;
-    const missing = FIELDS.filter((field) => !(values[field.name] ?? "").trim());
+    const submission = reviewSubmission(FIELDS.map((field) => field.name), values, draft.fields);
+    const missing = FIELDS.filter((field) => submission.missing.includes(field.name));
     if (missing.length) { setCorrectionOpen(true); setError(`Completa: ${missing.map((field) => field.label).join(", ")}.`); return; }
     setPending("confirm"); setError(undefined);
     try {
@@ -1094,9 +1089,10 @@ export default function QuickQuoteFlow({ readonly, showExcluded = false }: { rea
       if (draft.currentApprovedVersionId && draft.currentApprovedVersionId === draft.currentVersionId && FIELDS.every((field) => machineValue(field.name) === (draft.fields[field.name]?.value ?? ""))) {
         setDraft(null); setPending(undefined); await loadOffers(draft.id); return;
       }
-      const unchanged = FIELDS.filter((field) => values[field.name].trim() === (current.fields[field.name]?.value ?? "") && !current.fields[field.name]?.confirmed).map((field) => field.name);
+      const unchanged = submission.confirm;
       if (unchanged.length) current = (await requestJson<{ readonly document: BillDocumentModel }>(`/api/bills/${encodeURIComponent(current.id)}`, { method: "PATCH", body: JSON.stringify({ operation: "confirm-fields", versionId: current.currentVersionId, fields: unchanged }) })).document;
-      for (const field of FIELDS.filter((item) => values[item.name].trim() !== (draft.fields[item.name]?.value ?? ""))) {
+      for (const { field: name } of submission.correct) {
+        const field = { name };
         current = (await requestJson<{ readonly document: BillDocumentModel }>(`/api/bills/${encodeURIComponent(current.id)}`, { method: "PATCH", body: JSON.stringify({ operation: "correct", field: field.name, value: values[field.name].trim(), versionId: current.currentVersionId }) })).document;
       }
       current = (await requestJson<{ readonly document: BillDocumentModel }>(`/api/bills/${encodeURIComponent(current.id)}`, { method: "PATCH", body: JSON.stringify({ operation: "approve", versionId: current.currentVersionId }) })).document;
@@ -1109,7 +1105,7 @@ export default function QuickQuoteFlow({ readonly, showExcluded = false }: { rea
   // Tony (10/11/2026): "Dati letti" shows the bill data to every user who may open the bill; the full reading stays behind
   // "Dettaglio tecnico" (structuredBill is null without it), so the screen reads the bill view the server sends to everyone.
   const readBill = draft ? billForReading(draft) : null;
-  const missingValues = FIELDS.some((field) => !(values[field.name] ?? "").trim());
+  const missingValues = draft ? reviewSubmission(FIELDS.map((field) => field.name), values, draft.fields).missing.length > 0 : false;
 
   const visibleOffers = quote ? quote.offers.filter((offer) => !costlierThanBill(offer, quote.context, quote.bill) || chosen[offer.calculation.calculationId] !== undefined) : [];
   const hiddenOffers = quote ? quote.offers.filter((offer) => !visibleOffers.includes(offer)) : [];
@@ -1177,7 +1173,8 @@ export default function QuickQuoteFlow({ readonly, showExcluded = false }: { rea
       <details className="bill-read-correct" open={correctionOpen} onToggle={(event) => setCorrectionOpen(event.currentTarget.open)}>
         <summary>{missingValues ? "Completa i dati mancanti" : "Correggi i dati letti"}</summary>
         <p className="muted">Sono i valori letti sopra, usati per la ricerca delle CTE: modificali solo se vedi un errore.</p>
-        <div className="form-grid">{FIELDS.map((field) => <label className="form-field" key={field.name}><span className="form-label">{field.label}{unitOf(field.name, draft.resolvedVector)}{field.name === "annualConsumption" && !draft.fields.annualConsumption?.value && values.annualConsumption ? historyMonthTotals(readBill?.structuredBill?.consumptionHistory).length ? " · media dello storico consumi × 12" : " · media mensile × 12" : ""}</span><input value={values[field.name] ?? ""} onChange={(event) => setValues((current) => ({ ...current, [field.name]: event.target.value }))} disabled={Boolean(pending)} /></label>)}</div>
+        <div className="form-grid">{FIELDS.map((field) => <label className="form-field" key={field.name}><span className="form-label">{field.label}{unitOf(field.name, draft.resolvedVector)}{field.name === "annualConsumption" ? " · solo se dichiarato in bolletta" : ""}</span><input value={values[field.name] ?? ""} onChange={(event) => setValues((current) => ({ ...current, [field.name]: event.target.value }))} disabled={Boolean(pending)} /></label>)}</div>
+        {readBill && !draft.fields.annualConsumption?.value ? <p className="muted bill-annual-estimate">{annualConsumptionLine(billAnnualConsumption(readBill), draft.resolvedVector === "GAS" ? "Smc" : "kWh")}</p> : null}
       </details>
       <div className="button-row"><button className="button primary" type="button" onClick={() => void confirm()} disabled={readonly || Boolean(pending)}>{pending === "confirm" ? "Ricerca in corso" : "Cerca le CTE utilizzabili"}</button></div>
     </section> : null}
