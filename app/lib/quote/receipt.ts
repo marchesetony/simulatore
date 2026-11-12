@@ -51,6 +51,14 @@ export interface QuoteReceiptQuota { readonly key: QuoteReceiptQuotaKey; readonl
 /** One named charge inside a quota (energia, dispacciamento, capacity, sbilanciamento, PCV, trasporto, oneri), bill against CTE. */
 export interface QuoteReceiptDetail { readonly key: string; readonly label: string; readonly current: number | null; readonly offer: number | null; readonly difference: number | null; readonly missingReason?: string; /** Why the bill has no amount of its own for this charge (e.g. billed inside the energy price). */ readonly currentNote?: string; /** Why the CTE has no amount of its own for this charge (e.g. priced inside its spread). */ readonly offerNote?: string; /** Amounts whose €/kWh is shown on a line without amounts of its own (the energy comparison). */ readonly unitBasis?: { readonly current: number; readonly offer: number } }
 export interface QuoteReceiptOfferComponent { readonly category: string; readonly sign: string; readonly label?: string; readonly formulaId?: string; readonly amount: { readonly amount: number }; readonly formulaInputs?: Readonly<Record<string, string | number | boolean>> }
+/** The bill's analysis for the comparison column: its own lines, or, when the economic detail is hidden from the user, the
+ *  priced lines the server keeps for the comparison only (Tony 12/11, Fase A). Never used for any other view. */
+export function comparisonAnalysis<A extends Pick<BillEconomicAnalysis, "components" | "totals">>(economics: { readonly economicAnalysis: A; readonly comparisonComponents?: readonly BillEconomicComponent[] }): A {
+  const analysis = economics.economicAnalysis;
+  if (analysis.components.length > 0 || !economics.comparisonComponents?.length) return analysis;
+  return { ...analysis, components: economics.comparisonComponents };
+}
+
 export interface QuoteReceiptInput {
   readonly vector: "EE" | "GAS";
   readonly offerSupplyCost: number;
@@ -235,7 +243,7 @@ const sellerExtras = (input: QuoteReceiptInput): readonly BillLine[] => otherIte
 // Charges the bill and the CTE both name, so each one is compared on its own line and never hidden in an aggregate (Tony, 26/10).
 const DETAIL_LABEL: Readonly<Record<string, string>> = {
   ENERGY: "Prezzo energia (indice + spread o prezzo fisso)", LOSSES: "Perdite di rete", COMMERCIALIZATION: "Commercializzazione", DISPATCHING: "Dispacciamento",
-  CAPACITY: "Mercato della capacità (capacity market)", CAPACITY_CTE: "Capacity market libero (da CTE)", IMBALANCE: "Sbilanciamento", SELLER_OTHER: "Altri corrispettivi di vendita", PCV: "Quota fissa di vendita (PCV)",
+  CAPACITY: "Mercato della capacità (capacity market)", CAPACITY_CTE: "Capacity market libero (da CTE)", IMBALANCE: "Sbilanciamento", SELLER_OTHER: "Altri corrispettivi di vendita", SELLER_PRINTED: "Vendita stampata nel quadro sintetico, non dettagliata", PCV: "Quota fissa di vendita (PCV)",
   OPTIONS: "Opzioni e servizi a pagamento (es. Flex)", ONE_OFF: "Corrispettivi una tantum", REACTIVE: "Energia reattiva", NETWORK: "Tariffa per l'uso della rete (trasporto e gestione del contatore)", SYSTEM: "Oneri generali di sistema",
 };
 const DETAIL_ORDER = Object.keys(DETAIL_LABEL);
@@ -315,6 +323,24 @@ function quotasOf(input: QuoteReceiptInput, currentEnergy: number | null, offerE
     if (!hasOfficial) entry.offer = network;
     detail[quota].set("NETWORK", entry);
     bill[quota].all = cents(bill[quota].seller + regulatedPrinted);
+  }
+  // Tony (12/11, "Fase A confronto ELIOS", quadro sintetico: quota consumi 889,98 = vendita 711,96 + rete e oneri 178,02): the
+  // seller's part of a quota is the "di cui spesa per la vendita" the quadro sintetico prints, also when the detail read names
+  // only part of it. The part the detail does not name stays inside its quota, as printed, and never goes to "Altre voci",
+  // which keeps only what the bill does not tie to a quota. Applied only while the quotas stay within the bill's supply total.
+  const sellerRest = { CONSUMPTION: 0, FIXED: 0, POWER: 0 };
+  for (const quota of ["CONSUMPTION", "FIXED", "POWER"] as const) {
+    const printed = (input.analysis?.components ?? []).filter((line) => line.includedInReconciliation === false && !line.aggregate && SELLER_GROUPS.has(line.group ?? "") && billQuota(line) === quota && /\bdi cui spesa per (?:la )?vendita\b/i.test(line.description));
+    const sellerPrinted = printed.length === 1 ? amountOf(printed[0].amount) : null;
+    if (sellerPrinted !== null && Math.abs(sellerPrinted - bill[quota].seller) > 0.02) sellerRest[quota] = cents(sellerPrinted - bill[quota].seller);
+  }
+  const supplyBefore = currentEnergy === null ? null : currentEnergy + (network ?? 0) + (system ?? 0);
+  const anchored = bill.CONSUMPTION.all + bill.FIXED.all + bill.POWER.all + sellerRest.CONSUMPTION + sellerRest.FIXED + sellerRest.POWER;
+  if (supplyBefore !== null && anchored - supplyBefore <= 0.02) for (const quota of ["CONSUMPTION", "FIXED", "POWER"] as const) {
+    if (sellerRest[quota] === 0) continue;
+    addDetail(quota, "SELLER_PRINTED", "current", sellerRest[quota]);
+    bill[quota].seller = cents(bill[quota].seller + sellerRest[quota]);
+    bill[quota].all = cents(bill[quota].all + sellerRest[quota]);
   }
   const offer = { CONSUMPTION: 0, FIXED: 0, POWER: 0, ONE_OFF: 0 };
   for (const component of sellerComponents(input)) {

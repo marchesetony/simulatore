@@ -109,6 +109,8 @@ export interface BillAnalystReviewDTO {
     readonly total: BillAnalystReviewField<number | string>;
     readonly chargeLines: readonly BillEconomicChargeLineDTO[];
     readonly economicAnalysis: BillEconomicAnalysis;
+    /** Set only when the economic detail is hidden: the bill's priced lines the comparison column needs (bill-feature-permissions.ts). */
+    readonly comparisonComponents?: readonly BillEconomicComponent[];
   };
   readonly payment: {
     readonly method: BillAnalystReviewField<string>;
