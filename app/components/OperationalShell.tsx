@@ -26,6 +26,8 @@ const PLATFORM_SECTIONS: readonly string[] = ["dashboard", "access", "system"];
 const SALES_SECTIONS: readonly string[] = ["quote", "proposals"];
 // Tony (28/10): "dove trovo il tasto aggiorna?": Dati di mercato, with the refresh button, is always in a company admin's menu.
 const COMPANY_ADMIN_SECTIONS: readonly string[] = ["quote", "proposals", "cte", "market", "chain", "access"];
+// Tony (12/11, opzione A): Direttore e Area Manager (ANALYST) gestiscono l'Archivio CTE come già consente il server; scadenza, ricarico e assegnazioni restano all'Amministratore.
+const COMPANY_MANAGER_SECTIONS: readonly string[] = ["quote", "proposals", "cte"];
 type SectionId = "quote" | "dashboard" | "bills" | "cte" | "market" | "simulations" | "proposals" | "chain" | "access" | "permissions" | "system";
 type LoadState = "loading" | "ready" | "error";
 const sections: readonly { readonly id: SectionId; readonly label: string; readonly short: string }[] = [{ id: "quote", label: "Nuova simulazione", short: "N" }, { id: "dashboard", label: "Dashboard", short: "D" }, { id: "bills", label: "Bollette", short: "B" }, { id: "cte", label: "Archivio CTE", short: "C" }, { id: "market", label: "Dati di mercato", short: "M" }, { id: "simulations", label: "Simulazioni", short: "S" }, { id: "proposals", label: "Proposte", short: "P" }, { id: "chain", label: "Catena e CTE", short: "R" }, { id: "access", label: "Accessi", short: "A" }, { id: "permissions", label: "Permessi bolletta", short: "F" }, { id: "system", label: "Stato sistema", short: "Z" }];
@@ -539,7 +541,7 @@ export default function OperationalShell() {
   const platformTenant = tenantId === "tenant_piattaforma";
   const section: SectionId = chosenSection ?? (platformTenant ? "dashboard" : "quote");
   const companyAdmin = context?.role === "ADMIN";
-  const visibleSection = (id: SectionId): boolean => platformTenant ? PLATFORM_SECTIONS.includes(id) : (companyAdmin ? COMPANY_ADMIN_SECTIONS : SALES_SECTIONS).includes(id);
+  const visibleSection = (id: SectionId): boolean => platformTenant ? PLATFORM_SECTIONS.includes(id) : (companyAdmin ? COMPANY_ADMIN_SECTIONS : context?.role === "ANALYST" ? COMPANY_MANAGER_SECTIONS : SALES_SECTIONS).includes(id);
   // Tony (1/11): the fixed header's height (it changes with the logo) tells the menu where to stay while the page scrolls.
   useEffect(() => {
     const header = document.querySelector<HTMLElement>(".app-header");
