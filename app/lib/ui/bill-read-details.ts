@@ -360,7 +360,7 @@ const SHORT_LABEL: Readonly<Record<string, string>> = {
 };
 const ORDER: Readonly<Record<BillReadSectionId, readonly string[]>> = {
   SUPPLY: ["Intestatario", "Fornitore", "POD", "PDR", "Periodo", "Uso"],
-  TECHNICAL: ["Consumo totale (F0)", "F1", "F2", "F3", "Consumo annuo", ANNUAL_ESTIMATE_LABEL, "Potenza impegnata", "Potenza massima"],
+  TECHNICAL: ["Consumo totale (F0)", "F1", "F2", "F3", "Consumo annuo", ANNUAL_ESTIMATE_LABEL, "Tensione", "Potenza impegnata", "Potenza massima"],
   CONTRACT: ["Offerta", "Prezzo", "Fasce", "Indice", "Spread", "PCV", "Scadenza condizioni", "Scadenza contratto"],
   ECONOMICS: ["Vendita", "Rete e oneri di sistema", "Rete e trasporto", "Oneri di sistema", "Accise", "IVA", "Accise e IVA", "Totale fattura"],
 };
@@ -371,8 +371,9 @@ function secondaryRow(id: BillReadSectionId, row: BillReadRow, rows: readonly Bi
   if (row.group === "SIMULATOR") return false;
   if (id === "SUPPLY") return label === "Mercato" || label === "Indirizzo";
   if (id === "TECHNICAL") {
-    // Tension and available power only when they add something: a low-voltage supply, or the same power as the committed one.
-    if (label === "Tensione") return row.state !== "REVIEW" && (row.state !== "READ" || /bassa tensione|\bBT\b/i.test(row.value));
+    // Tony (13/11/2026): the supply voltage is always in view, next to the powers, as read (or "Non letto" / "Non presente").
+    if (label === "Tensione") return false;
+    // Available power only when it adds something: not the same power as the committed one.
     if (label === "Potenza disponibile") return row.state !== "READ" || row.value === rows.find((item) => item.label === "Potenza impegnata")?.value;
     return false;
   }

@@ -170,7 +170,12 @@ for (const label of ["Intestatario", "Fornitore", "POD", "Periodo", "Totale fatt
 // No information lost: the secondary values are still in their section, under "Altri dettagli".
 const secondary = (id) => section(sections, id).rows.filter((item) => item.secondary).map((item) => `${item.label}=${plain(item).value}`);
 assert.deepEqual(secondary("SUPPLY"), ["Mercato=MERCATO LIBERO"]);
-assert.deepEqual(secondary("TECHNICAL"), ["Tensione=380,0 V · bassa tensione (BT)", `Potenza disponibile=${NOT_IN_BILL}`], "low voltage and an unprinted available power are secondary");
+// Tony (13/11/2026, "tensione visibile"): the supply voltage is always in view next to the powers (expectation changed: a
+// low-voltage supply used to be under "Altri dettagli").
+assert.deepEqual(secondary("TECHNICAL"), [`Potenza disponibile=${NOT_IN_BILL}`], "an unprinted available power is secondary");
+const technicalLabels = section(sections, "TECHNICAL").rows.filter((item) => !item.secondary).map((item) => item.label);
+assert.equal(technicalLabels.indexOf("Tensione") + 1, technicalLabels.indexOf("Potenza impegnata"), "voltage right before the powers");
+assert.deepEqual(rowOf(sections, "TECHNICAL", "Tensione"), { label: "Tensione", value: "380,0 V · bassa tensione (BT)", state: "READ" }, "printed value and BT class kept");
 assert.deepEqual(secondary("CONTRACT"), [`Attivazione=${NOT_READ}`, "Decorrenza condizioni=01/05/2026", "PCV stampata (valore unitario)=10,392500 €/POD/mese · importo 10,39 €"]);
 // Tony (11/11/2026, "pulizia finale"): the economic summary in view holds the bill's values only; rete as a difference and
 // oneri as a sum of the detail rows are under "Altri dettagli".
@@ -228,6 +233,14 @@ assert.equal(segmentRepeatsUse(billOf(structuredBill), null), false, "an undeter
 const noUse = parseBillReading({ ...reading, tipoClienteStampato: "", tipoCliente: "ALTRI_USI" });
 assert.equal(segmentRepeatsUse(billOf(toStructuredBill({ reading: noUse, checks: [], reread: false })), "NON_RESIDENTIAL"), false, "without a printed use the segment stays in view");
 assert.equal(rowOf(householdSections, "TECHNICAL", "Tensione").value, "Bassa tensione (BT)");
+assert.equal(rowOf(householdSections, "TECHNICAL", "Tensione").secondary, undefined, "in view also without the volts");
+// Not printed and not classified: nothing invented, the row stays in view as not printed or not read.
+const noVoltage = parseBillReading({ ...reading, tensioneStampata: "", livelloTensione: "NON_DETERMINABILE", assenti: [{ campo: "tensioneStampata", motivo: "non stampata" }] });
+const noVoltageRow = rowOf(billReadSections(billOf(toStructuredBill({ reading: noVoltage, checks: [], reread: false }))), "TECHNICAL", "Tensione");
+assert.deepEqual([noVoltageRow.value, noVoltageRow.secondary], [NOT_IN_BILL, undefined]);
+const unreadVoltage = parseBillReading({ ...reading, tensioneStampata: "", livelloTensione: "NON_DETERMINABILE", assenti: [] });
+const unreadVoltageRow = rowOf(billReadSections(billOf(toStructuredBill({ reading: unreadVoltage, checks: [], reread: false }))), "TECHNICAL", "Tensione");
+assert.deepEqual([unreadVoltageRow.value, unreadVoltageRow.secondary], [NOT_READ, undefined], "no voltage is invented");
 assert.equal(rowOf(householdSections, "ECONOMICS", "Accise e IVA").value, "254,49 €", "without detail rows the printed 'Accise e IVA' is shown as printed");
 // Tony (13/11/2026, BPower 071808E): system charges the reading did not take apart are "Non letto separatamente", not
 // "Non presente nella fattura" (expectation changed from "ABSENT" by this requested behaviour).
