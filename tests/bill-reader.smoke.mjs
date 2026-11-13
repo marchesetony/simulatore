@@ -30,7 +30,9 @@ const minniti = parseBillReading({
     row("Totale bolletta", "TOTALE_BOLLETTA", "NESSUNA", "171,77"),
     row("Canone TV", "CANONE_TV", "NESSUNA", "9,00"),
   ],
-  assenti: [{ campo: "consumoAnnuo", motivo: "non stampato nella sintetica" }],
+  // Tony (13/11/2026, "CORREZIONE MIRATA LETTORE AI"): a complete reading gives every printed-component category an outcome.
+  componentiStampate: [],
+  assenti: [{ campo: "consumoAnnuo", motivo: "non stampato nella sintetica" }, ...["TRASPORTO_RETE", "ONERI_SISTEMA", "ACCISE", "IVA"].map((category) => ({ campo: `componentiStampate.${category}`, motivo: "non stampato a parte nella sintetica" }))],
 });
 
 assert.equal(italianNumber("1.234,56"), 1234.56);
@@ -49,7 +51,8 @@ assert.equal(bill.voltageLevel.value, "LV");
 assert.equal(bill.customerType.value, "RESIDENTIAL");
 assert.equal(bill.totalAmount.value, 171.77);
 assert.equal(bill.annualConsumption.status, "NOT_FOUND", "the annual consumption is not invented");
-assert.deepEqual(bill.readingAbsent, [{ field: "consumoAnnuo", reason: "non stampato nella sintetica" }]);
+assert.deepEqual(bill.readingAbsent[0], { field: "consumoAnnuo", reason: "non stampato nella sintetica" });
+assert.equal(bill.readingAbsent.length, 5, "the four declared absences of the printed components are kept too");
 assert.equal(bill.billingPeriod.value.from, "2026-09-01");
 assert.equal(bill.billingPeriod.value.to, "2026-09-30");
 assert.equal(bill.offerCode.value, "003888ESVFL02XXXXXXXCASAPROTETTA");

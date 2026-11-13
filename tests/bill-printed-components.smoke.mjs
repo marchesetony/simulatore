@@ -59,11 +59,13 @@ assert.deepEqual(without.componentiStampate, [], "a reading without the list kee
 // 2. Coherence: transport + system charges = rete e oneri (10,64), excise + VAT = Accise e IVA (6,44).
 assert.deepEqual(scontrinoAggregates(withComponents.scontrino), { networkAndSystem: 0.5 + 3.74 + 6.4, taxes: 6.44 });
 assert.deepEqual(checkBillReading(withComponents), [], "the verified case adds up");
-assert.deepEqual(checkBillReading(without), [], "a bill without separate components raises no new check");
+// Tony (13/11/2026, "CORREZIONE MIRATA LETTORE AI"): a reading that does not return the components is incomplete (expectation
+// changed from "no check" by this requested behaviour).
+assert.deepEqual(checkBillReading(without).map((check) => check.code), ["COMPONENTS_FIELD_MISSING"], "a reading without the components is reported");
 const wrongOneri = parseBillReading({ ...base, componentiStampate: COMPONENTS.map((row) => row.categoria === "ONERI_SISTEMA" ? { ...row, importo: "4,95" } : row) });
 assert.deepEqual(checkBillReading(wrongOneri).map((check) => check.code), ["COMPONENTS_NETWORK_SYSTEM"]);
 const tooLarge = parseBillReading({ ...base, componentiStampate: [component("Oneri di sistema", "ONERI_SISTEMA", "11,00")] });
-assert.deepEqual(checkBillReading(tooLarge).map((check) => check.code), ["COMPONENTS_NETWORK_SYSTEM"], "one part larger than its total");
+assert.ok(checkBillReading(tooLarge).map((check) => check.code).includes("COMPONENTS_NETWORK_SYSTEM"), "one part larger than its total");
 const wrongVat = parseBillReading({ ...base, componentiStampate: COMPONENTS.map((row) => row.categoria === "IVA" ? { ...row, importo: "6,41" } : row) });
 assert.deepEqual(checkBillReading(wrongVat).map((check) => check.code), ["COMPONENTS_TAXES"]);
 assert.deepEqual(printedComponentChecks({ network: null, system: 3.95, excise: null, vat: null }, { networkAndSystem: 10.64, taxes: null }), [], "one part within its total is fine");

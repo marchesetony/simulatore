@@ -1,4 +1,6 @@
 import type { BillReading, PrintedComponentCategory, ScontrinoRow } from "./bill-reader-schema.ts";
+// @ts-expect-error Node's strip-only test runner requires the explicit extension.
+import { PRINTED_COMPONENT_CATEGORIES } from "./bill-reader-schema.ts";
 
 // Tony (5/11/2026): before the agent sees the data, the reading must add up. These checks only compare numbers Claude copied
 // from the same bill; they never replace a value. A failed check sends Claude back to that point of the bill, and what still
@@ -114,6 +116,28 @@ export function printedComponentSum(rows: readonly { readonly categoria: string;
   return values.length ? values.reduce((left, right) => left + right, 0) : null;
 }
 
+const isCategory = (value: unknown): value is PrintedComponentCategory => typeof value === "string" && (PRINTED_COMPONENT_CATEGORIES as readonly string[]).includes(value);
+
+/** Tony (13/11/2026, "CORREZIONE MIRATA LETTORE AI"): every category of the components printed apart needs an outcome, the
+ *  printed amount or a declared absence. A field not returned, a row dropped (unknown category, unreadable amount) and a
+ *  category left without outcome are reported: the reading is incomplete. Nothing is filled in. */
+export function printedComponentOutcomeChecks(reading: BillReading): readonly ReadingCheck[] {
+  if (reading.tipoDocumento === "NON_BOLLETTA") return [];
+  const checks: ReadingCheck[] = [];
+  if (reading.campiOmessi?.includes("componentiStampate")) {
+    checks.push({ code: "COMPONENTS_FIELD_MISSING", message: "Componenti stampate non restituite dalla lettura: cerca in tutte le pagine trasporto, oneri di sistema, accise e IVA stampati a parte, oppure dichiarane l'assenza." });
+    return checks;
+  }
+  const rows = reading.componentiStampate ?? [];
+  const discarded = rows.filter((row) => !isCategory(row.categoria) || italianNumber(typeof row.importo === "string" ? row.importo : "") === null);
+  if (discarded.length) checks.push({ code: "COMPONENTS_DISCARDED", message: `Componenti stampate scartate perché categoria non riconosciuta o importo illeggibile: ${discarded.map((row) => `"${row.etichetta ?? ""}" (categoria ${String(row.categoria ?? "")}, importo ${String(row.importo ?? "")})`).join("; ")}.` });
+  const answered = new Set<string>(rows.filter((row) => isCategory(row.categoria) && italianNumber(row.importo) !== null).map((row) => row.categoria));
+  for (const absent of reading.assenti) { const match = /^componentiStampate\.([A-Z_]+)$/.exec(absent.campo?.trim() ?? ""); if (match && isCategory(match[1])) answered.add(match[1]); }
+  const missing = PRINTED_COMPONENT_CATEGORIES.filter((category) => !answered.has(category));
+  if (missing.length) checks.push({ code: "COMPONENTS_UNANSWERED", message: `Componenti stampate senza esito: ${missing.join(", ")}. Cerca in tutte le pagine, sezioni informative comprese, e riporta l'importo stampato oppure dichiarane l'assenza in assenti (componentiStampate.<CATEGORIA>).` });
+  return checks;
+}
+
 export function checkBillReading(reading: BillReading): readonly ReadingCheck[] {
   const checks: ReadingCheck[] = [];
   const isBill = reading.tipoDocumento !== "NON_BOLLETTA";
@@ -159,6 +183,7 @@ export function checkBillReading(reading: BillReading): readonly ReadingCheck[] 
   }
 
   const components = reading.componentiStampate ?? [];
+  checks.push(...printedComponentOutcomeChecks(reading));
   if (components.length) checks.push(...printedComponentChecks({ network: printedComponentSum(components, "TRASPORTO_RETE"), system: printedComponentSum(components, "ONERI_SISTEMA"), excise: printedComponentSum(components, "ACCISE"), vat: printedComponentSum(components, "IVA") }, scontrinoAggregates(reading.scontrino)));
 
   const productChecks = [...reading.scontrino.map((row) => ({ label: row.etichetta, quantity: row.quantita, price: row.prezzoMedio, amount: row.importo, unit: row.unitaPrezzo })),

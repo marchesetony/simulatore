@@ -94,6 +94,8 @@ export interface BillReading {
   readonly totaleBolletta: string;
   readonly fonti: readonly Source[];
   readonly assenti: readonly Absent[];
+  /** Not in the schema: the properties the model did not return at all (set by parseBillReading, for diagnosis only). */
+  readonly campiOmessi?: readonly string[];
 }
 
 export const BILL_READER_SCALARS = [

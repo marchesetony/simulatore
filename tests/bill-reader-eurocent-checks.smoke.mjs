@@ -68,6 +68,8 @@ const fixed = bill.economicChargeLines.find((line) => /Distribuzione fissa/.test
 assert.equal(fixed?.unitPrice, "49,020000");
 assert.equal(fixed?.unit, "Eurocent/mese");
 assert.equal(fixed?.amount, "0,49");
-assert.deepEqual(bill.readingChecks, [], "no 'Da controllare' warning for the Eurocent rows");
+// Tony (13/11/2026): this fixture returns no printed components, which is now reported on its own; the Eurocent rows still
+// raise no warning (expectation narrowed to the warnings this test is about).
+assert.deepEqual(bill.readingChecks.filter((message) => !/^Componenti stampate/.test(message)), [], "no 'Da controllare' warning for the Eurocent rows");
 
 console.log("bill-reader eurocent checks OK");
