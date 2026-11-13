@@ -325,7 +325,7 @@ export function printedContractValues(bill: Bill): { readonly priceType: string 
 }
 
 /** Tony (11/11/2026, "pulizia finale"): the simulator's customer segment repeats the use printed on the bill ("altri usi" →
- *  Business, "domestico" → Consumer); then it moves under "Altri dettagli". A segment that differs from the use stays in view. */
+ *  Business, "domestico" → Consumer). Tony (13/11/2026): the segment is always in view, so this no longer decides its place. */
 export function segmentRepeatsUse(bill: Bill, segment: "RESIDENTIAL" | "NON_RESIDENTIAL" | null): boolean {
   const profile = bill.structuredBill?.supplyProfile ?? bill.analystReview.supplyProfile ?? undefined;
   const use = profile?.supplyUseCategory;
@@ -359,7 +359,7 @@ const SHORT_LABEL: Readonly<Record<string, string>> = {
   "Spesa per la rete e gli oneri generali di sistema": "Rete e oneri di sistema", "Totale fatturato": "Totale fattura",
 };
 const ORDER: Readonly<Record<BillReadSectionId, readonly string[]>> = {
-  SUPPLY: ["Intestatario", "Fornitore", "POD", "PDR", "Periodo", "Uso"],
+  SUPPLY: ["Intestatario", "Fornitore", "POD", "PDR", "Periodo", "Uso", "Mercato"],
   TECHNICAL: ["Consumo totale (F0)", "F1", "F2", "F3", "Consumo annuo", ANNUAL_ESTIMATE_LABEL, "Tensione", "Potenza impegnata", "Potenza massima"],
   CONTRACT: ["Offerta", "Prezzo", "Fasce", "Indice", "Spread", "PCV", "Scadenza condizioni", "Scadenza contratto"],
   ECONOMICS: ["Vendita", "Rete e oneri di sistema", "Rete e trasporto", "Oneri di sistema", "Accise", "IVA", "Accise e IVA", "Totale fattura"],
@@ -369,7 +369,9 @@ const isZero = (value: string) => { const amounts = [...value.matchAll(/-?\d[\d.
 function secondaryRow(id: BillReadSectionId, row: BillReadRow, rows: readonly BillReadRow[]): boolean {
   const label = row.label;
   if (row.group === "SIMULATOR") return false;
-  if (id === "SUPPLY") return label === "Mercato" || label === "Indirizzo";
+  // Tony (13/11/2026, "mercato e segmento sempre visibili"): the market is always in view, after the use, as read (or "Non
+  // letto" / "Non presente nella fattura"); only the address stays under "Altri dettagli".
+  if (id === "SUPPLY") return label === "Indirizzo";
   if (id === "TECHNICAL") {
     // Tony (13/11/2026): the supply voltage is always in view, next to the powers, as read (or "Non letto" / "Non presente").
     if (label === "Tensione") return false;

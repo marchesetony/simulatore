@@ -7,7 +7,7 @@ import type { BillReadRow, BillReadSection, BillReadSectionId } from "../lib/ui/
 // secondary values (not printed, zero, auxiliary such as the GME PUN) stay one click away under "Altri dettagli".
 // Tony (11/11/2026, "pulizia finale"): the simulator's different classification is folded too, under its own heading.
 
-export interface CalculatedFact { readonly label: string; readonly value: ReactNode; readonly note: string; readonly section: BillReadSectionId; readonly secondary?: boolean }
+export interface CalculatedFact { readonly label: string; readonly value: ReactNode; readonly note: string; readonly section: BillReadSectionId; readonly secondary?: boolean; readonly noteShown?: boolean }
 
 type Entry = { readonly key: string; readonly label: string; readonly value: ReactNode; readonly state: BillReadRow["state"]; readonly note?: string; readonly noteShown?: boolean };
 
@@ -23,7 +23,7 @@ function Item({ entry, detailed }: { readonly entry: Entry; readonly detailed: b
 
 function entriesOf(section: BillReadSection, calculated: readonly CalculatedFact[]): { readonly main: readonly Entry[]; readonly simulator: readonly Entry[]; readonly more: readonly Entry[] } {
   const rows = section.rows.map((row, index): Entry & { readonly secondary?: boolean; readonly group?: string } => ({ key: `r${index}-${row.label}`, ...row }));
-  const facts = calculated.filter((fact) => fact.section === section.id).map((fact, index): Entry & { readonly secondary?: boolean } => ({ key: `c${index}-${fact.label}`, label: fact.label, value: fact.value, state: "CALCULATED", note: fact.note, secondary: fact.secondary }));
+  const facts = calculated.filter((fact) => fact.section === section.id).map((fact, index): Entry & { readonly secondary?: boolean } => ({ key: `c${index}-${fact.label}`, label: fact.label, value: fact.value, state: "CALCULATED", note: fact.note, secondary: fact.secondary, ...(fact.noteShown ? { noteShown: true } : {}) }));
   return {
     main: [...rows.filter((row) => !row.secondary && row.group !== "SIMULATOR"), ...facts.filter((fact) => !fact.secondary)],
     simulator: rows.filter((row) => row.group === "SIMULATOR"),

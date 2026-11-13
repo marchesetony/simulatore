@@ -169,7 +169,20 @@ assert.deepEqual(labels.filter((label, index) => labels.indexOf(label) !== index
 for (const label of ["Intestatario", "Fornitore", "POD", "Periodo", "Totale fattura", "Consumo totale (F0)"]) assert.equal(labels.filter((item) => item === label).length, 1, label);
 // No information lost: the secondary values are still in their section, under "Altri dettagli".
 const secondary = (id) => section(sections, id).rows.filter((item) => item.secondary).map((item) => `${item.label}=${plain(item).value}`);
-assert.deepEqual(secondary("SUPPLY"), ["Mercato=MERCATO LIBERO"]);
+// Tony (13/11/2026, "mercato e segmento sempre visibili"): the market is always in view, right after the use (expectation
+// changed: it used to be under "Altri dettagli"); nothing of the supply is folded when there is no address.
+assert.deepEqual(secondary("SUPPLY"), []);
+assert.deepEqual(section(sections, "SUPPLY").rows.map((item) => item.label), ["Intestatario", "Fornitore", "POD", "Periodo", "Uso", "Mercato"]);
+assert.deepEqual(rowOf(sections, "SUPPLY", "Mercato"), { label: "Mercato", value: "MERCATO LIBERO", state: "READ" }, "Mercato libero as read");
+// Not printed or not read: the row stays in view and says so, nothing is invented.
+const noMarket = parseBillReading({ ...reading, mercato: "", assenti: [{ campo: "mercato", motivo: "non stampato" }] });
+const noMarketRow = rowOf(billReadSections(billOf(toStructuredBill({ reading: noMarket, checks: [], reread: false }))), "SUPPLY", "Mercato");
+assert.deepEqual([noMarketRow.value, noMarketRow.secondary], [NOT_IN_BILL, undefined]);
+const unreadMarket = parseBillReading({ ...reading, mercato: "", assenti: [] });
+const unreadMarketRow = rowOf(billReadSections(billOf(toStructuredBill({ reading: unreadMarket, checks: [], reread: false }))), "SUPPLY", "Mercato");
+assert.deepEqual([unreadMarketRow.value, unreadMarketRow.secondary], [NOT_READ, undefined]);
+// No other supply value changes place or value.
+assert.deepEqual(section(sections, "SUPPLY").rows.filter((item) => item.label !== "Mercato").map((item) => [item.label, item.state, Boolean(item.secondary)]), [["Intestatario", "READ", false], ["Fornitore", "READ", false], ["POD", "READ", false], ["Periodo", "READ", false], ["Uso", "READ", false]]);
 // Tony (13/11/2026, "tensione visibile"): the supply voltage is always in view next to the powers (expectation changed: a
 // low-voltage supply used to be under "Altri dettagli").
 assert.deepEqual(secondary("TECHNICAL"), [`Potenza disponibile=${NOT_IN_BILL}`], "an unprinted available power is secondary");
@@ -223,7 +236,7 @@ assert.equal(rowOf(openSections, "CONTRACT", "Scadenza contratto").value, NOT_IN
 const household = parseBillReading({ ...reading, tipoCliente: "DOMESTICO", tipoClienteStampato: "Domestico residente", tensioneStampata: "", dettaglio: [], scontrino: reading.scontrino, pcvMensile: "", assenti: [] });
 const householdSections = billReadSections(billOf(toStructuredBill({ reading: household, checks: [], reread: false })));
 assert.equal(rowOf(householdSections, "SUPPLY", "Uso").value, "Domestico residente");
-// Tony (11/11/2026, "pulizia finale"): the segment moves under "Altri dettagli" only when it repeats the printed use.
+// Tony (11/11/2026, "pulizia finale"): whether the segment repeats the printed use (kept; since 13/11 the segment is always in view).
 const householdBill = billOf(toStructuredBill({ reading: household, checks: [], reread: false }));
 assert.equal(segmentRepeatsUse(householdBill, "RESIDENTIAL"), true, "Domestico → Consumer repeats the use");
 assert.equal(segmentRepeatsUse(householdBill, "NON_RESIDENTIAL"), false, "a segment different from the use stays in view");
@@ -285,7 +298,15 @@ assert.match(component, /<span className="visually-hidden"> \(calcolato dal simu
 assert.match(component, /<summary>Altri dettagli \(\{more\.length\}\)<\/summary>/, "secondary values one click away");
 // Tony (11/11/2026, "pulizia finale"): the simulator's different classification folded under its own heading.
 assert.match(component, /<details className="bill-read-simulator">\s*<summary>Classificazione del simulatore: differenze dalla fattura \(\{simulator\.length\}\)<\/summary>/);
-assert.match(flow, /\{ section: "SUPPLY", \.\.\.\(segmentRepeatsUse\(bill, type\) \? \{ secondary: true \} : \{\}\), label: "Segmento cliente"/, "the segment under Altri dettagli when it repeats the use");
+// Tony (13/11/2026, "mercato e segmento sempre visibili"): the segment is always in view, never under "Altri dettagli"
+// (expectation changed: it was folded when it repeated the use), with the asterisk and "Classificazione del simulatore" written.
+const segmentFact = flow.match(/\{ section: "SUPPLY", [^\n]*label: "Segmento cliente"[^\n]*\}/)?.[0] ?? "";
+assert.match(segmentFact, /^\{ section: "SUPPLY", noteShown: true, label: "Segmento cliente", value: type === "RESIDENTIAL" \? <span className="cte-segment-consumer">Consumer<\/span> : type === "NON_RESIDENTIAL" \? <span className="cte-segment-business">Business<\/span> : "Non determinato", note: "Classificazione del simulatore" \}$/, "Business / Consumer / Non determinato, with its provenance");
+assert.doesNotMatch(segmentFact, /secondary/, "never under Altri dettagli, so never shown twice");
+assert.equal((flow.match(/label: "Segmento cliente"/g) ?? []).length, 1, "one segment row");
+assert.match(flow, /const type = bill\.structuredBill \? customerTypeOf\(bill\.structuredBill\) : null;/, "classification unchanged");
+assert.match(component, /state: "CALCULATED", note: fact\.note, secondary: fact\.secondary, \.\.\.\(fact\.noteShown \? \{ noteShown: true \} : \{\}\) \}/, "a calculated fact can show its note in view");
+assert.match(component, /calculated \? <><span aria-hidden="true" className="bill-read-mark">\*<\/span>/, "the calculated segment keeps the asterisk");
 assert.match(component, /review && !note \? <small className="bill-read-note">da verificare<\/small>/, "an uncertain value still says so");
 
 console.log("bill-read-details OK");
