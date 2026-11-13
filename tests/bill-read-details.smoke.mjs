@@ -229,7 +229,9 @@ const noUse = parseBillReading({ ...reading, tipoClienteStampato: "", tipoClient
 assert.equal(segmentRepeatsUse(billOf(toStructuredBill({ reading: noUse, checks: [], reread: false })), "NON_RESIDENTIAL"), false, "without a printed use the segment stays in view");
 assert.equal(rowOf(householdSections, "TECHNICAL", "Tensione").value, "Bassa tensione (BT)");
 assert.equal(rowOf(householdSections, "ECONOMICS", "Accise e IVA").value, "254,49 €", "without detail rows the printed 'Accise e IVA' is shown as printed");
-assert.equal(rowOf(householdSections, "ECONOMICS", "Oneri di sistema").state, "ABSENT");
+// Tony (13/11/2026, BPower 071808E): system charges the reading did not take apart are "Non letto separatamente", not
+// "Non presente nella fattura" (expectation changed from "ABSENT" by this requested behaviour).
+assert.deepEqual([rowOf(householdSections, "ECONOMICS", "Oneri di sistema").state, rowOf(householdSections, "ECONOMICS", "Oneri di sistema").value], ["NOT_READ", "Non letto separatamente"]);
 const gas = parseBillReading({ ...reading, vettore: "GAS", pod: "", pdr: "01234567890123", consumoFatturato: "120", consumoSmc: "120", consumoF1: "", consumoF2: "", consumoF3: "", consumoAnnuo: "1.400", dettaglio: [], assenti: [] });
 const gasSections = billReadSections(billOf(toStructuredBill({ reading: gas, checks: [], reread: false }), "GAS"), []);
 assert.equal(rowOf(gasSections, "SUPPLY", "PDR").value, "01234567890123");

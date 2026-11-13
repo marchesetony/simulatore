@@ -61,6 +61,7 @@ export function billReadingView(reading: StructuredBillExtraction | null | undef
     ...(supplyProfile ? { supplyProfile } : {}),
     ...(reading.readingChecks ? { readingChecks: reading.readingChecks } : {}),
     ...(reading.readingAbsent ? { readingAbsent: reading.readingAbsent } : {}),
+    ...(reading.printedComponents ? { printedComponents: reading.printedComponents } : {}),
     ...(reading.analystExtractionStatus ? { analystExtractionStatus: reading.analystExtractionStatus } : {}),
   };
 }

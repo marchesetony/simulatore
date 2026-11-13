@@ -1,7 +1,7 @@
 import type { BillDocumentModel } from "./models";
-import type { StructuredBillEconomicChargeLine, StructuredBillField } from "../ingestion/structured-bill";
+import type { StructuredBillEconomicChargeLine, StructuredBillField, StructuredBillPrintedComponent, StructuredBillPrintedComponentCategory } from "../ingestion/structured-bill";
 import type { SupplyProfileField } from "../ingestion/bill-supply-profile";
-import { BANDS_SUM_TOLERANCE_KWH } from "../reading/bill-reader-checks";
+import { BANDS_SUM_TOLERANCE_KWH, printedComponentChecks } from "../reading/bill-reader-checks";
 import { formatKwh } from "./format";
 import { ANNUAL_ESTIMATE_LABEL } from "../calculation/annual-consumption";
 import { annualEstimateOrigin, billAnnualConsumption, quantityText } from "./annual-consumption";
@@ -27,6 +27,9 @@ export interface BillReadSection { readonly id: BillReadSectionId; readonly titl
 export const NOT_IN_BILL = "Non presente nella fattura";
 export const TO_CHECK = "Da verificare";
 export const NOT_READ = "Non letto";
+// Tony (13/11/2026, BPower 071808E): an amount the bill may well print, that the reading did not take apart, is "not read
+// separately"; "Non presente nella fattura" stays only for what the reader says the bill does not print.
+export const NOT_READ_SEPARATELY = "Non letto separatamente";
 
 type Bill = Pick<BillDocumentModel, "fields" | "structuredBill" | "analystReview" | "resolvedVector">;
 
@@ -209,31 +212,77 @@ function contractSection(bill: Bill, calculated: readonly BillReadRow[]): BillRe
   return { id: "CONTRACT", title: "Contratto e condizioni economiche attuali", rows };
 }
 
+// Tony (13/11/2026, BPower 071808E): transport, system charges, excise and VAT printed apart (also in an informative section)
+// are shown as read, with their page. They are parts of the printed "rete e oneri" and "Accise e IVA": never added to them.
+const COMPONENT_FIELD: Readonly<Record<StructuredBillPrintedComponentCategory, string>> = { NETWORK: "TRASPORTO_RETE", SYSTEM_CHARGES: "ONERI_SISTEMA", EXCISE: "ACCISE", VAT: "IVA" };
+function printedComponentOf(bill: Bill, category: StructuredBillPrintedComponentCategory): { readonly amount: number; readonly note: string } | null {
+  const items: readonly StructuredBillPrintedComponent[] = (bill.structuredBill?.printedComponents ?? []).filter((item) => item.category === category);
+  if (!items.length) return null;
+  const where = (item: StructuredBillPrintedComponent) => `${item.page > 0 ? `pagina ${item.page}` : "pagina non indicata"}${item.section ? `, ${item.section}` : ""}: "${item.label || "senza descrizione"}" ${item.rawAmount}`;
+  const amount = round2(items.reduce((total, item) => total + item.amount, 0));
+  return { amount, note: items.length === 1 ? `Stampato a ${where(items[0])}` : `Somma di ${items.length} importi stampati (${items.map(where).join("; ")})` };
+}
+/** The printed "rete e oneri" as the reader's scontrino rows give it: each quota's "di cui" (a quota potenza printed without
+ *  any "di cui" is all network). Falls back to the quadro sintetico's value. */
+function scontrinoNetworkAndSystem(bill: Bill, fallback: number | null): number | null {
+  const all = bill.structuredBill?.economicChargeLines ?? [];
+  const parts: number[] = [];
+  for (const quota of ["Quota per consumi", "Quota fissa", "Quota potenza"]) {
+    const shares = all.filter((line) => line.description === `${quota} - di cui spesa per la rete e gli oneri generali di sistema`);
+    if (shares.length) { const value = sumOf(shares); if (value !== null) parts.push(value); continue; }
+    if (quota === "Quota potenza" && !all.some((line) => line.description.startsWith(`${quota} - di cui spesa per la vendita`))) { const value = sumOf(all.filter((line) => line.code === "OTHER_CHARGE" && line.description === quota)); if (value !== null) parts.push(value); }
+  }
+  return parts.length ? round2(parts.reduce((total, value) => total + value, 0)) : fallback;
+}
+
 function economicsSection(bill: Bill): BillReadSection {
   const totals = bill.analystReview.economics.economicAnalysis?.totals;
   const printed = totals?.printedSummary;
   const sb = bill.structuredBill;
   const oneriLines = lines(bill, "ASOS", "ARIM");
-  const oneri = sumOf(oneriLines);
-  const excise = sumOf(lines(bill, "EXCISE"));
-  const vat = sumOf(lines(bill, "VAT"));
+  const printedNetwork = printedComponentOf(bill, "NETWORK");
+  const printedOneri = printedComponentOf(bill, "SYSTEM_CHARGES");
+  const printedExcise = printedComponentOf(bill, "EXCISE");
+  const printedVat = printedComponentOf(bill, "VAT");
+  // A printed component first; otherwise the detail rows, as before.
+  const oneri = printedOneri?.amount ?? sumOf(oneriLines);
+  const excise = printedExcise?.amount ?? sumOf(lines(bill, "EXCISE"));
+  const vat = printedVat?.amount ?? sumOf(lines(bill, "VAT"));
   const printedTotal = sumOf(lines(bill, "BILL_TOTAL")) ?? (fieldText(sb?.totalAmount) === null ? null : Number(fieldText(sb?.totalAmount)));
-  const money = (label: string, value: number | null, note?: string): BillReadRow => value === null ? { label, value: NOT_IN_BILL, state: "ABSENT", note: "Non letto come voce separata" } : { label, value: euro(value), state: "READ", ...(note ? { note } : {}) };
+  const absentComponent = (category: StructuredBillPrintedComponentCategory) => absentReason(bill, `componentiStampate.${COMPONENT_FIELD[category]}`);
+  const missing = (label: string, category?: StructuredBillPrintedComponentCategory): BillReadRow => {
+    const reason = category ? absentComponent(category) : null;
+    if (reason !== null) return { label, value: NOT_IN_BILL, state: "ABSENT", note: reason };
+    return category ? { label, value: NOT_READ_SEPARATELY, state: "NOT_READ", note: "La lettura non ha trovato questo importo come voce separata" } : { label, value: NOT_READ, state: "NOT_READ" };
+  };
+  const money = (label: string, value: number | null, note?: string, category?: StructuredBillPrintedComponentCategory): BillReadRow => value === null ? missing(label, category) : { label, value: euro(value), state: "READ", ...(note ? { note } : {}) };
   const calc = (label: string, value: number, note: string): BillReadRow => ({ label, value: euro(value), state: "CALCULATED", note });
+  // The printed parts against the printed totals: a part that does not add up is shown "Da verificare", never corrected.
+  const coherence = printedComponentChecks({ network: printedNetwork?.amount ?? null, system: printedOneri?.amount ?? null, excise: printedExcise?.amount ?? null, vat: printedVat?.amount ?? null }, { networkAndSystem: scontrinoNetworkAndSystem(bill, printed?.networkAndSystem ?? null), taxes: printed?.taxes ?? null });
+  const issue = (code: string) => coherence.find((check) => check.code === code)?.message ?? null;
+  const printedRow = (label: string, component: { readonly amount: number; readonly note: string }, code: string): BillReadRow => {
+    const problem = issue(code);
+    return problem ? { label, value: euro(component.amount), state: "REVIEW", note: `${TO_CHECK}: ${problem} · ${component.note}`, noteShown: true } : { label, value: euro(component.amount), state: "READ", note: component.note };
+  };
   const rows: BillReadRow[] = [];
   // Original values: the quadro sintetico as printed and the detail rows as printed.
   rows.push(money("Spesa per la vendita di energia", printed?.seller ?? null, "Quadro sintetico: somma dei \"di cui spesa per la vendita\""));
   if (printed?.networkAndSystem != null) {
     rows.push(money("Spesa per la rete e gli oneri generali di sistema", printed.networkAndSystem, "Quadro sintetico, come stampato (rete e oneri insieme)"));
-    if (oneri !== null) rows.push(calc("di cui spesa per la rete e il trasporto", round2(printed.networkAndSystem - oneri), "Calcolata: rete e oneri stampati meno gli oneri ASOS e ARIM del dettaglio"));
-  } else rows.push(money("Spesa per la rete e gli oneri generali di sistema", null));
-  rows.push(oneri === null ? money("Oneri generali di sistema", null) : { label: "Oneri generali di sistema", value: euro(oneri), state: "CALCULATED", note: `Somma delle ${oneriLines.length} righe ASOS e ARIM stampate nel dettaglio` });
-  rows.push(money("Accise", excise, "Righe di accisa del dettaglio"));
-  rows.push(money("IVA", vat, "Righe IVA del dettaglio"));
+    if (printedNetwork) rows.push(printedRow("di cui spesa per la rete e il trasporto", printedNetwork, "COMPONENTS_NETWORK_SYSTEM"));
+    else if (oneri !== null) rows.push(calc("di cui spesa per la rete e il trasporto", round2(printed.networkAndSystem - oneri), printedOneri ? "Calcolata: rete e oneri stampati meno gli oneri di sistema stampati" : "Calcolata: rete e oneri stampati meno gli oneri ASOS e ARIM del dettaglio"));
+    else rows.push(missing("di cui spesa per la rete e il trasporto", "NETWORK"));
+  } else {
+    rows.push(missing("Spesa per la rete e gli oneri generali di sistema"));
+    if (printedNetwork) rows.push(printedRow("di cui spesa per la rete e il trasporto", printedNetwork, "COMPONENTS_NETWORK_SYSTEM"));
+  }
+  rows.push(printedOneri ? printedRow("Oneri generali di sistema", printedOneri, "COMPONENTS_NETWORK_SYSTEM") : oneri === null ? missing("Oneri generali di sistema", "SYSTEM_CHARGES") : { label: "Oneri generali di sistema", value: euro(oneri), state: "CALCULATED", note: `Somma delle ${oneriLines.length} righe ASOS e ARIM stampate nel dettaglio` });
+  rows.push(printedExcise ? printedRow("Accise", printedExcise, "COMPONENTS_TAXES") : money("Accise", excise, "Righe di accisa del dettaglio", "EXCISE"));
+  rows.push(printedVat ? printedRow("IVA", printedVat, "COMPONENTS_TAXES") : money("IVA", vat, "Righe IVA del dettaglio", "VAT"));
   if (excise === null && vat === null && printed?.taxes != null) rows.push(money("Accise e IVA", printed.taxes, "Quadro sintetico, come stampato (insieme)"));
   const taxes = excise !== null || vat !== null ? (excise ?? 0) + (vat ?? 0) : printed?.taxes ?? null;
   // Tony (10/11, "semplificazione"): the total appears once; the sum of the printed components is a note on it only when it
-  // does not match.
+  // does not match. The parts printed apart are inside "rete e oneri" and "Accise e IVA": they are never added a second time.
   let totalNote: string | null = null;
   if (printed?.seller != null && printed.networkAndSystem != null && taxes !== null && printedTotal !== null) {
     const gap = round2(round2(printed.seller + printed.networkAndSystem + taxes) - printedTotal);
@@ -245,7 +294,7 @@ function economicsSection(bill: Bill): BillReadSection {
   const normalized: BillReadRow[] = [];
   if (totals) {
     const seller = [totals.sellerEnergyTotal, totals.sellerCommercializationTotal, totals.sellerOtherTotal].filter((value): value is number => value !== null);
-    const network = printed?.networkAndSystem != null && oneri !== null ? round2(printed.networkAndSystem - oneri) : null;
+    const network = printedNetwork?.amount ?? (printed?.networkAndSystem != null && oneri !== null ? round2(printed.networkAndSystem - oneri) : null);
     const add = (label: string, value: number | null, printedValue: number | null | undefined) => {
       if (value === null || (printedValue !== null && printedValue !== undefined && Math.abs(round2(value - printedValue)) < 0.01)) return;
       normalized.push({ label: `${label} (classificazione del simulatore)`, value: euro(value), state: "CALCULATED", note: printedValue === null || printedValue === undefined ? "Raggruppamento normalizzato delle righe lette, non stampato in fattura" : `Raggruppamento normalizzato delle righe lette: in fattura ${euro(printedValue)}` });
@@ -313,7 +362,7 @@ const ORDER: Readonly<Record<BillReadSectionId, readonly string[]>> = {
   SUPPLY: ["Intestatario", "Fornitore", "POD", "PDR", "Periodo", "Uso"],
   TECHNICAL: ["Consumo totale (F0)", "F1", "F2", "F3", "Consumo annuo", ANNUAL_ESTIMATE_LABEL, "Potenza impegnata", "Potenza massima"],
   CONTRACT: ["Offerta", "Prezzo", "Fasce", "Indice", "Spread", "PCV", "Scadenza condizioni", "Scadenza contratto"],
-  ECONOMICS: ["Vendita", "Rete e oneri di sistema", "Accise", "IVA", "Accise e IVA", "Totale fattura", "Rete e trasporto", "Oneri di sistema"],
+  ECONOMICS: ["Vendita", "Rete e oneri di sistema", "Rete e trasporto", "Oneri di sistema", "Accise", "IVA", "Accise e IVA", "Totale fattura"],
 };
 const isZero = (value: string) => { const amounts = [...value.matchAll(/-?\d[\d.]*,\d+|-?\d+(?:\.\d+)?/g)].map((match) => amountOf(match[0])); return amounts.length > 0 && amounts.every((amount) => amount === 0); };
 
@@ -335,7 +384,7 @@ function secondaryRow(id: BillReadSectionId, row: BillReadRow, rows: readonly Bi
   }
   // Tony (11/11/2026, "pulizia finale"): the economic summary shows the bill's values only; what is calculated here (rete
   // as a difference, oneri as a sum of the detail rows) and what is not printed stay under "Altri dettagli".
-  return (row.state === "ABSENT" || row.state === "CALCULATED") && label !== "Totale fattura";
+  return (row.state === "ABSENT" || row.state === "CALCULATED" || row.state === "NOT_READ") && label !== "Totale fattura";
 }
 
 function compactSection(section: BillReadSection): BillReadSection {

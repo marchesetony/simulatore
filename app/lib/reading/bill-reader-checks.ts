@@ -1,4 +1,4 @@
-import type { BillReading, ScontrinoRow } from "./bill-reader-schema.ts";
+import type { BillReading, PrintedComponentCategory, ScontrinoRow } from "./bill-reader-schema.ts";
 
 // Tony (5/11/2026): before the agent sees the data, the reading must add up. These checks only compare numbers Claude copied
 // from the same bill; they never replace a value. A failed check sends Claude back to that point of the bill, and what still
@@ -70,6 +70,50 @@ export function scontrinoSum(all: readonly ScontrinoRow[]): number {
   return sum;
 }
 
+// Tony (13/11/2026, BPower 071808E): transport and system charges printed apart are parts of the "rete e oneri" the scontrino
+// prints, excise and VAT parts of its "Accise e IVA". They are checked against those printed totals and never added to them.
+export interface PrintedComponentSums { readonly network: number | null; readonly system: number | null; readonly excise: number | null; readonly vat: number | null }
+export interface PrintedAggregates { readonly networkAndSystem: number | null; readonly taxes: number | null }
+
+const euroText = (value: number) => value.toFixed(2).replace(".", ",");
+/** The printed parts against the printed total: two parts must give the total (1 cent of rounding), one part cannot exceed it. */
+export function printedComponentChecks(parts: PrintedComponentSums, totals: PrintedAggregates): readonly ReadingCheck[] {
+  const checks: ReadingCheck[] = [];
+  const pair = (code: string, names: readonly [string, string], values: readonly [number | null, number | null], total: number | null, totalName: string) => {
+    if (total === null) return;
+    const known = values.filter((value): value is number => value !== null);
+    if (known.length === 0) return;
+    const sum = known.reduce((left, right) => left + right, 0);
+    if (known.length === 2 && Math.abs(cents(sum) - cents(total)) > 1) checks.push({ code, message: `${names[0]} ${euroText(values[0]!)} € + ${names[1]} ${euroText(values[1]!)} € = ${euroText(sum)} € ma ${totalName} stampato è ${euroText(total)} €: rileggi gli importi separati.` });
+    else if (known.length === 1 && cents(sum) > cents(total) + 1) checks.push({ code, message: `${values[0] !== null ? names[0] : names[1]} ${euroText(sum)} € supera ${totalName} stampato (${euroText(total)} €): rileggi l'importo separato.` });
+  };
+  pair("COMPONENTS_NETWORK_SYSTEM", ["Trasporto e rete", "oneri di sistema"], [parts.network, parts.system], totals.networkAndSystem, "rete e oneri");
+  pair("COMPONENTS_TAXES", ["Accise", "IVA"], [parts.excise, parts.vat], totals.taxes, "Accise e IVA");
+  return checks;
+}
+
+/** Rete e oneri and Accise e IVA as the scontrino prints them: each quota's "di cui rete e oneri" (a quota potenza printed
+ *  without any "di cui" is all network), and the "Accise e IVA" rows. Null when the scontrino does not print them. */
+export function scontrinoAggregates(rows: readonly ScontrinoRow[]): PrintedAggregates {
+  const end = rows.findIndex((row) => row.tipo === "TOTALE_BOLLETTA");
+  const scoped = end >= 0 ? rows.slice(0, end) : rows;
+  const sum = (items: readonly ScontrinoRow[]) => { const values = items.map((row) => italianNumber(row.importo)).filter((value): value is number => value !== null); return values.length ? values.reduce((left, right) => left + right, 0) : null; };
+  const parts: number[] = [];
+  for (const quota of ["CONSUMI", "FISSA", "POTENZA"] as const) {
+    const ofQuota = scoped.filter((row) => row.quota === quota);
+    const network = sum(ofQuota.filter((row) => row.tipo === "DI_CUI_RETE_ONERI"));
+    if (network !== null) parts.push(network);
+    else if (quota === "POTENZA" && !ofQuota.some((row) => row.tipo === "DI_CUI_VENDITA")) { const total = sum(ofQuota.filter((row) => row.tipo === "QUOTA_TOTALE")); if (total !== null) parts.push(total); }
+  }
+  return { networkAndSystem: parts.length ? parts.reduce((left, right) => left + right, 0) : null, taxes: sum(scoped.filter((row) => row.tipo === "ACCISE_IVA")) };
+}
+
+/** The printed components of one category added up (a bill may print VAT at two rates); null when none is printed. */
+export function printedComponentSum(rows: readonly { readonly categoria: string; readonly importo: string }[], category: PrintedComponentCategory): number | null {
+  const values = rows.filter((row) => row.categoria === category).map((row) => italianNumber(row.importo)).filter((value): value is number => value !== null);
+  return values.length ? values.reduce((left, right) => left + right, 0) : null;
+}
+
 export function checkBillReading(reading: BillReading): readonly ReadingCheck[] {
   const checks: ReadingCheck[] = [];
   const isBill = reading.tipoDocumento !== "NON_BOLLETTA";
@@ -113,6 +157,9 @@ export function checkBillReading(reading: BillReading): readonly ReadingCheck[] 
     const printed = italianNumber(printedTotal?.importo);
     if (printed !== null && cents(printed) !== cents(total)) checks.push({ code: "TOTAL_MISMATCH", message: `Il totale bolletta letto (${reading.totaleBolletta}) è diverso da quello dello scontrino (${printedTotal?.importo}).` });
   }
+
+  const components = reading.componentiStampate ?? [];
+  if (components.length) checks.push(...printedComponentChecks({ network: printedComponentSum(components, "TRASPORTO_RETE"), system: printedComponentSum(components, "ONERI_SISTEMA"), excise: printedComponentSum(components, "ACCISE"), vat: printedComponentSum(components, "IVA") }, scontrinoAggregates(reading.scontrino)));
 
   const productChecks = [...reading.scontrino.map((row) => ({ label: row.etichetta, quantity: row.quantita, price: row.prezzoMedio, amount: row.importo, unit: row.unitaPrezzo })),
     ...reading.dettaglio.map((row) => ({ label: row.descrizione, quantity: row.quantita, price: row.prezzo, amount: row.importo, unit: row.unitaPrezzo }))];

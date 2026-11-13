@@ -1,9 +1,9 @@
-import type { StructuredBillEconomicChargeLine, StructuredBillExtraction } from "../ingestion/structured-bill.ts";
+import type { StructuredBillEconomicChargeLine, StructuredBillExtraction, StructuredBillPrintedComponent, StructuredBillPrintedComponentCategory } from "../ingestion/structured-bill.ts";
 import type { BillWireExtraction, BillWireField } from "../ingestion/bill-wire.ts";
 import type { BillAnalystWireExtraction, BillAnalystWireItem } from "../ingestion/bill-two-stage.ts";
 // @ts-expect-error Node's strip-only test runner requires the explicit extension.
 import { mapBillCoreToStructuredBill, mergeBillCoreAndAnalyst } from "../ingestion/bill-two-stage.ts";
-import type { BillReading, DetailItem, DetailRow, ScontrinoRow } from "./bill-reader-schema.ts";
+import type { BillReading, DetailItem, DetailRow, PrintedComponentCategory, ScontrinoRow } from "./bill-reader-schema.ts";
 import type { ReadingCheck } from "./bill-reader-checks.ts";
 // @ts-expect-error Node's strip-only test runner requires the explicit extension.
 import { italianNumber } from "./bill-reader-checks.ts";
@@ -164,6 +164,22 @@ export function scontrinoLines(rows: readonly ScontrinoRow[], vector: BillReadin
   return lines;
 }
 
+const COMPONENT_CATEGORY: Readonly<Record<PrintedComponentCategory, StructuredBillPrintedComponentCategory>> = { TRASPORTO_RETE: "NETWORK", ONERI_SISTEMA: "SYSTEM_CHARGES", ACCISE: "EXCISE", IVA: "VAT" };
+
+/** Tony (13/11/2026, BPower 071808E): the amounts printed apart (transport, system charges, excise, VAT), as printed, with their
+ *  page and section. A row without a known category or a readable amount is left out: nothing is guessed. They are kept apart
+ *  from the economic charge lines, which the calculation and the comparison read. */
+export function printedComponents(reading: BillReading): StructuredBillPrintedComponent[] {
+  return (reading.componentiStampate ?? []).flatMap((row) => {
+    const category = COMPONENT_CATEGORY[row.categoria as PrintedComponentCategory];
+    const rawAmount = typeof row.importo === "string" ? row.importo.trim() : "";
+    const amount = italianNumber(rawAmount);
+    if (!category || amount === null) return [];
+    const page = typeof row.pagina === "number" && Number.isInteger(row.pagina) && row.pagina > 0 ? row.pagina : 0;
+    return [{ category, label: typeof row.etichetta === "string" ? row.etichetta.trim() : "", rawAmount, amount, section: typeof row.sezione === "string" ? row.sezione.trim() : "", page, source: "DOCUMENT_READING" as const }];
+  });
+}
+
 export interface ReaderOutcome { readonly reading: BillReading; readonly checks: readonly ReadingCheck[]; readonly reread: boolean }
 
 /** The structure the engine reads, with the reading, the checks still failing and the empty fields with their reason. */
@@ -181,6 +197,7 @@ export function toStructuredBill(outcome: ReaderOutcome): StructuredBillExtracti
     documentPriceRows: priceRows,
     reader: BILL_READER_ID,
     readingChecks: outcome.checks.map((check) => check.message),
+    printedComponents: printedComponents(reading),
     readingAbsent: reading.assenti.map((absent) => ({ field: absent.campo, reason: absent.motivo })),
     readingSources: reading.fonti.map((source) => ({ field: source.campo, page: source.pagina, text: source.testo.slice(0, 200) })),
     readingReread: outcome.reread,

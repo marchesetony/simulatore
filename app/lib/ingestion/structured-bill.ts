@@ -61,6 +61,25 @@ export interface StructuredBillExtendedFact {
   readonly status: StructuredBillFieldStatus;
 }
 
+/** Tony (13/11/2026, BPower 071808E): an amount of transport, system charges, excise or VAT the bill prints on its own (also in
+ *  an informative section, also without quantity × price), copied as printed with its page. Information on the bill only:
+ *  it is never one of the economic charge lines the calculation and the comparison read, so nothing is counted twice. */
+export const PRINTED_COMPONENT_CATEGORIES = ["NETWORK", "SYSTEM_CHARGES", "EXCISE", "VAT"] as const;
+export type StructuredBillPrintedComponentCategory = typeof PRINTED_COMPONENT_CATEGORIES[number];
+export interface StructuredBillPrintedComponent {
+  readonly category: StructuredBillPrintedComponentCategory;
+  /** The description as printed. */
+  readonly label: string;
+  /** The amount as printed ("3,95") and as a number (3.95). */
+  readonly rawAmount: string;
+  readonly amount: number;
+  /** The section or table title as printed ("" when it has none) and the PDF page (from 1; 0 when not given). */
+  readonly section: string;
+  readonly page: number;
+  /** Where the value comes from: always the reading of the document, never a calculation. */
+  readonly source: "DOCUMENT_READING";
+}
+
 export interface StructuredBillEconomicChargeLine {
   readonly code: BillEconomicChargeLineCode;
   readonly description: string;
@@ -136,6 +155,8 @@ export interface StructuredBillExtraction {
   readonly readingChecks?: readonly string[];
   /** Fields the bill does not print, with the reason Claude gave. */
   readonly readingAbsent?: readonly { readonly field: string; readonly reason: string }[];
+  /** Amounts of transport, system charges, excise and VAT printed on their own; undefined on bills read before 13/11/2026. */
+  readonly printedComponents?: readonly StructuredBillPrintedComponent[];
   /** Page and printed text each value was copied from. */
   readonly readingSources?: readonly { readonly field: string; readonly page: number; readonly text: string }[];
   /** True when the bill was read a second time because the first reading did not add up. */
@@ -255,6 +276,14 @@ export function validateStructuredBillExtraction(value: unknown): asserts value 
       for (const key of ["classification", "rawDescription", "rawValue", "rawUnit", "rawQuantity", "rawUnitPrice", "rawAmount", "rawPeriod", "documentEvidence", "calculationCheck"]) {
         if (current[key] !== undefined && typeof current[key] !== "string") throw new StructuredBillExtractionError(`BILL_STRUCTURED_FIELD_INVALID:economicChargeLines.${index}.${key}`);
       }
+    }
+  }
+  if (item.printedComponents !== undefined) {
+    if (!Array.isArray(item.printedComponents)) throw new StructuredBillExtractionError("BILL_STRUCTURED_FIELD_INVALID:printedComponents");
+    for (const [index, component] of item.printedComponents.entries()) {
+      const current = record(component, `printedComponents.${index}`);
+      if (!PRINTED_COMPONENT_CATEGORIES.includes(current.category as StructuredBillPrintedComponentCategory) || typeof current.label !== "string" || typeof current.rawAmount !== "string" || typeof current.amount !== "number" || !Number.isFinite(current.amount)
+        || typeof current.section !== "string" || typeof current.page !== "number" || !Number.isInteger(current.page) || current.page < 0 || current.source !== "DOCUMENT_READING") throw new StructuredBillExtractionError(`BILL_STRUCTURED_FIELD_INVALID:printedComponents.${index}`);
     }
   }
   if (item.monthlyBands !== undefined) {

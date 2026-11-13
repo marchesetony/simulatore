@@ -16,15 +16,22 @@ export const DETAIL_ITEMS = [
   "ACCISE", "IVA", "BONUS_SOCIALE", "ALTRE_PARTITE", "ALTRO",
 ] as const;
 const BANDS = ["F1", "F2", "F3", "F23", "MONORARIA", "PICCO", "FUORI_PICCO", "NESSUNA"] as const;
+// Tony (13/11/2026, BPower 071808E: "accise, IVA e oneri risultano 'Non presente nella fattura'" while the bill prints them
+// in its informative sections): the amounts of transport, system charges, excise and VAT printed on their own, with or
+// without quantity × price, are read as printed with their page. They are information on the bill, apart from the rows
+// the calculation uses.
+export const PRINTED_COMPONENT_CATEGORIES = ["TRASPORTO_RETE", "ONERI_SISTEMA", "ACCISE", "IVA"] as const;
 
 export type ScontrinoType = typeof SCONTRINO_TYPES[number];
 export type ScontrinoQuota = typeof SCONTRINO_QUOTAS[number];
 export type DetailItem = typeof DETAIL_ITEMS[number];
 export type Band = typeof BANDS[number];
+export type PrintedComponentCategory = typeof PRINTED_COMPONENT_CATEGORIES[number];
 
 export interface ScontrinoRow { readonly etichetta: string; readonly tipo: ScontrinoType; readonly quota: ScontrinoQuota; readonly quantita: string; readonly unita: string; readonly prezzoMedio: string; readonly unitaPrezzo: string; readonly importo: string; readonly pagina: number }
 export interface DetailRow { readonly descrizione: string; readonly voce: DetailItem; readonly fascia: Band; readonly periodo: string; readonly quantita: string; readonly unita: string; readonly prezzo: string; readonly unitaPrezzo: string; readonly importo: string; readonly pagina: number }
 export interface FormulaValue { readonly etichetta: string; readonly valore: string; readonly unita: string; readonly pagina: number }
+export interface PrintedComponent { readonly etichetta: string; readonly categoria: PrintedComponentCategory; readonly importo: string; readonly sezione: string; readonly pagina: number }
 export interface Source { readonly campo: string; readonly pagina: number; readonly testo: string }
 export interface Absent { readonly campo: string; readonly motivo: string }
 
@@ -83,6 +90,7 @@ export interface BillReading {
   readonly valoriFormula: readonly FormulaValue[];
   readonly scontrino: readonly ScontrinoRow[];
   readonly dettaglio: readonly DetailRow[];
+  readonly componentiStampate: readonly PrintedComponent[];
   readonly totaleBolletta: string;
   readonly fonti: readonly Source[];
   readonly assenti: readonly Absent[];
@@ -162,6 +170,18 @@ const scontrinoRow = {
   },
 } as const;
 
+const printedComponentRow = {
+  type: "object", additionalProperties: false,
+  required: ["etichetta", "categoria", "importo", "sezione", "pagina"],
+  properties: {
+    etichetta: text("Descrizione stampata dell'importo (es. 'Spesa per oneri di sistema', 'IVA 10%')."),
+    categoria: { type: "string", enum: [...PRINTED_COMPONENT_CATEGORIES], description: "TRASPORTO_RETE: trasporto, distribuzione, misura e gestione del contatore; ONERI_SISTEMA: oneri generali di sistema (ASOS, ARIM o il loro totale); ACCISE: accise o imposta erariale; IVA." },
+    importo: text("Importo in euro come stampato con il segno (es. '3,95')."),
+    sezione: text("Titolo della sezione o tabella in cui è stampato, come stampato; '' se non ha titolo."),
+    pagina: page,
+  },
+} as const;
+
 const detailRow = {
   type: "object", additionalProperties: false,
   required: ["descrizione", "voce", "fascia", "periodo", "quantita", "unita", "prezzo", "unitaPrezzo", "importo", "pagina"],
@@ -181,7 +201,7 @@ const detailRow = {
 
 export const BILL_READER_SCHEMA = {
   type: "object", additionalProperties: false,
-  required: ["tipoDocumento", "vettore", "tipoCliente", "livelloTensione", ...BILL_READER_SCALARS, "storicoConsumi", "valoriFormula", "scontrino", "dettaglio", "fonti", "assenti"],
+  required: ["tipoDocumento", "vettore", "tipoCliente", "livelloTensione", ...BILL_READER_SCALARS, "storicoConsumi", "valoriFormula", "scontrino", "dettaglio", "componentiStampate", "fonti", "assenti"],
   properties: {
     tipoDocumento: { type: "string", enum: ["BOLLETTA_SINTETICA", "BOLLETTA_COMPLETA", "FATTURA_DETTAGLIO", "NON_BOLLETTA"] },
     vettore: { type: "string", enum: ["EE", "GAS", "NON_DETERMINABILE"] },
@@ -192,6 +212,7 @@ export const BILL_READER_SCHEMA = {
     valoriFormula: { type: "array", description: "Valori della formula del Box dell'offerta o della tabella di composizione del prezzo (es. 'PUN', 'Spread', 'Dispacciamento'): sono prezzi unitari, non importi.", items: { type: "object", additionalProperties: false, required: ["etichetta", "valore", "unita", "pagina"], properties: { etichetta: text("Etichetta stampata."), valore: text("Valore stampato con il segno."), unita: text("Unità (€/kWh)."), pagina: page } } },
     scontrino: { type: "array", description: "Lo scontrino dell'energia (quadro sintetico), riga per riga, nell'ordine stampato, fino al Totale bolletta compreso.", items: scontrinoRow },
     dettaglio: { type: "array", description: "Gli elementi di dettaglio (quantità × prezzo = importo), una riga per voce stampata.", items: detailRow },
+    componentiStampate: { type: "array", description: "Gli importi di trasporto e gestione del contatore, oneri generali di sistema, accise e IVA stampati come voce a sé in qualsiasi pagina (riepiloghi, sezioni informative, tabella imposte, dettaglio), anche senza quantità × prezzo. Una riga per importo stampato, copiato come stampato; mai calcolato, mai ricavato per differenza o ripartendo un totale. Gli importi stampati insieme ('rete e oneri', 'Accise e IVA') non vanno qui: sono nello scontrino.", items: printedComponentRow },
     fonti: { type: "array", description: "Per ogni campo valorizzato: nome del campo, pagina e testo stampato da cui è copiato.", items: { type: "object", additionalProperties: false, required: ["campo", "pagina", "testo"], properties: { campo: text("Nome del campo."), pagina: page, testo: text("Testo stampato citato.") } } },
     assenti: { type: "array", description: "Per ogni campo lasciato vuoto: nome del campo e motivo (es. 'non stampato: fattura di dettaglio senza box').", items: { type: "object", additionalProperties: false, required: ["campo", "motivo"], properties: { campo: text("Nome del campo."), motivo: text("Perché è vuoto.") } } },
   },
