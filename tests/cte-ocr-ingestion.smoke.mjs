@@ -74,8 +74,9 @@ await assert.rejects(() => approveCteIngestion({ tenantId: tenant, ingestionId: 
 
 const ui = await readFile(path.join(root, "app/components/CteIngestionPanel.tsx"), "utf8");
 const route = await readFile(path.join(root, "app/api/cte/ingestion/route.ts"), "utf8");
-assert.match(ui, /requestForm/); assert.match(ui, /pendingRef\.current\.has\("cte:upload"\)/); assert.match(ui, /\/api\/cte\/ingestion/); assert.match(ui, /await load\(\)/);
-assert.match(route, /request\.formData\(\)/); assert.match(route, /requestPrincipal/); assert.match(route, /x-idempotency-key/);
+assert.match(ui, /requestUpload/); // Tony (31/10): "IL LIMITE DI 10 MB BISOGNA ALZARLO": large files go straight to storage
+ assert.match(ui, /pendingRef\.current\.has\("cte:upload"\)/); assert.match(ui, /\/api\/cte\/ingestion/); assert.match(ui, /await load\(\)/);
+assert.match(route, /uploadedFile\(request/); assert.match(route, /requestPrincipal/); assert.match(route, /x-idempotency-key/);
 const forbiddenUiTokens = /\b(?:price|savings|fingerprint)\b/i;
 assert.doesNotMatch(ui, forbiddenUiTokens);
 assert.doesNotMatch("pricing", forbiddenUiTokens);

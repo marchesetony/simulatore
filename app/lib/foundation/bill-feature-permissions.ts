@@ -4,6 +4,8 @@ import type { FoundationMembershipRecord, TenantRecordRepository } from "../pers
 // @ts-expect-error Node's strip-only test runner requires the explicit extension.
 import { deterministicRecordId } from "../persistence/types.ts";
 import type { PublicBillDocument } from "./real-bill.ts";
+// @ts-expect-error Node's strip-only test runner requires the explicit extension.
+import { billReadingView } from "./bill-reading-view.ts";
 import type { BillHierarchyRole, BillVisibilityScope } from "./bill-visibility.ts";
 
 export const BILL_FEATURES = [
@@ -124,6 +126,24 @@ function scrubRawValues<T>(value: T): T {
   return output as T;
 }
 
+type EconomicComponent = PublicBillDocument["analystReview"]["economics"]["economicAnalysis"]["components"][number];
+const NOT_FOR_COMPARISON = new Set(["BILL_TOTAL", "AMOUNT_DUE", "PRIOR_BALANCE", "TAX_SUBTOTAL"]);
+
+// Tony (12/11, "Fase A confronto ELIOS"): without the technical detail the comparison showed the bill's Quota consumi at 0 and
+// the whole supply (971,57 €) as "Altre partite", because the receipt places the bill's money by its priced lines and those
+// were emptied. The comparison column gets back only the bill's own priced lines (description, quantity, unit price, unit,
+// amount, classification): no raw text, no evidence, no subtotals or balances, no new permission. They come from the same
+// bill the user is already allowed to see, so tenant and branch isolation are those of the bill itself.
+export function comparisonComponentsOf(components: readonly EconomicComponent[]): readonly EconomicComponent[] {
+  return components.filter((line) => !line.aggregate && !NOT_FOR_COMPARISON.has(line.classification)).map((line) => ({
+    lineId: line.lineId, code: line.code, normalizedCode: line.normalizedCode, classification: line.classification, group: line.group,
+    accountingRole: line.accountingRole, includedInReconciliation: line.includedInReconciliation, aggregate: false, atomic: line.atomic,
+    parentComponent: null, childComponents: [], description: line.description, quantity: line.quantity, unitPrice: line.unitPrice,
+    unit: line.unit, amount: line.amount, period: line.period, rawDescription: "", rawValue: "", rawUnit: "", rawQuantity: "",
+    rawUnitPrice: "", rawAmount: "", rawPeriod: "", documentEvidence: "", calculationCheck: line.calculationCheck, status: line.status,
+  }));
+}
+
 function hideTechnicalReview(review: PublicBillDocument["analystReview"], hideEconomicDetail: boolean): PublicBillDocument["analystReview"] {
   const next = scrubRawValues(structuredClone(review));
   if (!hideEconomicDetail) return next;
@@ -132,6 +152,7 @@ function hideTechnicalReview(review: PublicBillDocument["analystReview"], hideEc
     ...next,
     economics: {
       ...next.economics,
+      comparisonComponents: comparisonComponentsOf(analysis.components),
       chargeLines: [],
       economicAnalysis: {
         ...analysis,
@@ -156,6 +177,8 @@ export function sanitizeBillForFeatureAccess(document: PublicBillDocument, acces
     ...document,
     featurePermissions: access,
     structuredBill: technical ? document.structuredBill : null,
+    // Tony (10/11/2026): the bill data of "Dati letti" go to everyone who may open the bill, whatever "Dettaglio tecnico" says.
+    billReading: billReadingView(document.structuredBill),
     invoicePunReferences: regulatory ? document.invoicePunReferences : [],
     regulatoryAudit: regulatory ? document.regulatoryAudit : null,
     verificationSummary: fullSummary,

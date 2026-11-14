@@ -10,7 +10,7 @@ export type MarketRepository = MarketArchiveRepository;
 function archiveRoot(rootDir?: string): string { return path.resolve(rootDir ?? path.join(/* turbopackIgnore: true */ process.cwd(), "var", "market-archive")); }
 function equal(left: unknown, right: unknown): boolean { return JSON.stringify(left) === JSON.stringify(right); }
 function immutableRecord(value: MarketArchiveRecord): unknown { const copy = structuredClone(value.record) as { approval: unknown }; delete copy.approval; return copy; }
-function allowedStatusTransition(from: MarketArchiveRecord["status"], to: MarketArchiveRecord["status"]): boolean { return (from === "DRAFT" && ["REVIEWED", "APPROVED", "REJECTED"].includes(to)) || (from === "REVIEWED" && ["APPROVED", "REJECTED"].includes(to)) || (from === "REJECTED" && ["REVIEWED", "APPROVED"].includes(to)); }
+function allowedStatusTransition(from: MarketArchiveRecord["status"], to: MarketArchiveRecord["status"]): boolean { return (from === "DRAFT" && ["REVIEWED", "APPROVED", "REJECTED"].includes(to)) || (from === "REVIEWED" && ["APPROVED", "REJECTED"].includes(to)) || (from === "APPROVED" && to === "REJECTED") || (from === "REJECTED" && ["REVIEWED", "APPROVED"].includes(to)); }
 function assertAppendOnly(previous: MarketArchiveRecord, next: MarketArchiveRecord): void {
   if (next.history.length < previous.history.length || next.approvals.length < previous.approvals.length) throw new Error("ARCHIVE_APPEND_ONLY_VIOLATION");
   for (let index = 0; index < previous.history.length; index += 1) if (!equal(previous.history[index], next.history[index])) throw new Error("ARCHIVE_HISTORY_IMMUTABLE");

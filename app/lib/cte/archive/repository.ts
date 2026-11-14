@@ -1,13 +1,16 @@
 // @ts-expect-error Node's strip-only test runner requires the explicit extension.
 import { readJsonFile, atomicWriteJson } from "../../archive/atomic.ts";
 import path from "node:path";
-import type { CteArchiveRecord, CteArchiveRepository } from "./types";
+import type { CteArchiveExclusion, CteArchiveListResult, CteArchiveRecord, CteArchiveRepository } from "./types";
 // @ts-expect-error Node's strip-only test runner requires the explicit extension.
 import { CTE_ARCHIVE_APPROVAL_CAPABILITY } from "./types.ts";
 // @ts-expect-error Node's strip-only test runner requires the explicit extension.
-import { assertTenantId, validateStoredCteArchive } from "./validation.ts";
+import { assertTenantId, CteArchiveRecordUnreadableError, logExcludedCteArchives, storedCteErrorCode, validateStoredCteArchive } from "./validation.ts";
 
 type CteArchiveStore = { readonly schemaVersion: 1; readonly records: readonly CteArchiveRecord[] };
+/** An unreadable stored entry: kept byte for byte in the file on every write, never shown, never rewritten. */
+type UnreadableEntry = CteArchiveExclusion & { readonly raw: unknown };
+type ReadStore = CteArchiveStore & { readonly unreadable: readonly UnreadableEntry[] };
 export type CteRepository = CteArchiveRepository;
 
 function archiveRoot(rootDir?: string): string {
@@ -47,42 +50,72 @@ export class LocalCteArchiveRepository implements CteArchiveRepository {
 
   constructor(rootDir?: string) { this.file = path.join(archiveRoot(rootDir), "metadata.json"); }
 
+  // Tony (9/11/2026, "lettura tollerante, scrittura rigorosa"): an unreadable entry no longer stops the other CTEs of the
+  // same company or of other companies; a single read of it is an explicit error and every write keeps it untouched.
   async get(tenantId: string, archiveId: string): Promise<CteArchiveRecord | null> {
     assertTenantId(tenantId);
     const store = await this.readStore();
+    const unreadable = store.unreadable.find((entry) => entry.tenantId === tenantId && entry.archiveId === archiveId);
+    if (unreadable) throw new CteArchiveRecordUnreadableError(tenantId, archiveId, unreadable.code);
     const record = store.records.find((candidate) => candidate.tenantId === tenantId && candidate.archiveId === archiveId);
     return record ? structuredClone(record) : null;
   }
 
-  async list(tenantId: string): Promise<ReadonlyArray<CteArchiveRecord>> {
+  async listWithExclusions(tenantId: string): Promise<CteArchiveListResult> {
     assertTenantId(tenantId);
     const store = await this.readStore();
-    return store.records.filter((candidate) => candidate.tenantId === tenantId).map((candidate) => structuredClone(candidate));
+    const excluded = store.unreadable.filter((entry) => entry.tenantId === tenantId).map(({ tenantId: tenant, archiveId, code }) => ({ tenantId: tenant, archiveId, code }));
+    logExcludedCteArchives(excluded);
+    return { records: store.records.filter((candidate) => candidate.tenantId === tenantId).map((candidate) => structuredClone(candidate)), excluded };
+  }
+
+  async list(tenantId: string): Promise<ReadonlyArray<CteArchiveRecord>> {
+    return (await this.listWithExclusions(tenantId)).records;
   }
 
   async save(record: CteArchiveRecord, capability?: symbol): Promise<void> {
     validateStoredCteArchive(record);
     const store = await this.readStore();
+    const unreadable = store.unreadable.find((entry) => entry.tenantId === record.tenantId && entry.archiveId === record.archiveId);
+    if (unreadable) throw new CteArchiveRecordUnreadableError(record.tenantId, record.archiveId, unreadable.code);
     const previous = store.records.find((candidate) => candidate.tenantId === record.tenantId && candidate.archiveId === record.archiveId);
     if (record.currentApprovedVersionId !== (previous?.currentApprovedVersionId ?? null) && capability !== CTE_ARCHIVE_APPROVAL_CAPABILITY) throw new Error("CTE_APPROVAL_WORKFLOW_REQUIRED");
     if (previous) assertAppendOnly(previous, record);
     const records = store.records.filter((candidate) => !(candidate.tenantId === record.tenantId && candidate.archiveId === record.archiveId));
-    await atomicWriteJson(this.file, { schemaVersion: 1, records: [...records, structuredClone(record)] });
+    await atomicWriteJson(this.file, { schemaVersion: 1, records: [...records, ...store.unreadable.map((entry) => entry.raw), structuredClone(record)] });
   }
 
-  private async readStore(): Promise<CteArchiveStore> {
+  async remove(tenantId: string, archiveId: string): Promise<void> {
+    assertTenantId(tenantId);
+    const store = await this.readStore();
+    const unreadable = store.unreadable.find((entry) => entry.tenantId === tenantId && entry.archiveId === archiveId);
+    if (unreadable) throw new CteArchiveRecordUnreadableError(tenantId, archiveId, unreadable.code);
+    await atomicWriteJson(this.file, { schemaVersion: 1, records: [...store.records.filter((candidate) => !(candidate.tenantId === tenantId && candidate.archiveId === archiveId)), ...store.unreadable.map((entry) => entry.raw)] });
+  }
+
+  private async readStore(): Promise<ReadStore> {
     const value = await readJsonFile<unknown>(this.file, { schemaVersion: 1, records: [] });
     if (typeof value !== "object" || value === null || Array.isArray(value)) throw new Error("ARCHIVE_STORE_CORRUPT");
     const item = value as Record<string, unknown>;
     if (item.schemaVersion !== 1 || !Array.isArray(item.records)) throw new Error("ARCHIVE_STORE_CORRUPT");
-    const records = item.records.map(validateStoredCteArchive);
+    const records: CteArchiveRecord[] = [];
+    const unreadable: UnreadableEntry[] = [];
+    item.records.forEach((raw: unknown, index: number) => {
+      try { records.push(validateStoredCteArchive(raw)); }
+      catch (error) {
+        const fields = typeof raw === "object" && raw !== null ? raw as Record<string, unknown> : {};
+        const tenantId = typeof fields.tenantId === "string" ? fields.tenantId : "unknown";
+        const archiveId = typeof fields.archiveId === "string" ? fields.archiveId : `entry-${index}`;
+        unreadable.push({ tenantId, archiveId, code: storedCteErrorCode(error), raw });
+      }
+    });
     const keys = new Set<string>();
-    for (const record of records) {
+    for (const record of [...records, ...unreadable]) {
       const key = `${record.tenantId}:${record.archiveId}`;
       if (keys.has(key)) throw new Error("ARCHIVE_STORE_CORRUPT");
       keys.add(key);
     }
-    return { schemaVersion: 1, records };
+    return { schemaVersion: 1, records, unreadable };
   }
 }
 

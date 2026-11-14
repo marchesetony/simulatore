@@ -122,7 +122,8 @@ try {
   assert.equal(cleanCore.economicChargeLines.length, 0);
   assert.equal(cleanCore.analystExtractionStatus, undefined);
   assert.equal(cleanCore.analystDiagnostic, undefined);
-  assert.deepEqual(ANALYST_OWNED_PROPERTIES, ["extendedFacts", "economicChargeLines", "supplyProfile", "analystExtractionStatus", "analystDiagnostic"]);
+  // Tony (30/10): the consumption history is read by the analyst stage, so a refresh replaces it too.
+  assert.deepEqual(ANALYST_OWNED_PROPERTIES, ["extendedFacts", "economicChargeLines", "supplyProfile", "analystExtractionStatus", "analystDiagnostic", "consumptionHistory"]);
 
   await repository.save(refreshed);
   const readback = await repository.get(tenantId, documentId);

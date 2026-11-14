@@ -1,12 +1,14 @@
+// @ts-expect-error Node's strip-only test runner requires the explicit extension.
+import { parseItalianPeriod } from "./billing-period.ts";
 import type { DeclaredText, Quantity } from "../energy/types";
 // @ts-expect-error Node's strip-only test runner requires the explicit extension.
 import { validateBillContract } from "../energy/validation.ts";
 import type { BillContract } from "../energy/types";
 // @ts-expect-error Node's strip-only test runner requires the explicit extension.
-import { BILL_ECONOMIC_CHARGE_CODES, normalizeAnalystItemCode, type BillEconomicChargeLineCode, type BillExtendedFactCode } from "./bill-extended-contract.ts";
+import { BILL_ECONOMIC_CHARGE_CODES, analystOfferField, normalizeAnalystFactCode, normalizeAnalystItemCode, type BillEconomicChargeLineCode, type BillExtendedFactCode } from "./bill-extended-contract.ts";
 import type { StructuredBillExtraction, StructuredBillField, StructuredBillPeriod } from "./structured-bill.ts";
 // @ts-expect-error Node's strip-only test runner requires the explicit extension.
-import { validateStructuredBillExtraction } from "./structured-bill.ts";
+import { customerTypeOf, validateStructuredBillExtraction } from "./structured-bill.ts";
 // @ts-expect-error Node's strip-only test runner requires the explicit extension.
 import { resolveBillVectorFromEvidence } from "./vector-resolution.ts";
 // @ts-expect-error Node's strip-only test runner requires the explicit extension.
@@ -169,7 +171,12 @@ function parseEnum<T extends string>(values: readonly T[], value: string): T {
   return value as T;
 }
 
+// Tony (2/11): every other printed form of the period ("luglio - agosto 2026", "dal 1 luglio 2026 al 31 agosto 2026").
 function parsePeriod(value: string): StructuredBillPeriod {
+  try { return parseStrictPeriod(value); }
+  catch (error) { const wider = parseItalianPeriod(value); if (wider) return wider; throw error; }
+}
+function parseStrictPeriod(value: string): StructuredBillPeriod {
   const raw = value.trim().replace(/[‐‑‒–—−]/g, "-").replace(/\s+/g, " ").replace(/(\d{1,2}[/.]\d{1,2}[/.]\d{4}|\d{4}-\d{1,2}-\d{1,2})\s*-\s*(?=(?:\d{1,2}[/.]\d{1,2}[/.]\d{4}|\d{4}-\d{1,2}-\d{1,2}))/i, "$1 - ");
   const monthNames: Readonly<Record<string, number>> = { gennaio: 1, febbraio: 2, marzo: 3, aprile: 4, maggio: 5, giugno: 6, luglio: 7, agosto: 8, settembre: 9, ottobre: 10, novembre: 11, dicembre: 12 };
   const monthOnly = /^(?:(\d{1,2})[/. -](\d{4})|([a-zàèéìòù]+)\s+(\d{4}))$/i.exec(raw);
@@ -234,10 +241,18 @@ function canonical<T>(wire: BillWireExtraction, name: BillWireFieldName): Struct
   return canonicalField(name, wire[name] ?? { value: "NOT_FOUND", status: "NOT_FOUND" }, parserFor(name) as WireParser<T>);
 }
 
+// Tony (31/10, bolletta sintetica BPower): the box dell'offerta name/code read as a fact fills a core field left empty.
+function offerField(wire: BillWireExtraction, analystItems: NonNullable<BillWireExtraction["analystItems"]>, name: "offerName" | "offerCode"): StructuredBillField<string> {
+  const core = canonical<string>(wire, name);
+  if (core.status === "FOUND") return core;
+  const fact = analystItems.find((item) => item.kind === "FACT" && (analystOfferField(item.code) ?? analystOfferField(item.description)) === name && (item.status === "FOUND" || item.status === "NEEDS_REVIEW") && item.value.trim() && !/^NOT_FOUND$/i.test(item.value.trim()));
+  return fact ? canonicalField(name, { value: fact.value.trim(), status: fact.status }, parserFor(name) as WireParser<string>) : core;
+}
+
 export function mapBillWireToStructuredBill(wire: BillWireExtraction): StructuredBillExtraction {
   validateBillWireExtraction(wire);
   const analystItems = wire.analystItems ?? [];
-  const facts = analystItems.filter((item) => item.kind === "FACT").map((item) => ({ code: normalizeAnalystItemCode(item.code) as BillExtendedFactCode, value: item.value, ...(item.unit ? { unit: item.unit } : {}), status: item.status }));
+  const facts = analystItems.filter((item) => item.kind === "FACT").map((item) => ({ code: normalizeAnalystFactCode(item.code, item.description) as BillExtendedFactCode, value: item.value, ...(item.unit ? { unit: item.unit } : {}), status: item.status }));
   const charges = analystItems.filter((item) => item.kind === "CHARGE").map((item) => {
     const normalized = normalizeAnalystItemCode(item.code);
     const code = BILL_ECONOMIC_CHARGE_CODES.includes(normalized as BillEconomicChargeLineCode) ? normalized as BillEconomicChargeLineCode : "UNKNOWN";
@@ -253,7 +268,7 @@ export function mapBillWireToStructuredBill(wire: BillWireExtraction): Structure
     billingPeriod, totalAmount: canonical(wire, "totalAmount"), annualConsumption: canonical(wire, "annualConsumption"), billedConsumption: canonical(wire, "billedConsumption"),
     pod: canonical(wire, "pod"), pdr: canonical(wire, "pdr"), voltageLevel: canonical(wire, "voltageLevel"), powerKw: canonical(wire, "powerKw"),
     f1Consumption: canonical(wire, "f1Consumption"), f2Consumption: canonical(wire, "f2Consumption"), f3Consumption: canonical(wire, "f3Consumption"), smcConsumption: canonical(wire, "smcConsumption"), conversionCoefficient: canonical(wire, "conversionCoefficient"), pcs: canonical(wire, "pcs"),
-    offerName: canonical(wire, "offerName"), offerCode: canonical(wire, "offerCode"), extendedFacts: facts, economicChargeLines: charges,
+    offerName: offerField(wire, analystItems, "offerName"), offerCode: offerField(wire, analystItems, "offerCode"), extendedFacts: facts, economicChargeLines: charges,
     ...(wire.monthlyBands === undefined ? {} : { monthlyBands: normalizeMonthlyBands(wire.monthlyBands) }),
   };
   validateStructuredBillExtraction(extraction);
@@ -271,7 +286,7 @@ export function mapBillWireToContract(input: { readonly extraction: StructuredBi
   const vector = resolveBillVectorFromEvidence(extraction).vector;
   const supplier = valueOf(extraction.supplier);
   const period = valueOf(extraction.billingPeriod);
-  const customerType = valueOf(extraction.customerType);
+  const customerType = customerTypeOf(extraction);
   if (vector === "UNKNOWN" || !supplier || !period || !isoDate(period.from) || !isoDate(period.to) || period.from >= period.to || !customerType) return null;
   const customerId = valueOf(extraction.customerId);
   const provenanceFields = ["billingPeriod", "customer", "supply", "consumption", "supplier", "offer", "regulatedCharges"] as const;

@@ -2,6 +2,8 @@ import {
   approveDocumentVersion,
   confirmBillFields,
   createManualCorrection,
+  createAnalystRefreshVersion,
+  storedBillContentType,
   toPublicApprovedDocument,
   parseBillOperation,
   toPublicDocument,
@@ -9,9 +11,14 @@ import {
 import { requestPrincipal } from "../../../lib/auth/request";
 import { runtimeRepositories } from "../../../lib/persistence/adapter";
 import { recordRuntimeAudit } from "../../../lib/persistence/audit";
-import { attachOfficialPun } from "../../../lib/market/pun-reference";
+import { attachOfficialPun, ensureOfficialPunForBill, withDocumentPriceRows } from "../../../lib/market/pun-reference";
+import { billPunRefresh } from "../../../lib/market-refresh/bill-pun";
+import { deleteBillPermanently } from "../../../lib/foundation/bill-retention";
 import { billVisibilityScope, getBillInScope } from "../../../lib/foundation/bill-visibility";
+import { billDeleteDecision, proposalsFromBill } from "../../../lib/foundation/bill-delete";
 import { isBillFeature, resolveBillFeaturePermissions, sanitizeBillForFeatureAccess, type BillFeature } from "../../../lib/foundation/bill-feature-permissions";
+import { createClaudeBillReader } from "../../../lib/reading/bill-reader";
+import { readingHasScontrino } from "../../../lib/ingestion/printed-scontrino";
 import type { AuthenticatedPrincipal } from "../../../lib/auth/types";
 import type { RuntimeRepositories } from "../../../lib/persistence/adapter";
 import type { PublicBillDocument } from "../../../lib/foundation/real-bill";
@@ -39,7 +46,11 @@ export async function GET(request: Request, context: { params: Promise<{ id: str
     const access = await resolveBillFeaturePermissions(principal, repositories, scope);
     const requestedFeature = new URL(request.url).searchParams.get("feature");
     if (requestedFeature !== null && (!isBillFeature(requestedFeature) || !access.features[requestedFeature as BillFeature])) return deny("BILL_FEATURE_ACCESS_DENIED", "Funzione tecnica non autorizzata", 403);
-    const publicDocument = document ? (approvedView ? toPublicApprovedDocument(document) : toPublicDocument(document)) : null;
+    const shownDocument = document ? (approvedView ? toPublicApprovedDocument(document) : toPublicDocument(document)) : null;
+    const withPrinted = shownDocument && document ? await withDocumentPriceRows(shownDocument) : shownDocument;
+    // The scontrino printed in the PDF counts as read charge lines.
+    const publicDocument = withPrinted && withPrinted.chargeLinesUnread && readingHasScontrino(withPrinted.structuredBill) ? { ...withPrinted, chargeLinesUnread: false } : withPrinted;
+    if (publicDocument) await ensureOfficialPunForBill(publicDocument, repositories.marketArchiveRepository, billPunRefresh(repositories, publicDocument.tenantId));
     return publicDocument ? Response.json({ document: sanitizeBillForFeatureAccess(await attachOfficialPun(publicDocument, repositories.marketArchiveRepository), access) }, { headers: NO_STORE_HEADERS }) : deny("DOCUMENT_NOT_FOUND", "Bill document not found", 404);
   } catch (error) {
     const code = publicErrorCode(error);
@@ -101,6 +112,19 @@ export async function PATCH(request: Request, context: { params: Promise<{ id: s
       await audit.record({ type: "CORRECTION", tenantId, documentId: id, outcome: "ALLOWED" });
       return Response.json({ document: await publicDocumentFor(principal, repositories, await attachOfficialPun(toPublicDocument(corrected), repositories.marketArchiveRepository)) }, { headers: NO_STORE_HEADERS });
     }
+    if (operation?.operation === "reread-analyst") {
+      // Tony (1/11, "le bollette non riesci a leggerle"): the charge lines are read again from the stored file.
+      const bytes = await repositories.documentStorage.read(tenantId, document.id);
+      const contentType = storedBillContentType(bytes);
+      if (!contentType) return deny("BILL_OPERATION_INVALID", "Stored file type not recognized", 400);
+      // Tony (5/11/2026): "Rileggi" reads the whole bill again with the new reader (app/lib/reading/bill-reader.ts); the PDF
+      // text layer is no longer used to patch the reading.
+      const reading = await createClaudeBillReader().extract({ bytes, contentType });
+      const refreshed = createAnalystRefreshVersion({ document, tenantId, sourceVersionId: operation.versionId, analyst: null, at: now, refine: () => reading });
+      await repository.saveIfCurrentVersion(refreshed, operation.versionId, document.versions.find((version) => version.versionId === operation.versionId)!);
+      await audit.record({ type: "INGESTION", tenantId, documentId: id, outcome: "ALLOWED" });
+      return Response.json({ document: await publicDocumentFor(principal, repositories, await attachOfficialPun(toPublicDocument(refreshed), repositories.marketArchiveRepository)) }, { headers: NO_STORE_HEADERS });
+    }
     return deny("BILL_OPERATION_INVALID", "Unsupported bill operation", 400);
   } catch (error) {
     const code = publicErrorCode(error);
@@ -113,10 +137,21 @@ export async function DELETE(request: Request, context: { params: Promise<{ id: 
   try {
     const principal = await requestPrincipal(request, "WRITE");
     const repositories = runtimeRepositories();
-    const document = await getBillInScope(principal, repositories, id);
-    if (!document) return Response.json({ deleted: true }, { headers: NO_STORE_HEADERS });
-    if (document.lifecycleState === "DELETED") return Response.json({ deleted: true }, { headers: NO_STORE_HEADERS });
-    return deny(document.currentApprovedVersionId !== null ? "BILL_APPROVED_DELETE_FORBIDDEN" : "BILL_RETENTION_NOT_DUE", "Bill deletion is controlled by the retention lifecycle", 409);
+    // Tony (10/11/2026): the outcome is real for each document. A bill missing, already deleted or of another tenant (read
+    // with the user's tenant only) is "not found"; one of the tenant outside the user's commercial branch is "forbidden"; one a
+    // proposal was built from is kept, because deleting it would hide that proposal from directors and agents.
+    const stored = await repositories.billRepository.get(principal.tenantId, id);
+    const document = stored ? await getBillInScope(principal, repositories, id) : null;
+    const linkedProposals = document ? proposalsFromBill(await repositories.proposals.list(principal.tenantId), principal.tenantId, document.id) : 0;
+    const decision = billDeleteDecision({ tenantId: principal.tenantId, stored, inScope: document !== null, linkedProposals });
+    if (decision.outcome !== "ALLOWED" || !document) {
+      const code = decision.code ?? "DOCUMENT_NOT_FOUND";
+      return Response.json({ id, outcome: decision.outcome, ...(decision.linkedProposals ? { linkedProposals: decision.linkedProposals } : {}), error: { code, message: messageFor(code), correlationId: CORRELATION_ID } }, { status: decision.status, headers: NO_STORE_HEADERS });
+    }
+    // Tony (31/10): "serve un tasto cancella le bollette". Any bill the user can see and edit is removed for good.
+    const audit = { async record(event: { readonly type: string; readonly documentId: string; readonly outcome: string }) { await recordRuntimeAudit({ principal, action: "BILL_DELETED_BY_USER", resourceType: "BILL", resourceId: event.documentId, outcome: event.outcome === "ALLOWED" ? "ALLOWED" : "DENIED", correlationId: CORRELATION_ID }); } };
+    await deleteBillPermanently({ tenantId: principal.tenantId, documentId: document.id, repositories: { bills: repositories.billRepository, storage: repositories.documentStorage, audit } });
+    return Response.json({ deleted: true, id: document.id, outcome: "DELETED" }, { headers: NO_STORE_HEADERS });
   } catch (error) {
     const code = publicErrorCode(error);
     return deny(code, messageFor(code), statusFor(code));
@@ -140,6 +175,8 @@ const INTERNAL_TO_PUBLIC_CODE: Readonly<Record<string, string>> = {
   BILL_OPERATION_INVALID: "BILL_OPERATION_INVALID",
   DOCUMENT_NOT_FOUND: "DOCUMENT_NOT_FOUND",
   BILL_APPROVED_DELETE_FORBIDDEN: "BILL_APPROVED_DELETE_FORBIDDEN",
+  BILL_DELETE_FORBIDDEN: "BILL_DELETE_FORBIDDEN",
+  BILL_LINKED_TO_PROPOSALS: "BILL_LINKED_TO_PROPOSALS",
   BILL_RETENTION_NOT_DUE: "BILL_RETENTION_NOT_DUE",
   BILL_DELETE_UNAVAILABLE: "BILL_DELETE_UNAVAILABLE",
   AUTHENTICATION_REQUIRED: "AUTHENTICATION_REQUIRED",
@@ -161,13 +198,18 @@ function statusFor(code: string): number {
   if (code === "AUTH_CONFIGURATION_INVALID" || code === "AUTH_ADAPTER_UNAVAILABLE" || code === "AUTH_AUDIT_UNAVAILABLE") return 503;
   if (code === "BILL_REPOSITORY_CAS_UNAVAILABLE" || code === "BILL_REPOSITORY_BUSY") return 503;
   if (["DOCUMENT_NOT_FOUND"].includes(code)) return 404;
-  if (["BILL_APPROVED_DELETE_FORBIDDEN", "BILL_RETENTION_NOT_DUE"].includes(code)) return 409;
+  if (code === "BILL_DELETE_FORBIDDEN") return 403;
+  if (["BILL_APPROVED_DELETE_FORBIDDEN", "BILL_RETENTION_NOT_DUE", "BILL_LINKED_TO_PROPOSALS"].includes(code)) return 409;
   if (["DOCUMENT_VERSION_NOT_CURRENT", "DOCUMENT_VERSION_STALE", "DOCUMENT_VERSION_ALREADY_APPROVED", "DOCUMENT_NO_CHANGES", "METADATA_INVALID"].includes(code)) return 409;
   return 400;
 }
 
 function messageFor(code: string): string {
   switch (code) {
+    case "BILL_DELETE_FORBIDDEN":
+      return "The bill is outside your commercial branch";
+    case "BILL_LINKED_TO_PROPOSALS":
+      return "A proposal was built from this bill";
     case "APPROVAL_REQUIRED_FIELDS_MISSING":
       return "Required bill fields are missing";
     case "APPROVAL_FIELDS_UNCONFIRMED":
@@ -200,3 +242,6 @@ function messageFor(code: string): string {
       return "Bill operation failed";
   }
 }
+
+// The charge lines can be read again here (reread-analyst): same time as an upload.
+export const maxDuration = 300;
