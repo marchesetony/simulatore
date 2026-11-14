@@ -20,7 +20,7 @@ import { reviewSubmission } from "../lib/ui/bill-review-submission";
 import type { ApprovedBillSummaryModel, BillDocumentModel, CalculationModel, ComparisonModel, ProposalModel } from "../lib/ui/models";
 
 type Step = "bill" | "review" | "offers";
-type Pending = "upload" | "open" | "confirm" | "offers" | "proposal" | "reread";
+type Pending = "upload" | "open" | "confirm" | "offers" | "proposal" | "reread" | "technical";
 type Context = {
   readonly billId: string; readonly billVersionId: string; readonly vector: "EE" | "GAS"; readonly customerType: "RESIDENTIAL" | "NON_RESIDENTIAL";
   readonly supply: { readonly pod: string | null; readonly pdr: string | null; readonly voltageLevel: "LV" | "MV" | "HV" | "EHV" | null; readonly contractedPowerKw?: number | null; readonly availablePowerKw?: number | null; readonly maximumDrawnPowerKw?: number | null };
@@ -38,7 +38,11 @@ type Terms = { readonly fixedPrice: number | null; readonly spread: number | nul
 type Offer = { readonly rank: number; readonly calculation: CalculationModel; readonly supplier: string; readonly offerName: string; readonly receipt: QuoteReceipt; readonly candidate: Candidate; readonly discount?: CommercialDiscount | null };
 // Tony (1/11): the company's commercial discount, applied to every quote that costs slightly more than the bill.
 type CommercialDiscount = { readonly enabled: boolean; readonly maxGapPercent: number; readonly targetSavingPercent: number };
-type Quote = { readonly bill: BillDocumentModel; readonly context: Context; readonly comparison: ComparisonModel; readonly offers: readonly Offer[]; readonly candidates?: readonly Candidate[]; readonly unlisted?: readonly Unlisted[]; readonly canAuthorizeCte?: boolean; readonly failure?: string };
+type Quote = { readonly bill: BillDocumentModel; readonly context: Context; readonly comparison: ComparisonModel; readonly offers: readonly Offer[]; readonly candidates?: readonly Candidate[]; readonly unlisted?: readonly Unlisted[]; readonly canAuthorizeCte?: boolean; readonly canRunTechnicalDerogation?: boolean; readonly failure?: string };
+// Tony (14/11/2026): the Direttore's technical simulation in derogation of the annual consumption threshold, never a proposal.
+type TechnicalResult = { readonly banner: string; readonly cte: { readonly supplier: string; readonly offerName: string; readonly offerCode: string; readonly consumptionRequirement: string | null }; readonly annualConsumption: { readonly value: number | null; readonly status: string }; readonly components: readonly { readonly label: string; readonly sign: "CHARGE" | "DISCOUNT"; readonly amount: number }[]; readonly totalCommercialCost: number; readonly totalCommercialPlusRegulatedSubsetCost: number | null; readonly warnings: readonly string[] };
+// Excluded only by the annual consumption threshold: the one requirement the Direttore may set aside, for a technical simulation.
+const technicalDerogable = (candidate: Candidate) => candidate.finalStatus === "NOT_ELIGIBLE" && candidate.calculationReadiness === "READY" && Boolean(candidate.cteVersionId) && candidate.reasonCodes?.length === 1 && candidate.reasonCodes[0] === "CONSUMPTION_THRESHOLD_MISMATCH";
 
 // The seven fields the server needs confirmed before a bill can be used.
 const FIELDS: readonly { readonly name: string; readonly label: string }[] = [
@@ -468,10 +472,10 @@ function ChooseWithReason({ onChoose }: { readonly onChoose: (reason: string) =>
   return <span className="quote-authorize"><input aria-label="Motivo della scelta" placeholder="Motivo (es. il cliente vuole questa offerta)" value={reason} maxLength={300} onChange={(event) => setReason(event.target.value)} /><button className="button primary compact" type="button" disabled={!reason.trim()} onClick={() => onChoose(reason.trim())}>Mostra</button><button className="button secondary compact" type="button" onClick={() => setOpen(false)}>Annulla</button></span>;
 }
 
-function NoOfferReasons({ quote, shown = [], onAuthorize }: { readonly quote: Quote; readonly shown?: readonly string[]; readonly onAuthorize?: (archiveId: string, reason: string) => Promise<void> }): ReactNode {
+function NoOfferReasons({ quote, shown = [], onAuthorize, onTechnical }: { readonly quote: Quote; readonly shown?: readonly string[]; readonly onAuthorize?: (archiveId: string, reason: string) => Promise<void>; readonly onTechnical?: (archiveId: string) => void }): ReactNode {
   // Only CTEs of the bill's commodity are worth explaining; a CTE of the other commodity never applies to this bill.
   const candidates = (quote.candidates ?? []).filter((candidate) => !shown.includes(candidate.archiveId) && ![...(candidate.reasonCodes ?? []), candidate.compatibilityReason ?? ""].some((code) => /VECTOR_MISMATCH/.test(code)));
-  const unlisted = (quote.unlisted ?? []).map((item) => ({ key: item.archiveId, name: `${item.supplier} · ${item.offer.name || item.offer.code}`, reasons: [UNLISTED_LABEL[item.reason] ?? item.reason], authorizable: false }));
+  const unlisted = (quote.unlisted ?? []).map((item) => ({ key: item.archiveId, name: `${item.supplier} · ${item.offer.name || item.offer.code}`, reasons: [UNLISTED_LABEL[item.reason] ?? item.reason], authorizable: false, technical: false }));
   if (!candidates.length && !unlisted.length) return null;
   const evaluated = candidates.map((candidate) => {
     const excluded = quote.comparison.excludedOffers.find((item) => item.archiveId === candidate.archiveId);
@@ -484,13 +488,26 @@ function NoOfferReasons({ quote, shown = [], onAuthorize }: { readonly quote: Qu
       ? excluded ? [`calcolo non riuscito: ${EXCLUSION_LABEL[excluded.code] ?? excluded.code}${/\(([^)]+)\)$/.exec(excluded.message)?.[1] ? ` (${/\(([^)]+)\)$/.exec(excluded.message)?.[1]})` : ""}`] : candidate.calculationReadiness !== "READY" ? [REASON_LABEL[candidate.calculationReadiness] ?? candidate.calculationReadiness] : ["calcolo non eseguito"]
       : [...new Set([...(candidate.reasonCodes ?? []), candidate.compatibilityReason].filter((code): code is string => Boolean(code)).map((code) => REASON_LABEL[code] ?? code))].map((label) => label === REASON_LABEL.CONSUMPTION_NOT_ELIGIBLE ? `${label}${threshold}` : label);
     const authorizable = Boolean(quote.canAuthorizeCte && onAuthorize && candidate.finalStatus === "NOT_ELIGIBLE" && candidate.overrideRequestable);
-    return { key: candidate.archiveId, name: `${candidate.supplier} · ${candidate.offer.name || candidate.offer.code}`, reasons, authorizable, rank: exclusionRank({ reasonCodes: [...(candidate.reasonCodes ?? []), candidate.compatibilityReason ?? ""], customer: candidate.scope?.customer ?? null, consumption: candidate.scope?.consumption ?? null }, quote.context.customerType === "NON_RESIDENTIAL", annual.value) };
+    const technical = Boolean(quote.canRunTechnicalDerogation && onTechnical && technicalDerogable(candidate));
+    return { key: candidate.archiveId, name: `${candidate.supplier} · ${candidate.offer.name || candidate.offer.code}`, reasons, authorizable, technical, rank: exclusionRank({ reasonCodes: [...(candidate.reasonCodes ?? []), candidate.compatibilityReason ?? ""], customer: candidate.scope?.customer ?? null, consumption: candidate.scope?.consumption ?? null }, quote.context.customerType === "NON_RESIDENTIAL", annual.value) };
   });
   // Tony (1/11): "devono essere ordinate per tipologia se la bolletta è business prima le business ordinate da quella adeguata
   // per vincoli sui consumi e a seguire le meno convenienti". CTEs of the bill's customer type first; among them the ones whose
   // consumption limits fit the bill, then those whose threshold is nearest to the bill's annual consumption.
   const rows = [...[...evaluated].sort((a, b) => a.rank[0] - b.rank[0] || a.rank[1] - b.rank[1] || a.name.localeCompare(b.name, "it")), ...unlisted];
-  return <details className="quote-cost-detail"><summary>{shown.length ? `CTE non utilizzabili per questa bolletta (${rows.length})` : `Perché nessuna CTE è utilizzabile (${rows.length})`}</summary><ul>{rows.map((row) => <li key={row.key}><strong>{row.name}</strong>: {row.reasons.join("; ")}{row.authorizable && onAuthorize ? <> <AuthorizeCte onAuthorize={(reason) => onAuthorize(row.key, reason)} /></> : null}</li>)}</ul></details>;
+  return <details className="quote-cost-detail"><summary>{shown.length ? `CTE non utilizzabili per questa bolletta (${rows.length})` : `Perché nessuna CTE è utilizzabile (${rows.length})`}</summary><ul>{rows.map((row) => <li key={row.key}><strong>{row.name}</strong>: {row.reasons.join("; ")}{row.authorizable && onAuthorize ? <> <AuthorizeCte onAuthorize={(reason) => onAuthorize(row.key, reason)} /></> : null}{row.technical && onTechnical ? <> <button className="button secondary compact" type="button" onClick={() => onTechnical(row.key)}>Simulazione tecnica in deroga</button></> : null}</li>)}</ul></details>;
+}
+
+/** Shown apart from the offers, with no proposal button: it is outside the CTE requirements. */
+function TechnicalSimulation({ result }: { readonly result: TechnicalResult }): ReactNode {
+  return <section className="ui-card technical-simulation" role="status">
+    <p className="technical-simulation-banner"><strong>{result.banner}</strong></p>
+    <h3>{result.cte.supplier} · {result.cte.offerName || result.cte.offerCode}</h3>
+    <p className="muted">Requisito non rispettato: consumo annuo{result.cte.consumptionRequirement ? ` (la CTE richiede ${result.cte.consumptionRequirement})` : ""}. Consumo annuo della bolletta {result.annualConsumption.value === null ? "non determinabile" : `${Math.round(result.annualConsumption.value)} ${result.annualConsumption.status === "ESTIMATED" ? "(stimato)" : ""}`.trim()}.</p>
+    <ul>{result.components.map((component, index) => <li key={`${component.label}-${index}`}>{component.label}: {euro(component.sign === "DISCOUNT" ? -component.amount : component.amount)}</li>)}</ul>
+    <p><strong>Totale tecnico: {euro(result.totalCommercialPlusRegulatedSubsetCost ?? result.totalCommercialCost)}</strong>{result.totalCommercialPlusRegulatedSubsetCost === null ? " (solo costi commerciali)" : ""}</p>
+    {result.warnings.length ? <p className="muted">{result.warnings.join(" · ")}</p> : null}
+  </section>;
 }
 
 function Steps({ step }: { readonly step: Step }): ReactNode {
@@ -916,6 +933,7 @@ export default function QuickQuoteFlow({ readonly, showExcluded = false }: { rea
   // Tony (1/11): "bisogna mostrare solo le più vantaggiose non quelle più care, tranne se scelte con motivazione".
   const [chosen, setChosen] = useState<Readonly<Record<string, string>>>({});
   const [proposal, setProposal] = useState<ProposalModel | null>(null);
+  const [technical, setTechnical] = useState<TechnicalResult | null>(null);
   const presentationRef = useRef<ProposalPresentation | null>(null);
   const keepPresentation = useCallback((presentation: ProposalPresentation) => { presentationRef.current = presentation; }, []);
   const today = new Date().toISOString().slice(0, 10);
@@ -975,13 +993,13 @@ export default function QuickQuoteFlow({ readonly, showExcluded = false }: { rea
   // Tony (10/11/2026): the legacy "Cancella tutte" (5/11) is disabled, in the screen and on the server (DELETE /api/bills
   // answers 410 without deleting): bills are deleted only one by one, after selection and confirmation.
 
-  type Prepared = { readonly context: Context; readonly candidates: readonly Candidate[]; readonly unlisted?: readonly Unlisted[]; readonly canAuthorizeCte?: boolean };
+  type Prepared = { readonly context: Context; readonly candidates: readonly Candidate[]; readonly unlisted?: readonly Unlisted[]; readonly canAuthorizeCte?: boolean; readonly canRunTechnicalDerogation?: boolean };
   const emptyComparison = (context: Context): ComparisonModel => ({ comparisonId: "", fingerprint: "", tenantId: "", vector: context.vector, results: [], excludedOffers: [], ranking: [], warnings: [] });
   // Tony (31/10, SOURCE_BILL_VOLTAGE_MISMATCH: "deve scrivere in italiano se non ha la cte adeguata ed eventualmente chiedere
   // quale usare, aggiungi qualche tasto per selezionare"): a failed calculation keeps the bill and its CTEs on screen, says why
   // in Italian and lets the agent pick the CTE to calculate with.
   const compareWith = async (bill: BillDocumentModel, prepared: Prepared, anchor: Candidate | null) => {
-    const base = { bill, context: withExclusiveEnd(prepared.context), candidates: prepared.candidates, unlisted: prepared.unlisted ?? [], canAuthorizeCte: prepared.canAuthorizeCte === true };
+    const base = { bill, context: withExclusiveEnd(prepared.context), candidates: prepared.candidates, unlisted: prepared.unlisted ?? [], canAuthorizeCte: prepared.canAuthorizeCte === true, canRunTechnicalDerogation: prepared.canRunTechnicalDerogation === true };
     if (!anchor) { setQuote({ ...base, comparison: emptyComparison(prepared.context), offers: [] }); return; }
     try {
       // Tony (1/11, speed): the company discount is fetched while the comparison runs, not after it.
@@ -1000,19 +1018,29 @@ export default function QuickQuoteFlow({ readonly, showExcluded = false }: { rea
     if (!quote || pending) return;
     const anchor = (quote.candidates ?? []).find((item) => item.archiveId === archiveId) ?? null;
     setPending("offers"); setError(undefined); setProposal(null);
-    try { await compareWith(quote.bill, { context: quote.context, candidates: quote.candidates ?? [], unlisted: quote.unlisted, canAuthorizeCte: quote.canAuthorizeCte }, anchor); } finally { setPending(undefined); }
+    try { await compareWith(quote.bill, { context: quote.context, candidates: quote.candidates ?? [], unlisted: quote.unlisted, canAuthorizeCte: quote.canAuthorizeCte, canRunTechnicalDerogation: quote.canRunTechnicalDerogation }, anchor); } finally { setPending(undefined); }
   };
 
   const loadOffers = async (billId: string) => {
-    setPending("offers"); setError(undefined); setQuote(null); setProposal(null); setStep("offers");
+    setPending("offers"); setError(undefined); setQuote(null); setProposal(null); setTechnical(null); setStep("offers");
     try {
       const bill = (await requestJson<{ readonly document: BillDocumentModel }>(`/api/bills/${encodeURIComponent(billId)}?view=approved`)).document;
-      const prepared = await requestJson<{ readonly context: Context; readonly candidates: readonly Candidate[]; readonly unlisted?: readonly Unlisted[]; readonly canAuthorizeCte?: boolean }>(`/api/simulation/context?billId=${encodeURIComponent(billId)}&taxTreatment=EXCLUDED`);
+      const prepared = await requestJson<Prepared>(`/api/simulation/context?billId=${encodeURIComponent(billId)}&taxTreatment=EXCLUDED`);
       // A CTE authorized for this bill can anchor the comparison when no other CTE fits.
       const ready = (item: Candidate) => item.calculationReadiness === "READY" && Boolean(item.cteVersionId);
       const anchor = prepared.candidates.find((item) => item.finalStatus === "ELIGIBLE" && ready(item)) ?? prepared.candidates.find((item) => item.finalStatus === "ELIGIBLE_BY_OVERRIDE" && item.eligibilityOverrideId && ready(item));
       await compareWith(bill, prepared, anchor ?? null);
     } catch (cause) { setError(cause instanceof Error && cause.message.startsWith("Dalla bolletta") ? cause.message : message(cause)); } finally { setPending(undefined); }
+  };
+
+  // Tony (14/11/2026): the result is shown on its own, marked, and never stored: no offer, comparison or proposal uses it.
+  const runTechnical = async (archiveId: string) => {
+    if (!quote || pending) return;
+    const candidate = (quote.candidates ?? []).find((item) => item.archiveId === archiveId);
+    if (!candidate?.cteVersionId) return;
+    setPending("technical"); setError(undefined); setTechnical(null);
+    try { setTechnical((await requestJson<{ readonly result: TechnicalResult }>("/api/simulation/technical", { method: "POST", body: JSON.stringify({ billId: quote.context.billId, billVersionId: quote.context.billVersionId, archiveId, cteVersionId: candidate.cteVersionId, taxTreatment: "EXCLUDED" }) })).result); }
+    catch (cause) { setError(`La simulazione tecnica non è riuscita. ${message(cause)}`); } finally { setPending(undefined); }
   };
 
   const authorizeCte = async (archiveId: string, reason: string) => {
@@ -1215,10 +1243,11 @@ export default function QuickQuoteFlow({ readonly, showExcluded = false }: { rea
           <p className="muted">Non sono proposte al cliente. Per mostrarne una scrivi il motivo della scelta.</p>
           <ul>{hiddenOffers.map((offer) => <li key={offer.calculation.calculationId}><strong>{offer.supplier} · {offer.offerName}</strong>{offer.receipt.savingsPercent !== null ? <>: più cara del {PERCENT.format(Math.abs(offer.receipt.savingsPercent))}%</> : null}{readonly ? null : <> <ChooseWithReason onChoose={(reason) => { setChosen((current) => ({ ...current, [offer.calculation.calculationId]: reason })); setSelectedId(offer.calculation.calculationId); setProposal(null); }} /></>}</li>)}</ul>
         </details> : null}
-        {quote.offers.length ? <NoOfferReasons quote={quote} shown={quote.offers.map((offer) => offer.candidate.archiveId)} onAuthorize={readonly ? undefined : authorizeCte} /> : null}
+        {quote.offers.length ? <NoOfferReasons quote={quote} shown={quote.offers.map((offer) => offer.candidate.archiveId)} onAuthorize={readonly ? undefined : authorizeCte} onTechnical={readonly ? undefined : (archiveId) => void runTechnical(archiveId)} /> : null}
         {quote.failure ? <CtePicker quote={quote} onPick={(archiveId) => void pickCte(archiveId)} disabled={readonly || Boolean(pending)} /> : null}
-        {quote.offers.length || quote.failure ? null : <><EmptyState title="Nessuna offerta utilizzabile" detail="Nessuna CTE a te assegnata è adatta a questa bolletta. Chiedi all'amministratore di assegnartene una." /><NoOfferReasons quote={quote} onAuthorize={readonly ? undefined : authorizeCte} /></>}
+        {quote.offers.length || quote.failure ? null : <><EmptyState title="Nessuna offerta utilizzabile" detail="Nessuna CTE a te assegnata è adatta a questa bolletta. Chiedi all'amministratore di assegnartene una." /><NoOfferReasons quote={quote} onAuthorize={readonly ? undefined : authorizeCte} onTechnical={readonly ? undefined : (archiveId) => void runTechnical(archiveId)} /></>}
       </section>
+      {pending === "technical" ? <LoadingState label="Simulazione tecnica in corso" /> : technical ? <TechnicalSimulation result={technical} /> : null}
       {selected ? <><Receipt offer={selected} today={today} business={quote.context.customerType === "NON_RESIDENTIAL"} context={quote.context} bill={quote.bill} onPresentation={keepPresentation} showExcluded={showExcluded} /><div className="button-row"><button className="button primary" type="button" onClick={() => void saveProposal()} disabled={readonly || Boolean(pending)}>{pending === "proposal" ? "Preparazione" : "Scarica la proposta in PDF"}</button>{proposal ? <span className="muted" role="status">Proposta salvata in Proposte.</span> : null}</div></> : null}
     </> : null : null}
     {error ? <ErrorState message={error} /> : null}

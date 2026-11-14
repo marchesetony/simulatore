@@ -372,7 +372,7 @@ function buildContext(document: BillDocument, version: BillVersion): BillDrivenS
   };
 }
 
-function requestFromContext(context: BillDrivenSimulationContext, taxTreatment: TaxInclusionState, calculationDate: string): unknown {
+export function requestFromContext(context: BillDrivenSimulationContext, taxTreatment: TaxInclusionState, calculationDate: string): unknown {
   const common = { schemaVersion: 1, tenantId: context.tenantId, calculationDate, supplyPeriod: simulationPeriodOf(context.billingPeriod), customerCategory: context.customerType, ...(context.residency ? { residency: context.residency } : {}), currency: "EUR", taxTreatment, sourceBill: { billId: context.billId, version: context.billVersionId } };
   if (context.vector === "EE") {
     const { f1, f2, f3 } = context.consumption.period;

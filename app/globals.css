@@ -531,6 +531,8 @@ button:focus-visible,a:focus-visible,input:focus-visible,select:focus-visible,te
 .bill-reread { margin:0 0 12px; }
 .bill-reread > summary { cursor:pointer; font-weight:600; font-size:14px; padding:6px 0; }
 .bill-reread > .muted { margin:4px 0 8px; font-size:12px; }
+.technical-simulation { border-color:#e3a1a1; }
+.technical-simulation-banner { margin:0 0 12px; padding:10px 12px; border-radius:10px; color:#8c2d2d !important; background:#fde6e6; font-size:13px; }
 .quote-warning { margin:12px 0 0; color:#b54708; font-weight:600; }
 .quote-detail { margin:16px 0 0; }
 .quote-detail summary { cursor:pointer; font-weight:700; padding:8px 0; }
