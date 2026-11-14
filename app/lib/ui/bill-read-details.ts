@@ -270,7 +270,13 @@ function economicsSection(bill: Bill): BillReadSection {
   if (printed?.networkAndSystem != null) {
     rows.push(money("Spesa per la rete e gli oneri generali di sistema", printed.networkAndSystem, "Quadro sintetico, come stampato (rete e oneri insieme)"));
     if (printedNetwork) rows.push(printedRow("di cui spesa per la rete e il trasporto", printedNetwork, "COMPONENTS_NETWORK_SYSTEM"));
-    else if (oneri !== null) rows.push(calc("di cui spesa per la rete e il trasporto", round2(printed.networkAndSystem - oneri), printedOneri ? "Calcolata: rete e oneri stampati meno gli oneri di sistema stampati" : "Calcolata: rete e oneri stampati meno gli oneri ASOS e ARIM del dettaglio"));
+    else if (oneri !== null) {
+      rows.push(calc("di cui spesa per la rete e il trasporto", round2(printed.networkAndSystem - oneri), printedOneri ? "Calcolata: rete e oneri stampati meno gli oneri di sistema stampati" : "Calcolata: rete e oneri stampati meno gli oneri ASOS e ARIM del dettaglio"));
+      // Tony (14/11/2026): the subtraction is not described in the summary; it stays in the technical details, on the printed
+      // aggregate it comes from.
+      const aggregate = rows.length - 2;
+      rows[aggregate] = { ...rows[aggregate], note: `${rows[aggregate].note} · rete e trasporto calcolata: ${euro(printed.networkAndSystem)} − oneri di sistema ${euro(oneri)} = ${euro(round2(printed.networkAndSystem - oneri))}` };
+    }
     else rows.push(missing("di cui spesa per la rete e il trasporto", "NETWORK"));
   } else {
     rows.push(missing("Spesa per la rete e gli oneri generali di sistema"));
@@ -279,7 +285,9 @@ function economicsSection(bill: Bill): BillReadSection {
   rows.push(printedOneri ? printedRow("Oneri generali di sistema", printedOneri, "COMPONENTS_NETWORK_SYSTEM") : oneri === null ? missing("Oneri generali di sistema", "SYSTEM_CHARGES") : { label: "Oneri generali di sistema", value: euro(oneri), state: "CALCULATED", note: `Somma delle ${oneriLines.length} righe ASOS e ARIM stampate nel dettaglio` });
   rows.push(printedExcise ? printedRow("Accise", printedExcise, "COMPONENTS_TAXES") : money("Accise", excise, "Righe di accisa del dettaglio", "EXCISE"));
   rows.push(printedVat ? printedRow("IVA", printedVat, "COMPONENTS_TAXES") : money("IVA", vat, "Righe IVA del dettaglio", "VAT"));
-  if (excise === null && vat === null && printed?.taxes != null) rows.push(money("Accise e IVA", printed.taxes, "Quadro sintetico, come stampato (insieme)"));
+  // Tony (14/11/2026, "semplificazione visualizzazione costi"): the printed "Accise e IVA" is always kept; the screen shows it in
+  // view when accise and IVA are not both known, otherwise under "Altri dettagli" (nothing invented, nothing lost).
+  if (printed?.taxes != null) rows.push(money("Accise e IVA", printed.taxes, "Quadro sintetico, come stampato (insieme)"));
   const taxes = excise !== null || vat !== null ? (excise ?? 0) + (vat ?? 0) : printed?.taxes ?? null;
   // Tony (10/11, "semplificazione"): the total appears once; the sum of the printed components is a note on it only when it
   // does not match. The parts printed apart are inside "rete e oneri" and "Accise e IVA": they are never added a second time.
@@ -368,7 +376,8 @@ const isZero = (value: string) => { const amounts = [...value.matchAll(/-?\d[\d.
 
 function secondaryRow(id: BillReadSectionId, row: BillReadRow, rows: readonly BillReadRow[]): boolean {
   const label = row.label;
-  if (row.group === "SIMULATOR") return false;
+  // Tony (14/11/2026, "semplificazione visualizzazione costi"): the simulator's comparison grouping is a technical detail.
+  if (row.group === "SIMULATOR") return id === "ECONOMICS";
   // Tony (13/11/2026, "mercato e segmento sempre visibili"): the market is always in view, after the use, as read (or "Non
   // letto" / "Non presente nella fattura"); only the address stays under "Altri dettagli".
   if (id === "SUPPLY") return label === "Indirizzo";
@@ -385,9 +394,24 @@ function secondaryRow(id: BillReadSectionId, row: BillReadRow, rows: readonly Bi
     // Other commercial charges: in view unless zero.
     return isZero(row.value);
   }
-  // Tony (11/11/2026, "pulizia finale"): the economic summary shows the bill's values only; what is calculated here (rete
-  // as a difference, oneri as a sum of the detail rows) and what is not printed stay under "Altri dettagli".
-  return (row.state === "ABSENT" || row.state === "CALCULATED" || row.state === "NOT_READ") && label !== "Totale fattura";
+  return economicSecondary(row, rows);
+}
+
+// Tony (14/11/2026, "semplificazione visualizzazione costi"): Vendita, Rete e trasporto, Oneri di sistema, Accise, IVA and
+// Totale fattura in view, each once. A printed aggregate (rete e oneri, accise e IVA) moves under "Altri dettagli" only when
+// both its parts have a value (read, or calculated from printed values with the asterisk); otherwise the aggregate stays in
+// view as printed and the parts that are missing or alone go under "Altri dettagli". Values are the ones built above.
+const ECONOMIC_SPLITS: readonly (readonly [string, readonly [string, string]])[] = [["Rete e oneri di sistema", ["Rete e trasporto", "Oneri di sistema"]], ["Accise e IVA", ["Accise", "IVA"]]];
+const hasValue = (row: BillReadRow | undefined) => row !== undefined && (row.state === "READ" || row.state === "REVIEW" || row.state === "CALCULATED");
+function economicSecondary(row: BillReadRow, rows: readonly BillReadRow[]): boolean {
+  if (row.label === "Totale fattura") return false;
+  const find = (label: string) => rows.find((item) => item.label === label && item.group !== "SIMULATOR");
+  for (const [aggregate, parts] of ECONOMIC_SPLITS) {
+    const complete = parts.every((part) => hasValue(find(part)));
+    if (row.label === aggregate) return complete || !hasValue(row);
+    if (parts.includes(row.label)) return complete ? false : hasValue(find(aggregate)) || !hasValue(row);
+  }
+  return !hasValue(row);
 }
 
 function compactSection(section: BillReadSection): BillReadSection {
@@ -400,7 +424,8 @@ function compactSection(section: BillReadSection): BillReadSection {
     return { ...rest, label, ...(noteShown ? { noteShown } : {}) };
   });
   const order = ORDER[section.id];
-  const rank = (row: BillReadRow) => { const index = order.indexOf(row.label); return index < 0 ? order.length : index; };
+  // The simulator's groupings after the bill's own values (Tony, 14/11/2026).
+  const rank = (row: BillReadRow) => { if (row.group === "SIMULATOR") return order.length + 1; const index = order.indexOf(row.label); return index < 0 ? order.length : index; };
   const rows = renamed.map((row) => ({ ...row, ...(secondaryRow(section.id, row, renamed) ? { secondary: true } : {}) }))
     .map((row, index) => ({ row, index })).sort((a, b) => rank(a.row) - rank(b.row) || a.index - b.index).map((item) => item.row);
   return { id: section.id, title: SECTION_TITLE[section.id], rows };

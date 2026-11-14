@@ -152,6 +152,21 @@ try {
   assert.deepEqual([wrongShown["Oneri di sistema"].value, wrongShown["Oneri di sistema"].state], ["4,95 €", "REVIEW"]);
   assert.match(wrongShown["Oneri di sistema"].note, /^Da verificare: Trasporto e rete 6,69 € \+ oneri di sistema 4,95 € = 11,64 € ma rete e oneri stampato è 10,64 €/);
   assert.equal(wrongShown["Rete e trasporto"].state, "REVIEW");
+
+  // Tony (14/11/2026, "semplificazione visualizzazione costi", caso BPower 071808E riletto): the six ASOS/ARIM amounts printed on
+  // page 5, accise and IVA on page 4, transport declared not printed apart. In view: Vendita 17,92, Rete e trasporto 6,69
+  // calculated (asterisk), Oneri 3,95 read, Accise 0,13, IVA 6,31, Totale 35,00; aggregates and formula in the details.
+  const oneri = [["ASOS - quota potenza", "1,85"], ["ASOS - quota per consumi", "0,32"], ["ASOS - quota fissa", "1,08"], ["ARIM - quota potenza", "0,43"], ["ARIM - quota per consumi", "0,02"], ["ARIM - quota fissa", "0,25"]].map(([label, amount]) => component(`Componente ${label}`, "ONERI_SISTEMA", amount, 5, "Oneri generali di sistema"));
+  const reread = parseBillReading({ ...base, componentiStampate: [...oneri, component("Imposte erariali", "ACCISE", "0,13", 4, "Imposte"), component("IVA vendite 22%", "IVA", "6,31", 4, "Imposte")], assenti: [...base.assenti, { campo: "componentiStampate.TRASPORTO_RETE", motivo: "non stampato separatamente" }] });
+  const rereadBill = toPublicDocument(await ingest(toStructuredBill({ reading: reread, checks: checkBillReading(reread), reread: false }), "prova-g.pdf"));
+  const costs = billReadSections(billForReading(rereadBill)).find((section) => section.id === "ECONOMICS").rows;
+  const inView = costs.filter((row) => !row.secondary);
+  assert.deepEqual(inView.map((row) => [row.label, plain(row.value), row.state]), [["Vendita", "17,92 €", "READ"], ["Rete e trasporto", "6,69 €", "CALCULATED"], ["Oneri di sistema", "3,95 €", "READ"], ["Accise", "0,13 €", "READ"], ["IVA", "6,31 €", "READ"], ["Totale fattura", "35,00 €", "READ"]]);
+  assert.match(inView[1].note, /^Calcolata: rete e oneri stampati meno gli oneri di sistema stampati$/, "never attributed to the reading");
+  assert.match(plain(inView[2].note), /^Somma di 6 importi stampati \(pagina 5, Oneri generali di sistema: "Componente ASOS - quota potenza" 1,85;/);
+  const details = costs.filter((row) => row.secondary && !row.group).map((row) => [row.label, plain(row.value), plain(row.note ?? "")]);
+  assert.deepEqual(details, [["Rete e oneri di sistema", "10,64 €", "Quadro sintetico, come stampato (rete e oneri insieme) · rete e trasporto calcolata: 10,64 € − oneri di sistema 3,95 € = 6,69 €"], ["Accise e IVA", "6,44 €", "Quadro sintetico, come stampato (insieme)"]], "the printed aggregates kept in the details, not in the summary");
+  assert.equal(costs.filter((row) => row.label === "Rete e trasporto" && !row.group).length, 1, "rete e trasporto once");
 } finally {
   await rm(root, { recursive: true, force: true });
 }

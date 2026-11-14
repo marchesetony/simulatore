@@ -190,11 +190,19 @@ const technicalLabels = section(sections, "TECHNICAL").rows.filter((item) => !it
 assert.equal(technicalLabels.indexOf("Tensione") + 1, technicalLabels.indexOf("Potenza impegnata"), "voltage right before the powers");
 assert.deepEqual(rowOf(sections, "TECHNICAL", "Tensione"), { label: "Tensione", value: "380,0 V · bassa tensione (BT)", state: "READ" }, "printed value and BT class kept");
 assert.deepEqual(secondary("CONTRACT"), [`Attivazione=${NOT_READ}`, "Decorrenza condizioni=01/05/2026", "PCV stampata (valore unitario)=10,392500 €/POD/mese · importo 10,39 €"]);
-// Tony (11/11/2026, "pulizia finale"): the economic summary in view holds the bill's values only; rete as a difference and
-// oneri as a sum of the detail rows are under "Altri dettagli".
-assert.deepEqual(secondary("ECONOMICS"), ["Rete e trasporto=134,30 €", "Oneri di sistema=114,92 €"], "calculated economic values one click away");
-assert.ok(section(sections, "ECONOMICS").rows.filter((item) => !item.secondary && item.group !== "SIMULATOR").every((item) => item.state === "READ"), "only printed values in the economic summary");
-for (const label of ["Intestatario", "Fornitore", "POD", "Periodo", "Consumo totale (F0)", "F1", "F2", "F3", "Potenza impegnata", "Potenza massima", "Prezzo", "Fasce", "Indice", "Spread", "PCV", "Scadenza condizioni", "Scadenza contratto", "Vendita", "Rete e oneri di sistema", "Accise", "IVA", "Totale fattura"]) {
+// Tony (14/11/2026, "semplificazione visualizzazione costi"): Vendita, Rete e trasporto, Oneri di sistema, Accise, IVA and
+// Totale fattura in view, each once (expectation changed: until 11/11 the calculated rete and oneri were under "Altri
+// dettagli" and the printed "rete e oneri" in view). The printed aggregate, with the subtraction, and the simulator's grouping
+// are technical details under "Altri dettagli"; there is no separate simulator block in the costs any more.
+assert.deepEqual(secondary("ECONOMICS"), ["Rete e oneri di sistema=249,22 €", "Accise e IVA=254,49 €", "Vendita=448,78 €", "Rete e trasporto=132,34 €"], "aggregate and simulator grouping one click away");
+const costsInView = section(sections, "ECONOMICS").rows.filter((item) => !item.secondary);
+assert.deepEqual(costsInView.map((item) => `${item.label}=${plain(item).value}`), ["Vendita=722,35 €", "Rete e trasporto=134,30 €", "Oneri di sistema=114,92 €", "Accise=33,40 €", "IVA=221,09 €", "Totale fattura=1.226,06 €"]);
+assert.deepEqual(costsInView.map((item) => item.state), ["READ", "CALCULATED", "CALCULATED", "READ", "READ", "READ"], "calculated values keep their asterisk");
+assert.ok(costsInView.every((item) => !item.noteShown), "no technical description written in the summary");
+assert.match(plain(rowOf(sections, "ECONOMICS", "Rete e oneri di sistema")).note, /rete e trasporto calcolata: 249,22 € − oneri di sistema 114,92 € = 134,30 €$/, "the subtraction stays in the technical details");
+assert.match(rowOf(sections, "ECONOMICS", "Rete e trasporto").note, /^Calcolata: /, "and on the calculated value itself");
+assert.ok(section(sections, "ECONOMICS").rows.filter((item) => item.group === "SIMULATOR").every((item) => item.secondary), "the simulator grouping is kept, as a technical detail");
+for (const label of ["Intestatario", "Fornitore", "POD", "Periodo", "Consumo totale (F0)", "F1", "F2", "F3", "Potenza impegnata", "Potenza massima", "Prezzo", "Fasce", "Indice", "Spread", "PCV", "Scadenza condizioni", "Scadenza contratto", "Vendita", "Rete e trasporto", "Oneri di sistema", "Accise", "IVA", "Totale fattura"]) {
   const found = sections.flatMap((entry) => entry.rows).find((item) => item.label === label && item.group !== "SIMULATOR");
   assert.ok(found && !found.secondary, `${label} is in view`);
 }
@@ -255,6 +263,10 @@ const unreadVoltage = parseBillReading({ ...reading, tensioneStampata: "", livel
 const unreadVoltageRow = rowOf(billReadSections(billOf(toStructuredBill({ reading: unreadVoltage, checks: [], reread: false }))), "TECHNICAL", "Tensione");
 assert.deepEqual([unreadVoltageRow.value, unreadVoltageRow.secondary], [NOT_READ, undefined], "no voltage is invented");
 assert.equal(rowOf(householdSections, "ECONOMICS", "Accise e IVA").value, "254,49 €", "without detail rows the printed 'Accise e IVA' is shown as printed");
+// Tony (14/11/2026): without the parts the printed aggregates stay in view, the parts not read under "Altri dettagli".
+const householdCosts = section(householdSections, "ECONOMICS").rows;
+assert.deepEqual(householdCosts.filter((item) => !item.secondary && item.group !== "SIMULATOR").map((item) => item.label), ["Vendita", "Rete e oneri di sistema", "Accise e IVA", "Totale fattura"]);
+assert.deepEqual(householdCosts.filter((item) => item.secondary && item.group !== "SIMULATOR").map((item) => `${item.label}=${item.value}`), ["Rete e trasporto=Non letto separatamente", "Oneri di sistema=Non letto separatamente", "Accise=Non letto separatamente", "IVA=Non letto separatamente"]);
 // Tony (13/11/2026, BPower 071808E): system charges the reading did not take apart are "Non letto separatamente", not
 // "Non presente nella fattura" (expectation changed from "ABSENT" by this requested behaviour).
 assert.deepEqual([rowOf(householdSections, "ECONOMICS", "Oneri di sistema").state, rowOf(householdSections, "ECONOMICS", "Oneri di sistema").value], ["NOT_READ", "Non letto separatamente"]);
@@ -297,6 +309,9 @@ assert.match(component, /calcolato dal simulatore · gli altri valori sono quell
 assert.match(component, /<span className="visually-hidden"> \(calcolato dal simulatore\)<\/span>/, "the asterisk is read out by screen readers");
 assert.match(component, /<summary>Altri dettagli \(\{more\.length\}\)<\/summary>/, "secondary values one click away");
 // Tony (11/11/2026, "pulizia finale"): the simulator's different classification folded under its own heading.
+// Tony (14/11/2026): a folded simulator grouping keeps its name under "Altri dettagli".
+assert.match(component, /simulator: rows\.filter\(\(row\) => row\.group === "SIMULATOR" && !row\.secondary\)/);
+assert.match(component, /row\.group === "SIMULATOR" \? \{ \.\.\.row, label: `\$\{row\.label\} · classificazione del simulatore` \} : row/);
 assert.match(component, /<details className="bill-read-simulator">\s*<summary>Classificazione del simulatore: differenze dalla fattura \(\{simulator\.length\}\)<\/summary>/);
 // Tony (13/11/2026, "mercato e segmento sempre visibili"): the segment is always in view, never under "Altri dettagli"
 // (expectation changed: it was folded when it repeated the use), with the asterisk and "Classificazione del simulatore" written.

@@ -26,8 +26,9 @@ function entriesOf(section: BillReadSection, calculated: readonly CalculatedFact
   const facts = calculated.filter((fact) => fact.section === section.id).map((fact, index): Entry & { readonly secondary?: boolean } => ({ key: `c${index}-${fact.label}`, label: fact.label, value: fact.value, state: "CALCULATED", note: fact.note, secondary: fact.secondary, ...(fact.noteShown ? { noteShown: true } : {}) }));
   return {
     main: [...rows.filter((row) => !row.secondary && row.group !== "SIMULATOR"), ...facts.filter((fact) => !fact.secondary)],
-    simulator: rows.filter((row) => row.group === "SIMULATOR"),
-    more: [...rows.filter((row) => row.secondary), ...facts.filter((fact) => fact.secondary)],
+    simulator: rows.filter((row) => row.group === "SIMULATOR" && !row.secondary),
+    // Tony (14/11/2026): a simulator grouping folded with the technical details keeps its name, so it never reads as the bill's.
+    more: [...rows.filter((row) => row.secondary).map((row) => row.group === "SIMULATOR" ? { ...row, label: `${row.label} · classificazione del simulatore` } : row), ...facts.filter((fact) => fact.secondary)],
   };
 }
 
