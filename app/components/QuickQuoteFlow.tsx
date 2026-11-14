@@ -1063,6 +1063,16 @@ export default function QuickQuoteFlow({ readonly, showExcluded = false }: { rea
     <p>{bill.printedVoltageMismatch ? `La bolletta è stampata in ${VOLTAGE_NAME[bill.printedVoltageMismatch.printed]} ma è stata letta in ${bill.printedVoltageMismatch.read ? VOLTAGE_NAME[bill.printedVoltageMismatch.read] ?? bill.printedVoltageMismatch.read : "tensione non indicata"}: perdite di rete, rete e oneri sarebbero sbagliati. Rileggila dal PDF già caricato e conferma i dati.` : "Le voci di spesa dello scontrino di questa bolletta non sono state lette, quindi il confronto con la bolletta non si può fare. Rileggile dal PDF già caricato."}</p>
     <button className="button primary" type="button" onClick={() => void rereadAnalyst(bill.id)} disabled={readonly || Boolean(pending)}>{pending === "reread" ? "Lettura delle voci in corso…" : "Rileggi le voci della bolletta"}</button>
   </div> : null;
+  // Tony (13/11/2026, "rilettura bollette approvate", soluzione A): a bill whose charge lines were read, approved too, can be read
+  // again with the same "reread-analyst" operation (server checks unchanged). The reading becomes a new version to verify; the
+  // approved version, its history and the simulations made on it stay as they are until the new one is confirmed.
+  const billReread = (bill: BillDocumentModel) => readonly ? null : <>
+    {bill.currentApprovedVersionId && bill.currentApprovedVersionId !== bill.currentVersionId ? <p className="warning-text" role="status">Nuova lettura da verificare: controlla tutti i dati, comprese le correzioni fatte a mano in precedenza. Finché non confermi con «Cerca le CTE utilizzabili», simulazioni e proposte usano la versione approvata precedente.</p> : null}
+    <details className="bill-reread">
+    <summary>Rileggi le voci della bolletta</summary>
+    <p className="muted">{bill.currentApprovedVersionId ? "La nuova lettura AI del PDF già caricato crea una nuova versione da verificare: la versione approvata, lo storico e le simulazioni già fatte restano invariati finché non confermi i nuovi dati." : "La nuova lettura AI del PDF già caricato crea una nuova versione da verificare."} Le correzioni manuali fatte in precedenza non vengono riportate: ricontrolla tutti i dati prima di confermare.</p>
+    <button className="button secondary" type="button" onClick={() => void rereadAnalyst(bill.id)} disabled={Boolean(pending)}>{pending === "reread" ? "Lettura delle voci in corso…" : "Rileggi le voci della bolletta"}</button>
+  </details></>;
 
   // An already loaded bill opens on its read data first, like a new upload.
   const openBill = async (billId: string) => {
@@ -1165,7 +1175,7 @@ export default function QuickQuoteFlow({ readonly, showExcluded = false }: { rea
     </section> : null}
     {step === "review" && draft ? <section className="ui-card">
       <h3>Dati letti dalla bolletta</h3><p className="muted">Usati per trovare le CTE adatte.</p>
-      {analystRetry(draft)}
+      {analystRetry(draft) ?? billReread(draft)}
       {/* Tony (5/11/2026): what does not add up after the reading, or is not printed, is said here instead of a wrong number. */}
       {readBill?.structuredBill?.readingChecks?.length ? <div className="warning-text" role="status"><strong>Da controllare sulla bolletta</strong><ul>{readBill.structuredBill.readingChecks.map((check) => <li key={check}>{check}</li>)}</ul></div> : null}
       {readBill ? <BillReadDetails sections={billReadSections(readBill)} calculated={calculatedFacts(readBill)} /> : null}
