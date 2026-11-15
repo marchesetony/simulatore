@@ -4,6 +4,7 @@ import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { buildCurrentBillEconomicAnalysis } from "../app/lib/foundation/bill-economic-analysis.ts";
 import { technicalScontrino } from "../app/lib/quote/technical-scontrino.ts";
+import { technicalTaxes } from "../app/lib/calculation/technical-quadrature.ts";
 import { register } from "node:module";
 
 // The screen is rendered with react-dom/server: the test registers a loader that compiles .tsx (tests/node-tsx-render-loader.mjs).
@@ -63,7 +64,12 @@ const components = [
 const sum = (items) => Math.round(items.reduce((total, item) => total + item.amount, 0) * 100) / 100;
 assert.equal(sum(components.filter((item) => !item.category.startsWith("REGULATED_"))), 17.92);
 assert.equal(sum(components), 28.56, "technical total net of taxes, as in the control case");
-const result = { components, totalCommercialCost: 17.92, costScope: "COMMERCIAL_PLUS_REGULATED_NET_OF_TAX_COMPLETE", warnings: [] };
+// Tony (15/11/2026, quadratura autonoma): the server checks rete e oneri and computes excise and VAT from the law; here the
+// engine certifies the scope (COMPLETE) and the taxes come from the same fiscal module, never from the bill.
+const regulatedComplete = { status: "COMPLETE", basis: "ENGINE", tariffClass: "BTA1", checked: [], missing: [], asos: { class: "0", basis: "DOCUMENTED", note: "classe ASOS 0 documentata in bolletta" } };
+const taxesOf = (warnings, regulated = regulatedComplete) => technicalTaxes({ vector: "EE", taxTreatment: "EXCLUDED", domestic: false, resident: null, committedPowerKw: 1.5, supplyPeriod: { periodStart: "2026-10-01", periodEnd: "2026-11-01" }, bands: { f1: 3, f2: 4, f3: 3 }, monthlyProfile: null, warnings, regulated, totalNetOfTaxes: 28.56 });
+const withTaxes = (base, regulated = regulatedComplete) => { const taxes = taxesOf(base.warnings, regulated); return { ...base, regulatedCompleteness: regulated, taxes, totals: { netOfTaxes: 28.56, taxes: taxes.totalTaxes, withTaxes: taxes.totalTaxes === null ? null : Math.round((28.56 + taxes.totalTaxes) * 100) / 100 } }; };
+const result = withTaxes({ components, totalCommercialCost: 17.92, costScope: "COMMERCIAL_PLUS_REGULATED_NET_OF_TAX_COMPLETE", warnings: [] });
 const base = { vector: "EE", domestic: false, quantity: 10, months: 1, powerKw: 1.5 };
 
 // 1. Complete case: both columns, quota by quota, taxes and totals.
@@ -74,8 +80,11 @@ const quota = (key) => complete.receipt.quotas.find((item) => item.key === key);
 assert.deepEqual([quota("CONSUMPTION").current, quota("CONSUMPTION").currentSeller, quota("CONSUMPTION").offer, quota("CONSUMPTION").offerSeller], [3.42, 2.92, 3.42, 2.92], "quota per consumi: vendita 2,92 + rete e oneri 0,50 on both sides");
 assert.deepEqual([quota("FIXED").current, quota("FIXED").currentSeller, quota("FIXED").offer, quota("FIXED").offerSeller], [18.74, 15, 18.74, 15], "quota fissa: PCV 15,00 + rete e oneri 3,74");
 assert.deepEqual([quota("POWER").current, quota("POWER").currentSeller, quota("POWER").offer, quota("POWER").offerSeller], [6.4, 0, 6.4, 0], "quota potenza: rete e oneri 6,40 only");
-assert.deepEqual([quota("EXCISE").current, quota("EXCISE").offer], [0.13, 0.13], "excise: the bill's, same kWh and legal rate");
-assert.deepEqual([quota("VAT").current, quota("VAT").offer], [6.31, 6.31], "VAT 22% on 28,56 + 0,13");
+assert.deepEqual([quota("EXCISE").current, quota("VAT").current], [0.13, 6.31], "the bill's own taxes, for its column only");
+// The simulation's taxes are its own: excise 10 x 0,0125 and VAT 22% on 28,56 + 0,13, from the fiscal module.
+const offerLine = (label) => complete.offerLines.find((item) => item.label === label);
+assert.deepEqual([offerLine("di cui accise").amount, offerLine("di cui IVA").amount, offerLine("di cui IVA").price], [0.13, 6.31, "22%"]);
+assert.equal(complete.offerTaxesDetermined, true);
 assert.equal(complete.receipt.quotas.some((item) => item.key === "OTHER"), false, "no altre partite: every line is in a quota");
 assert.equal(complete.billTotal, 35);
 assert.equal(complete.offerTotal, 35, "28,56 + accise 0,13 + IVA 6,31");
@@ -103,27 +112,31 @@ assert.deepEqual(main.map((item) => [item.label, item.bill.price, item.offer.pri
   ["1,5 kW per 1 mese", "4,2667 €/kW/mese", "4,2667 €/kW/mese", 6.4, 6.4],
 ], "quantity and average price for each quota");
 
-// 2. The bill without taxes: no difference, the simulation's 28,56 is "imposte escluse", taxes shown as missing.
+// 2. The bill without taxes: no difference; the simulation keeps its own taxes (it never needed the bill's), the bill's
+// 28,56 is "imposte escluse" and its taxes are shown as missing on its side.
 const untaxed = technicalScontrino({ ...base, result, analysis: analysisOf(false) });
 assert.equal(untaxed.taxesIncluded, false);
 assert.equal(untaxed.complete, false);
 assert.equal(untaxed.difference, null);
 assert.equal(untaxed.differencePercent, null);
-assert.equal(untaxed.offerTotal, 28.56);
+assert.equal(untaxed.billTotal, 28.56);
+assert.equal(untaxed.offerTotal, 35, "the simulation's own total with taxes");
 const untaxedTotal = untaxed.rows.find((item) => item.kind === "total");
-assert.equal(untaxedTotal.label, "Totale imposte escluse", "28,56 is never the total with taxes");
-assert.equal(untaxed.rows.find((item) => item.label === "Accise e IVA").offer.price, "non determinabili");
+assert.equal(untaxedTotal.label, "Totale", "two totals of a different kind share no label");
+assert.deepEqual([untaxed.rows.find((item) => item.label === "tipo di totale").bill.price, untaxed.rows.find((item) => item.label === "tipo di totale").offer.price], ["Totale imposte escluse", "Totale bolletta"], "the bill's 28,56 is never shown as a total with taxes");
+assert.equal(untaxed.rows.find((item) => item.label === "Accise e IVA").bill.price, "non determinabili");
 assert.ok(untaxed.missing.some((text) => /accise e IVA/.test(text)));
 
 // 3. A charge the engine could not price: partial total, no difference, the reason in words.
-const partial = technicalScontrino({ ...base, result: { ...result, warnings: ["OFFICIAL_VALUE_MISSING:DISPATCHING:LOSS_COEFFICIENT_UNAVAILABLE"] }, analysis: analysisOf(true) });
+const partial = technicalScontrino({ ...base, result: withTaxes({ ...result, warnings: ["OFFICIAL_VALUE_MISSING:DISPATCHING:LOSS_COEFFICIENT_UNAVAILABLE"] }), analysis: analysisOf(true) });
 assert.equal(partial.complete, false);
 assert.equal(partial.difference, null);
 assert.equal(partial.offerLines.find((item) => item.kind === "total").label, "Totale parziale della simulazione (voci non determinate)");
-assert.ok(partial.rows.some((item) => item.kind === "sub" && item.bill === null && /Totale parziale della simulazione/.test(item.label)), "the partial total is said on the simulation side");
-assert.deepEqual(partial.missing, ["dispacciamento: coefficiente perdite TIS Tabella 4 non verificato per il periodo"]);
+assert.equal(partial.rows.find((item) => item.label === "tipo di totale").offer.price, "Totale parziale della simulazione (voci non determinate)", "the partial total is said on the simulation side");
+assert.deepEqual(partial.missing, ["dispacciamento: coefficiente perdite TIS Tabella 4 non verificato per il periodo", "IVA: costo della fornitura simulata non completo, manca la base imponibile"], "no VAT on an incomplete supply cost");
 // 4. Rete e oneri not computed in full: not complete either.
-assert.equal(technicalScontrino({ ...base, result: { ...result, costScope: "COMMERCIAL_PLUS_REGULATED_PARTIAL" }, analysis: analysisOf(true) }).difference, null);
+const regulatedPartial = { ...regulatedComplete, status: "INCOMPLETE", basis: "NONE", missing: ["rete e oneri ARERA: il motore non li calcola per intero per questa tipologia di fornitura"] };
+assert.equal(technicalScontrino({ ...base, result: withTaxes({ ...result, costScope: "COMMERCIAL_PLUS_REGULATED_PARTIAL" }, regulatedPartial), analysis: analysisOf(true) }).difference, null);
 
 // 5. The screen: the real component rendered to HTML.
 const context = { billId: "bill-test", billVersionId: "v1", vector: "EE", customerType: "NON_RESIDENTIAL", supply: { pod: null, pdr: null, voltageLevel: "LV", contractedPowerKw: 1.5 }, consumption: { annual: null, period: { f1: 3, f2: 4, f3: 3, smc: null } }, billingPeriod: { periodStart: "2026-10-01", periodEnd: "2026-11-01" }, currentSupplier: "Fornitore attuale", classification: { domestic: false }, missingRequiredData: [] };
@@ -143,8 +156,11 @@ assert.doesNotMatch(html, /proposta in PDF|Scarica la proposta|button primary/, 
 const untaxedHtml = renderToStaticMarkup(createElement(TechnicalSimulation, { result: technical, context, bill: billOf(false) }));
 assert.match(untaxedHtml, /data-testid="technical-difference-missing"/);
 assert.match(untaxedHtml, /Totale imposte escluse/);
-assert.doesNotMatch(untaxedHtml, /Totale bolletta/);
 assert.match(untaxedHtml, /non determinabili/);
+assert.match(html, /Accise calcolate: 10 kWh × 0,0125 €\/kWh/, "the excise formula and its law are shown");
+assert.match(html, /IVA 22% su 28,69\s€/);
+assert.match(html, /Nessun importo della fattura entra nella simulazione/);
+assert.match(html, /data-testid="technical-provenance"/);
 
 // Wiring: the server passes each line's formula, never an id or fingerprint.
 const server = readFileSync(new URL("../app/lib/calculation/technical-derogation.ts", import.meta.url), "utf8");

@@ -123,6 +123,13 @@ assert.equal(technical.cte.consumptionRequirement, "> 50.000 kWh/anno");
 const engine = await calculate((await import("../app/lib/calculation/input.ts")).parseSimulationRequest((await import("../app/lib/calculation/bill-driven.ts")).requestFromContext(ordinary.context, "EXCLUDED", "2026-09-16"), tenantId), "CTE_QA_THRESHOLD");
 assert.equal(technical.totalCommercialCost, engine.totalCommercialCost.amount, "same engine, same result");
 assert.equal("calculationId" in technical || "fingerprint" in technical, false, "no reference a proposal could use");
+// Tony (15/11/2026, quadratura autonoma): without ARERA tables the engine prices the CTE only, so rete e oneri are incomplete;
+// excise is still the law's on the bill's 175 kWh (0,0125 €/kWh), VAT and the total with taxes are not given, and each line
+// says where its value comes from.
+assert.equal(technical.regulatedCompleteness.status, "INCOMPLETE");
+assert.deepEqual([technical.taxes.status, technical.taxes.excise.amount, technical.taxes.vat], ["NOT_DETERMINABLE", 2.19, null]);
+assert.deepEqual(technical.totals, { netOfTaxes: null, taxes: null, withTaxes: null });
+assert.ok(technical.components.every((component) => component.provenance.kinds.length > 0 && component.provenance.kinds.includes("CTE")), "every line of a fixed-price CTE comes from the CTE");
 assert.equal(stored.length, 0, "never stored as a calculation");
 const allowed = audits.filter((event) => event.action === "TECHNICAL_DEROGATION_SIMULATION" && event.outcome === "ALLOWED");
 assert.equal(allowed.length, 1);

@@ -25,12 +25,14 @@ export async function POST(request: Request): Promise<Response> {
     const input = { billId: text(body.billId), billVersionId: text(body.billVersionId), archiveId: text(body.archiveId), cteVersionId: text(body.cteVersionId), taxTreatment: (body.taxTreatment === "INCLUDED" || body.taxTreatment === "NOT_APPLICABLE" ? body.taxTreatment : "EXCLUDED") as TaxInclusionState, calculationDate: new Date().toISOString().slice(0, 10) };
     const result = await runTechnicalDerogation(principal, repositories, input, async (simulation, cteId) => {
       let dependencies: CalculationDependencies | undefined;
+      let asos: { readonly asosClass: string; readonly temporalStatus: string } | null = null;
       if (simulation.vector === "EE" && simulation.sourceBill) {
         const { context: trustedElectricityContext, reason, currentOffer, billPeakEnergy } = await resolveTrustedElectricityContextWithReason(repositories.billRepository, tenantId, simulation);
         const regulatoryBridge = new ProductionRegulatoryPersistenceBridge(repositories.regulatoryValues, repositories.approvalDomains, { readArchiveOncePerRequest: true });
+        asos = trustedElectricityContext ? { asosClass: trustedElectricityContext.asosClass, temporalStatus: trustedElectricityContext.asosClassTemporalStatus } : null;
         dependencies = { ...(trustedElectricityContext ? { trustedElectricityContext } : {}), ...(reason ? { regulatedUnavailableReason: reason } : {}), ...(currentOffer ? { currentOffer } : {}), ...(billPeakEnergy ? { billPeakEnergy } : {}), regulatoryBridge, regulatoryRuntimeResolver: new ProductionCteRegulatoryRuntimeResolver(regulatoryBridge), regulatoryRefreshState: repositories.regulatoryRefreshState };
       }
-      return calculateApprovedOffer(repositories.cteArchiveRepository, repositories.marketArchiveRepository, simulation, cteId, dependencies);
+      return { result: await calculateApprovedOffer(repositories.cteArchiveRepository, repositories.marketArchiveRepository, simulation, cteId, dependencies), asos };
     });
     return Response.json({ result }, { headers: NO_STORE_HEADERS });
   } catch (error) {

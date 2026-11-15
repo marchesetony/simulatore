@@ -3,7 +3,7 @@
 import { isValidElement, useCallback, useEffect, useRef, useState, type ChangeEvent, type ReactNode } from "react";
 import type { ProposalPresentation } from "../lib/proposal/presentation";
 import { areraNote, billedMonths, offerScontrino, pairScontrini, type ScontrinoLine, type ScontrinoPairRow } from "../lib/quote/offer-scontrino";
-import { technicalScontrino, type TechnicalComponent } from "../lib/quote/technical-scontrino";
+import { technicalScontrino, type TechnicalComponent, type TechnicalScontrinoInput } from "../lib/quote/technical-scontrino";
 import { EmptyState, ErrorState, LoadingState } from "./UiStates";
 import { BillReadDetails, type CalculatedFact } from "./BillReadDetails";
 import { formatKwh } from "../lib/ui/format";
@@ -41,7 +41,7 @@ type Offer = { readonly rank: number; readonly calculation: CalculationModel; re
 type CommercialDiscount = { readonly enabled: boolean; readonly maxGapPercent: number; readonly targetSavingPercent: number };
 type Quote = { readonly bill: BillDocumentModel; readonly context: Context; readonly comparison: ComparisonModel; readonly offers: readonly Offer[]; readonly candidates?: readonly Candidate[]; readonly unlisted?: readonly Unlisted[]; readonly canAuthorizeCte?: boolean; readonly canRunTechnicalDerogation?: boolean; readonly failure?: string };
 // Tony (14/11/2026): the Direttore's technical simulation in derogation of the annual consumption threshold, never a proposal.
-type TechnicalResult = { readonly banner: string; readonly cte: { readonly supplier: string; readonly offerName: string; readonly offerCode: string; readonly consumptionRequirement: string | null }; readonly annualConsumption: { readonly value: number | null; readonly status: string }; readonly components: readonly TechnicalComponent[]; readonly totalCommercialCost: number; readonly totalCommercialPlusRegulatedSubsetCost: number | null; readonly costScope: string; readonly warnings: readonly string[] };
+type TechnicalResult = { readonly banner: string; readonly cte: { readonly supplier: string; readonly offerName: string; readonly offerCode: string; readonly consumptionRequirement: string | null }; readonly annualConsumption: { readonly value: number | null; readonly status: string }; readonly components: readonly TechnicalComponent[]; readonly totalCommercialCost: number; readonly totalCommercialPlusRegulatedSubsetCost: number | null; readonly costScope: string; readonly warnings: readonly string[] } & Pick<TechnicalScontrinoInput["result"], "regulatedCompleteness" | "taxes" | "totals">;
 // Excluded only by the annual consumption threshold: the one requirement the Direttore may set aside, for a technical simulation.
 const technicalDerogable = (candidate: Candidate) => candidate.finalStatus === "NOT_ELIGIBLE" && candidate.calculationReadiness === "READY" && Boolean(candidate.cteVersionId) && candidate.reasonCodes?.length === 1 && candidate.reasonCodes[0] === "CONSUMPTION_THRESHOLD_MISMATCH";
 
@@ -509,7 +509,6 @@ export function TechnicalSimulation({ result, context, bill }: { readonly result
   const analysis = comparisonAnalysis(bill.analystReview.economics);
   const offerName = result.cte.offerName || result.cte.offerCode;
   const scontrino = technicalScontrino({ vector: context.vector, result, analysis, domestic: context.classification.domestic, quantity, months, powerKw: powerQuotaKw(context), billExcluded: (compared) => billOutsideComparison(analysis, compared) });
-  const { receipt } = scontrino;
   const calculation = { components: result.components.map((component) => ({ ...component, formulaId: component.formulaId ?? "", amount: { amount: component.amount, minorUnits: Math.round(component.amount * 100), currency: "EUR" as const } })) };
   const billTitle = `Fattura originale · ${context.currentSupplier}`;
   const offerTitle = `Simulazione ${offerName}`;
@@ -527,10 +526,32 @@ export function TechnicalSimulation({ result, context, bill }: { readonly result
     {scontrino.rows.length
       ? <ScontrinoPairTable billTitle={billTitle} offerTitle={offerTitle} rows={scontrino.rows} />
       : <ScontrinoTable title={offerTitle} lines={scontrino.offerLines} />}
-    <p className="muted quote-note">Vendita della simulazione dai prezzi della CTE {offerName}; rete e oneri dai valori ARERA del periodo, sugli stessi consumi e sullo stesso periodo della fattura.{scontrino.taxesIncluded ? ` Accise uguali alla fattura (stessi kWh, aliquota di legge); IVA della simulazione ricalcolata al ${receipt.vatRate === null ? "—" : PERCENT.format(receipt.vatRate * 100)}% sul nuovo imponibile.` : " Accise e IVA non determinabili: il totale della simulazione è senza imposte e non è confrontabile con il totale della fattura."}</p>
+    <p className="muted quote-note" data-testid="technical-sources">{technicalSourcesText(result, offerName)}</p>
+    {scontrino.assumptions.length ? <p className="muted" data-testid="technical-assumptions">Ipotesi esplicite: {scontrino.assumptions.join("; ")}.</p> : null}
     <CostDetail calculation={calculation} offerName={offerName} open={false} title="Dettaglio analitico dei corrispettivi" />
+    <details className="quote-detail" data-testid="technical-provenance"><summary>Provenienza dei corrispettivi</summary>
+      <table><thead><tr><th scope="col">Voce</th><th scope="col">Fonte</th><th scope="col">Riferimento</th></tr></thead>
+        <tbody>{result.components.map((component, index) => <tr key={index}><th scope="row">{component.label}</th><td>{component.provenance?.kinds.join(" + ") ?? "—"}</td><td>{component.provenance?.detail ?? ""}</td></tr>)}
+          {result.taxes.excise ? <tr><th scope="row">Accise</th><td>NORMA FISCALE</td><td>{result.taxes.excise.source}</td></tr> : null}
+          {result.taxes.vat ? <tr><th scope="row">IVA</th><td>NORMA FISCALE</td><td>{result.taxes.vat.source}</td></tr> : null}</tbody></table>
+    </details>
     {result.warnings.length ? <p className="muted">Avvisi del calcolo: {result.warnings.join(" · ")}</p> : null}
   </section>;
+}
+
+const TAX_RATE = new Intl.NumberFormat("it-IT", { minimumFractionDigits: 4, maximumFractionDigits: 6 });
+// Tony (15/11/2026, quadratura autonoma): where each part of the simulation comes from, the fiscal rules applied and what is
+// missing, in words. No bill amount is used: excise and VAT are the law's on the simulated consumption and amounts.
+function technicalSourcesText(result: TechnicalResult, offerName: string): string {
+  const regulated = result.regulatedCompleteness;
+  const network = regulated.status === "COMPLETE"
+    ? `rete e oneri dai valori ARERA del periodo${regulated.tariffClass ? ` (${regulated.tariffClass})` : ""}, ${regulated.basis === "BTA1_5_COMPONENTS" ? `${regulated.checked.length} componenti obbligatorie calcolate su tutto il periodo` : "completi"}`
+    : `rete e oneri ARERA incompleti (${regulated.missing.join("; ")})`;
+  const taxes = result.taxes;
+  const fiscal = taxes.status === "DETERMINED" && taxes.excise && taxes.vat
+    ? `Accise calcolate: ${taxes.excise.lines.map((line) => line.kwh !== null && line.rate !== null ? `${formatKwh(line.kwh)} × ${TAX_RATE.format(line.rate)} €/kWh (${line.label})` : `${line.label} ${euro(line.amount)}`).join(" + ")} = ${euro(taxes.excise.amount)}, ${taxes.excise.source}. IVA ${PERCENT.format(taxes.vat.rate * 100)}% su ${euro(taxes.vat.base)} (fornitura + accise) = ${euro(taxes.vat.amount)}, ${taxes.vat.source}.`
+    : `Accise e IVA della simulazione non determinabili: ${taxes.reasons.join("; ")}.`;
+  return `Vendita della simulazione dai prezzi della CTE ${offerName}, con PUN GME, Terna e ARERA dove la CTE li richiama; ${network}; sugli stessi consumi e sullo stesso periodo della fattura. ${fiscal} Nessun importo della fattura entra nella simulazione.`;
 }
 
 function Steps({ step }: { readonly step: Step }): ReactNode {
