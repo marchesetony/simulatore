@@ -3,6 +3,7 @@
 import { isValidElement, useCallback, useEffect, useRef, useState, type ChangeEvent, type ReactNode } from "react";
 import type { ProposalPresentation } from "../lib/proposal/presentation";
 import { areraNote, billedMonths, offerScontrino, pairScontrini, type ScontrinoLine, type ScontrinoPairRow } from "../lib/quote/offer-scontrino";
+import { technicalScontrino, type TechnicalComponent } from "../lib/quote/technical-scontrino";
 import { EmptyState, ErrorState, LoadingState } from "./UiStates";
 import { BillReadDetails, type CalculatedFact } from "./BillReadDetails";
 import { formatKwh } from "../lib/ui/format";
@@ -40,7 +41,7 @@ type Offer = { readonly rank: number; readonly calculation: CalculationModel; re
 type CommercialDiscount = { readonly enabled: boolean; readonly maxGapPercent: number; readonly targetSavingPercent: number };
 type Quote = { readonly bill: BillDocumentModel; readonly context: Context; readonly comparison: ComparisonModel; readonly offers: readonly Offer[]; readonly candidates?: readonly Candidate[]; readonly unlisted?: readonly Unlisted[]; readonly canAuthorizeCte?: boolean; readonly canRunTechnicalDerogation?: boolean; readonly failure?: string };
 // Tony (14/11/2026): the Direttore's technical simulation in derogation of the annual consumption threshold, never a proposal.
-type TechnicalResult = { readonly banner: string; readonly cte: { readonly supplier: string; readonly offerName: string; readonly offerCode: string; readonly consumptionRequirement: string | null }; readonly annualConsumption: { readonly value: number | null; readonly status: string }; readonly components: readonly { readonly label: string; readonly sign: "CHARGE" | "DISCOUNT"; readonly amount: number }[]; readonly totalCommercialCost: number; readonly totalCommercialPlusRegulatedSubsetCost: number | null; readonly warnings: readonly string[] };
+type TechnicalResult = { readonly banner: string; readonly cte: { readonly supplier: string; readonly offerName: string; readonly offerCode: string; readonly consumptionRequirement: string | null }; readonly annualConsumption: { readonly value: number | null; readonly status: string }; readonly components: readonly TechnicalComponent[]; readonly totalCommercialCost: number; readonly totalCommercialPlusRegulatedSubsetCost: number | null; readonly costScope: string; readonly warnings: readonly string[] };
 // Excluded only by the annual consumption threshold: the one requirement the Direttore may set aside, for a technical simulation.
 const technicalDerogable = (candidate: Candidate) => candidate.finalStatus === "NOT_ELIGIBLE" && candidate.calculationReadiness === "READY" && Boolean(candidate.cteVersionId) && candidate.reasonCodes?.length === 1 && candidate.reasonCodes[0] === "CONSUMPTION_THRESHOLD_MISMATCH";
 
@@ -499,14 +500,36 @@ function NoOfferReasons({ quote, shown = [], onAuthorize, onTechnical }: { reado
 }
 
 /** Shown apart from the offers, with no proposal button: it is outside the CTE requirements. */
-function TechnicalSimulation({ result }: { readonly result: TechnicalResult }): ReactNode {
-  return <section className="ui-card technical-simulation" role="status">
+// Tony (15/11/2026, "Intervento risolutivo scontrino ARERA"): the original bill and the simulation side by side as the ARERA
+// Scontrino dell'energia; the engine's own lines move into the "Dettaglio analitico dei corrispettivi" panel.
+export function TechnicalSimulation({ result, context, bill }: { readonly result: TechnicalResult; readonly context: Context; readonly bill: BillDocumentModel }): ReactNode {
+  const period = context.consumption?.period;
+  const quantity = !period ? null : context.vector === "GAS" ? period.smc : [period.f1, period.f2, period.f3].every((value) => value === null) ? null : (period.f1 ?? 0) + (period.f2 ?? 0) + (period.f3 ?? 0);
+  const months = billedMonths(context.billingPeriod.periodStart, context.billingPeriod.periodEnd);
+  const analysis = comparisonAnalysis(bill.analystReview.economics);
+  const offerName = result.cte.offerName || result.cte.offerCode;
+  const scontrino = technicalScontrino({ vector: context.vector, result, analysis, domestic: context.classification.domestic, quantity, months, powerKw: powerQuotaKw(context), billExcluded: (compared) => billOutsideComparison(analysis, compared) });
+  const { receipt } = scontrino;
+  const calculation = { components: result.components.map((component) => ({ ...component, formulaId: component.formulaId ?? "", amount: { amount: component.amount, minorUnits: Math.round(component.amount * 100), currency: "EUR" as const } })) };
+  const billTitle = `Fattura originale · ${context.currentSupplier}`;
+  const offerTitle = `Simulazione ${offerName}`;
+  return <section className="ui-card technical-simulation" role="status" aria-label="Scontrino dell'energia comparativo">
     <p className="technical-simulation-banner"><strong>{result.banner}</strong></p>
-    <h3>{result.cte.supplier} · {result.cte.offerName || result.cte.offerCode}</h3>
+    <p className="eyebrow">SCONTRINO DELL&apos;ENERGIA · CONFRONTO TECNICO</p>
+    <h3>{result.cte.supplier} · {offerName}</h3>
     <p className="muted">Requisito non rispettato: consumo annuo{result.cte.consumptionRequirement ? ` (la CTE richiede ${result.cte.consumptionRequirement})` : ""}. Consumo annuo della bolletta {result.annualConsumption.value === null ? "non determinabile" : `${Math.round(result.annualConsumption.value)} ${result.annualConsumption.status === "ESTIMATED" ? "(stimato)" : ""}`.trim()}.</p>
-    <ul>{result.components.map((component, index) => <li key={`${component.label}-${index}`}>{component.label}: {euro(component.sign === "DISCOUNT" ? -component.amount : component.amount)}</li>)}</ul>
-    <p><strong>Totale tecnico: {euro(result.totalCommercialPlusRegulatedSubsetCost ?? result.totalCommercialCost)}</strong>{result.totalCommercialPlusRegulatedSubsetCost === null ? " (solo costi commerciali)" : ""}</p>
-    {result.warnings.length ? <p className="muted">{result.warnings.join(" · ")}</p> : null}
+    {scontrino.complete && scontrino.difference !== null
+      ? <div className={scontrino.difference <= 0 ? "quote-saving" : "quote-saving negative"} data-testid="technical-difference">
+        <span>Differenza tra simulazione e fattura originale (imposte comprese)</span>
+        <strong>{scontrino.difference > 0 ? "+" : scontrino.difference < 0 ? "−" : ""}{euro(Math.abs(scontrino.difference))}{scontrino.differencePercent !== null ? ` (${scontrino.differencePercent > 0 ? "+" : scontrino.differencePercent < 0 ? "−" : ""}${PERCENT.format(Math.abs(scontrino.differencePercent))}%)` : ""}</strong>
+      </div>
+      : <p className="inline-warning" data-testid="technical-difference-missing">Differenza non calcolata: i due totali non sono entrambi completi. Mancano: {scontrino.missing.join("; ")}.</p>}
+    {scontrino.rows.length
+      ? <ScontrinoPairTable billTitle={billTitle} offerTitle={offerTitle} rows={scontrino.rows} />
+      : <ScontrinoTable title={offerTitle} lines={scontrino.offerLines} />}
+    <p className="muted quote-note">Vendita della simulazione dai prezzi della CTE {offerName}; rete e oneri dai valori ARERA del periodo, sugli stessi consumi e sullo stesso periodo della fattura.{scontrino.taxesIncluded ? ` Accise uguali alla fattura (stessi kWh, aliquota di legge); IVA della simulazione ricalcolata al ${receipt.vatRate === null ? "—" : PERCENT.format(receipt.vatRate * 100)}% sul nuovo imponibile.` : " Accise e IVA non determinabili: il totale della simulazione è senza imposte e non è confrontabile con il totale della fattura."}</p>
+    <CostDetail calculation={calculation} offerName={offerName} open={false} title="Dettaglio analitico dei corrispettivi" />
+    {result.warnings.length ? <p className="muted">Avvisi del calcolo: {result.warnings.join(" · ")}</p> : null}
   </section>;
 }
 
@@ -525,7 +548,8 @@ const BASIS_UNIT: Record<string, string> = { EUR_PER_KWH: "kWh", EUR_PER_SMC: "S
 function num(value: unknown): number | null { const parsed = typeof value === "number" ? value : typeof value === "string" ? Number(value) : NaN; return Number.isFinite(parsed) ? parsed : null; }
 function monthLabel(value: unknown): string { return typeof value === "string" && /^\d{4}-\d{2}$/.test(value) ? MONTH.format(new Date(`${value}-01T00:00:00Z`)) : String(value ?? ""); }
 // Each cost of the new offer as quantity x unit price, the way a business customer checks it against the CTE.
-function costLines(calculation: CalculationModel): readonly CostLine[] {
+type CostSource = { readonly components: CalculationModel["components"]; readonly unitCost?: CalculationModel["unitCost"] };
+function costLines(calculation: CostSource): readonly CostLine[] {
   return calculation.components.map((component, index) => {
     const inputs = component.formulaInputs ?? {};
     const sign = component.sign === "DISCOUNT" ? -1 : 1;
@@ -578,7 +602,7 @@ type CostGroup = { readonly title: string; readonly lines: readonly CostLine[]; 
 // gestione del contatore (distribuzione, misura, trasmissione, UC3, UC6) and oneri generali di sistema (ARIM, ASOS), each as
 // quota fissa, quota potenza and quota energia. The single ARERA lines open only on request.
 const TRANSPORT = ["NETWORK", "METERING", "TRANSMISSION", "UC3", "UC6", "DISTRIBUTION"] as const;
-function costGroups(calculation: CalculationModel, lines: readonly CostLine[]): readonly CostGroup[] {
+function costGroups(calculation: CostSource, lines: readonly CostLine[]): readonly CostGroup[] {
   const seller: CostLine[] = [];
   const buckets = new Map<string, { group: "TRANSPORT" | "SYSTEM"; quota: "FIXED" | "POWER" | "ENERGY"; amount: number; rate: number; quantity: string; lines: CostLine[] }>();
   calculation.components.forEach((component, index) => {
@@ -607,14 +631,14 @@ function costGroups(calculation: CalculationModel, lines: readonly CostLine[]): 
   ].filter((group) => group.lines.length > 0);
 }
 
-function CostDetail({ offer, open }: { readonly offer: Offer; readonly open: boolean }): ReactNode {
+function CostDetail({ calculation, offerName, open, title = "Dettaglio dei costi della nuova offerta" }: { readonly calculation: CostSource; readonly offerName: string; readonly open: boolean; readonly title?: string }): ReactNode {
   const [expanded, setExpanded] = useState<Readonly<Record<string, boolean>>>({});
-  const lines = costLines(offer.calculation);
+  const lines = costLines(calculation);
   if (!lines.length) return null;
-  const groups = costGroups(offer.calculation, lines);
+  const groups = costGroups(calculation, lines);
   return <details className="quote-detail" open={open}>
-    <summary>Dettaglio dei costi della nuova offerta</summary>
-    <p className="muted">Ogni voce è calcolata sugli stessi consumi e sullo stesso periodo della bolletta, con i prezzi della CTE {offer.offerName}.</p>
+    <summary>{title}</summary>
+    <p className="muted">Ogni voce è calcolata sugli stessi consumi e sullo stesso periodo della bolletta, con i prezzi della CTE {offerName}.</p>
     <div className="responsive-table"><table>
       <thead><tr><th scope="col">Voce</th><th scope="col">Quantità</th><th scope="col">Prezzo unitario</th><th scope="col">Importo</th></tr></thead>
       {groups.map((group) => <tbody key={group.title}>
@@ -625,7 +649,7 @@ function CostDetail({ offer, open }: { readonly offer: Offer; readonly open: boo
       {/* Tony (31/10): the footer said 113,77 € under groups worth 152,11 €; it is the sum of every line above. */}
       <tfoot><tr><th scope="row" colSpan={3}>Totale nuova offerta (imposte escluse)</th><td>{euro(groups.reduce((total, group) => total + group.lines.reduce((sum, line) => sum + line.amount, 0), 0))}</td></tr></tfoot>
     </table></div>
-    <p className="muted quote-note">Costo medio della materia energia: {RATE.format(offer.calculation.unitCost.amount)} {offer.calculation.unitCost.unit === "EUR_PER_SMC" ? "€/Smc" : "€/kWh"}. Imposte escluse.</p>
+    {calculation.unitCost ? <p className="muted quote-note">Costo medio della materia energia: {RATE.format(calculation.unitCost.amount)} {calculation.unitCost.unit === "EUR_PER_SMC" ? "€/Smc" : "€/kWh"}. Imposte escluse.</p> : <p className="muted quote-note">Imposte escluse.</p>}
   </details>;
 }
 
@@ -912,7 +936,7 @@ function Receipt({ offer: quoted, today, business, context, bill, onPresentation
       <span>Offerta valida fino al</span><strong>{date(receipt.validUntil)}</strong>
       <small>{left === null ? "Verifica la scadenza sulla CTE prima di firmare." : left < 0 ? "Offerta scaduta: non può più essere firmata." : `Il cliente deve firmare il contratto entro questa data${left <= 7 ? ` (mancano ${left} giorni)` : ""}.`}</small>
     </div>
-    <CostDetail offer={offer} open={business} />
+    <CostDetail calculation={offer.calculation} offerName={offer.offerName} open={business} />
     <p className="muted quote-note">Calcolo sugli stessi consumi e sullo stesso periodo della bolletta, con le voci di spesa della delibera ARERA 386/2025. Tariffa per l'uso della rete, oneri generali di sistema e accise non dipendono dal fornitore e restano quelli della bolletta{receipt.vatRate !== null ? `; IVA della nuova offerta al ${PERCENT.format(receipt.vatRate * 100)}%${receipt.vatRateEstimated ? " stimata" : ""}${receipt.billVatRate != null && Math.abs(receipt.vatRate - receipt.billVatRate) > 0.0001 ? ` (in bolletta ${PERCENT.format(receipt.billVatRate * 100)}%)` : ""}` : ""}.</p>
   </section>;
 }
@@ -1247,7 +1271,7 @@ export default function QuickQuoteFlow({ readonly, showExcluded = false }: { rea
         {quote.failure ? <CtePicker quote={quote} onPick={(archiveId) => void pickCte(archiveId)} disabled={readonly || Boolean(pending)} /> : null}
         {quote.offers.length || quote.failure ? null : <><EmptyState title="Nessuna offerta utilizzabile" detail="Nessuna CTE a te assegnata è adatta a questa bolletta. Chiedi all'amministratore di assegnartene una." /><NoOfferReasons quote={quote} onAuthorize={readonly ? undefined : authorizeCte} onTechnical={readonly ? undefined : (archiveId) => void runTechnical(archiveId)} /></>}
       </section>
-      {pending === "technical" ? <LoadingState label="Simulazione tecnica in corso" /> : technical ? <TechnicalSimulation result={technical} /> : null}
+      {pending === "technical" ? <LoadingState label="Simulazione tecnica in corso" /> : technical ? <TechnicalSimulation result={technical} context={quote.context} bill={quote.bill} /> : null}
       {selected ? <><Receipt offer={selected} today={today} business={quote.context.customerType === "NON_RESIDENTIAL"} context={quote.context} bill={quote.bill} onPresentation={keepPresentation} showExcluded={showExcluded} /><div className="button-row"><button className="button primary" type="button" onClick={() => void saveProposal()} disabled={readonly || Boolean(pending)}>{pending === "proposal" ? "Preparazione" : "Scarica la proposta in PDF"}</button>{proposal ? <span className="muted" role="status">Proposta salvata in Proposte.</span> : null}</div></> : null}
     </> : null : null}
     {error ? <ErrorState message={error} /> : null}

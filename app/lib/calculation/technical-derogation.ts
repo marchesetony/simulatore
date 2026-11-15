@@ -57,7 +57,9 @@ export interface TechnicalDerogationResult {
   readonly annualConsumption: { readonly value: number | null; readonly status: string; readonly source: string | null };
   readonly supplyPeriod: CalculationResult["supplyPeriod"];
   readonly taxTreatment: TaxInclusionState;
-  readonly components: readonly { readonly label: string; readonly category: string; readonly sign: "CHARGE" | "DISCOUNT"; readonly amount: number }[];
+  /** Each priced line with its formula and inputs (rates, quantities, units: no customer data), so the screen can build the
+   *  ARERA scontrino and the analytical detail with the builders of the ordinary quotes (Tony 15/11/2026). */
+  readonly components: readonly { readonly label: string; readonly category: string; readonly sign: "CHARGE" | "DISCOUNT"; readonly amount: number; readonly formulaId: string; readonly formulaInputs: CalculationResult["components"][number]["formulaInputs"] }[];
   readonly totalCommercialCost: number;
   readonly totalCommercialPlusRegulatedSubsetCost: number | null;
   readonly costScope: CalculationResult["costScope"];
@@ -95,7 +97,7 @@ export async function runTechnicalDerogation(principal: AuthenticatedPrincipal, 
     cte: { archiveId: found.archiveId, versionId: input.cteVersionId, supplier: found.supplier, offerName: found.offer.name, offerCode: found.offer.code, consumptionRequirement: found.scope?.consumption ?? null },
     annualConsumption: { value: annual.value, status: annual.status, source: annual.source },
     supplyPeriod: result.supplyPeriod, taxTreatment: result.taxTreatment,
-    components: result.components.map((component) => ({ label: component.label, category: component.category, sign: component.sign, amount: component.amount.amount })),
+    components: result.components.map((component) => ({ label: component.label, category: component.category, sign: component.sign, amount: component.amount.amount, formulaId: component.formulaId, formulaInputs: component.formulaInputs })),
     totalCommercialCost: result.totalCommercialCost.amount,
     totalCommercialPlusRegulatedSubsetCost: result.totalCommercialPlusRegulatedSubsetCost?.amount ?? null,
     costScope: result.costScope, warnings: result.warnings,
