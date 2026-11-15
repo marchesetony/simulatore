@@ -15,6 +15,8 @@ import type { CteArchiveRepository } from "../cte/archive/types";
 import type { CalculationComponent, CalculationExclusion, CalculationExclusionCode, CalculationMarketReference, CalculationMoney, CalculationResult, ContractualPassThroughState, ContractualPassThroughStatus, ElectricitySimulationRequest, GasSimulationRequest, SimulationRequest, SimulationPeriod } from "./types";
 import type { ElectricitySupplyContext } from "./trusted-ee-supply-context.ts";
 // @ts-expect-error Node's strip-only test runner requires the explicit extension.
+import { tisTable4LossCoefficient } from "./network-losses.ts";
+// @ts-expect-error Node's strip-only test runner requires the explicit extension.
 import { resolveCteRegulatoryRuntime, type CteRegulatoryRuntimeResolver, type CteRuntimeResolution, type ResolvedOfficialRuntimeValue } from "./regulatory-runtime-resolvers.ts";
 import type { ProductionRegulatoryPersistenceBridge } from "../regulatory-bridge.ts";
 import type { TenantRecordRepository } from "../persistence/types.ts";
@@ -168,64 +170,69 @@ function addPassThroughComponents(target: ComponentDraft[], offer: CalculationRe
 }
 
 // Quote on a competitor bill (Tony, 26/10: "sulla CTE mancano tutti i costi"): the CTE's dispatching, capacity market and
-// network losses are part of what the customer would pay, so they are priced with the official value of the period when
-// resolved, else with the value the CTE states ("attualmente pari a ..."). A charge the CTE does not state stays out.
-// Network losses are always billed (Tony, 26/10: "le perdite di rete sono sempre presenti"): under the TIS the energy
-// withdrawn at a point grow by the standard factor of TIS Tabella 4 colonna A, so when no official record is resolved the
-// table value for the supply's voltage applies (delibera 117/2022/R/eel from 1/1/2023, confirmed by 584/2023/R/eel).
-const TIS_TABLE_4_COLUMN_A: Readonly<Record<ElectricitySimulationRequest["voltageLevel"], number>> = { LV: 0.1, MV: 0.038, HV: 0.018, EHV: 0.007 };
-function lossRatio(value: ResolvedOfficialRuntimeValue | null | undefined): Rational | null {
+// network losses are part of what the customer would pay, so they are priced with the official value of the billed period.
+// A charge the CTE does not state stays out.
+// Tony (15/11/2026, "Correzione perdite e Capacity Market"): the loss coefficient is the typed TIS Tabella 4 percentage for
+// the supply's voltage and the billed period (network-losses.ts), never an archived €/kWh record matched by its wording.
+// Each charge is grossed up only when the CTE says so for that price (stated "al netto delle perdite", or named among the
+// charges increased by the Tabella 4 factor) or, for the regulated capacity charge, because the official value is published
+// net of losses (decision 1). A price stated "al lordo delle perdite" is never grossed up again (decision 2).
+const NET_LOSS_STATES: readonly string[] = ["NET_OF_LOSSES", "OFFICIAL_REFERENCE"];
+const LOSS_SETTLED_STATES: readonly string[] = ["GROSS_OF_LOSSES", "INCLUDED", "EXCLUDED"];
+/** An official runtime value usable for the whole billed period, published net of losses. */
+function periodRuntimeValue(value: ResolvedOfficialRuntimeValue | null | undefined, period: ElectricitySimulationRequest["supplyPeriod"]): ResolvedOfficialRuntimeValue | null {
   if (!value || !Number.isFinite(value.value) || value.value <= 0) return null;
-  const ratio = /percent|%/i.test(value.unit) || value.value > 1 ? value.value / 100 : value.value;
-  return ratio > 0 && ratio < 0.5 ? fromNumber(ratio) : null;
+  const start = period.periodStart.slice(0, 10); const end = period.periodEnd.slice(0, 10);
+  if (value.effectiveFrom.slice(0, 10) > start || (value.effectiveTo !== null && value.effectiveTo.slice(0, 10) < end)) return null;
+  return value;
 }
-function standardLoss(request: ElectricitySimulationRequest, runtime: CteRuntimeResolution | null): { readonly ratio: Rational; readonly source: string } | null {
-  const official = lossRatio(runtime?.loss);
-  if (official) return { ratio: official, source: runtime?.loss?.officialIdentifier ?? "OFFICIAL" };
-  if (request.supplyPeriod.periodStart < "2023-01-01") return null;
-  return { ratio: fromNumber(TIS_TABLE_4_COLUMN_A[request.voltageLevel]), source: "TIS_TABELLA_4_COLONNA_A" };
-}
+const netOfLossesBasis = (value: ResolvedOfficialRuntimeValue): boolean => /al netto delle perdite|net of (network )?losses/i.test(value.provenance.applicationBasis);
 function addCtePassThroughs(target: ComponentDraft[], request: ElectricitySimulationRequest, offer: CalculationReadyOffer, runtime: CteRuntimeResolution | null, totalQuantity: Rational, context: ElectricitySupplyContext | undefined, missing: string[], capacityMonths: readonly AreraCapacityMonth[] = ARERA_TIV_CAPACITY_MONTHS, tideQuarters: readonly TernaTideQuarter[] = TERNA_TIDE_DISPATCHING_QUARTERS, domesticCdispd: "PRICED" | "MISSING" | null = null, cdispdMonths: readonly AreraCapacityMonth[] | null = null, ternaCapacity: readonly TernaCapacityQuarter[] = [], peakEnergy: BillPeakEnergy | null = null): void {
   const priced = new Set(target.filter((draft) => draft.formulaId.startsWith("CONTRACTUAL_PASS_THROUGH")).map((draft) => String(draft.formulaInputs.kind ?? "")));
-  const standard = standardLoss(request, runtime);
-  const loss = standard?.ratio ?? null;
+  const coefficient = tisTable4LossCoefficient(request.voltageLevel, request.supplyPeriod.periodStart, request.supplyPeriod.periodEnd);
+  const loss = coefficient ? divide(fromNumber(coefficient.percent), fromNumber(100)) : null;
+  const lossInputs: Readonly<Record<string, string | number>> = coefficient ? { lossFactor: toDecimal(loss as Rational, 6), lossPercent: coefficient.percent, lossSource: coefficient.source } : { lossFactor: 0 };
+  const noLoss: Readonly<Record<string, string | number>> = { lossFactor: 0 };
   const targets = new Set(offer.lossReference?.applicationTargets ?? []);
-  const grossUp = (rate: Rational) => loss ? multiply(rate, add(fromNumber(1), loss)) : rate;
-  // Losses on energy: the energy price (index and spread, or the fixed price) applied to the energy lost on the networks.
-  // Only a CTE that names the index alone as grossed up keeps the spread out of the base.
-  // Tony (3/11, Atlante delle voci): "senza applicazione automatica del 10% quando la CTE tace. Prima verificare se il prezzo
-  // comprende già le perdite; in caso di ambiguità, segnalare il dato non determinabile e non inventare il costo". Losses are
-  // priced only when the CTE states how they apply (Tabella 4 TIS, a price or spread net or gross of losses) or the rule does
-  // (households from 1/4/2026, delibera 386/2025: seller charges gross of losses, losses on the index); a CTE that includes
-  // them in the price adds none; otherwise the line is "non determinabile".
-  const householdFrom2026 = context?.regulatoryCustomerScope?.startsWith("DOMESTIC") === true && request.supplyPeriod.periodStart.slice(0, 10) >= "2026-04-01";
+  let coefficientNeeded = false;
+  // Tony (3/11, Atlante delle voci): "senza applicazione automatica del 10% quando la CTE tace"; Tony (15/11, rule 5): no
+  // losses on PUN or spread unless the contract formula provides them. Only the parts of the energy price the CTE names
+  // are grossed up: the index when it names the index, the spread or the fixed price when stated net of losses.
   const priceLoss = offer.pricing.mode === "INDEXED" ? offer.pricing.spread.lossTreatment : offer.pricing.mode === "FIXED" ? offer.pricing.fixedPrice?.lossTreatment : undefined;
   const lossesIncluded = priceLoss === "INCLUDED";
-  const lossesStated = offer.lossReference !== undefined || offer.lossSemantics !== undefined || ["NET_OF_LOSSES", "GROSS_OF_LOSSES", "OFFICIAL_REFERENCE"].includes(String(priceLoss ?? "")) || householdFrom2026;
+  const lossesStated = offer.lossReference !== undefined || offer.lossSemantics !== undefined || ["NET_OF_LOSSES", "GROSS_OF_LOSSES", "OFFICIAL_REFERENCE"].includes(String(priceLoss ?? ""));
   if (!lossesStated && !lossesIncluded && !priced.has("LOSSES")) missing.push("LOSSES:CTE_NOT_DETERMINABLE");
-  if (loss && standard && lossesStated && !lossesIncluded && !priced.has("LOSSES")) {
-    // A spread stated gross of losses already contains them (Tony, 28/10, BE Family Casa Protetta).
-    // Households from 1 April 2026 (delibera 386/2025/R/com, Codice di condotta commerciale art. 5.1.a): the seller's
-    // charges are stated "al lordo delle perdite di rete" and the index carries one spread covering every cost outside it,
-    // sbilanciamento and commercializzazione included (Tony, 29/10). Losses apply to the index only, whatever the reading.
-    const householdCode = context?.regulatoryCustomerScope?.startsWith("DOMESTIC") === true && request.supplyPeriod.periodStart.slice(0, 10) >= "2026-04-01";
-    const spreadGross = offer.pricing.mode === "INDEXED" && (offer.pricing.spread.lossTreatment === "GROSS_OF_LOSSES" || householdCode);
-    const indexOnly = (targets.has("ENERGY_INDEX") && !targets.has("SPREAD")) || spreadGross;
+  // A spread stated "al lordo delle perdite" already contains its share while the index still bears them (Tony, 28/10, BE
+  // Family Casa Protetta): the CTE then states losses on the index.
+  const indexLoss = targets.has("ENERGY_INDEX") || (offer.pricing.mode === "INDEXED" && offer.pricing.spread.lossTreatment === "GROSS_OF_LOSSES");
+  const priceNet = NET_LOSS_STATES.includes(String(priceLoss ?? "")) || targets.has("SPREAD");
+  if ((indexLoss || priceNet) && !lossesIncluded && !priced.has("LOSSES")) {
     const energy = target.filter((draft) => draft.category === "ENERGY" && ["EE_PUN_MWH_TO_KWH_PLUS_SPREAD", "EE_FIXED_PRICE_TIMES_KWH", "EE_SPREAD_TIMES_KWH"].includes(draft.formulaId));
     const base = energy.reduce((total, draft) => {
-      if (!indexOnly) return add(total, draft.value);
-      if (draft.formulaId !== "EE_PUN_MWH_TO_KWH_PLUS_SPREAD") return draft.formulaId === "EE_SPREAD_TIMES_KWH" ? total : add(total, draft.value);
-      return add(total, multiply(divide(fromNumber(Number(draft.formulaInputs.punEurPerMwh ?? 0)), fromNumber(1000)), fromNumber(Number(draft.formulaInputs.quantityKwh ?? 0))));
+      if (draft.formulaId === "EE_FIXED_PRICE_TIMES_KWH") return priceNet ? add(total, draft.value) : total;
+      if (draft.formulaId === "EE_SPREAD_TIMES_KWH") return priceNet ? add(total, draft.value) : total;
+      const quantity = fromNumber(Number(draft.formulaInputs.quantityKwh ?? 0));
+      const index = multiply(divide(fromNumber(Number(draft.formulaInputs.punEurPerMwh ?? 0)), fromNumber(1000)), quantity);
+      const spread = add(draft.value, multiply(index, fromNumber(-1)));
+      return add(add(total, indexLoss ? index : fromNumber(0)), priceNet ? spread : fromNumber(0));
     }, fromNumber(0));
-    if (energy.length) target.push({ componentId: "cte-pass-through:losses", category: "VARIABLE_FEE", label: "Perdite di rete", sign: "CHARGE", value: multiply(base, loss), formulaId: "CTE_PASS_THROUGH_LOSSES_ON_ENERGY", formulaInputs: { kind: "LOSSES", lossFactor: toDecimal(loss, 6), base: toDecimal(base, 6), spreadIncluded: !indexOnly, source: standard.source } });
+    coefficientNeeded = coefficientNeeded || energy.length > 0;
+    if (energy.length && loss) target.push({ componentId: "cte-pass-through:losses", category: "VARIABLE_FEE", label: "Perdite di rete", sign: "CHARGE", value: multiply(base, loss), formulaId: "CTE_PASS_THROUGH_LOSSES_ON_ENERGY", formulaInputs: { kind: "LOSSES", ...lossInputs, base: toDecimal(base, 6), indexIncluded: indexLoss, spreadIncluded: priceNet, source: coefficient?.source ?? "" } });
   }
-  // Tony (29/10, BPower BE SPECIAL 26, imbalance billed on 3.970 x 1,10 kWh): "solo se la CTE lo dice". Imbalance and
-  // per-kWh commercialization fees apply to the kWh with losses only when the CTE names them among the loss targets.
-  if (loss) for (let index = 0; index < target.length; index += 1) {
+  // Tony (29/10, BPower BE SPECIAL 26: "solo se la CTE lo dice"; 15/11 rule 6): imbalance and per-kWh seller fees apply to the
+  // kWh with losses when the CTE states that price "al netto delle perdite" or names it among the charges the Tabella 4
+  // factor increases; never when it states the price gross of losses or including them.
+  const feeLoss = new Map<string, string>([...offer.variableFees.map((fee) => [fee.feeId, String(fee.lossTreatment ?? "")] as const), ...(offer.imbalance.status === "DECLARED" ? [[offer.imbalance.component.feeId, String(offer.imbalance.component.lossTreatment ?? "")] as const] : [])]);
+  for (let index = 0; index < target.length; index += 1) {
     const draft = target[index];
-    const imbalance = draft.category === "IMBALANCE" && targets.has("IMBALANCE");
-    const commercialization = draft.category === "VARIABLE_FEE" && draft.formulaId === "FEE_RATE_TIMES_BASIS" && draft.formulaInputs.feeUnit === "EUR_PER_KWH" && /commercializ/i.test(`${draft.label} ${String(draft.formulaInputs.feeId ?? "")}`) && targets.has("COMMERCIALIZATION_FEE");
-    if (imbalance || commercialization) target[index] = { ...draft, value: grossUp(draft.value), formulaInputs: { ...draft.formulaInputs, lossFactor: toDecimal(loss, 6) } };
+    if (draft.formulaInputs.feeUnit !== "EUR_PER_KWH") continue;
+    const state = feeLoss.get(String(draft.formulaInputs.feeId ?? "")) ?? "";
+    if (LOSS_SETTLED_STATES.includes(state)) continue;
+    const imbalance = draft.category === "IMBALANCE" && draft.formulaId === "IMBALANCE_RATE_TIMES_BASIS" && (state === "NET_OF_LOSSES" || targets.has("IMBALANCE"));
+    const commercialization = draft.category === "VARIABLE_FEE" && draft.formulaId === "FEE_RATE_TIMES_BASIS" && (state === "NET_OF_LOSSES" || (targets.has("COMMERCIALIZATION_FEE") && /commercializ/i.test(`${draft.label} ${String(draft.formulaInputs.feeId ?? "")}`)));
+    if (!imbalance && !commercialization) continue;
+    coefficientNeeded = true;
+    if (loss) target[index] = { ...draft, value: multiply(draft.value, add(fromNumber(1), loss)), formulaInputs: { ...draft.formulaInputs, ...lossInputs, lossTreatment: state || "TARGET_OF_TABLE_4" } };
   }
   // Base di calcolo approvata da Tony (26/10): dispacciamento (TIDE) e mercato della capacità si prendono solo dai valori
   // ufficiali ARERA/Terna del periodo; il valore che la CTE scrive ("attualmente pari a") serve solo da controllo. Senza
@@ -259,28 +266,37 @@ function addCtePassThroughs(target: ComponentDraft[], request: ElectricitySimula
   const dispatchingStated = dispatching !== undefined || statedBy("DISPATCHING");
   if (!inCdispd && !dispatchingStated && !statedAway("DISPATCHING") && !priced.has("DISPATCHING")) missing.push("DISPATCHING:CTE_NOT_DETERMINABLE");
   if (!inCdispd && dispatchingStated && !priced.has("DISPATCHING")) {
-    // Customers other than households: Terna's quarterly TIDE dispatching charge, when the archive resolves none.
-    const terna = runtime?.dispatching?.value === undefined && !domestic ? ternaTideForPeriod(request.supplyPeriod.periodStart, request.supplyPeriod.periodEnd, tideQuarters) : null;
-    const official = runtime?.dispatching?.value ?? terna?.eurPerKwh;
-    if (official !== undefined && Number.isFinite(official) && official > 0) {
-      // TIDE charges apply to the energy withdrawn plus losses (TIS Tabella 4).
-      const unitRate = grossUp(fromNumber(official));
-      target.push({ componentId: "cte-pass-through:dispatching", category: "VARIABLE_FEE", label: "Dispacciamento", sign: "CHARGE", value: multiply(unitRate, totalQuantity), formulaId: "CTE_PASS_THROUGH_RATE_TIMES_KWH", formulaInputs: { kind: "DISPATCHING", feeUnit: "EUR_PER_KWH", feeRate: toDecimal(unitRate, 6), officialRate: official, lossFactor: loss ? toDecimal(loss, 6) : 0, basisQuantity: toDecimal(totalQuantity, 3), source: runtime?.dispatching?.officialIdentifier ?? (terna ? terna.quarters.map((item) => item.reference).join(", ") : "OFFICIAL") } });
-    } else missing.push("DISPATCHING:OFFICIAL_VALUE_MISSING");
+    // Customers other than households: Terna's quarterly TIDE dispatching charge of the billed period, published net of
+    // losses. An archived runtime value counts only when it covers the whole billed period and says it is net of losses.
+    const runtimeTide = periodRuntimeValue(runtime?.dispatching, request.supplyPeriod);
+    const fromRuntime = runtimeTide !== null && netOfLossesBasis(runtimeTide) ? runtimeTide : null;
+    const terna = fromRuntime === null && !domestic ? ternaTideForPeriod(request.supplyPeriod.periodStart, request.supplyPeriod.periodEnd, tideQuarters) : null;
+    const official = fromRuntime?.value ?? terna?.eurPerKwh;
+    // Tony (15/11, rule 6): grossed up only when the CTE increases dispatching by the Tabella 4 factor (Be Relax: "incrementati
+    // del fattore per tenere conto delle perdite ... Tabella 4, colonna A").
+    const grossed = targets.has("DISPATCHING") || /tabella\s*4/i.test(dispatching?.formula ?? "");
+    if (official === undefined || !Number.isFinite(official) || official <= 0) missing.push("DISPATCHING:OFFICIAL_VALUE_MISSING");
+    else if (grossed && !loss) { coefficientNeeded = true; missing.push("DISPATCHING:LOSS_COEFFICIENT_UNAVAILABLE"); }
+    else {
+      const unitRate = grossed && loss ? multiply(fromNumber(official), add(fromNumber(1), loss)) : fromNumber(official);
+      target.push({ componentId: "cte-pass-through:dispatching", category: "VARIABLE_FEE", label: "Dispacciamento", sign: "CHARGE", value: multiply(unitRate, totalQuantity), formulaId: "CTE_PASS_THROUGH_RATE_TIMES_KWH", formulaInputs: { kind: "DISPATCHING", feeUnit: "EUR_PER_KWH", feeRate: toDecimal(unitRate, 6), officialRate: official, ...(grossed ? lossInputs : noLoss), lossTreatment: grossed ? "CTE_TABLE_4_FACTOR" : "NOT_STATED_BY_CTE", basisQuantity: toDecimal(totalQuantity, 3), source: fromRuntime?.officialIdentifier ?? (terna ? terna.quarters.map((item) => item.reference).join(", ") : "OFFICIAL") } });
+    }
   }
   if (!priced.has("CAPACITY_MARKET")) {
     const period = request.supplyPeriod;
     const entries = (offer.capacityMarketSchedule ?? []).filter((entry) => entry.effectiveFrom < period.periodEnd && entry.effectiveTo > period.periodStart);
-    // Charges the CTE fixes itself (Capacity Market libero): the CTE's value, grossed up when "al lordo delle perdite".
+    // Charges the CTE fixes itself (Capacity Market libero), kept apart from the regulated charge (decision 3). Tony (15/11,
+    // decision 2): a value stated "al lordo delle perdite" already contains them and is never grossed up again; a value stated
+    // "al netto delle perdite" is; a value with no statement is applied as written.
     entries.filter((entry) => entry.mode === "FIXED_VALUE").forEach((entry, index) => {
       if (!Number.isFinite(entry.value) || entry.value <= 0) return;
-      const unitRate = entry.lossTreatment === "GROSS_OF_LOSSES" ? grossUp(fromNumber(entry.value)) : fromNumber(entry.value);
-      target.push({ componentId: `cte-pass-through:capacity-cte:${index}`, category: "VARIABLE_FEE", label: "Capacity market libero (da CTE)", sign: "CHARGE", value: multiply(unitRate, totalQuantity), formulaId: "CTE_PASS_THROUGH_RATE_TIMES_KWH", formulaInputs: { kind: "CAPACITY_MARKET", feeUnit: "EUR_PER_KWH", feeRate: toDecimal(unitRate, 6), basisQuantity: toDecimal(totalQuantity, 3), source: "CTE_STATED_VALUE" } });
+      const grossed = entry.lossTreatment === "NET_OF_LOSSES";
+      if (grossed && !loss) { coefficientNeeded = true; missing.push("CAPACITY_MARKET_LIBERO:LOSS_COEFFICIENT_UNAVAILABLE"); return; }
+      const unitRate = grossed && loss ? multiply(fromNumber(entry.value), add(fromNumber(1), loss)) : fromNumber(entry.value);
+      target.push({ componentId: `cte-pass-through:capacity-cte:${index}`, category: "VARIABLE_FEE", label: "Capacity market libero (da CTE)", sign: "CHARGE", value: multiply(unitRate, totalQuantity), formulaId: "CTE_PASS_THROUGH_RATE_TIMES_KWH", formulaInputs: { kind: "CAPACITY_MARKET", capacityNature: "CONTRACTUAL", feeUnit: "EUR_PER_KWH", feeRate: toDecimal(unitRate, 6), cteRate: entry.value, ...(grossed ? lossInputs : noLoss), lossTreatment: entry.lossTreatment, basisQuantity: toDecimal(totalQuantity, 3), source: "CTE_STATED_VALUE" } });
     });
-    // The regulated capacity charge (TIV comma 34.8 bis, Terna): published net of losses, so always grossed up. BT up to
-    // 55 kW: one monthly value on all kWh. BT above 55 kW, MT, AT: kWh in Terna's 500 peak hours x peak rate + the rest x
-    // off-peak rate, which needs the peak-hour kWh of the meter.
-    // Households: inside CDISPD, see above.
+    // The regulated capacity charge (TIV comma 34.8 bis): ARERA publishes it net of network losses, so it is grossed up once
+    // by the TIS Tabella 4 coefficient (Tony 15/11, decision 1). Households: inside CDISPD, see above.
     // Tony (30/10, AZIENDA PROTETTA: "credo ci siano errori ancora"): a CTE that fixes only its own Capacity Market libero is
     // silent on the regulated charge, which then applies as for any silent CTE (Tony 28/10), beside the CTE's own value.
     // A CTE stating capacity included in the energy price, or not applicable, adds none (Tony 28/10).
@@ -289,48 +305,40 @@ function addCtePassThroughs(target: ComponentDraft[], request: ElectricitySimula
     // A CTE silent on the regulated capacity charge (or stating only its own Capacity Market libero, V9): not determinable.
     else if (!capacityStated) missing.push("CAPACITY_MARKET:CTE_NOT_DETERMINABLE");
     else {
-      const powerKw = context?.availablePowerKw ?? context?.contractedPowerKw;
-      // Tony (1/11): "non si può non calcolare un dato che sfalsa la bolletta". A BT bill without power read: with the kWh of
-      // Terna's peak hours on the bill it is priced as above 55 kW (the bill bills it that way), otherwise as up to 55 kW, the
-      // monthly ARERA value on all kWh. The charge is never left out.
       // Tony (2/11, after the sample bills: "puoi leggere arera anzichè terna"): IREN (MT, 311 kW), Repower (BT, 152 kW),
-      // Hera and Plenitude all bill the monthly ARERA value (TIV art. 4.1, 0,3197 c€/kWh in September 2026) grossed up for
-      // the losses of their voltage; the Terna peak rate (0,065 €/kWh) on every kWh had priced Citrus about 5.000 € too high.
-      // So the monthly ARERA value applies to every non-household supply, whatever its power or voltage.
-      void peakEnergy; void powerKw; void ternaCapacity;
-      const smallLv = true;
-      // BT up to 55 kW: the monthly value ARERA fixes in the quarterly TIV update (art. 4.1), when the archive has none.
-      const arera = smallLv && runtime?.capacityMarket?.value === undefined ? areraCapacityForPeriod(period.periodStart, period.periodEnd, capacityMonths) : null;
-      const official = runtime?.capacityMarket?.value ?? arera?.eurPerKwh;
-      const officialSource = runtime?.capacityMarket?.officialIdentifier ?? (arera ? `ARERA ${arera.months.map((month) => month.resolution).join(", ")}` : "OFFICIAL");
-      const before = missing.length;
-      if (official === undefined || !Number.isFinite(official) || official <= 0) missing.push("CAPACITY_MARKET:OFFICIAL_VALUE_MISSING");
-      else {
-        const unitRate = grossUp(fromNumber(official));
-        target.push({ componentId: "cte-pass-through:capacity", category: "VARIABLE_FEE", label: "Mercato della capacità", sign: "CHARGE", value: multiply(unitRate, totalQuantity), formulaId: "CTE_PASS_THROUGH_RATE_TIMES_KWH", formulaInputs: { kind: "CAPACITY_MARKET", feeUnit: "EUR_PER_KWH", feeRate: toDecimal(unitRate, 6), officialRate: official, lossFactor: loss ? toDecimal(loss, 6) : 0, basisQuantity: toDecimal(totalQuantity, 3), source: officialSource } });
-      }
-      // Tony (1/11: "bisogna trovare da arera come già detto i valori standard, ma solitamente le aziende lo scrivono nella cte
-      // ... nella simulazione si scrive quello previsto nella cte"): when the archive has no official value for the period, the
-      // value the CTE states for the supply's voltage ("attualmente pari a 0,01349 Eur/kWh in bassa tensione") is applied,
-      // grossed up like the official one, so the charge is never left out.
-      // Tony (1/11, after Azienda Protetta came out cheaper than Be Smart with a higher spread: "bisogna trovare da arera come
-      // già detto i valori standard"): the regulated charge is the same for every offer, so the ARERA standard monthly value
-      // (TIV art. 4.1) comes first, for every CTE alike; the CTE's own printed value only when ARERA has none for the period.
-      const missingAt = missing.indexOf("CAPACITY_MARKET:OFFICIAL_VALUE_MISSING", before);
-      const standardArera = missingAt >= 0 ? areraCapacityForPeriod(period.periodStart, period.periodEnd, capacityMonths) : null;
-      const stated = missingAt >= 0 && !standardArera ? cteStatedCapacity(offer, request.voltageLevel, period.periodStart, period.periodEnd) : null;
-      if (standardArera) {
-        missing.splice(missingAt, 1);
-        const unitRate = grossUp(fromNumber(standardArera.eurPerKwh));
-        target.push({ componentId: "cte-pass-through:capacity-arera-standard", category: "VARIABLE_FEE", label: "Mercato della capacità (valore standard ARERA)", sign: "CHARGE", value: multiply(unitRate, totalQuantity), formulaId: "CTE_PASS_THROUGH_RATE_TIMES_KWH", formulaInputs: { kind: "CAPACITY_MARKET", feeUnit: "EUR_PER_KWH", feeRate: toDecimal(unitRate, 6), officialRate: standardArera.eurPerKwh, lossFactor: loss ? toDecimal(loss, 6) : 0, basisQuantity: toDecimal(totalQuantity, 3), source: `ARERA ${standardArera.months.map((month) => month.resolution).join(", ")}` } });
-      } else if (stated) {
-        missing.splice(missingAt, 1);
-        const unitRate = stated.lossTreatment === "GROSS_OF_LOSSES" ? fromNumber(stated.value) : grossUp(fromNumber(stated.value));
-        target.push({ componentId: "cte-pass-through:capacity-cte-stated", category: "VARIABLE_FEE", label: "Mercato della capacità (valore indicato nella CTE)", sign: "CHARGE", value: multiply(unitRate, totalQuantity), formulaId: "CTE_PASS_THROUGH_RATE_TIMES_KWH", formulaInputs: { kind: "CAPACITY_MARKET", feeUnit: "EUR_PER_KWH", feeRate: toDecimal(unitRate, 6), officialRate: stated.value, lossFactor: loss ? toDecimal(loss, 6) : 0, basisQuantity: toDecimal(totalQuantity, 3), source: "CTE_REGULATED_SNAPSHOT" } });
+      // Hera and Plenitude all bill the monthly ARERA value (TIV art. 4.1) grossed up for the losses of their voltage, so the
+      // monthly ARERA value of the billed months applies to every non-household supply, whatever its power or voltage.
+      void peakEnergy; void ternaCapacity;
+      const runtimeCapacity = periodRuntimeValue(runtime?.capacityMarket, period);
+      const fromRuntime = runtimeCapacity !== null && netOfLossesBasis(runtimeCapacity) ? runtimeCapacity : null;
+      // ARERA TIV art. 4.1 monthly values (archive records "...:art.4.1:..." or the hand-checked table): net of losses by
+      // definition of the source (TIV comma 34.8 bis, values applied with TIS Tabella 4).
+      const arera = fromRuntime === null ? areraCapacityForPeriod(period.periodStart, period.periodEnd, capacityMonths) : null;
+      const official = fromRuntime?.value ?? arera?.eurPerKwh;
+      const officialSource = fromRuntime?.officialIdentifier ?? (arera ? `ARERA ${arera.months.map((month) => month.resolution).join(", ")}` : "OFFICIAL");
+      if (official !== undefined && Number.isFinite(official) && official > 0) {
+        if (!loss) { coefficientNeeded = true; missing.push("CAPACITY_MARKET:LOSS_COEFFICIENT_UNAVAILABLE"); }
+        else {
+          const unitRate = multiply(fromNumber(official), add(fromNumber(1), loss));
+          target.push({ componentId: "cte-pass-through:capacity", category: "VARIABLE_FEE", label: "Mercato della capacità", sign: "CHARGE", value: multiply(unitRate, totalQuantity), formulaId: "CTE_PASS_THROUGH_RATE_TIMES_KWH", formulaInputs: { kind: "CAPACITY_MARKET", capacityNature: "REGULATED", feeUnit: "EUR_PER_KWH", feeRate: toDecimal(unitRate, 6), officialRate: official, ...lossInputs, lossTreatment: "OFFICIAL_NET_OF_LOSSES", basisQuantity: toDecimal(totalQuantity, 3), source: officialSource } });
+        }
+      } else {
+        // Tony (1/11): when ARERA has no value for the billed period, the value the CTE prints for the supply's voltage. Tony
+        // (15/11, rule 4): it is grossed up only when the CTE states it net of losses, kept as is when stated gross, and not
+        // priced when the CTE does not say which (a factor is never applied to a value not known to be net).
+        const stated = cteStatedCapacity(offer, request.voltageLevel, period.periodStart, period.periodEnd);
+        if (!stated) missing.push("CAPACITY_MARKET:OFFICIAL_VALUE_MISSING");
+        else if (stated.lossTreatment !== "GROSS_OF_LOSSES" && stated.lossTreatment !== "NET_OF_LOSSES") missing.push("CAPACITY_MARKET:NET_BASIS_UNVERIFIED");
+        else if (stated.lossTreatment === "NET_OF_LOSSES" && !loss) { coefficientNeeded = true; missing.push("CAPACITY_MARKET:LOSS_COEFFICIENT_UNAVAILABLE"); }
+        else {
+          const grossed = stated.lossTreatment === "NET_OF_LOSSES";
+          const unitRate = grossed && loss ? multiply(fromNumber(stated.value), add(fromNumber(1), loss)) : fromNumber(stated.value);
+          target.push({ componentId: "cte-pass-through:capacity-cte-stated", category: "VARIABLE_FEE", label: "Mercato della capacità (valore indicato nella CTE)", sign: "CHARGE", value: multiply(unitRate, totalQuantity), formulaId: "CTE_PASS_THROUGH_RATE_TIMES_KWH", formulaInputs: { kind: "CAPACITY_MARKET", capacityNature: "REGULATED", feeUnit: "EUR_PER_KWH", feeRate: toDecimal(unitRate, 6), officialRate: stated.value, ...(grossed ? lossInputs : noLoss), lossTreatment: stated.lossTreatment, basisQuantity: toDecimal(totalQuantity, 3), source: "CTE_REGULATED_SNAPSHOT" } });
+        }
       }
     }
   }
-  if (!loss) missing.push("LOSSES:OFFICIAL_VALUE_MISSING");
+  if (coefficientNeeded && !loss) missing.push("LOSSES:TIS_TABLE_4_NOT_VERIFIED_FOR_PERIOD");
 }
 
 /** The regulated capacity value the CTE prints for the supply's voltage (all hours), used when the archive has none. */
@@ -564,12 +572,17 @@ export async function calculatePreparedOffer(request: SimulationRequest, prepare
     // The CTE's official pass-through values (capacity, dispatching, losses): on a competitor bill they are priced below
     // (official value when resolved, else the value the CTE states), and a missing official value no longer drops the offer.
     try {
-      cteRuntime = await resolveCteRegulatoryRuntime(prepared.version.contract, { tenantId: request.tenantId, effectiveAt: request.calculationDate, customerScope: dependencies.trustedElectricityContext?.regulatoryCustomerScope ?? "ALL_ELECTRICITY", voltageLevel: request.voltageLevel }, dependencies.regulatoryRuntimeResolver);
+      // Tony (15/11, rule 7): the official values of the billed period, never those of the day of the calculation.
+      cteRuntime = await resolveCteRegulatoryRuntime(prepared.version.contract, { tenantId: request.tenantId, effectiveAt: request.supplyPeriod.periodStart.slice(0, 10), customerScope: dependencies.trustedElectricityContext?.regulatoryCustomerScope ?? "ALL_ELECTRICITY", voltageLevel: request.voltageLevel }, dependencies.regulatoryRuntimeResolver);
     } catch (error) {
       if (!request.sourceBill) throw error;
       cteRuntime = null;
     }
-    if (cteRuntime && !cteRuntime.ready && !request.sourceBill) throw new CalculationEngineError(cteRuntime.blockers[0] ?? "REGULATORY_RUNTIME_VALUE_MISSING");
+    // The loss coefficient is the typed TIS Tabella 4 percentage (network-losses.ts), not an archived record: a CTE that
+    // refers to Tabella 4 is ready when the table covers the billed period and voltage.
+    const lossCovered = tisTable4LossCoefficient(request.voltageLevel, request.supplyPeriod.periodStart, request.supplyPeriod.periodEnd) !== null;
+    const blockers = (cteRuntime?.blockers ?? []).filter((blocker) => !(lossCovered && blocker === "LOSS_REGULATORY_VALUE_MISSING"));
+    if (cteRuntime && blockers.length > 0 && !request.sourceBill) throw new CalculationEngineError(blockers[0] ?? "REGULATORY_RUNTIME_VALUE_MISSING");
   }
   let regulated: Awaited<ReturnType<typeof calculateRegulatedEeSubset>> | null = null;
   let regulatedMissingReason = dependencies.regulatedUnavailableReason ?? "CONTEXT_MISSING";

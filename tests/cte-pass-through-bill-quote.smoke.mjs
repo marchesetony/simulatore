@@ -34,7 +34,7 @@ const prepared = {
 // Base di calcolo approvata da Tony (26/10): dispacciamento e capacity solo dai valori ufficiali ARERA/Terna del periodo,
 // maggiorati delle perdite (TIS Tabella 4: BT 10%); il valore scritto nella CTE serve solo da controllo.
 prepared.version.contract.commercialTerms = { dispatchingReference: prepared.offer.dispatchingReference, capacityMarketSchedule: prepared.offer.capacityMarketSchedule };
-const officialValue = (kind, value) => ({ kind, value, unit: "EUR/KWH", authority: "ARERA", officialIdentifier: `official-${kind}`, sourceReference: "https://www.arera.it/", effectiveFrom: "2026-07-01", effectiveTo: null, recordId: kind, recordVersion: "1", provenance: { sourceSha256: "a".repeat(64), checksum: "c", applicationBasis: "test" } });
+const officialValue = (kind, value) => ({ kind, value, unit: "EUR/KWH", authority: "ARERA", officialIdentifier: `official-${kind}`, sourceReference: "https://www.arera.it/", effectiveFrom: "2026-07-01", effectiveTo: null, recordId: kind, recordVersion: "1", provenance: { sourceSha256: "a".repeat(64), checksum: "c", applicationBasis: "valore ufficiale al netto delle perdite (TIS Tabella 4)" } });
 const resolver = (dispatching, capacity) => ({ resolveDispatching: async () => dispatching === null ? null : officialValue("DISPATCHING", dispatching), resolveCapacity: async () => capacity === null ? null : officialValue("CAPACITY_MARKET", capacity), resolveLoss: async () => null });
 const context = (availablePowerKw) => ({ vector: "EE", contractedPowerKw: availablePowerKw, availablePowerKw, supplyUseCategory: "NON_DOMESTIC", domesticResidenceStatus: "NOT_APPLICABLE", voltageLevel: "LV", regulatoryCustomerScope: "NON_DOMESTIC_BT", asosClass: "UNKNOWN", energyIntensiveStatus: "UNKNOWN", asosClassTemporalStatus: "UNKNOWN" });
 const deps = (dispatching, capacity, power) => ({ regulatoryRuntimeResolver: resolver(dispatching, capacity), regulatoryBridge: { list: async () => [] }, ...(power === undefined ? {} : { trustedElectricityContext: context(power) }) });
@@ -43,15 +43,23 @@ const byKind = (result, kind) => result.components.filter((component) => compone
 // 1.000 kWh: dispatching 0,0105 x 1,10 = 11,55; capacity BT up to 55 kW 0,004275 x 1,10 = 4,70; Capacity Market libero is the CTE's own charge, 5.
 assert.deepEqual(byKind(quote, "DISPATCHING"), [11.55]);
 assert.deepEqual(byKind(quote, "CAPACITY_MARKET"), [5, 4.7]);
-// Losses: 1.000 kWh x 0,1 EUR x 10% = 10 EUR, always present (Tony, 26/10).
-assert.deepEqual(byKind(quote, "LOSSES"), [10], "BT standard losses 10% of the energy cost");
+// Tony (15/11/2026, rule 5: "non applicare perdite a PUN o spread quando non previste dalla formula contrattuale"): this CTE
+// increases only dispatching by the Tabella 4 factor, so its energy price carries no losses (the 26/10 rule "always present"
+// is superseded). A fixed price stated "al netto delle perdite" is grossed up: 1.000 kWh x 0,1 EUR x 10% = 10 EUR.
+assert.deepEqual(byKind(quote, "LOSSES"), [], "no losses on an energy price the CTE does not state net of losses");
+const netPrice = structuredClone(prepared); netPrice.offer.pricing.fixedPrice.lossTreatment = "NET_OF_LOSSES";
+assert.deepEqual(byKind(await calculatePreparedOffer(request(true), netPrice, deps(0.0105, 0.004275, 30)), "LOSSES"), [10], "BT standard losses 10% of a price stated net of losses");
+// Tony (15/11, rule 4): an archived value whose basis does not say it is net of losses is never grossed up: the monthly
+// ARERA value of the billed month applies instead (settembre 2026 0,3197 c€/kWh x 1,10 x 1.000 kWh = 3,52).
+const unverified = (dispatching, capacity) => ({ ...deps(dispatching, capacity, 30), regulatoryRuntimeResolver: { resolveDispatching: async () => ({ ...officialValue("DISPATCHING", dispatching), provenance: { sourceSha256: "a".repeat(64), checksum: "c", applicationBasis: "test" } }), resolveCapacity: async () => ({ ...officialValue("CAPACITY_MARKET", capacity), provenance: { sourceSha256: "a".repeat(64), checksum: "c", applicationBasis: "test" } }), resolveLoss: async () => null } });
+assert.deepEqual(byKind(await calculatePreparedOffer(request(true), prepared, unverified(0.0105, 0.004275)), "CAPACITY_MARKET"), [5, 3.52]);
 // Tony (3/11): "senza applicazione automatica del 10% quando la CTE tace": the same CTE without the losses paragraph prices
 // none and says the losses are not determinable.
 const silentLosses = structuredClone(prepared); delete silentLosses.offer.lossReference;
 const silentLossQuote = await calculatePreparedOffer(request(true), silentLosses, deps(0.0105, 0.004275, 30));
 assert.deepEqual(byKind(silentLossQuote, "LOSSES"), []);
 assert.ok(silentLossQuote.warnings.includes("OFFICIAL_VALUE_MISSING:LOSSES:CTE_NOT_DETERMINABLE"), silentLossQuote.warnings.join(","));
-assert.equal(quote.totalCommercialCost.amount, 100 + 10 + 11.55 + 5 + 4.7);
+assert.equal(quote.totalCommercialCost.amount, 100 + 11.55 + 5 + 4.7);
 // The stub has no ARERA tables for business BT: only that reason remains, so the receipt can say why (Tony, 27/10).
 assert.deepEqual(quote.warnings.filter((warning) => warning.startsWith("OFFICIAL_VALUE_MISSING")), ["OFFICIAL_VALUE_MISSING:REGULATED:SCOPE_UNREGISTERED_NON_DOMESTIC_BT"]);
 // Without official values nothing is estimated from the CTE's "attualmente pari a": the reason goes in the warnings.
@@ -88,14 +96,19 @@ assert.ok(noStatedQuote.warnings.includes("OFFICIAL_VALUE_MISSING:CAPACITY_MARKE
 const unknown = await calculatePreparedOffer(request(true), prepared, deps(0.0105, 0.004275));
 assert.ok(!unknown.warnings.includes("OFFICIAL_VALUE_MISSING:CAPACITY_MARKET:AVAILABLE_POWER_MISSING"));
 assert.deepEqual(byKind(unknown, "CAPACITY_MARKET"), [5, 4.7]);
-// Capacity Market libero "al lordo delle perdite di rete" is applied to the energy plus losses: 0,005 x 1,10.
+// Tony (15/11/2026, decision 2): a Capacity Market libero stated "al lordo delle perdite di rete" already contains them and is
+// never grossed up again (5); one stated "al netto delle perdite" is (0,005 x 1,10 = 5,50). The regulated charge beside it
+// is grossed up once (decision 1).
 const gross = structuredClone(prepared);
 gross.offer.capacityMarketSchedule[2].lossTreatment = "GROSS_OF_LOSSES";
 const grossQuote = await calculatePreparedOffer(request(true), gross, deps(0.0105, 0.004275, 30));
-assert.deepEqual(byKind(grossQuote, "CAPACITY_MARKET"), [5.5, 4.7]);
-// MT supply: TIS Tabella 4 colonna A gives 3,8%.
+assert.deepEqual(byKind(grossQuote, "CAPACITY_MARKET"), [5, 4.7]);
+const net = structuredClone(prepared);
+net.offer.capacityMarketSchedule[2].lossTreatment = "NET_OF_LOSSES";
+assert.deepEqual(byKind(await calculatePreparedOffer(request(true), net, deps(0.0105, 0.004275, 30)), "CAPACITY_MARKET"), [5.5, 4.7]);
+// MT supply: TIS Tabella 4 colonna A gives 3,8% (on a price stated net of losses, rule 5).
 const mvRequest = parseSimulationRequest({ ...JSON.parse(JSON.stringify(request(true))), voltageLevel: "MV" }, tenant);
-const mv = await calculatePreparedOffer(mvRequest, structuredClone(prepared)).catch((error) => error);
+const mv = await calculatePreparedOffer(mvRequest, structuredClone(netPrice)).catch((error) => error);
 assert.ok(!(mv instanceof Error), String(mv?.message)); assert.deepEqual(byKind(mv, "LOSSES"), [3.8]);
 // Outside a bill quote the engine behaves as before: no CTE pass-through is added.
 const plainPrepared = structuredClone(prepared); plainPrepared.version.contract.commercialTerms = {};
@@ -132,13 +145,17 @@ assert.equal(imbalanceSilentQuote.components.filter((component) => component.cat
 const indexedLoss = (lossTreatment) => { const offer = structuredClone(prepared); offer.offer.pricing = { mode: "INDEXED", reference: "PUN", spread: { amount: 0.03, currency: "EUR", unit: "EUR_PER_KWH", taxTreatment: "EXCLUDED", ...(lossTreatment ? { lossTreatment } : {}) } }; offer.markets = [{ month: "2026-09", record: { vector: "EE", f1: { value: 100 }, f2: { value: 100 }, f3: { value: 100 } } }]; return offer; };
 const lossOf = async (offer) => Number((await calculatePreparedOffer(request(true), offer, deps(0.0105, 0.004275, 3))).components.find((component) => component.formulaInputs?.kind === "LOSSES")?.amount.amount);
 assert.equal(await lossOf(indexedLoss("GROSS_OF_LOSSES")), 10);
-assert.equal(await lossOf(indexedLoss()), 13);
-// Tony (29/10): "nello spread del consumer deve esserci dentro anche sbilanciamento e commercializzazione" (delibera
-// 386/2025/R/com, Codice di condotta commerciale art. 5.1.a: corrispettivi "al lordo delle perdite di rete"). A household
-// offer from 1 April 2026 has its losses on the PUN alone even when the reading did not mark the spread as gross.
+// Tony (15/11/2026, rule 5): a CTE that increases only dispatching by the Tabella 4 factor and says nothing on its spread
+// prices no losses on PUN or spread (it had been 13 €: losses on index and spread).
+assert.ok(Number.isNaN(await lossOf(indexedLoss())), "no losses on PUN and spread the CTE does not state");
+// Tony (9/11: losses "decided only by the CTE wording, never by customer type or date"; 15/11, rule 5): a household offer
+// from 1 April 2026 no longer takes losses on the PUN by the 386/2025 shortcut when its CTE does not state them; with the
+// spread stated "al lordo delle perdite" the PUN bears them (10 € on 100 € of index).
 const household = { ...context(3), supplyUseCategory: "DOMESTIC", domesticResidenceStatus: "NON_RESIDENT", regulatoryCustomerScope: "DOMESTIC_NON_RESIDENT_BT" };
 const householdLoss = await calculatePreparedOffer(request(true), indexedLoss(), { ...deps(0.0105, 0.004275, 3), trustedElectricityContext: household });
-assert.equal(Number(householdLoss.components.find((component) => component.formulaInputs?.kind === "LOSSES")?.amount.amount), 10);
+assert.equal(householdLoss.components.some((component) => component.formulaInputs?.kind === "LOSSES"), false);
+const householdGross = await calculatePreparedOffer(request(true), indexedLoss("GROSS_OF_LOSSES"), { ...deps(0.0105, 0.004275, 3), trustedElectricityContext: household });
+assert.equal(Number(householdGross.components.find((component) => component.formulaInputs?.kind === "LOSSES")?.amount.amount), 10);
 // Tony (29/10): "lo spread 0,03 è comprensivo di quello che prevede la norma". Imbalance or commercialization read apart in
 // a household CTE from 1 April 2026 is inside the spread, never a second charge.
 const feeOf = (feeId, label, amount) => ({ feeId, label, amount, currency: "EUR", unit: "EUR_PER_KWH", taxTreatment: "EXCLUDED" });
