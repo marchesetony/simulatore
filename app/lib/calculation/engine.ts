@@ -177,7 +177,6 @@ function addPassThroughComponents(target: ComponentDraft[], offer: CalculationRe
 // Each charge is grossed up only when the CTE says so for that price (stated "al netto delle perdite", or named among the
 // charges increased by the Tabella 4 factor) or, for the regulated capacity charge, because the official value is published
 // net of losses (decision 1). A price stated "al lordo delle perdite" is never grossed up again (decision 2).
-const NET_LOSS_STATES: readonly string[] = ["NET_OF_LOSSES", "OFFICIAL_REFERENCE"];
 const LOSS_SETTLED_STATES: readonly string[] = ["GROSS_OF_LOSSES", "INCLUDED", "EXCLUDED"];
 /** An official runtime value usable for the whole billed period, published net of losses. */
 function periodRuntimeValue(value: ResolvedOfficialRuntimeValue | null | undefined, period: ElectricitySimulationRequest["supplyPeriod"]): ResolvedOfficialRuntimeValue | null {
@@ -195,29 +194,45 @@ function addCtePassThroughs(target: ComponentDraft[], request: ElectricitySimula
   const noLoss: Readonly<Record<string, string | number>> = { lossFactor: 0 };
   const targets = new Set(offer.lossReference?.applicationTargets ?? []);
   let coefficientNeeded = false;
-  // Tony (3/11, Atlante delle voci): "senza applicazione automatica del 10% quando la CTE tace"; Tony (15/11, rule 5): no
-  // losses on PUN or spread unless the contract formula provides them. Only the parts of the energy price the CTE names
-  // are grossed up: the index when it names the index, the spread or the fixed price when stated net of losses.
+  // Tony (15/11/2026, "Correzione definitiva perdite sull'energia", replacing the Atlante 3/11 "non determinabile" and the
+  // 15/11 rule 5 on the energy price): the energy price (PUN + spread, or the fixed price) bears the TIS Tabella 4 losses
+  // unless the CTE says they are already in it. Stated "al lordo delle perdite" or "comprese": nothing is added. Stated "al
+  // netto", or not stated at all: the price is net and the conventional coefficient of the period and voltage is applied,
+  // band by band (F1, F2, F3) and month by month, on the same kWh. A spread stated gross keeps its own share while the
+  // index still bears the losses (Tony, 28/10, BE Family Casa Protetta). Losses priced by the contract formula are never
+  // added twice. Commercializzazione, sbilanciamento, dispacciamento and Capacity Market keep their own rules below.
   const priceLoss = offer.pricing.mode === "INDEXED" ? offer.pricing.spread.lossTreatment : offer.pricing.mode === "FIXED" ? offer.pricing.fixedPrice?.lossTreatment : undefined;
-  const lossesIncluded = priceLoss === "INCLUDED";
-  const lossesStated = offer.lossReference !== undefined || offer.lossSemantics !== undefined || ["NET_OF_LOSSES", "GROSS_OF_LOSSES", "OFFICIAL_REFERENCE"].includes(String(priceLoss ?? ""));
-  if (!lossesStated && !lossesIncluded && !priced.has("LOSSES")) missing.push("LOSSES:CTE_NOT_DETERMINABLE");
-  // A spread stated "al lordo delle perdite" already contains its share while the index still bears them (Tony, 28/10, BE
-  // Family Casa Protetta): the CTE then states losses on the index.
-  const indexLoss = targets.has("ENERGY_INDEX") || (offer.pricing.mode === "INDEXED" && offer.pricing.spread.lossTreatment === "GROSS_OF_LOSSES");
-  const priceNet = NET_LOSS_STATES.includes(String(priceLoss ?? "")) || targets.has("SPREAD");
-  if ((indexLoss || priceNet) && !lossesIncluded && !priced.has("LOSSES")) {
+  const priceState = String(priceLoss ?? "");
+  const priceGross = priceState === "INCLUDED" || priceState === "GROSS_OF_LOSSES";
+  const energyBasis = priceState === "" || priceState === "NOT_DECLARED" ? "NOT_STATED_PRICE_NET" : priceGross ? "PRICE_GROSS_OF_LOSSES" : "PRICE_NET_OF_LOSSES";
+  // The index bears the losses unless the whole price includes them; the spread or the fixed price only when not stated gross.
+  const indexLoss = priceState !== "INCLUDED" && !(offer.pricing.mode === "FIXED" && priceGross);
+  const priceNet = !priceGross;
+  if (!priced.has("LOSSES") && (indexLoss || priceNet)) {
     const energy = target.filter((draft) => draft.category === "ENERGY" && ["EE_PUN_MWH_TO_KWH_PLUS_SPREAD", "EE_FIXED_PRICE_TIMES_KWH", "EE_SPREAD_TIMES_KWH"].includes(draft.formulaId));
-    const base = energy.reduce((total, draft) => {
-      if (draft.formulaId === "EE_FIXED_PRICE_TIMES_KWH") return priceNet ? add(total, draft.value) : total;
-      if (draft.formulaId === "EE_SPREAD_TIMES_KWH") return priceNet ? add(total, draft.value) : total;
-      const quantity = fromNumber(Number(draft.formulaInputs.quantityKwh ?? 0));
-      const index = multiply(divide(fromNumber(Number(draft.formulaInputs.punEurPerMwh ?? 0)), fromNumber(1000)), quantity);
-      const spread = add(draft.value, multiply(index, fromNumber(-1)));
-      return add(add(total, indexLoss ? index : fromNumber(0)), priceNet ? spread : fromNumber(0));
-    }, fromNumber(0));
-    coefficientNeeded = coefficientNeeded || energy.length > 0;
-    if (energy.length && loss) target.push({ componentId: "cte-pass-through:losses", category: "VARIABLE_FEE", label: "Perdite di rete", sign: "CHARGE", value: multiply(base, loss), formulaId: "CTE_PASS_THROUGH_LOSSES_ON_ENERGY", formulaInputs: { kind: "LOSSES", ...lossInputs, base: toDecimal(base, 6), indexIncluded: indexLoss, spreadIncluded: priceNet, source: coefficient?.source ?? "" } });
+    const quantityOf = (value: unknown) => fromNumber(Number(value ?? 0));
+    const lines: { readonly id: string; readonly label: string; readonly kwh: Rational; readonly unit: Rational; readonly inputs: Readonly<Record<string, string | number>> }[] = [];
+    for (const draft of energy) {
+      if (draft.formulaId === "EE_PUN_MWH_TO_KWH_PLUS_SPREAD") {
+        const kwh = quantityOf(draft.formulaInputs.quantityKwh);
+        const index = divide(fromNumber(Number(draft.formulaInputs.punEurPerMwh ?? 0)), fromNumber(1000));
+        const spread = fromNumber(Number(draft.formulaInputs.spreadPerKwh ?? 0));
+        const unit = add(indexLoss ? index : fromNumber(0), priceNet ? spread : fromNumber(0));
+        lines.push({ id: `${String(draft.formulaInputs.month)}:${String(draft.formulaInputs.band).toLowerCase()}`, label: `Perdite di rete ${String(draft.formulaInputs.band)} ${String(draft.formulaInputs.month)}`, kwh, unit, inputs: { band: String(draft.formulaInputs.band), month: String(draft.formulaInputs.month), punEurPerMwh: Number(draft.formulaInputs.punEurPerMwh ?? 0), spreadPerKwh: Number(draft.formulaInputs.spreadPerKwh ?? 0), indexIncluded: indexLoss ? 1 : 0, spreadIncluded: priceNet ? 1 : 0 } });
+      } else if (priceNet && draft.formulaId === "EE_FIXED_PRICE_TIMES_KWH") {
+        const price = fromNumber(Number(draft.formulaInputs.pricePerKwh ?? 0));
+        (["f1Kwh", "f2Kwh", "f3Kwh"] as const).forEach((key, band) => { const kwh = quantityOf(draft.formulaInputs[key]); if (kwh.numerator !== BigInt(0)) lines.push({ id: `fixed:f${band + 1}`, label: `Perdite di rete F${band + 1} (prezzo fisso)`, kwh, unit: price, inputs: { band: `F${band + 1}`, pricePerKwh: Number(draft.formulaInputs.pricePerKwh ?? 0) } }); });
+      } else if (priceNet && draft.formulaId === "EE_SPREAD_TIMES_KWH") {
+        lines.push({ id: "fixed:spread", label: "Perdite di rete (spread)", kwh: quantityOf(draft.formulaInputs.totalKwh), unit: fromNumber(Number(draft.formulaInputs.spreadPerKwh ?? 0)), inputs: { spreadPerKwh: Number(draft.formulaInputs.spreadPerKwh ?? 0) } });
+      }
+    }
+    if (lines.length) coefficientNeeded = true;
+    // Full precision: the kWh of losses (kWh x coefficient) are not rounded; each line is rounded to the cent like every
+    // other component. Bills may print the loss kWh rounded to the unit (BPower), which the bill comparison shows.
+    if (loss) for (const line of lines) {
+      const lossKwh = multiply(line.kwh, loss);
+      target.push({ componentId: `cte-pass-through:losses:${line.id}`, category: "VARIABLE_FEE", label: line.label, sign: "CHARGE", value: multiply(lossKwh, line.unit), formulaId: "CTE_PASS_THROUGH_LOSSES_ON_ENERGY", formulaInputs: { kind: "LOSSES", ...lossInputs, ...line.inputs, quantityKwh: toDecimal(line.kwh, 6), lossKwh: toDecimal(lossKwh, 6), unitPricePerKwh: toDecimal(line.unit, 6), base: toDecimal(multiply(line.kwh, line.unit), 6), lossTreatment: energyBasis, source: coefficient?.source ?? "" } });
+    }
   }
   // Tony (29/10, BPower BE SPECIAL 26: "solo se la CTE lo dice"; 15/11 rule 6): imbalance and per-kWh seller fees apply to the
   // kWh with losses when the CTE states that price "al netto delle perdite" or names it among the charges the Tabella 4

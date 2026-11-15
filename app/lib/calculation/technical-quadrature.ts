@@ -19,6 +19,10 @@ export function provenanceOf(component: Component, asosBasis: AsosBasis | null =
   const losses = typeof inputs.lossFactor === "number" && inputs.lossFactor > 0 ? { kind: "TIS" as const, detail: `perdite ${text(inputs.lossPercent) || Math.round(inputs.lossFactor * 100)}%: ${text(inputs.lossSource) || "TIS Tabella 4"}` } : null;
   const withLosses = (kinds: readonly ProvenanceKind[], detail: string): ComponentProvenance => losses ? { kinds: [...kinds, "TIS"], detail: `${detail}; ${losses.detail}` } : { kinds, detail };
   const id = component.formulaId;
+  if (id === "CTE_PASS_THROUGH_LOSSES_ON_ENERGY") {
+    const kinds: ProvenanceKind[] = Number(inputs.punEurPerMwh ?? 0) > 0 && Number(inputs.indexIncluded ?? 0) ? ["GME", "CTE", "TIS"] : ["CTE", "TIS"];
+    return { kinds, detail: `perdite sull'energia ${text(inputs.band)} ${text(inputs.month)}: ${text(inputs.lossKwh)} kWh × ${text(inputs.unitPricePerKwh)} €/kWh; ${text(inputs.lossSource) || "TIS Tabella 4"}`.replace(/\s+:/, ":") };
+  }
   if (id === "EE_PUN_MWH_TO_KWH_PLUS_SPREAD") return { kinds: ["GME", "CTE"], detail: `PUN ${text(inputs.band)} ${text(inputs.month)} (${text(inputs.marketRecordId) || "GME"}) + spread della CTE` };
   if (id.startsWith("GAS_PSV")) return { kinds: ["MERCATO", "CTE"], detail: `PSV ${text(inputs.month)} + spread della CTE` };
   if (id === "CTE_PASS_THROUGH_RATE_TIMES_KWH") {

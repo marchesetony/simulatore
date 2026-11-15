@@ -9,7 +9,8 @@ import { ProductionCteRegulatoryRuntimeResolver } from "../app/lib/calculation/r
 // a 0,34% loss factor. Decisions: (1) the regulated capacity charge (TIV 34.8 bis), published net of losses, is grossed up
 // once by the BT 10% of TIS Tabella 4; (2) a Capacity Market libero stated "al lordo delle perdite" is not grossed up again;
 // (3) the two stay separate. Losses apply to dispatching, imbalance and commercialization only as the CTE states for each
-// price, never to PUN or spread the formula does not name, with the values of the billed month. Synthetic data only, shaped
+// price, with the values of the billed month. The energy price bears them unless the CTE says they are already in it (Tony
+// 15/11/2026, "Correzione definitiva perdite sull'energia"). Synthetic data only, shaped
 // on the Be Relax 06.25 wording (October 2026, 10 kWh BT).
 const tenant = "tenant_network-losses-capacity";
 const request = ({ sourceBill = true, calculationDate = "2026-11-14", periodStart = "2026-10-01", periodEnd = "2026-11-01", voltageLevel = "LV" } = {}) => parseSimulationRequest({
@@ -105,24 +106,32 @@ const grossFeesQuote = await calculatePreparedOffer(request(), grossFees, deps()
 assert.equal(line(grossFeesQuote, (component) => component.category === "IMBALANCE")[0].formulaInputs.lossFactor, undefined);
 assert.equal(line(grossFeesQuote, (component) => component.formulaInputs?.feeId === "relax-variable")[0].formulaInputs.lossFactor, undefined);
 
-// PUN and spread: the CTE does not state losses on them, so there is no losses line. 2,61 of energy only.
-assert.deepEqual(amountOf(quote, (component) => component.formulaInputs?.kind === "LOSSES"), []);
-assert.deepEqual(amountOf(quote, (component) => component.category === "ENERGY"), [0.78, 1.11, 0.72]);
-// Only when the CTE names the index are its losses priced: 2,35637 € of PUN x 10% = 0,24.
-const indexed = prepared(); indexed.offer.lossReference = { ...lossReference, applicationTargets: [...lossReference.applicationTargets, "ENERGY_INDEX"] };
-const indexedLosses = line(await calculatePreparedOffer(request(), indexed, deps()), (component) => component.formulaInputs?.kind === "LOSSES");
-assert.deepEqual(indexedLosses.map((component) => component.amount.amount), [0.24]);
-assert.equal(indexedLosses[0].formulaInputs.spreadIncluded, false);
+// Tony (15/11/2026, "Correzione definitiva perdite sull'energia", replacing rule 5 of the same day): the CTE does not say
+// the losses are in the energy price, so PUN + spread is net and bears the BT 10%, band by band on the same kWh:
+// F1 3 x 0,25839 x 10% = 0,0775 -> 0,08; F2 4 x 0,27714 x 10% = 0,1109 -> 0,11; F3 3 x 0,24088 x 10% = 0,0723 -> 0,07.
+assert.deepEqual(amountOf(quote, (component) => component.category === "ENERGY"), [0.78, 1.11, 0.72], "energy itself unchanged");
+const energyLosses = line(quote, (component) => component.formulaInputs?.kind === "LOSSES");
+assert.deepEqual(energyLosses.map((component) => [component.label, component.amount.amount]), [["Perdite di rete F1 2026-10", 0.08], ["Perdite di rete F2 2026-10", 0.11], ["Perdite di rete F3 2026-10", 0.07]]);
+assert.deepEqual(energyLosses.map((component) => [component.formulaInputs.quantityKwh, component.formulaInputs.lossKwh, component.formulaInputs.unitPricePerKwh]), [[3, 0.3, 0.25839], [4, 0.4, 0.27714], [3, 0.3, 0.24088]], "kWh of losses kept exact, not rounded");
+assert.ok(energyLosses.every((component) => component.formulaInputs.lossTreatment === "NOT_STATED_PRICE_NET" && component.formulaInputs.lossPercent === 10 && component.formulaId === "CTE_PASS_THROUGH_LOSSES_ON_ENERGY"));
+const lossesOf = async (mutate) => { const offer = prepared(); mutate(offer); return line(await calculatePreparedOffer(request(), offer, deps()), (component) => component.formulaInputs?.kind === "LOSSES").map((component) => component.amount.amount); };
+// Stated "al netto": the same; stated "comprese" in the price: none; a spread stated "al lordo" keeps its share and only
+// the index bears them (Tony 28/10): F1 0,70017 x 10% = 0,07; F2 1,00856 x 10% = 0,10; F3 0,64764 x 10% = 0,06.
+assert.deepEqual(await lossesOf((offer) => { offer.offer.pricing.spread.lossTreatment = "NET_OF_LOSSES"; }), [0.08, 0.11, 0.07]);
+assert.deepEqual(await lossesOf((offer) => { offer.offer.pricing.spread.lossTreatment = "INCLUDED"; }), [], "never twice when the price already includes them");
+assert.deepEqual(await lossesOf((offer) => { offer.offer.pricing.spread.lossTreatment = "GROSS_OF_LOSSES"; }), [0.07, 0.1, 0.06]);
+// Naming the index among the Tabella 4 targets changes nothing: the index is grossed up once.
+assert.deepEqual(await lossesOf((offer) => { offer.offer.lossReference = { ...lossReference, applicationTargets: [...lossReference.applicationTargets, "ENERGY_INDEX"] }; }), [0.08, 0.11, 0.07]);
 
-// Total of the seller side: 2,61 + 15 + 0,03 + 0,06 + 0,11 + 0,07 + 0,04 = 17,92.
-assert.equal(quote.totalCommercialCost.amount, 17.92);
+// Total of the seller side: 2,61 + perdite 0,26 + 15 + 0,03 + 0,06 + 0,11 + 0,07 + 0,04 = 18,18.
+assert.equal(quote.totalCommercialCost.amount, 18.18);
 
 // Values of the billed month, never of the calculation day: the same October bill calculated on 20 January 2027 still uses
 // TIDE Q4 2026, 0,3423 c€/kWh of October and the 2026 Tabella 4; the runtime archive is asked for the billed period.
 asked.length = 0;
 const late = await calculatePreparedOffer(request({ calculationDate: "2027-01-20" }), prepared(), deps());
 assert.ok(asked.length > 0 && asked.every((date) => date === "2026-10-01"), asked.join(","));
-assert.equal(late.totalCommercialCost.amount, 17.92);
+assert.equal(late.totalCommercialCost.amount, 18.18);
 near(line(late, (component) => component.formulaInputs?.capacityNature === "REGULATED")[0].formulaInputs.officialRate, 0.003423);
 // A December bill takes December's 0,9243 c€/kWh: 0,009243 x 1,10 x 10 = 0,10.
 const december = await calculatePreparedOffer(request({ periodStart: "2026-12-01", periodEnd: "2027-01-01" }), prepared(), deps());
@@ -140,7 +149,7 @@ assert.equal(await productionResolver.resolveLoss({ tenantId: tenant, effectiveA
 const monetaryLoss = { ...laterValue, kind: "LOSS_FACTOR", value: 0.003423, effectiveFrom: "2026-10-01" };
 const runtimeOfFake = { resolveDispatching: async () => null, resolveCapacity: async () => null, resolveLoss: async () => monetaryLoss };
 const monetaryQuote = await calculatePreparedOffer(request(), prepared(), deps(runtimeOfFake));
-assert.equal(monetaryQuote.totalCommercialCost.amount, 17.92);
+assert.equal(monetaryQuote.totalCommercialCost.amount, 18.18);
 assert.ok(monetaryQuote.components.every((component) => component.formulaInputs?.lossFactor === undefined || component.formulaInputs.lossFactor === 0 || component.formulaInputs.lossFactor === 0.1), "only the 10% coefficient");
 
 // Without a verified Tabella 4 coefficient for the period, the charges that need one are not priced and say why.

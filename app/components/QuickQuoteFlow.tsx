@@ -593,6 +593,13 @@ function costLines(calculation: CostSource): readonly CostLine[] {
       case "GAS_FIXED_PRICE_TIMES_SMC": return { ...base, label: "Gas a prezzo fisso", quantity: `${QUANTITY.format(num(inputs.effectiveSmc) ?? 0)} Smc`, rate: `${RATE.format(num(inputs.pricePerSmc) ?? 0)} €/Smc` };
       case "GAS_SPREAD_TIMES_SMC": return { ...base, label: "Spread", quantity: `${QUANTITY.format(num(inputs.effectiveSmc) ?? 0)} Smc`, rate: `${RATE.format(num(inputs.spreadPerSmc) ?? 0)} €/Smc` };
       case "ONE_OFF_CONTRACT_FEE": return { ...base, label: component.label, quantity: "1", rate: `${EURO.format(num(inputs.feeRate) ?? 0)} una tantum` };
+      // Tony (15/11/2026, "Correzione definitiva perdite sull'energia"): the losses of each band apart from its energy, as the
+      // coefficient on the band's kWh at the band's price (kWh shown without decimals, Tony 11/11).
+      case "CTE_PASS_THROUGH_LOSSES_ON_ENERGY": {
+        const pun = num(inputs.punEurPerMwh); const spread = num(inputs.spreadPerKwh); const unit = num(inputs.unitPricePerKwh);
+        const price = pun !== null && inputs.indexIncluded ? `${spread !== null && inputs.spreadIncluded ? `(PUN ${RATE.format(pun / 1000)} + spread ${RATE.format(spread)})` : `PUN ${RATE.format(pun / 1000)}`} = ${RATE.format(unit ?? 0)} €/kWh` : `${RATE.format(unit ?? 0)} €/kWh`;
+        return { ...base, label: inputs.month ? `Perdite di rete ${inputs.band} · ${monthLabel(inputs.month)}` : component.label, quantity: `${PERCENT.format(num(inputs.lossPercent) ?? 0)}% di ${kwh(inputs.quantityKwh)}`, rate: price };
+      }
       default: {
         // Tony (30/10, "credo ci siano errori di calcolo, con altro simulatore risulta diversa"): every ARERA line shows its
         // official rate, the kW or kWh it applies to and the table class, so it can be checked against the bill.

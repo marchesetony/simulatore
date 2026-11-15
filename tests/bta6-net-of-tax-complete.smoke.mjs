@@ -55,10 +55,10 @@ try {
   assert.equal(completeA.contractualPassThroughCompleteness, "COMPLETE");
   // Tony (26/10): "le perdite di rete sono sempre presenti". On a bill quote the energy (1.000 kWh x 0,2 = 200 EUR) also pays
   // the TIS Tabella 4 BT losses (10% = 20 EUR), on top of dispatching 10 EUR: 230 EUR (was 210 before losses were priced).
-  // Tony (3/11, Atlante delle voci): "senza applicazione automatica del 10% quando la CTE tace". This synthetic CTE says
-  // nothing on losses, so they are "non determinabile" and not priced: 200 EUR of energy + 10 EUR of dispatching = 210 EUR.
-  assert.equal(completeA.totalCommercialCost.minorUnits, 21000);
-  assert.ok(completeA.warnings.includes("OFFICIAL_VALUE_MISSING:LOSSES:CTE_NOT_DETERMINABLE"), completeA.warnings.join(","));
+  // Tony (15/11/2026, "Correzione definitiva perdite sull'energia", replacing the Atlante 3/11 "non determinabile"): this
+  // synthetic CTE says nothing on losses, so its price is net and bears the BT 10%: 200 + 20 + 10 of dispatching = 230 EUR.
+  assert.equal(completeA.totalCommercialCost.minorUnits, 23000);
+  assert.equal(completeA.warnings.some((warning) => warning.startsWith("OFFICIAL_VALUE_MISSING:LOSSES")), false, completeA.warnings.join(","));
   assert.equal(completeA.totalRegulatedSubsetCost?.minorUnits, completeA.totalCommercialPlusRegulatedSubsetCost?.minorUnits - completeA.totalCommercialCost.minorUnits);
   assert.equal(completeA.components.filter((component) => component.formulaId === "CONTRACTUAL_PASS_THROUGH_ENERGY_RATE_TIMES_KWH").length, 1);
   assert.equal(completeA.contractualPassThroughStates.find((state) => state.kind === "CAPACITY_MARKET")?.state, "RESOLVED_INCLUDED");
