@@ -146,7 +146,9 @@ console.log("quote receipt official regulated check passed");
 //  - Prior-period adjustments and the other "altre partite" are listed apart, out of the comparison.
 //  - The official check allows only cent rounding: 0,01 EUR per component.
 const other = (amount, description) => ({ ...line("ALTRE_PARTITE", amount, description), group: "OTHER_ITEMS", includedInReconciliation: true });
-const based = buildQuoteReceipt({ vector: "EE", offerSupplyCost: 88, analysis: { components: [...scontrinoLines, other("13,95", "Energia reattiva"), other("7,58", "Ricalcoli mesi precedenti")], totals: scontrinoTotals }, domestic: true, validUntil: null, offerComponents: officialComponents, warnings: ["OFFICIAL_VALUE_MISSING:DISPATCHING:OFFICIAL_VALUE_MISSING", "OFFICIAL_VALUE_MISSING:CAPACITY_MARKET:PEAK_HOUR_KWH_MISSING"] });
+// The reactive line as the bill analysis classifies it (Tony 16/11/2026, "classificazione unica"): REACTIVE_ENERGY, not altre partite.
+const reactiveLine = (amount, description) => ({ ...line("REACTIVE_ENERGY", amount, description), group: "REACTIVE_ENERGY", includedInReconciliation: true });
+const based = buildQuoteReceipt({ vector: "EE", offerSupplyCost: 88, analysis: { components: [...scontrinoLines, reactiveLine("13,95", "Energia reattiva"), other("7,58", "Ricalcoli mesi precedenti")], totals: scontrinoTotals }, domestic: true, validUntil: null, offerComponents: officialComponents, warnings: ["OFFICIAL_VALUE_MISSING:DISPATCHING:OFFICIAL_VALUE_MISSING", "OFFICIAL_VALUE_MISSING:CAPACITY_MARKET:PEAK_HOUR_KWH_MISSING"] });
 const dispatchingLine = based.rows[0].details.find((item) => item.key === "DISPATCHING");
 assert.equal(dispatchingLine.offer, null); assert.equal(dispatchingLine.difference, null);
 assert.equal(dispatchingLine.missingReason, "valore ufficiale ARERA/Terna del periodo non in archivio");

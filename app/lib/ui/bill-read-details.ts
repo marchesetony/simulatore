@@ -3,6 +3,7 @@ import type { StructuredBillEconomicChargeLine, StructuredBillField, StructuredB
 import type { SupplyProfileField } from "../ingestion/bill-supply-profile";
 import { BANDS_SUM_TOLERANCE_KWH, printedComponentChecks } from "../reading/bill-reader-checks";
 import { formatKwh } from "./format";
+import { isReactiveEnergy } from "../foundation/bill-economic-analysis";
 import { ANNUAL_ESTIMATE_LABEL } from "../calculation/annual-consumption";
 import { annualEstimateOrigin, billAnnualConsumption, quantityText } from "./annual-consumption";
 
@@ -282,6 +283,15 @@ function economicsSection(bill: Bill): BillReadSection {
     rows.push(missing("Spesa per la rete e gli oneri generali di sistema"));
     if (printedNetwork) rows.push(printedRow("di cui spesa per la rete e il trasporto", printedNetwork, "COMPONENTS_NETWORK_SYSTEM"));
   }
+  // Tony (16/11/2026, "classificazione unica", 070789E): the energia reattiva the bill prints apart (5,48 €) is shown as read,
+  // under its own name, with the line it comes from; it is outside the printed "rete e oneri", so never subtracted from it.
+  const reactiveRead = (bill.analystReview.economics.economicAnalysis?.components ?? []).filter((item) => isReactiveEnergy(item) && item.includedInReconciliation && !item.aggregate && amountOf(item.amount) !== null);
+  const reactive = reactiveRead.length ? round2(reactiveRead.reduce((total, item) => total + (amountOf(item.amount) ?? 0), 0)) : totals?.reactiveEnergyTotal ?? null;
+  if (reactive !== null) {
+    rows.push({ label: "Energia reattiva", value: euro(reactive), state: "READ", note: reactiveRead.length ? `Stampata in fattura: ${reactiveRead.map((item) => `"${item.rawDescription || item.description}" ${euro(amountOf(item.amount) ?? 0)}`).join("; ")}` : "Stampata in fattura" });
+    const ordinary = printedNetwork?.amount ?? (printed?.networkAndSystem != null && oneri !== null ? round2(printed.networkAndSystem - oneri) : null);
+    if (ordinary !== null) rows.push(calc("Rete complessiva (rete e trasporto ed energia reattiva)", round2(ordinary + reactive), `Calcolata: rete e trasporto ${euro(ordinary)} + energia reattiva ${euro(reactive)}`));
+  }
   rows.push(printedOneri ? printedRow("Oneri generali di sistema", printedOneri, "COMPONENTS_NETWORK_SYSTEM") : oneri === null ? missing("Oneri generali di sistema", "SYSTEM_CHARGES") : { label: "Oneri generali di sistema", value: euro(oneri), state: "CALCULATED", note: `Somma delle ${oneriLines.length} righe ASOS e ARIM stampate nel dettaglio` });
   rows.push(printedExcise ? printedRow("Accise", printedExcise, "COMPONENTS_TAXES") : money("Accise", excise, "Righe di accisa del dettaglio", "EXCISE"));
   rows.push(printedVat ? printedRow("IVA", printedVat, "COMPONENTS_TAXES") : money("IVA", vat, "Righe IVA del dettaglio", "VAT"));
@@ -293,8 +303,9 @@ function economicsSection(bill: Bill): BillReadSection {
   // does not match. The parts printed apart are inside "rete e oneri" and "Accise e IVA": they are never added a second time.
   let totalNote: string | null = null;
   if (printed?.seller != null && printed.networkAndSystem != null && taxes !== null && printedTotal !== null) {
-    const gap = round2(round2(printed.seller + printed.networkAndSystem + taxes) - printedTotal);
-    if (gap !== 0) totalNote = `Le componenti stampate sommano ${euro(round2(printed.seller + printed.networkAndSystem + taxes))}: differenza di ${euro(gap)} (altre partite, bonus o canone non inclusi; calcolata)`;
+    const components = round2(printed.seller + printed.networkAndSystem + (reactive ?? 0) + taxes);
+    const gap = round2(components - printedTotal);
+    if (gap !== 0) totalNote = `Le componenti stampate sommano ${euro(components)}: differenza di ${euro(gap)} (altre partite, bonus o canone non inclusi; calcolata)`;
   }
   rows.push(printedTotal === null ? { label: "Totale fatturato", value: NOT_IN_BILL, state: "ABSENT" } : { label: "Totale fatturato", value: euro(printedTotal), state: "READ", ...(totalNote ? { note: totalNote } : {}) });
   // The simulator's own grouping, shown apart and labelled, only where it differs from what the bill prints (Tony, 10/11,
@@ -365,12 +376,13 @@ const SHORT_LABEL: Readonly<Record<string, string>> = {
   "Decorrenza condizioni economiche": "Decorrenza condizioni", "Attivazione fornitura": "Attivazione", "Scadenza condizioni economiche": "Scadenza condizioni",
   "Spesa per la vendita di energia": "Vendita", "di cui spesa per la rete e il trasporto": "Rete e trasporto", "Oneri generali di sistema": "Oneri di sistema",
   "Spesa per la rete e gli oneri generali di sistema": "Rete e oneri di sistema", "Totale fatturato": "Totale fattura",
+  "Rete complessiva (rete e trasporto ed energia reattiva)": "Rete complessiva",
 };
 const ORDER: Readonly<Record<BillReadSectionId, readonly string[]>> = {
   SUPPLY: ["Intestatario", "Fornitore", "POD", "PDR", "Periodo", "Uso", "Mercato"],
   TECHNICAL: ["Consumo totale (F0)", "F1", "F2", "F3", "Consumo annuo", ANNUAL_ESTIMATE_LABEL, "Tensione", "Potenza impegnata", "Potenza massima"],
   CONTRACT: ["Offerta", "Prezzo", "Fasce", "Indice", "Spread", "PCV", "Scadenza condizioni", "Scadenza contratto"],
-  ECONOMICS: ["Vendita", "Rete e oneri di sistema", "Rete e trasporto", "Oneri di sistema", "Accise", "IVA", "Accise e IVA", "Totale fattura"],
+  ECONOMICS: ["Vendita", "Rete e oneri di sistema", "Rete e trasporto", "Energia reattiva", "Rete complessiva", "Oneri di sistema", "Accise", "IVA", "Accise e IVA", "Totale fattura"],
 };
 const isZero = (value: string) => { const amounts = [...value.matchAll(/-?\d[\d.]*,\d+|-?\d+(?:\.\d+)?/g)].map((match) => amountOf(match[0])); return amounts.length > 0 && amounts.every((amount) => amount === 0); };
 

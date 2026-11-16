@@ -64,6 +64,8 @@ export function offerScontrino(input: { readonly quotas: readonly QuoteReceiptQu
     }
   }
   if (discount) lines.push({ kind: "item", label: "Sconto commerciale aziendale", amount: cents(discount) });
+  // Tony (16/11/2026, "classificazione unica"): the energia reattiva is named as such, never "Altre partite".
+  const reactive = quota("REACTIVE"); if (reactive && reactive.offer) lines.push({ kind: "item", label: "Energia reattiva", amount: reactive.offer });
   const other = quota("OTHER"); if (other && other.offer) lines.push({ kind: "item", label: "Altre partite", amount: other.offer });
   const excluded = side === "current" ? (input.excluded ?? []).filter((item) => Math.abs(item.amount) >= 0.005) : [];
   for (const item of excluded) lines.push({ kind: "item", label: item.label, amount: cents(item.amount) });

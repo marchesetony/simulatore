@@ -8,7 +8,7 @@ import type { ApprovedBillSummaryModel, BillDocumentModel, SimulationDraft } fro
 import type { BillAnalystReviewDTO, BillAnalystReviewField } from "../lib/foundation/bill-analyst-review";
 import type { BillRegulatoryAuditDTO } from "../lib/foundation/bill-regulatory-audit";
 import type { DomesticResidentMatrix, ExpectedComponent } from "../lib/foundation/bill-domestic-resident-matrix";
-import type { BillEconomicComponent } from "../lib/foundation/bill-economic-analysis";
+import { billComponentLabel, type BillEconomicComponent } from "../lib/foundation/bill-economic-analysis";
 import { semanticCategoryLabel, type BillComponentSemanticCategory, type RegulatedPassThroughItem } from "../lib/foundation/bill-regulated-pass-through";
 import type { BillFeature, BillVerificationSummary } from "../lib/foundation/bill-feature-permissions";
 
@@ -99,7 +99,7 @@ function formatNumericText(value: string): string {
   return parsed === null ? value : `${formatNumber(parsed)}${match[2]}`;
 }
 function componentValue(component: BillEconomicComponent): ReactNode { const amount = componentNumber(component.amount); if (amount !== null) return formatEuro(amount); const unitPrice = componentNumber(component.unitPrice); return unitPrice !== null ? <>{formatNumber(unitPrice)} <span className="bill-audit-unit">{component.unit ?? ""}</span></> : "Da verificare"; }
-function componentRows(components: readonly BillEconomicComponent[]): DisplayRow[] { return components.map((component) => ({ label: component.description || component.rawDescription, value: componentValue(component), detail: [component.quantity, component.unitPrice, component.unit, component.period].filter(Boolean).map((value) => formatNumericText(String(value))).join(" · ") || undefined })); }
+function componentRows(components: readonly BillEconomicComponent[]): DisplayRow[] { return components.map((component) => ({ label: billComponentLabel({ classification: component.classification, description: component.description || component.rawDescription }), value: componentValue(component), detail: [component.quantity, component.unitPrice, component.unit, component.period].filter(Boolean).map((value) => formatNumericText(String(value))).join(" · ") || undefined })); }
 
 function regulatedItem(audit: BillRegulatoryAuditDTO | null, code: string): RegulatedPassThroughItem | null { return audit?.regulatedPassThrough?.items.find((item) => item.code === code) ?? null; }
 function regulatedOutcomeLabel(item: RegulatedPassThroughItem | null): string { if (!item) return "Non disponibile"; if (item.outcome === "COINCIDE") return item.code === "CAPACITY_MARKET" ? "Conforme al riferimento ARERA" : "Coincide con riferimento ufficiale"; if (item.outcome === "SCOSTAMENTO") return item.status === "SUPERIORE_AL_RIFERIMENTO" ? "Superiore al riferimento" : item.status === "INFERIORE_AL_RIFERIMENTO" ? item.code === "DISPATCHING" ? "Inferiore al riferimento ARERA" : "Inferiore al riferimento" : "Scostamento"; if (item.outcome === "PRESENTE_AGGREGATO") return "Presente in voce aggregata"; if (item.outcome === "NON_IDENTIFICATO_IN_BOLLETTA") return "Non identificato separatamente"; if (item.outcome === "RIFERIMENTO_UFFICIALE_NON_DISPONIBILE") return "Riferimento ufficiale non disponibile"; return "Non confrontabile direttamente"; }
@@ -167,6 +167,7 @@ function LegacyEnergyReceiptCompact({ review }: { readonly review: BillAnalystRe
     { label: "Consumi", value: review.consumption.billed.value === null ? "Non determinabile" : formatKwh(review.consumption.billed.value) },
     { label: "Vendita energia", value: totals.sellerEnergyTotal === null && totals.sellerCommercializationTotal === null ? "Da verificare" : formatEuro((totals.sellerEnergyTotal ?? 0) + (totals.sellerCommercializationTotal ?? 0)) },
     { label: "Rete e oneri", value: formatEuro((totals.regulatedNetworkTotal ?? 0) + (totals.systemChargesTotal ?? 0)) },
+    ...(totals.reactiveEnergyTotal != null ? [{ label: "Energia reattiva", value: formatEuro(totals.reactiveEnergyTotal) }] : []),
     { label: "Imposte", value: totals.taxTotal === null ? "Da verificare" : formatEuro(totals.taxTotal) },
     { label: "Altre partite", value: totals.otherItemsTotal === null ? "Da verificare" : formatEuro(totals.otherItemsTotal) },
     { label: "Totale bolletta", value: totals.billTotal === null ? "Da verificare" : formatEuro(totals.billTotal) },
@@ -187,6 +188,7 @@ function CleanEnergyReceiptCompact({ review }: { readonly review: BillAnalystRev
     { label: "Totale bolletta corrente", value: totals.currentInvoiceAggregateTotal === null ? "Da verificare" : formatEuro(totals.currentInvoiceAggregateTotal) },
     { label: "Vendita energia", value: formatEuro((totals.sellerEnergyTotal ?? 0) + (totals.sellerCommercializationTotal ?? 0)) },
     { label: "Rete e oneri", value: formatEuro((totals.regulatedNetworkTotal ?? 0) + (totals.systemChargesTotal ?? 0)) },
+    ...(totals.reactiveEnergyTotal != null ? [{ label: "Energia reattiva", value: formatEuro(totals.reactiveEnergyTotal) }] : []),
     { label: "Fiscalità", value: totals.fiscalTotal === null ? "Da verificare" : formatEuro(totals.fiscalTotal), detail: fiscalDetails },
     { label: "Altre partite / voci straordinarie", value: formatEuro(reconciledOtherItems), detail: extraordinaryDetails },
     ...(totals.tvFeeTotal !== null ? [{ label: "Totale bolletta escluso Canone TV", value: totals.totalExcludingTvFee === null ? "Da verificare" : formatEuro(totals.totalExcludingTvFee) }] : []),
@@ -235,6 +237,7 @@ function CostSummary({ review }: { readonly review: BillAnalystReviewDTO }): Rea
     { label: "Totale bolletta corrente", value: totals.currentInvoiceAggregateTotal === null ? "Da verificare" : formatEuro(totals.currentInvoiceAggregateTotal) },
     { label: "Vendita energia", value: sellerTotal === null ? "Da verificare" : formatEuro(sellerTotal) },
     { label: "Rete e oneri di sistema", value: totals.regulatedNetworkTotal === null && totals.systemChargesTotal === null ? "Da verificare" : formatEuro((totals.regulatedNetworkTotal ?? 0) + (totals.systemChargesTotal ?? 0)) },
+    ...(totals.reactiveEnergyTotal != null ? [{ label: "Energia reattiva", value: formatEuro(totals.reactiveEnergyTotal) }] : []),
     { label: "Fiscalità", value: totals.fiscalTotal === null ? "Da verificare" : formatEuro(totals.fiscalTotal) },
     { label: "Voci straordinarie", value: totals.extraordinaryTotal === null ? "Da verificare" : formatEuro(totals.extraordinaryTotal) },
     { label: "Altre partite riconciliate", value: totals.otherItemsTotal === null ? "Da verificare" : formatEuro(totals.otherItemsTotal) },
@@ -405,7 +408,7 @@ function SellerSection({ review }: { readonly review: BillAnalystReviewDTO }): R
 
 function RegulatedCostSection({ review }: { readonly review: BillAnalystReviewDTO }): ReactNode {
   const costs = review.economics.economicAnalysis.regulatedAndSystemCosts;
-  const lines = [...costs.ARERA_NETWORK, ...costs.ARERA_SYSTEM_CHARGES, ...costs.TERNA_DISPATCHING_REFERENCES, ...costs.GME_MARKET_REFERENCE];
+  const lines = [...costs.ARERA_NETWORK, ...(costs.REACTIVE_ENERGY ?? []), ...costs.ARERA_SYSTEM_CHARGES, ...costs.TERNA_DISPATCHING_REFERENCES, ...costs.GME_MARKET_REFERENCE];
   return <AuditCard title="COSTI REGOLATI E DI SISTEMA"><p className="bill-audit-overline">COMPONENTI REGOLATE</p><DataRows rows={componentRows(lines)}/>{!lines.length ? <p className="bill-audit-muted">Nessuna voce regolata distinta rilevata.</p> : null}<p className="bill-audit-note">I costi fatturati sono separati dai riferimenti ufficiali ARERA, TERNA e GME.</p></AuditCard>;
 }
 
@@ -413,6 +416,13 @@ function TaxSection({ review }: { readonly review: BillAnalystReviewDTO }): Reac
   const groups = review.economics.economicAnalysis.taxesAndOtherItems;
   const lines = [...groups.TAXES, ...groups.OTHER_ITEMS];
   return <AuditCard title="IMPOSTE E ALTRE PARTITE"><DataRows rows={componentRows(lines)}/>{!lines.length ? <p className="bill-audit-muted">Nessuna imposta o altra partita rilevata separatamente.</p> : null}<p className="bill-audit-note"><StatusBadge tone="warning">Imposte e altre partite non sono costi venditore.</StatusBadge></p></AuditCard>;
+}
+
+// Tony (16/11/2026, "classificazione unica"): printed, calculated and assumed amounts are kept apart and said.
+function amountOriginLabel(component: Pick<BillEconomicComponent, "origin" | "derivation">): string {
+  if (component.origin === "CALCULATED") return `Calcolato${component.derivation ? `: ${component.derivation}` : ""}`;
+  if (component.origin === "ASSUMED") return `Valore di riferimento${component.derivation ? `: ${component.derivation}` : ""}`;
+  return "Stampato";
 }
 
 function EconomicTechnicalDetail({ review }: { readonly review: BillAnalystReviewDTO }): ReactNode {
@@ -423,7 +433,7 @@ function EconomicTechnicalDetail({ review }: { readonly review: BillAnalystRevie
     rawUnitPrice: component.rawUnitPrice ? formatNumericText(component.rawUnitPrice) : component.rawUnitPrice,
     rawAmount: component.rawAmount ? formatNumericText(component.rawAmount) : component.rawAmount,
   }));
-  return <details className="bill-audit-collapsible bill-audit-wide"><summary>DETTAGLIO ECONOMICO DOCUMENTALE</summary><div className="bill-audit-table-wrap"><table className="bill-audit-table bill-audit-technical-table"><thead><tr><th>Descrizione</th><th>Classificazione</th><th>Raw value</th><th>Raw unit</th><th>Quantità</th><th>Prezzo unitario</th><th>Importo</th><th>Periodo</th><th>Calcolo</th></tr></thead><tbody>{components.map((component, index) => <tr key={`${component.code}-${index}`}><th scope="row">{component.rawDescription || component.description}</th><td>{component.classification}</td><td>{component.rawValue || "—"}</td><td>{component.rawUnit || "—"}</td><td>{component.rawQuantity || "—"}</td><td>{component.rawUnitPrice || "—"}</td><td>{component.rawAmount || "—"}</td><td>{component.rawPeriod || "—"}</td><td>{component.calculationCheck}</td></tr>)}</tbody></table></div></details>;
+  return <details className="bill-audit-collapsible bill-audit-wide"><summary>DETTAGLIO ECONOMICO DOCUMENTALE</summary><div className="bill-audit-table-wrap"><table className="bill-audit-table bill-audit-technical-table"><thead><tr><th>Descrizione</th><th>Classificazione</th><th>Raw value</th><th>Raw unit</th><th>Quantità</th><th>Prezzo unitario</th><th>Importo</th><th>Periodo</th><th>Calcolo</th><th>Origine</th></tr></thead><tbody>{components.map((component, index) => <tr key={`${component.code}-${index}`}><th scope="row">{component.rawDescription || component.description}</th><td>{component.classification}</td><td>{component.rawValue || "—"}</td><td>{component.rawUnit || "—"}</td><td>{component.rawQuantity || "—"}</td><td>{component.rawUnitPrice || "—"}</td><td>{component.rawAmount || "—"}</td><td>{component.rawPeriod || "—"}</td><td>{component.calculationCheck}</td><td>{amountOriginLabel(component)}</td></tr>)}</tbody></table></div></details>;
 }
 
 function MissingAnalysis({ audit, matrix }: { readonly audit: BillRegulatoryAuditDTO | null; readonly matrix: DomesticResidentMatrix | null | undefined }): ReactNode {
@@ -461,7 +471,7 @@ function Provenance({ review }: { readonly review: BillAnalystReviewDTO }): Reac
 function ExpandedReceipt({ review, matrix }: { readonly review: BillAnalystReviewDTO; readonly matrix: DomesticResidentMatrix | null | undefined }): ReactNode {
   const components = review.economics.economicAnalysis.components;
   const passThrough = matrix?.components ?? [];
-  return <><AuditCard title="SCONTRINO AMPLIATO" className="bill-audit-wide bill-audit-table-card"><p className="bill-audit-intro">Dettaglio atomico della bolletta: le voci marcate come subtotale, totale o dettaglio incluso non vengono sommate una seconda volta.</p><div className="bill-audit-table-wrap"><table className="bill-audit-table bill-audit-technical-table"><thead><tr><th>Descrizione bolletta</th><th>Codice</th><th>Ruolo contabile</th><th>Quantità</th><th>Unità</th><th>Prezzo unitario</th><th>Importo</th><th>Periodo</th><th>Calcolo</th></tr></thead><tbody>{components.map((component, index) => <tr key={`${component.code}-${index}`}><th scope="row">{component.rawDescription || component.description}</th><td>{component.classification}</td><td>{component.accountingRole}</td><td>{component.rawQuantity || "—"}</td><td>{component.rawUnit || "—"}</td><td>{component.rawUnitPrice || "—"}</td><td>{component.rawAmount || "—"}</td><td>{component.rawPeriod || "—"}</td><td>{component.calculationCheck}</td></tr>)}</tbody></table></div></AuditCard><AuditCard title="CORRISPETTIVI REGOLATI / PASSANTI" className="bill-audit-wide bill-audit-table-card"><p className="bill-audit-intro">Il riferimento ufficiale upstream resta distinto dal corrispettivo addebitato al cliente.</p><div className="bill-audit-table-wrap"><table className="bill-audit-table bill-audit-technical-table"><thead><tr><th>Voce</th><th>Valore in bolletta</th><th>Riferimento ufficiale</th><th>Authority</th><th>Periodo</th><th>Esito</th></tr></thead><tbody>{passThrough.map((component) => <tr key={component.code}><th scope="row">{component.officialName}</th><td>{evidenceText(component.billEvidence)}</td><td>{component.sourceValue?.sourceOriginalValue ?? "—"} {component.sourceValue?.sourceOriginalUnit ?? ""}</td><td>{component.authority}</td><td>{component.sourceValue ? dateRange(component.sourceValue.effectiveFrom, component.sourceValue.effectiveTo ? inclusiveEnd(component.sourceValue.effectiveTo) : null) : "—"}</td><td>{component.auditability}</td></tr>)}</tbody></table></div></AuditCard></>;
+  return <><AuditCard title="SCONTRINO AMPLIATO" className="bill-audit-wide bill-audit-table-card"><p className="bill-audit-intro">Dettaglio atomico della bolletta: le voci marcate come subtotale, totale o dettaglio incluso non vengono sommate una seconda volta.</p><div className="bill-audit-table-wrap"><table className="bill-audit-table bill-audit-technical-table"><thead><tr><th>Descrizione bolletta</th><th>Codice</th><th>Ruolo contabile</th><th>Quantità</th><th>Unità</th><th>Prezzo unitario</th><th>Importo</th><th>Periodo</th><th>Calcolo</th><th>Origine</th></tr></thead><tbody>{components.map((component, index) => <tr key={`${component.code}-${index}`}><th scope="row">{component.rawDescription || component.description}</th><td>{component.classification}</td><td>{component.accountingRole}</td><td>{component.rawQuantity || "—"}</td><td>{component.rawUnit || "—"}</td><td>{component.rawUnitPrice || "—"}</td><td>{component.rawAmount || "—"}</td><td>{component.rawPeriod || "—"}</td><td>{component.calculationCheck}</td><td>{amountOriginLabel(component)}</td></tr>)}</tbody></table></div></AuditCard><AuditCard title="CORRISPETTIVI REGOLATI / PASSANTI" className="bill-audit-wide bill-audit-table-card"><p className="bill-audit-intro">Il riferimento ufficiale upstream resta distinto dal corrispettivo addebitato al cliente.</p><div className="bill-audit-table-wrap"><table className="bill-audit-table bill-audit-technical-table"><thead><tr><th>Voce</th><th>Valore in bolletta</th><th>Riferimento ufficiale</th><th>Authority</th><th>Periodo</th><th>Esito</th></tr></thead><tbody>{passThrough.map((component) => <tr key={component.code}><th scope="row">{component.officialName}</th><td>{evidenceText(component.billEvidence)}</td><td>{component.sourceValue?.sourceOriginalValue ?? "—"} {component.sourceValue?.sourceOriginalUnit ?? ""}</td><td>{component.authority}</td><td>{component.sourceValue ? dateRange(component.sourceValue.effectiveFrom, component.sourceValue.effectiveTo ? inclusiveEnd(component.sourceValue.effectiveTo) : null) : "—"}</td><td>{component.auditability}</td></tr>)}</tbody></table></div></AuditCard></>;
 }
 
 function RegulatedPassThroughTable({ audit }: { readonly audit: BillRegulatoryAuditDTO | null }): ReactNode {

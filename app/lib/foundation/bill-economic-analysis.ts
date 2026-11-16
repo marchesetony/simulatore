@@ -3,15 +3,18 @@ import { amountToken } from "./amount-token.ts";
 export const BILL_ECONOMIC_CLASSIFICATIONS = [
   "ENERGY_INDEX", "ENERGY_SPREAD", "ENERGY_FIXED_PRICE", "PCV", "COMMERCIALIZATION_FIXED_FEE", "COMMERCIALIZATION_VARIABLE_FEE", "SELLER_FIXED_FEE", "SELLER_ENERGY_FEE",
   "NETWORK_LOSS_CHARGE", "DISPATCHING_SELLER_CHARGE", "CAPACITY_MARKET_SELLER_CHARGE", "BALANCING_CHARGE", "OTHER_SELLER_ENERGY_CHARGE", "OTHER_SELLER_FIXED_CHARGE",
-  "ARERA_NETWORK", "ARERA_SYSTEM_CHARGES", "TERNA_DISPATCHING_REFERENCES", "GME_MARKET_REFERENCE", "IVA", "ACCISE", "TAX_SUBTOTAL",
+  "ARERA_NETWORK", "ARERA_SYSTEM_CHARGES", "REACTIVE_ENERGY", "TERNA_DISPATCHING_REFERENCES", "GME_MARKET_REFERENCE", "IVA", "ACCISE", "TAX_SUBTOTAL",
   "BONUS", "CANONE_RAI", "INTERESSI_MORA", "CMOR", "ADMINISTRATIVE_FEES", "DELIVERY_DISCOUNT", "SERVIZI_AGGIUNTIVI", "RICALCOLI", "RESTITUZIONI", "ADDEBITI", "ACCREDITI", "ALTRE_PARTITE",
-  "UNCLASSIFIED_BILL_CHARGE", "BILL_TOTAL", "AMOUNT_DUE", "PRIOR_BALANCE",
+  "QUOTA_TOTAL", "UNCLASSIFIED_BILL_CHARGE", "BILL_TOTAL", "AMOUNT_DUE", "PRIOR_BALANCE",
 ] as const;
 
 export type BillEconomicClassification = typeof BILL_ECONOMIC_CLASSIFICATIONS[number];
 export type BillCalculationCheck = "MATCH" | "MISMATCH" | "NOT_CHECKABLE";
 export type BillAccountingRole = "ATOMIC" | "DETAIL_INCLUDED_IN_SUBTOTAL" | "SUBTOTAL" | "TOTAL" | "PRIOR_BALANCE";
-export type BillEconomicGroup = "ENERGY_PRICE" | "COMMERCIALIZATION" | "DISPATCHING_OR_PASS_THROUGH" | "CAPACITY_MARKET" | "OTHER_SELLER_CHARGES" | "REGULATED_NETWORK" | "SYSTEM_CHARGES" | "TAX" | "OTHER_ITEMS";
+export type BillEconomicGroup = "ENERGY_PRICE" | "COMMERCIALIZATION" | "DISPATCHING_OR_PASS_THROUGH" | "CAPACITY_MARKET" | "OTHER_SELLER_CHARGES" | "REGULATED_NETWORK" | "REACTIVE_ENERGY" | "SYSTEM_CHARGES" | "TAX" | "OTHER_ITEMS";
+/** Where an amount comes from: printed on the bill, calculated by the simulator from printed amounts (a difference, a
+ *  split), or assumed from a regulated reference (ARERA values of the period). Never mixed: each component has one. */
+export type BillAmountOrigin = "PRINTED" | "CALCULATED" | "ASSUMED";
 
 export interface BillEconomicComponentInput {
   readonly code?: string | null; readonly description?: string | null; readonly value?: string | number | null;
@@ -26,11 +29,13 @@ export interface BillEconomicComponent {
   readonly description: string; readonly quantity: string | null; readonly unitPrice: string | null; readonly unit: string | null; readonly amount: string | null; readonly period: string | null;
   readonly rawDescription: string; readonly rawValue: string; readonly rawUnit: string; readonly rawQuantity: string; readonly rawUnitPrice: string; readonly rawAmount: string; readonly rawPeriod: string;
   readonly documentEvidence: string; readonly calculationCheck: BillCalculationCheck; readonly status: string;
+  /** Printed, calculated or assumed (see BillAmountOrigin); `derivation` says how a calculated or assumed amount was obtained. */
+  readonly origin: BillAmountOrigin; readonly derivation?: string;
 }
 
 export interface BillEconomicTotals {
   readonly sellerEnergyTotal: number | null; readonly sellerCommercializationTotal: number | null; readonly sellerOtherTotal: number | null;
-  readonly regulatedNetworkTotal: number | null; readonly systemChargesTotal: number | null; readonly taxTotal: number | null; readonly otherItemsTotal: number | null;
+  readonly regulatedNetworkTotal: number | null; /** Energia reattiva: a regulated network charge of its own, never in regulatedNetworkTotal or otherItemsTotal. */ readonly reactiveEnergyTotal: number | null; readonly systemChargesTotal: number | null; readonly taxTotal: number | null; readonly otherItemsTotal: number | null;
   readonly reconstructedCurrentSupplyTotal: number | null; readonly currentPeriodTotal: number | null; readonly priorBalanceTotal: number | null; readonly tvFeeTotal: number | null;
   readonly billTotal: number | null; readonly amountDue: number | null; readonly currentBillReconstructedTotal: number | null; readonly reconciliationDifference: number | null;
   readonly currentInvoiceAtomicTotal: number | null; readonly currentInvoiceAggregateTotal: number | null; readonly fiscalTotal: number | null; readonly extraordinaryTotal: number | null;
@@ -45,13 +50,21 @@ export interface BillEconomicAnalysis {
   readonly priceType: "INDEXED_PUN_SPREAD" | "FIXED_PRICE" | "OTHER_INDEX" | "MIXED_FORMULA" | "NOT_DETERMINABLE";
   readonly components: readonly BillEconomicComponent[];
   readonly currentSellerCostBreakdown: Readonly<Record<"ENERGY_PRICE" | "COMMERCIALIZATION" | "DISPATCHING_OR_PASS_THROUGH" | "CAPACITY_MARKET" | "OTHER_SELLER_CHARGES", readonly BillEconomicComponent[]>>;
-  readonly regulatedAndSystemCosts: Readonly<Record<"ARERA_NETWORK" | "ARERA_SYSTEM_CHARGES" | "TERNA_DISPATCHING_REFERENCES" | "GME_MARKET_REFERENCE", readonly BillEconomicComponent[]>>;
+  readonly regulatedAndSystemCosts: Readonly<Record<"ARERA_NETWORK" | "REACTIVE_ENERGY" | "ARERA_SYSTEM_CHARGES" | "TERNA_DISPATCHING_REFERENCES" | "GME_MARKET_REFERENCE", readonly BillEconomicComponent[]>>;
   readonly taxesAndOtherItems: Readonly<Record<"TAXES" | "OTHER_ITEMS", readonly BillEconomicComponent[]>>;
   readonly totals: BillEconomicTotals;
 }
 
+/** The one test for reactive energy everywhere (receipt, scontrino, screens, PDF): the analysis's own classification. */
+export const isReactiveEnergy = (line: { readonly classification: string }): boolean => line.classification === "REACTIVE_ENERGY";
+/** A line's name on screen and in the PDF: a line the analysis cannot identify says so, it is never given a category. */
+export function billComponentLabel(line: { readonly classification: string; readonly description: string }): string {
+  return line.classification === "UNCLASSIFIED_BILL_CHARGE" ? `${line.description} (voce non classificata)` : line.description;
+}
+
 const text = (value: string | number | null | undefined): string => value === null || value === undefined ? "" : String(value).trim();
 const CARRIED_OVER = /^(CREDITO_RIMANENTE|IMPORTI_CHE_SARANNO_ADDEBITATI)/;
+const QUOTA_TOTAL_KEY = /^QUOTA_(CONSUMI|PER_CONSUMI|PER_I_CONSUMI|ENERGIA|VARIABILE|FISSA|FISSA_E_QUOTA_POTENZA|FISSA_TOTALE|POTENZA)(_\d+)*$/;
 const keyOf = (value: string | null | undefined): string => text(value).toUpperCase().replace(/[^A-Z0-9]+/g, "_").replace(/^_+|_+$/g, "");
 const numberFrom = (value: string | number | null | undefined): number | null => {
   if (typeof value === "number") return Number.isFinite(value) ? value : null;
@@ -70,6 +83,10 @@ export function classifyBillEconomicComponent(code: string | null | undefined, d
   const c = keyOf(code); const d = keyOf(description);
   // A prior-period adjustment ("Conguaglio dei mesi precedenti") is a recalculation whatever charge it repeats.
   if (["RICALCOLI", "RECALCULATION"].includes(c) || d.includes("RICALCOL") || d.includes("CONGUAGLIO")) return "RICALCOLI";
+  // Tony (16/11/2026, "classificazione unica", bolletta 070789E): "Energia reattiva immessa 5,48 €" is energia reattiva in
+  // every view, never altre partite, bonus, canone or an unexplained difference. The bill names it: that name decides,
+  // whatever code the reading stored (the reader keeps the stored code OTHER_CHARGE, which production also reads).
+  if (c === "REACTIVE_ENERGY" || d.includes("REATTIV")) return "REACTIVE_ENERGY";
   if (["PUN", "PUN_SINGLE", "PUN_F1", "PUN_F2", "PUN_F3", "ENERGY_INDEX", "PUN_APPLICATO"].includes(c) || d.includes("PUN")) return "ENERGY_INDEX";
   if (["SPREAD", "SELLER_SPREAD", "ENERGY_SPREAD"].includes(c) || d.includes("SPREAD")) return "ENERGY_SPREAD";
   // Tony (30/10, bolletta Plenitude Trend Business Luce Base: "credo che la lettura non è stata fatta"): the elementi di
@@ -125,6 +142,10 @@ export function classifyBillEconomicComponent(code: string | null | undefined, d
   if (["RESTITUZIONI", "REFUNDS"].includes(c)) return "RESTITUZIONI";
   if (["ADDEBITI", "DEBITS"].includes(c)) return "ADDEBITI";
   if (["ACCREDITI", "CREDITS"].includes(c)) return "ACCREDITI";
+  // The quadro sintetico's own quota totals ("Quota per consumi", "Quota fissa", "Quota potenza") are identified lines: a total
+  // of vendita and rete e oneri, never altre partite (Tony 16/11/2026, "classificazione unica"). Their money stays where
+  // quotaTotals and the summary families put it: the classification only names them.
+  if (["OTHER_CHARGE", "UNCLASSIFIED_BILL_CHARGE"].includes(c) && QUOTA_TOTAL_KEY.test(d)) return "QUOTA_TOTAL";
   if (["ALTRE_PARTITE", "OTHER_ITEMS", "OTHER_CHARGE"].includes(c)) return "ALTRE_PARTITE";
   // Scontrino dell'energia (ARERA, Bolletta 2.0 as Tony sent it on 1/11): "Importi collegati all'offerta" is the seller's
   // difference between the quota consumi billed and the fixed amount of the contract, so spesa per la vendita; "Restituzione
@@ -138,7 +159,6 @@ export function classifyBillEconomicComponent(code: string | null | undefined, d
   if (d.startsWith("ALTRE_PARTITE") || d.includes("DEPOSITO_CAUZIONALE") || d.includes("INDENNIZZ") || CARRIED_OVER.test(d)) return "ALTRE_PARTITE";
   // Bolletta 2.0 wording when the reader gave a descriptive code (e.g. Repower: "F0 - energia (monoraria)",
   // "Corrispettivo capacità fuori picco", "Corrispettivo distribuzione, misura e trasporto", "Imposta Erariale").
-  if (d.includes("REATTIV")) return "UNCLASSIFIED_BILL_CHARGE";
   if (d.includes("CAPACIT_") || d.includes("CAPACITA")) return "CAPACITY_MARKET_SELLER_CHARGE";
   if (d.includes("SERVIZIO_DI_VENDITA") || d.includes("CORRISPETTIVO_DI_VENDITA")) return "SELLER_ENERGY_FEE";
   if (d.includes("ENERGIA") && (/(^|_)F[0-3](_|$)/.test(d) || d.includes("MONORARI") || d.includes("FASCIA"))) return "SELLER_ENERGY_FEE";
@@ -156,6 +176,7 @@ function groupOf(c: BillEconomicClassification): BillEconomicGroup {
   if (["DISPATCHING_SELLER_CHARGE", "BALANCING_CHARGE"].includes(c)) return "DISPATCHING_OR_PASS_THROUGH";
   if (c === "CAPACITY_MARKET_SELLER_CHARGE") return "CAPACITY_MARKET";
   if (c === "ARERA_NETWORK") return "REGULATED_NETWORK";
+  if (c === "REACTIVE_ENERGY") return "REACTIVE_ENERGY";
   if (c === "ARERA_SYSTEM_CHARGES") return "SYSTEM_CHARGES";
   if (["TERNA_DISPATCHING_REFERENCES", "GME_MARKET_REFERENCE"].includes(c)) return "OTHER_ITEMS";
   if (["IVA", "ACCISE", "TAX_SUBTOTAL"].includes(c)) return "TAX";
@@ -232,7 +253,7 @@ export function normalizeBillEconomicComponent(input: BillEconomicComponentInput
   const rawDescription = text(input.rawDescription ?? description); const rawValue = text(input.rawValue ?? input.value ?? input.amount ?? input.unitPrice ?? ""); const rawUnit = text(input.rawUnit ?? unit); const rawQuantity = text(input.rawQuantity ?? quantity); const rawUnitPrice = text(input.rawUnitPrice ?? unitPrice); const rawAmount = text(input.rawAmount ?? amount); const rawPeriod = text(input.rawPeriod ?? period);
   const code = text(input.code) || "UNCLASSIFIED_BILL_CHARGE"; const key = keyOf(description); const classification = classifyBillEconomicComponent(code, description); const role = unitPriceOnly(amount, quantity, unitPrice, text(input.code) || null, unit, ["ENERGY_PRICE", "COMMERCIALIZATION", "DISPATCHING_OR_PASS_THROUGH", "CAPACITY_MARKET", "OTHER_SELLER_CHARGES"].includes(groupOf(classification))) ? "DETAIL_INCLUDED_IN_SUBTOTAL" : accountingRole(classification, description);
   const normalizedCode = code !== "UNCLASSIFIED_BILL_CHARGE" ? code : key.includes("TOTALE_VENDITA") ? "TOTAL_SELLER_ENERGY" : key.includes("TOTALE_TARIFFA") ? "TOTAL_NETWORK_TARIFF" : key.includes("TOTALE_ONERI") ? "TOTAL_SYSTEM_CHARGES" : key === "TOTALE_IMPOSTE" ? "TAX_SUBTOTAL" : key === "TOTALE_FORNITURA" ? "TOTAL_SUPPLY" : key === "TOTALE_BOLLETTA" ? "BILL_TOTAL" : key === "TOTALE_DA_PAGARE" ? "AMOUNT_DUE" : code;
-  return { lineId: "", code, normalizedCode, classification, group: groupOf(classification), accountingRole: role, includedInReconciliation: role === "ATOMIC", aggregate: role !== "ATOMIC" && role !== "PRIOR_BALANCE", atomic: role === "ATOMIC", parentComponent: null, childComponents: [], description: description || rawDescription || "Voce economica non descritta", quantity, unitPrice, unit, amount, period, rawDescription, rawValue, rawUnit, rawQuantity, rawUnitPrice, rawAmount, rawPeriod, documentEvidence: text(input.documentEvidence ?? rawDescription), calculationCheck: calculationCheck({ quantity: rawQuantity, unitPrice: rawUnitPrice, unit: rawUnit, amount: rawAmount }), status: text(input.status) || "FOUND" };
+  return { lineId: "", code, normalizedCode, classification, group: groupOf(classification), accountingRole: role, includedInReconciliation: role === "ATOMIC", aggregate: role !== "ATOMIC" && role !== "PRIOR_BALANCE", atomic: role === "ATOMIC", parentComponent: null, childComponents: [], description: description || rawDescription || "Voce economica non descritta", quantity, unitPrice, unit, amount, period, rawDescription, rawValue, rawUnit, rawQuantity, rawUnitPrice, rawAmount, rawPeriod, documentEvidence: text(input.documentEvidence ?? rawDescription), calculationCheck: calculationCheck({ quantity: rawQuantity, unitPrice: rawUnitPrice, unit: rawUnit, amount: rawAmount }), status: text(input.status) || "FOUND", origin: "PRINTED" };
 }
 
 const sum = (items: readonly BillEconomicComponent[]): number | null => { const values = items.filter((item) => item.includedInReconciliation).map((item) => numberFrom(item.amount)).filter((value): value is number => value !== null); return values.length ? round(values.reduce((a, b) => a + b, 0)) : null; };
@@ -357,7 +378,7 @@ function networkFromSummary(items: readonly BillEconomicComponent[]): readonly B
     }
     const network = round((numberFrom(first.amount) ?? 0) - systemAmount);
     const label = quota === "CONSUMPTION" ? "quota energia" : quota === "FIXED" ? "quota fissa" : "quota potenza";
-    replaced.set(first.lineId, { ...first, code: "NETWORK_FROM_SUMMARY", normalizedCode: "NETWORK_FROM_SUMMARY", classification: "ARERA_NETWORK", group: "REGULATED_NETWORK", accountingRole: "ATOMIC", atomic: true, aggregate: false, amount: network.toFixed(2).replace(".", ","), quantity: null, unitPrice: null, calculationCheck: "NOT_CHECKABLE", description: `Trasporto e gestione del contatore, ${label}: rete e oneri del quadro sintetico ${numberFrom(first.amount)?.toFixed(2).replace(".", ",")} € meno oneri di sistema ${systemAmount.toFixed(2).replace(".", ",")} €` });
+    replaced.set(first.lineId, { ...first, code: "NETWORK_FROM_SUMMARY", normalizedCode: "NETWORK_FROM_SUMMARY", classification: "ARERA_NETWORK", group: "REGULATED_NETWORK", accountingRole: "ATOMIC", atomic: true, aggregate: false, amount: network.toFixed(2).replace(".", ","), quantity: null, unitPrice: null, calculationCheck: "NOT_CHECKABLE", origin: "CALCULATED", derivation: `${numberFrom(first.amount)?.toFixed(2).replace(".", ",")} € (rete e oneri stampati, ${label}) − ${systemAmount.toFixed(2).replace(".", ",")} € (oneri di sistema stampati) = ${network.toFixed(2).replace(".", ",")} €`, description: `Trasporto e gestione del contatore, ${label}: rete e oneri del quadro sintetico ${numberFrom(first.amount)?.toFixed(2).replace(".", ",")} € meno oneri di sistema ${systemAmount.toFixed(2).replace(".", ",")} €` });
     for (const copy of copies) replaced.set(copy.lineId, { ...copy, accountingRole: "DETAIL_INCLUDED_IN_SUBTOTAL", includedInReconciliation: false, atomic: false });
   }
   return items.map((item) => replaced.get(item.lineId) ?? item);
@@ -396,7 +417,7 @@ function quotaTotals(items: readonly BillEconomicComponent[]): readonly BillEcon
     if (Math.abs(summed - total) <= 0.02) { replaced.set(item.lineId, { ...item, accountingRole: "DETAIL_INCLUDED_IN_SUBTOTAL", includedInReconciliation: false, atomic: false, aggregate: true }); continue; }
     if (children.some((child) => child.side === "NETWORK_SYSTEM") || summed > total) continue;
     const label = quota === "CONSUMPTION" ? "quota per consumi" : quota === "FIXED" ? "quota fissa" : "quota potenza";
-    replaced.set(item.lineId, { ...item, code: "NETWORK_AND_SYSTEM_FROM_TOTAL", normalizedCode: "NETWORK_AND_SYSTEM_FROM_TOTAL", classification: "ARERA_NETWORK", group: "REGULATED_NETWORK", accountingRole: "ATOMIC", atomic: true, aggregate: false, amount: round(total - summed).toFixed(2).replace(".", ","), quantity: null, unitPrice: null, unit: null, calculationCheck: "NOT_CHECKABLE", description: `di cui spesa per la rete e gli oneri generali di sistema (${label}): totale ${total.toFixed(2).replace(".", ",")} € meno vendita ${summed.toFixed(2).replace(".", ",")} €` });
+    replaced.set(item.lineId, { ...item, code: "NETWORK_AND_SYSTEM_FROM_TOTAL", normalizedCode: "NETWORK_AND_SYSTEM_FROM_TOTAL", classification: "ARERA_NETWORK", group: "REGULATED_NETWORK", accountingRole: "ATOMIC", atomic: true, aggregate: false, amount: round(total - summed).toFixed(2).replace(".", ","), quantity: null, unitPrice: null, unit: null, calculationCheck: "NOT_CHECKABLE", origin: "CALCULATED", derivation: `${total.toFixed(2).replace(".", ",")} € (totale ${label} stampato) − ${summed.toFixed(2).replace(".", ",")} € (vendita stampata) = ${round(total - summed).toFixed(2).replace(".", ",")} €`, description: `di cui spesa per la rete e gli oneri generali di sistema (${label}): totale ${total.toFixed(2).replace(".", ",")} € meno vendita ${summed.toFixed(2).replace(".", ",")} €` });
   }
   return items.map((item) => replaced.get(item.lineId) ?? item);
 }
@@ -483,11 +504,11 @@ export function buildCurrentBillEconomicAnalysis(inputs: readonly BillEconomicCo
     const printed = subtotals.find((i) => /^(ACCISE_E_IVA|TOTALE_IMPOSTE_E_IVA)$/.test(keyOf(i.description))) ?? [...subtotals].sort((a, b) => (numberFrom(b.amount) ?? 0) - (numberFrom(a.amount) ?? 0))[0];
     const excise = round(components.filter((i) => i.classification === "ACCISE" && i.includedInReconciliation).reduce((total, i) => total + (numberFrom(i.amount) ?? 0), 0));
     const vat = printed ? round((numberFrom(printed.amount) ?? 0) - excise) : 0;
-    if (printed && vat > 0.02) components = components.map((i) => i.lineId === printed.lineId ? { ...i, classification: "IVA", normalizedCode: "IVA", group: "TAX", accountingRole: "ATOMIC", includedInReconciliation: true, atomic: true, aggregate: false, ...(excise > 0 ? { amount: vat.toFixed(2).replace(".", ","), quantity: null, unitPrice: null, calculationCheck: "NOT_CHECKABLE" as const, description: `IVA: ${i.description} ${numberFrom(i.amount)?.toFixed(2).replace(".", ",")} € meno accise ${excise.toFixed(2).replace(".", ",")} €` } : {}) } : i);
+    if (printed && vat > 0.02) components = components.map((i) => i.lineId === printed.lineId ? { ...i, classification: "IVA", normalizedCode: "IVA", group: "TAX", accountingRole: "ATOMIC", includedInReconciliation: true, atomic: true, aggregate: false, ...(excise > 0 ? { amount: vat.toFixed(2).replace(".", ","), quantity: null, unitPrice: null, calculationCheck: "NOT_CHECKABLE" as const, origin: "CALCULATED" as const, derivation: `${numberFrom(i.amount)?.toFixed(2).replace(".", ",")} € (accise e IVA stampate) − ${excise.toFixed(2).replace(".", ",")} € (accise stampate) = ${vat.toFixed(2).replace(".", ",")} €`, description: `IVA: ${i.description} ${numberFrom(i.amount)?.toFixed(2).replace(".", ",")} € meno accise ${excise.toFixed(2).replace(".", ",")} €` } : {}) } : i);
   }
   components = withoutSummaries(components, numberFrom(options.sourceBillTotal ?? billTotal) ?? numberFrom(components.find((i) => i.classification === "BILL_TOTAL")?.amount));
   const seller = { ENERGY_PRICE: components.filter((i) => i.group === "ENERGY_PRICE"), COMMERCIALIZATION: components.filter((i) => i.group === "COMMERCIALIZATION"), DISPATCHING_OR_PASS_THROUGH: components.filter((i) => i.group === "DISPATCHING_OR_PASS_THROUGH"), CAPACITY_MARKET: components.filter((i) => i.group === "CAPACITY_MARKET"), OTHER_SELLER_CHARGES: components.filter((i) => i.group === "OTHER_SELLER_CHARGES") } as const;
-  const regulatedAndSystemCosts = { ARERA_NETWORK: components.filter((i) => i.group === "REGULATED_NETWORK"), ARERA_SYSTEM_CHARGES: components.filter((i) => i.group === "SYSTEM_CHARGES"), TERNA_DISPATCHING_REFERENCES: components.filter((i) => i.classification === "TERNA_DISPATCHING_REFERENCES"), GME_MARKET_REFERENCE: components.filter((i) => i.classification === "GME_MARKET_REFERENCE") } as const;
+  const regulatedAndSystemCosts = { ARERA_NETWORK: components.filter((i) => i.group === "REGULATED_NETWORK"), REACTIVE_ENERGY: components.filter((i) => i.group === "REACTIVE_ENERGY"), ARERA_SYSTEM_CHARGES: components.filter((i) => i.group === "SYSTEM_CHARGES"), TERNA_DISPATCHING_REFERENCES: components.filter((i) => i.classification === "TERNA_DISPATCHING_REFERENCES"), GME_MARKET_REFERENCE: components.filter((i) => i.classification === "GME_MARKET_REFERENCE") } as const;
   const taxesAndOtherItems = { TAXES: components.filter((i) => i.group === "TAX"), OTHER_ITEMS: components.filter((i) => i.group === "OTHER_ITEMS") } as const;
   const sourceTotal = numberFrom(options.sourceBillTotal ?? billTotal) ?? numberFrom(components.find((i) => i.classification === "BILL_TOTAL")?.amount);
   const amountDue = numberFrom(options.sourceAmountDue) ?? numberFrom(components.find((i) => i.classification === "AMOUNT_DUE")?.amount);
@@ -503,7 +524,7 @@ export function buildCurrentBillEconomicAnalysis(inputs: readonly BillEconomicCo
   const previousDebtIncludedInCurrentInvoiceTotal = priorBalance === null || totalToPay === null || sourceTotal === null ? null : totalToPay > sourceTotal + 0.02;
   return { priceType: priceType(components), components, currentSellerCostBreakdown: seller, regulatedAndSystemCosts, taxesAndOtherItems, totals: {
     sellerEnergyTotal: sum(seller.ENERGY_PRICE), sellerCommercializationTotal: sum(seller.COMMERCIALIZATION), sellerOtherTotal: [seller.DISPATCHING_OR_PASS_THROUGH, seller.CAPACITY_MARKET, seller.OTHER_SELLER_CHARGES].flat().length ? sum([...seller.DISPATCHING_OR_PASS_THROUGH, ...seller.CAPACITY_MARKET, ...seller.OTHER_SELLER_CHARGES]) : null,
-    regulatedNetworkTotal: sum(regulatedAndSystemCosts.ARERA_NETWORK), systemChargesTotal: sum(regulatedAndSystemCosts.ARERA_SYSTEM_CHARGES), taxTotal: fiscalTotal, otherItemsTotal: sum(taxesAndOtherItems.OTHER_ITEMS.filter((item) => item.classification !== "CANONE_RAI")), reconstructedCurrentSupplyTotal, currentPeriodTotal, priorBalanceTotal: priorBalance, tvFeeTotal, billTotal: sourceTotal, amountDue, currentBillReconstructedTotal: currentPeriodTotal, reconciliationDifference, currentInvoiceAtomicTotal: reconstructedCurrentSupplyTotal, currentInvoiceAggregateTotal: currentPeriodTotal, fiscalTotal, extraordinaryTotal, totalExcludingTvFee, totalToPay, previousDebtIncludedInCurrentInvoiceTotal, reconciliationStatus: reconciliationDifference === null ? "NOT_RECONCILABLE" : Math.abs(reconciliationDifference) <= 0.02 ? "RECONCILED" : "DIFFERENCE",
+    regulatedNetworkTotal: sum(regulatedAndSystemCosts.ARERA_NETWORK), reactiveEnergyTotal: sum(regulatedAndSystemCosts.REACTIVE_ENERGY), systemChargesTotal: sum(regulatedAndSystemCosts.ARERA_SYSTEM_CHARGES), taxTotal: fiscalTotal, otherItemsTotal: sum(taxesAndOtherItems.OTHER_ITEMS.filter((item) => item.classification !== "CANONE_RAI")), reconstructedCurrentSupplyTotal, currentPeriodTotal, priorBalanceTotal: priorBalance, tvFeeTotal, billTotal: sourceTotal, amountDue, currentBillReconstructedTotal: currentPeriodTotal, reconciliationDifference, currentInvoiceAtomicTotal: reconstructedCurrentSupplyTotal, currentInvoiceAggregateTotal: currentPeriodTotal, fiscalTotal, extraordinaryTotal, totalExcludingTvFee, totalToPay, previousDebtIncludedInCurrentInvoiceTotal, reconciliationStatus: reconciliationDifference === null ? "NOT_RECONCILABLE" : Math.abs(reconciliationDifference) <= 0.02 ? "RECONCILED" : "DIFFERENCE",
     printedSummary: { ...summary, taxes: summary.taxes ?? printedSummary(components).taxes },
   } };
 }

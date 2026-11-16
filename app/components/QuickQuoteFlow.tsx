@@ -7,6 +7,7 @@ import { technicalScontrino, type TechnicalComponent, type TechnicalScontrinoInp
 import { EmptyState, ErrorState, LoadingState } from "./UiStates";
 import { BillReadDetails, type CalculatedFact } from "./BillReadDetails";
 import { formatKwh } from "../lib/ui/format";
+import { billComponentLabel } from "../lib/foundation/bill-economic-analysis";
 import { billForReading, billReadSections, printedContractValues } from "../lib/ui/bill-read-details";
 import { BillArchivePicker } from "./BillArchivePicker";
 import { requestBillDelete, approvedBillEntry, archiveLoadError, canDeleteBills, deleteConfirmText, deleteReportText, deleteSelectedBills, deleteSummaryText, pendingBillEntry, type ArchiveList, type BillArchiveEntry, type BillDeleteReport } from "../lib/ui/bill-archive";
@@ -701,8 +702,8 @@ function VerificationNote({ bill, rowKey, receipt }: { readonly bill: BillDocume
   // Tony (31/10): the note says how the bill and the simulation each stand against ARERA, not the gap between the two columns.
   if (official?.status === "DIFFERENCE" && official.difference !== null) {
     const arera = official.official ?? 0;
-    const row = receipt?.rows.find((item) => item.key === rowKey);
-    const apart = row?.current != null ? Math.round((row.current - arera - official.difference) * 100) / 100 : 0;
+    // The reactive energy the bill names (its own component), never the row's arithmetic remainder (Tony 16/11/2026).
+    const apart = rowKey === "NETWORK" ? receipt?.quotas.find((item) => item.key === "REACTIVE")?.current ?? 0 : 0;
     return <small className="quote-check bad">⚠ Valori ARERA del periodo {EURO.format(arera)}: la bolletta addebita {EURO.format(arera + official.difference)}, cioè {EURO.format(Math.abs(official.difference))} {official.difference > 0 ? "in più" : "in meno"} di ARERA; la simulazione applica i valori ARERA ({EURO.format(arera)}){Math.abs(apart) >= 0.01 ? `. Energia reattiva ${EURO.format(apart)} a parte, uguale nelle due colonne` : ""}.</small>;
   }
   const check = regulatedVerification(bill.regulatoryAudit, domain);
@@ -829,7 +830,7 @@ function billOutsideComparison(analysis: BillDocumentModel["analystReview"]["eco
   if (!analysis || compared === null) return [];
   const value = (amount: string | null) => { const parsed = Number(String(amount ?? "").replace(/[^\d,\-]/g, "").replace(",", ".")); return Number.isFinite(parsed) ? parsed : 0; };
   const items = analysis.components.filter((line) => line.group === "OTHER_ITEMS" && !line.aggregate && line.includedInReconciliation !== false && line.classification !== "BILL_TOTAL" && line.classification !== "AMOUNT_DUE")
-    .map((line) => ({ label: line.description, amount: value(line.amount) })).filter((item) => item.amount !== 0);
+    .map((line) => ({ label: billComponentLabel(line), amount: value(line.amount) })).filter((item) => item.amount !== 0);
   const total = analysis.totals.billTotal;
   const sum = items.reduce((acc, item) => acc + item.amount, 0);
   return total !== null && Math.abs(compared + sum - total) <= 0.02 ? items : [];

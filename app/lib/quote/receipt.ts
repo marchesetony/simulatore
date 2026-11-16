@@ -3,6 +3,8 @@ import { amountToken } from "../foundation/amount-token.ts";
 // @ts-expect-error Node's strip-only test runner requires the explicit extension.
 import { commercialDiscountAmount, type CommercialDiscountPolicy } from "../company/discount.ts";
 import type { BillEconomicAnalysis, BillEconomicComponent } from "../foundation/bill-economic-analysis";
+// @ts-expect-error Node's strip-only test runner requires the explicit extension.
+import { billComponentLabel, isReactiveEnergy } from "../foundation/bill-economic-analysis.ts";
 import type { BillRegulatoryAuditDTO } from "../foundation/bill-regulatory-audit";
 // @ts-expect-error Node's strip-only test runner requires the explicit extension.
 import { referenceDomainForComponent } from "../foundation/regulatory-domains.ts";
@@ -45,7 +47,7 @@ export interface QuoteReceipt {
   readonly undetermined?: readonly string[];
 }
 export interface OfficialCheck { readonly status: "VERIFIED" | "DIFFERENCE" | "NOT_AVAILABLE"; readonly official: number | null; readonly difference: number | null; readonly reason: string | null }
-export type QuoteReceiptQuotaKey = "CONSUMPTION" | "FIXED" | "POWER" | "OTHER" | "BONUS" | "EXCISE" | "VAT" | "TAXES";
+export type QuoteReceiptQuotaKey = "CONSUMPTION" | "FIXED" | "POWER" | "REACTIVE" | "OTHER" | "BONUS" | "EXCISE" | "VAT" | "TAXES";
 /** One line of the scontrino: what the bill paid, what the simulated CTE pays, and how much of it is the seller's. */
 export interface QuoteReceiptQuota { readonly key: QuoteReceiptQuotaKey; readonly label: string; readonly basis: string; readonly current: number | null; readonly offer: number | null; readonly difference: number | null; readonly currentSeller: number | null; readonly offerSeller: number | null; readonly details: readonly QuoteReceiptDetail[] }
 /** One named charge inside a quota (energia, dispacciamento, capacity, sbilanciamento, PCV, trasporto, oneri), bill against CTE. */
@@ -222,22 +224,23 @@ function undeterminedOf(input: QuoteReceiptInput): readonly string[] {
   const labels = (input.warnings ?? []).filter((warning) => warning.endsWith(":CTE_NOT_DETERMINABLE")).map((warning) => DETAIL_LABEL[MISSING_KEY[warning.split(":")[1] ?? ""] ?? ""] ?? warning.split(":")[1] ?? "");
   return [...new Set(labels.filter(Boolean))];
 }
-// Reactive energy is an ARERA charge tied to the customer's plant: the same on both sides (base di calcolo, 26/10).
-// Every other "altre partite" line (prior periods, interest, deposits, indemnities, TV licence) stays out of the comparison.
+// Reactive energy is an ARERA charge tied to the customer's plant: the same on both sides (base di calcolo, 26/10). It is the
+// analysis's own REACTIVE_ENERGY component (Tony 16/11/2026, "classificazione unica"), never searched again in the wording.
+// Every "altre partite" line (prior periods, interest, deposits, indemnities, TV licence) stays out of the comparison.
 type BillLine = NonNullable<QuoteReceiptInput["analysis"]>["components"][number];
-const otherItems = (input: QuoteReceiptInput): readonly BillLine[] => (input.analysis?.components ?? []).filter((line) => line.group === "OTHER_ITEMS" && !line.aggregate && line.includedInReconciliation !== false && amountOf(line.amount) !== null);
+const liveLine = (line: BillLine): boolean => !line.aggregate && line.includedInReconciliation !== false && amountOf(line.amount) !== null;
+const otherItems = (input: QuoteReceiptInput): readonly BillLine[] => (input.analysis?.components ?? []).filter((line) => line.group === "OTHER_ITEMS" && liveLine(line));
+const reactiveLines = (input: QuoteReceiptInput): readonly BillLine[] => (input.analysis?.components ?? []).filter((line) => isReactiveEnergy(line) && liveLine(line));
 // Tony (31/10, bolletta BPower settembre 2026): "la bolletta che tu segni totale 181,62 non esiste". The social bonus is
 // granted by ARERA whoever the seller is: it stays on its own line, the same on both sides, so the bill column adds up to
 // the bill's own total (168,42 €) and the bonus still moves nothing in the comparison ("il bonus non va considerato").
 const bonusOf = (input: QuoteReceiptInput): number => sumKnown((input.analysis?.components ?? []).filter((line) => line.classification === "BONUS" && !line.aggregate && line.includedInReconciliation !== false).map((line) => amountOf(line.amount))) ?? 0;
-const isReactive = (line: BillLine): boolean => line.classification !== "RICALCOLI" && /reattiv/i.test(`${line.description} ${line.rawDescription ?? ""}`);
 // Tony (1/11, "Addebito CTS-Corrispettivo Tariffario Specifico: 42,46 €" listed as excluded: "se è una voce che compare nella
 // fattura deve essere inserita come costo poichè aumenta il risparmio"; then "la cte non prevede ... nelle bollette le aziende
 // scrivono e raggruppano nei modi più disparati alcuni costi, ecco perchè si devono raggruppare come detta il regolamento").
 // The CTS the seller bills under "altre partite" is a seller charge the new CTE does not foresee: it is regrouped in the
 // spesa per la vendita, in the bill column only.
 const isCts = (line: BillLine): boolean => line.classification !== "RICALCOLI" && /\bCTS\b|corrispettivo tariffario specifico/i.test(`${line.description} ${line.rawDescription ?? ""}`);
-const isNetworkPassThrough = (line: BillLine): boolean => isReactive(line);
 const sellerExtras = (input: QuoteReceiptInput): readonly BillLine[] => otherItems(input).filter(isCts);
 
 // Charges the bill and the CTE both name, so each one is compared on its own line and never hidden in an aggregate (Tony, 26/10).
@@ -368,6 +371,10 @@ function quotasOf(input: QuoteReceiptInput, currentEnergy: number | null, offerE
     row("FIXED", "Quota fissa", "mesi \u00d7 corrispettivi in \u20ac/mese", currentEnergy === null ? null : bill.FIXED.all, regulated("FIXED") + offer.FIXED, currentEnergy === null ? null : bill.FIXED.seller, offer.FIXED, detailsOf("FIXED", withBill)),
   ];
   if (input.vector === "EE") rows.push(row("POWER", "Quota potenza", "kW \u00d7 corrispettivi in \u20ac/kW", currentEnergy === null ? null : bill.POWER.all, regulated("POWER") + offer.POWER, currentEnergy === null ? null : bill.POWER.seller, offer.POWER, detailsOf("POWER", withBill)));
+  // Tony (16/11/2026, "classificazione unica", 070789E): the energia reattiva the bill names is its own line of the scontrino,
+  // the same amount on both sides (it is in the rete of both columns), never folded into "Altre voci" as a difference.
+  const reactive = sumKnown(reactiveLines(input).map((line) => amountOf(line.amount)));
+  if (reactive !== null && Math.abs(reactive) >= 0.005) rows.push(row("REACTIVE", "Energia reattiva", "importo stampato in bolletta (uguale nelle due colonne)", withBill ? reactive : null, reactive));
   // Whatever the bill does not tie to a quota (a line without unit) and the CTE's one-off fees, so the quotas add up to the same totals.
   const supplyCurrent = currentEnergy === null ? null : currentEnergy + (network ?? 0) + (system ?? 0);
   const supplyOffer = offerEnergy + (offerNetwork ?? 0) + (offerSystem ?? 0);
@@ -480,7 +487,7 @@ function withDetails(input: QuoteReceiptInput, rows: readonly QuoteReceiptRow[],
         return [[quota ?? "OTHER", label(quota), value, official.length ? null : value] as const];
       }),
       ...official.map((component) => { const quota = regulatedQuota(component); return [quota, label(quota), null, signed(component)] as const; }),
-      ...(side === "NETWORK" ? otherItems(input).filter(isNetworkPassThrough).map((line) => ["REACTIVE", DETAIL_LABEL.REACTIVE, amountOf(line.amount), amountOf(line.amount)] as const) : []),
+      ...(side === "NETWORK" ? reactiveLines(input).map((line) => ["REACTIVE", DETAIL_LABEL.REACTIVE, amountOf(line.amount), amountOf(line.amount)] as const) : []),
     ]);
   };
   const excise = sumKnown(components.filter((line) => line.classification === "ACCISE").map((line) => amountOf(line.amount)));
@@ -523,8 +530,8 @@ function summaryNetworkToSeller(input: QuoteReceiptInput): { readonly input: Quo
     // Only what the sintetica could have put there: never more than the derived amount itself.
     if (!target || Math.abs(shift) < 0.01 || shift > own) continue;
     const write = (value: number) => value.toFixed(2).replace(".", ",");
-    replaced.set(derived[0].lineId, { ...derived[0], amount: write(own - shift) });
-    replaced.set(target.lineId, { ...target, amount: write((amountOf(target.amount) ?? 0) + shift) });
+    replaced.set(derived[0].lineId, { ...derived[0], amount: write(own - shift), origin: "ASSUMED", derivation: "trasporto ARERA del periodo sulla stessa quota" });
+    replaced.set(target.lineId, { ...target, amount: write((amountOf(target.amount) ?? 0) + shift), origin: "CALCULATED", derivation: `${write(amountOf(target.amount) ?? 0)} € stampati + ${write(shift)} € che la pagina sintetica mette nella rete` });
     moved = cents(moved + shift);
   }
   if (!moved) return { input, moved: 0 };
@@ -542,7 +549,7 @@ function anchoredToPrintedSummary(input: QuoteReceiptInput): QuoteReceiptInput {
   const totals = analysis.totals;
   const differs = (a: number | null, b: number | null) => a !== null && (b === null || Math.abs(a - b) > 0.02);
   const seller = sumKnown([totals.sellerEnergyTotal, totals.sellerCommercializationTotal, totals.sellerOtherTotal]);
-  const reactive = sumKnown(otherItems(input).filter(isNetworkPassThrough).map((line) => amountOf(line.amount)));
+  const reactive = sumKnown(reactiveLines(input).map((line) => amountOf(line.amount)));
   const regulated = sumKnown([totals.regulatedNetworkTotal, totals.systemChargesTotal]);
   const next = { ...totals };
   if (differs(printed.seller, seller)) Object.assign(next, { sellerEnergyTotal: cents((printed.seller ?? 0) - (totals.sellerCommercializationTotal ?? 0) - (totals.sellerOtherTotal ?? 0)) });
@@ -574,8 +581,8 @@ function splitPrintedNetworkAndSystem(input: QuoteReceiptInput): QuoteReceiptInp
     const value = amountOf(line.amount) ?? 0;
     if (oneri <= 0 || oneri > value + 0.01) continue;
     done.add(quota);
-    replaced.set(line.lineId, { ...line, amount: write(value - oneri) });
-    added.push({ ...line, lineId: `${line.lineId}_ONERI`, classification: "ARERA_SYSTEM_CHARGES", group: "SYSTEM_CHARGES", amount: write(oneri), description: `${line.description} - oneri generali di sistema (valori ARERA del periodo)` });
+    replaced.set(line.lineId, { ...line, amount: write(value - oneri), origin: "CALCULATED", derivation: `${write(value)} € (rete e oneri stampati) − ${write(oneri)} € (oneri ARERA del periodo) = ${write(value - oneri)} €` });
+    added.push({ ...line, lineId: `${line.lineId}_ONERI`, classification: "ARERA_SYSTEM_CHARGES", group: "SYSTEM_CHARGES", amount: write(oneri), description: `${line.description} - oneri generali di sistema (valori ARERA del periodo)`, origin: "ASSUMED", derivation: "oneri generali di sistema ARERA del periodo sulla stessa quota" });
   }
   if (!added.length) return input;
   const moved = cents(added.reduce((total, line) => total + (amountOf(line.amount) ?? 0), 0));
@@ -599,14 +606,14 @@ function buildReceipt(input: QuoteReceiptInput): QuoteReceipt {
   const extras = sumKnown(sellerExtras(input).map((line) => amountOf(line.amount)));
   const currentEnergy = totals ? sumKnown([totals.sellerEnergyTotal, totals.sellerCommercializationTotal, totals.sellerOtherTotal, extras]) : null;
   const billNetwork = totals?.regulatedNetworkTotal ?? null;
-  const reactive = sumKnown(otherItems(input).filter(isNetworkPassThrough).map((line) => amountOf(line.amount)));
+  const reactive = sumKnown(reactiveLines(input).map((line) => amountOf(line.amount)));
   const network = billNetwork === null && reactive === null ? null : cents((billNetwork ?? 0) + (reactive ?? 0));
   const system = totals?.systemChargesTotal ?? null;
   // Prior-period adjustments are one item, as in the bill's own summary ("Ricalcoli").
   const recalculations = otherItems(input).filter((line) => line.classification === "RICALCOLI");
   const excluded = [
     ...(recalculations.length ? [{ label: "Ricalcoli e conguagli dei mesi precedenti", amount: cents(recalculations.reduce((total, line) => total + (amountOf(line.amount) ?? 0), 0)) }] : []),
-    ...otherItems(input).filter((line) => !isNetworkPassThrough(line) && !isCts(line) && line.classification !== "RICALCOLI" && line.classification !== "BONUS").map((line) => ({ label: line.description, amount: amountOf(line.amount) ?? 0 })),
+    ...otherItems(input).filter((line) => !isCts(line) && line.classification !== "RICALCOLI" && line.classification !== "BONUS").map((line) => ({ label: billComponentLabel(line), amount: amountOf(line.amount) ?? 0 })),
   ];
   const officialNetwork = officialOf(input, "NETWORK");
   const officialSystem = officialOf(input, "SYSTEM");

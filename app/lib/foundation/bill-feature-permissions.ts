@@ -141,6 +141,7 @@ export function comparisonComponentsOf(components: readonly EconomicComponent[])
     parentComponent: null, childComponents: [], description: line.description, quantity: line.quantity, unitPrice: line.unitPrice,
     unit: line.unit, amount: line.amount, period: line.period, rawDescription: "", rawValue: "", rawUnit: "", rawQuantity: "",
     rawUnitPrice: "", rawAmount: "", rawPeriod: "", documentEvidence: "", calculationCheck: line.calculationCheck, status: line.status,
+    origin: line.origin, ...(line.derivation ? { derivation: line.derivation } : {}),
   }));
 }
 
@@ -158,7 +159,7 @@ function hideTechnicalReview(review: PublicBillDocument["analystReview"], hideEc
         ...analysis,
         components: [],
         currentSellerCostBreakdown: { ENERGY_PRICE: [], COMMERCIALIZATION: [], DISPATCHING_OR_PASS_THROUGH: [], CAPACITY_MARKET: [], OTHER_SELLER_CHARGES: [] },
-        regulatedAndSystemCosts: { ARERA_NETWORK: [], ARERA_SYSTEM_CHARGES: [], TERNA_DISPATCHING_REFERENCES: [], GME_MARKET_REFERENCE: [] },
+        regulatedAndSystemCosts: { ARERA_NETWORK: [], REACTIVE_ENERGY: [], ARERA_SYSTEM_CHARGES: [], TERNA_DISPATCHING_REFERENCES: [], GME_MARKET_REFERENCE: [] },
         taxesAndOtherItems: { TAXES: [], OTHER_ITEMS: [] },
       },
     },
