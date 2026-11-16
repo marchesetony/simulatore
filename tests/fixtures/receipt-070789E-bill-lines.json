@@ -1,0 +1,219 @@
+{
+ "_note": "Economic lines of bill BPower 070789E (October 2026), read-only from the approved version; no customer data.",
+ "lines": [
+  {
+   "code": "OTHER_CHARGE",
+   "unit": "kWh",
+   "amount": "120,12 €",
+   "status": "FOUND",
+   "quantity": "335",
+   "periodRaw": "",
+   "unitPrice": "0,358567",
+   "description": "Quota per consumi",
+   "documentEvidence": "pagina 2"
+  },
+  {
+   "code": "OTHER_CHARGE",
+   "unit": "€/kWh",
+   "amount": "103,75 €",
+   "status": "FOUND",
+   "quantity": "",
+   "periodRaw": "",
+   "unitPrice": "0,309701",
+   "description": "Quota per consumi - di cui spesa per la vendita di energia elettrica",
+   "documentEvidence": "pagina 2",
+   "rawDescription": "di cui spesa per la vendita di energia elettrica"
+  },
+  {
+   "code": "NETWORK_SYSTEM",
+   "unit": "€/kWh",
+   "amount": "16,37 €",
+   "status": "FOUND",
+   "quantity": "",
+   "periodRaw": "",
+   "unitPrice": "0,048866",
+   "description": "Quota per consumi - di cui spesa per la rete e gli oneri generali di sistema",
+   "documentEvidence": "pagina 2",
+   "rawDescription": "di cui spesa per la rete e gli oneri generali di sistema"
+  },
+  {
+   "code": "OTHER_CHARGE",
+   "unit": "kVArh",
+   "amount": "5,48 €",
+   "status": "FOUND",
+   "quantity": "504",
+   "periodRaw": "",
+   "unitPrice": "0,010873",
+   "description": "Energia reattiva immessa",
+   "documentEvidence": "pagina 2"
+  },
+  {
+   "code": "OTHER_CHARGE",
+   "unit": "mese",
+   "amount": "21,74 €",
+   "status": "FOUND",
+   "quantity": "1",
+   "periodRaw": "",
+   "unitPrice": "21,74",
+   "description": "Quota fissa",
+   "documentEvidence": "pagina 2"
+  },
+  {
+   "code": "OTHER_CHARGE",
+   "unit": "€/mese",
+   "amount": "18,00 €",
+   "status": "FOUND",
+   "quantity": "",
+   "periodRaw": "",
+   "unitPrice": "18,00",
+   "description": "Quota fissa - di cui spesa per la vendita di energia elettrica",
+   "documentEvidence": "pagina 2",
+   "rawDescription": "di cui spesa per la vendita di energia elettrica"
+  },
+  {
+   "code": "NETWORK_SYSTEM",
+   "unit": "€/mese",
+   "amount": "3,74 €",
+   "status": "FOUND",
+   "quantity": "",
+   "periodRaw": "",
+   "unitPrice": "3,74",
+   "description": "Quota fissa - di cui spesa per la rete e gli oneri generali di sistema",
+   "documentEvidence": "pagina 2",
+   "rawDescription": "di cui spesa per la rete e gli oneri generali di sistema"
+  },
+  {
+   "code": "OTHER_CHARGE",
+   "unit": "kW per 1 mese",
+   "amount": "17,07 €",
+   "status": "FOUND",
+   "quantity": "4,0",
+   "periodRaw": "",
+   "unitPrice": "4,2675",
+   "description": "Quota potenza",
+   "documentEvidence": "pagina 2"
+  },
+  {
+   "code": "NETWORK_SYSTEM",
+   "unit": "€/kW/mese",
+   "amount": "17,07 €",
+   "status": "FOUND",
+   "quantity": "",
+   "periodRaw": "",
+   "unitPrice": "4,267500",
+   "description": "Quota potenza - di cui spesa per la rete e gli oneri generali di sistema",
+   "documentEvidence": "pagina 2",
+   "rawDescription": "di cui spesa per la rete e gli oneri generali di sistema"
+  },
+  {
+   "code": "TAX_SUBTOTAL",
+   "unit": "",
+   "amount": "40,62 €",
+   "status": "FOUND",
+   "quantity": "",
+   "periodRaw": "",
+   "unitPrice": "",
+   "description": "Accise e IVA",
+   "documentEvidence": "pagina 2"
+  },
+  {
+   "code": "BILL_TOTAL",
+   "unit": "",
+   "amount": "205,03 €",
+   "status": "FOUND",
+   "quantity": "",
+   "periodRaw": "",
+   "unitPrice": "",
+   "description": "Totale bolletta",
+   "documentEvidence": "pagina 2"
+  },
+  {
+   "code": "EXCISE",
+   "unit": "EUR/KWH",
+   "amount": "4,19",
+   "status": "FOUND",
+   "quantity": "335",
+   "periodRaw": "",
+   "unitPrice": "0,0125",
+   "description": "Accise: Imposte erariali (primo scaglione) 335 kWh x 0,0125 €/kWh",
+   "documentEvidence": "pagina 2"
+  },
+  {
+   "code": "VAT",
+   "unit": "%",
+   "amount": "36,43",
+   "status": "FOUND",
+   "quantity": "165,6",
+   "periodRaw": "",
+   "unitPrice": "22",
+   "description": "IVA vendite 22% su 165,6 €",
+   "documentEvidence": "pagina 2"
+  },
+  {
+   "code": "ASOS",
+   "unit": "",
+   "amount": "4,94",
+   "status": "FOUND",
+   "quantity": "",
+   "periodRaw": "",
+   "unitPrice": "",
+   "description": "Componente ASOS - quota potenza",
+   "documentEvidence": "pagina 2"
+  },
+  {
+   "code": "ASOS",
+   "unit": "",
+   "amount": "10,68",
+   "status": "FOUND",
+   "quantity": "",
+   "periodRaw": "",
+   "unitPrice": "",
+   "description": "Componente ASOS - quota per consumi",
+   "documentEvidence": "pagina 2"
+  },
+  {
+   "code": "ASOS",
+   "unit": "",
+   "amount": "1,08",
+   "status": "FOUND",
+   "quantity": "",
+   "periodRaw": "",
+   "unitPrice": "",
+   "description": "Componente ASOS - quota fissa",
+   "documentEvidence": "pagina 2"
+  },
+  {
+   "code": "ARIM",
+   "unit": "",
+   "amount": "1,15",
+   "status": "FOUND",
+   "quantity": "",
+   "periodRaw": "",
+   "unitPrice": "",
+   "description": "Componente ARIM - quota potenza",
+   "documentEvidence": "pagina 2"
+  },
+  {
+   "code": "ARIM",
+   "unit": "",
+   "amount": "0,54",
+   "status": "FOUND",
+   "quantity": "",
+   "periodRaw": "",
+   "unitPrice": "",
+   "description": "Componente ARIM - quota per consumi",
+   "documentEvidence": "pagina 2"
+  },
+  {
+   "code": "ARIM",
+   "unit": "",
+   "amount": "0,25",
+   "status": "FOUND",
+   "quantity": "",
+   "periodRaw": "",
+   "unitPrice": "",
+   "description": "Componente ARIM - quota fissa",
+   "documentEvidence": "pagina 2"
+  }
+ ]
+}

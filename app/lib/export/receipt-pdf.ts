@@ -2,6 +2,7 @@
 import { pdfBytes, pdfText, type PdfImage, type PdfPage } from "./pdf.ts";
 // @ts-expect-error Node's strip-only test runner requires the explicit extension.
 import { jpegSize } from "../company/profile.ts";
+import { SAME_CTE_TOLERANCE_PERCENT } from "../quote/receipt";
 import type { CompanyProfile } from "../company/profile";
 import type { ProposalPresentation } from "../proposal/presentation";
 import type { ProposalCanonicalSnapshot } from "../proposal/types";
@@ -191,7 +192,8 @@ export function renderReceiptProposal(proposal: ProposalCanonicalSnapshot, prese
   };
   if (presentation.sameOffer) {
     sheet.text("STESSA OFFERTA DELLA BOLLETTA", L + 14, sTop - 18, 7.5, { bold: true, color: tone });
-    sheet.text(`${saving !== null && saving >= 0 ? "La bolletta addebita" : "La bolletta addebita meno di"} ${euro(saving === null ? null : Math.abs(saving))}${saving !== null && saving >= 0 ? " in più di quanto prevede la CTE" : " rispetto alla CTE"}`, L + 14, sTop - 42, 12, { bold: true, color: tone });
+    // Tony (16/11/2026): a same-CTE gap is a recalculation gap, never by itself a claim that the bill charges more than due.
+    sheet.text(`${presentation.savingsPercent !== null && Math.abs(presentation.savingsPercent) <= SAME_CTE_TOLERANCE_PERCENT ? "Scostamento di ricalcolo entro tolleranza" : "Scostamento da verificare voce per voce"}: ${euro(saving === null ? null : Math.abs(saving))}`, L + 14, sTop - 42, 12, { bold: true, color: tone });
     sheet.text("Verifica voce per voce nello scontrino qui sotto.", L + 14, sTop - 58, 7.5, { color: MUTED });
   } else {
     const word = (value: number | null) => value !== null && value < 0 ? "Costo in più" : "Risparmio";

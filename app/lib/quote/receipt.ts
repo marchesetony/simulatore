@@ -49,7 +49,7 @@ export type QuoteReceiptQuotaKey = "CONSUMPTION" | "FIXED" | "POWER" | "OTHER" |
 /** One line of the scontrino: what the bill paid, what the simulated CTE pays, and how much of it is the seller's. */
 export interface QuoteReceiptQuota { readonly key: QuoteReceiptQuotaKey; readonly label: string; readonly basis: string; readonly current: number | null; readonly offer: number | null; readonly difference: number | null; readonly currentSeller: number | null; readonly offerSeller: number | null; readonly details: readonly QuoteReceiptDetail[] }
 /** One named charge inside a quota (energia, dispacciamento, capacity, sbilanciamento, PCV, trasporto, oneri), bill against CTE. */
-export interface QuoteReceiptDetail { readonly key: string; readonly label: string; readonly current: number | null; readonly offer: number | null; readonly difference: number | null; readonly missingReason?: string; /** Why the bill has no amount of its own for this charge (e.g. billed inside the energy price). */ readonly currentNote?: string; /** Why the CTE has no amount of its own for this charge (e.g. priced inside its spread). */ readonly offerNote?: string; /** Amounts whose €/kWh is shown on a line without amounts of its own (the energy comparison). */ readonly unitBasis?: { readonly current: number; readonly offer: number } }
+export interface QuoteReceiptDetail { readonly key: string; readonly label: string; readonly current: number | null; readonly offer: number | null; readonly difference: number | null; readonly missingReason?: string; /** Why the bill has no amount of its own for this charge (e.g. billed inside the energy price). */ readonly currentNote?: string; /** Why the CTE has no amount of its own for this charge (e.g. priced inside its spread). */ readonly offerNote?: string; /** Amounts whose €/kWh is shown on a line without amounts of its own (the energy comparison). */ readonly unitBasis?: { readonly current: number; readonly offer: number }; /** How the bill amount of this line was obtained when the bill prints it inside a larger line (e.g. PCV and Flex in one quota fissa di vendita). */ readonly currentDerived?: string }
 export interface QuoteReceiptOfferComponent { readonly category: string; readonly sign: string; readonly label?: string; readonly formulaId?: string; readonly amount: { readonly amount: number }; readonly formulaInputs?: Readonly<Record<string, string | number | boolean>> }
 /** The bill's analysis for the comparison column: its own lines, or, when the economic detail is hidden from the user, the
  *  priced lines the server keeps for the comparison only (Tony 12/11, Fase A). Never used for any other view. */
@@ -486,7 +486,7 @@ function withDetails(input: QuoteReceiptInput, rows: readonly QuoteReceiptRow[],
   const excise = sumKnown(components.filter((line) => line.classification === "ACCISE").map((line) => amountOf(line.amount)));
   return rows.map((row) => {
     const difference = row.current === null || row.offer === null ? null : cents(row.offer - row.current);
-    if (row.key === "ENERGY") return { ...row, difference, details: sellerWithComparison };
+    if (row.key === "ENERGY") return { ...row, difference, details: reconcileSellerFixed(sellerWithComparison) };
     if (row.key === "NETWORK") return { ...row, difference, details: regulated("REGULATED_NETWORK", "NETWORK") };
     if (row.key === "SYSTEM") return { ...row, difference, details: regulated("SYSTEM_CHARGES", "SYSTEM") };
     if (row.key === "BONUS") return { ...row, difference, details: [] };
@@ -705,6 +705,36 @@ export function regulatedVerification(audit: BillRegulatoryAuditDTO | null | und
   return { status: "NOT_VERIFIABLE", checked: verified.length, difference: 0, reason: verified.length ? `${verified.length} di ${lines.length} voci verificate; le altre: ${reason}` : reason };
 }
 
+/** Tony (16/11/2026, "Correzione definitiva riconciliazione scontrino", bolletta 070789E): the bill prints one quota fissa di
+ *  vendita (18,00 €) where the CTE lists the quota business (15,00 €) and the Opzione Flex (3,00 €). When the bill line is
+ *  exactly the sum of the CTE's PCV and options, the bill amount is split as the CTE prices it, said as a split (never as a
+ *  read value), and the total is shown beside it: no false gap of −3,00 on the PCV and +3,00 on the options. */
+export function reconcileSellerFixed(details: readonly QuoteReceiptDetail[]): readonly QuoteReceiptDetail[] {
+  const pcv = details.find((item) => item.key === "PCV");
+  const options = details.find((item) => item.key === "OPTIONS");
+  if (!pcv || !options || pcv.current === null || pcv.offer === null || options.current !== null || options.offer === null || options.offer <= 0 || pcv.missingReason || options.missingReason) return details;
+  const offerTotal = cents(pcv.offer + options.offer);
+  if (Math.abs(pcv.current - offerTotal) >= 0.005) return details;
+  const printed = pcv.current;
+  const note = `ripartizione dei ${euroText(printed)} di quota fissa di vendita stampati in bolletta su una sola riga`;
+  const total: QuoteReceiptDetail = { key: "SELLER_FIXED_TOTAL", label: "Totale quota fissa di vendita (quota business + opzioni)", current: printed, offer: offerTotal, difference: cents(offerTotal - printed) };
+  return details.flatMap((item) => {
+    if (item === pcv) return [{ ...item, label: "Quota fissa di vendita: quota business (PCV)", current: item.offer, difference: 0, currentDerived: note }];
+    if (item === options) return [{ ...item, current: item.offer, difference: 0, currentDerived: note }, total];
+    return [item];
+  });
+}
+
+/** Tony (16/11/2026): internal tolerance of a same-CTE recalculation, as a share of the bill total. */
+export const SAME_CTE_TOLERANCE_PERCENT = 1;
+/** Headline of a same-CTE comparison: within tolerance it is a recalculation gap; beyond it, a gap to check, never by itself a
+ *  claim that the supplier billed more than due (only a contractual difference proven line by line says that). */
+export function sameCteHeadline(savingsPercent: number | null): string {
+  return savingsPercent !== null && Math.abs(savingsPercent) <= SAME_CTE_TOLERANCE_PERCENT
+    ? "Stessa CTE — scostamento di ricalcolo entro tolleranza"
+    : "Stessa CTE della bolletta — scostamento tra bolletta e ricalcolo da verificare voce per voce";
+}
+
 /** One charge that differs when the bill was issued with the very CTE being simulated. */
 export interface SameOfferDifference { readonly label: string; readonly current: number | null; readonly offer: number | null; readonly difference: number | null; readonly cause: string; readonly accepted?: boolean; readonly consequence?: boolean }
 
@@ -723,14 +753,22 @@ export function sameOfferDifferences(receipt: Pick<QuoteReceipt, "rows">): reado
     if (difference !== null && Math.abs(difference) > 0.01) out.push({ label, current: item.current, offer, difference, cause: "Importo diverso: va controllata la lettura di bolletta e CTE" });
   };
   for (const row of receipt.rows) {
-    if (row.details?.length) for (const detail of row.details) check(`${row.label} · ${detail.label}`, detail);
+    // Tony (16/11/2026): energy is compared only on homogeneous bases. When the bill's energy price bundles charges the CTE
+    // lists apart, the bundled line has no gap of its own: the comparison line (bill energy price against CTE energy plus
+    // those charges) carries it.
+    const compared = row.details?.find((detail) => detail.key === "ENERGY_COMPARISON" && detail.unitBasis);
+    if (row.details?.length) for (const detail of row.details) {
+      if (compared && detail.key === "ENERGY" && detail.difference === null) continue;
+      if (detail === compared) { check(`${row.label} · ${detail.label}`, { current: compared.unitBasis!.current, offer: compared.unitBasis!.offer, difference: compared.difference }); continue; }
+      check(`${row.label} · ${detail.label}`, detail);
+    }
     else check(row.label, row);
   }
   // Tony (28/10): "questa maggiorazione che deriva da un arrotondamento di decimali sulla cte ... la consideriamo corretta".
   // The CTE prints its prices with fewer decimals than the supplier bills (BPower: commercialisation and imbalance, 5,38 € on
   // 978,56 €): a gap on the energy price that bundles those charges, within 1% of it, is accepted; so is the IVA on it.
-  const accepted = out.map((item) => item.difference !== null && item.current !== null && /comprende anche/.test(item.label) && Math.abs(item.difference) <= Math.abs(item.current) * 0.01
-    ? { ...item, accepted: true, cause: "Arrotondamento dei decimali dei prezzi della CTE (es. commercializzazione e sbilanciamento): considerato corretto" } : item);
+  const accepted = out.map((item) => item.difference !== null && item.current !== null && /comprende anche|Confronto energia/.test(item.label) && Math.abs(item.difference) <= Math.abs(item.current) * 0.01
+    ? { ...item, accepted: true, cause: "Scostamento di ricalcolo entro l'1% del prezzo energia della bolletta (arrotondamenti della bolletta, es. kWh di perdita interi e decimali dei prezzi): considerato corretto" } : item);
   const acceptedTotal = accepted.filter((item) => item.accepted).reduce((total, item) => total + (item.difference ?? 0), 0);
   const others = accepted.filter((item) => !item.accepted && !/(?:^|· )IVA$/.test(item.label));
   // An IVA gap that is just the IVA on the other gaps is their consequence, not a gap of its own (Tony, 29/10).

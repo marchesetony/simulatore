@@ -11,7 +11,7 @@ import { billForReading, billReadSections, printedContractValues } from "../lib/
 import { BillArchivePicker } from "./BillArchivePicker";
 import { requestBillDelete, approvedBillEntry, archiveLoadError, canDeleteBills, deleteConfirmText, deleteReportText, deleteSelectedBills, deleteSummaryText, pendingBillEntry, type ArchiveList, type BillArchiveEntry, type BillDeleteReport } from "../lib/ui/bill-archive";
 import { downloadExport, MAX_UPLOAD_BYTES, requestJson, requestUpload, toUiError, UiApiError } from "../lib/ui/client";
-import { buildQuoteReceipt, comparisonAnalysis, effectiveBillSpread, isSameOffer, regulatedVerification, sameOfferDifferences, type QuoteReceipt, type RegulatedDomain } from "../lib/quote/receipt";
+import { buildQuoteReceipt, comparisonAnalysis, effectiveBillSpread, isSameOffer, regulatedVerification, sameCteHeadline, sameOfferDifferences, type QuoteReceipt, type RegulatedDomain } from "../lib/quote/receipt";
 import { annualSaving, annualSavingUnderDiscount } from "../lib/quote/annual-saving";
 import { customerTypeOf } from "../lib/ingestion/customer-type";
 import { exclusionRank } from "../lib/quote/exclusion-order";
@@ -675,9 +675,11 @@ function CostDetail({ calculation, offerName, open, title = "Dettaglio dei costi
         {expanded[group.title] ? group.detail.map((line) => <tr key={`detail:${line.key}`} className="quote-cost-subline"><th scope="row">· {line.label}</th><td>{line.quantity}</td><td>{line.rate}</td><td>{euro(line.amount)}</td></tr>) : null}
       </tbody>)}
       {/* Tony (31/10): the footer said 113,77 € under groups worth 152,11 €; it is the sum of every line above. */}
-      <tfoot><tr><th scope="row" colSpan={3}>Totale nuova offerta (imposte escluse)</th><td>{euro(groups.reduce((total, group) => total + group.lines.reduce((sum, line) => sum + line.amount, 0), 0))}</td></tr></tfoot>
+      {/* Tony (16/11/2026): this subtotal is vendita + rete e oneri only; the complete total is in the Scontrino comparativo. */}
+      <tfoot><tr><th scope="row" colSpan={3}>Subtotale nuova offerta: vendita, rete e oneri (esclusi energia reattiva e imposte)</th><td>{euro(groups.reduce((total, group) => total + group.lines.reduce((sum, line) => sum + line.amount, 0), 0))}</td></tr></tfoot>
     </table></div>
     {calculation.unitCost ? <p className="muted quote-note">Costo medio della materia energia: {RATE.format(calculation.unitCost.amount)} {calculation.unitCost.unit === "EUR_PER_SMC" ? "€/Smc" : "€/kWh"}. Imposte escluse.</p> : <p className="muted quote-note">Imposte escluse.</p>}
+    <p className="muted quote-note">Il totale completo, con energia reattiva e altre partite della bolletta, accise e IVA, è nello scontrino comparativo.</p>
   </details>;
 }
 
@@ -810,7 +812,7 @@ function presentationOf(offer: Offer, receipt: QuoteReceipt, bill: BillDocumentM
     taxesIncluded: receipt.taxesIncluded, sameOffer: same,
     currentTotal: receipt.currentTotal, offerTotal: receipt.offerTotal, savings: receipt.savings, savingsPercent: receipt.savingsPercent,
     annualSaving, annualCurrent, annualBasisLabel: basisLabel, validUntil: receipt.validUntil,
-    rows: receipt.rows.flatMap((row) => [{ label: row.label, current: row.current, offer: row.offer, difference: row.difference ?? null, detail: false }, ...(row.details ?? []).map((item) => ({ label: item.label, current: item.current, offer: item.offer, difference: item.difference, detail: true, ...(item.offer === null && item.missingReason ? { note: `non calcolato: ${item.missingReason}` } : {}) }))]).slice(0, 80),
+    rows: receipt.rows.flatMap((row) => [{ label: row.label, current: row.current, offer: row.offer, difference: row.difference ?? null, detail: false }, ...(row.details ?? []).map((item) => ({ label: item.label, current: item.current, offer: item.offer, difference: item.difference, detail: true, ...(item.offer === null && item.missingReason ? { note: `non calcolato: ${item.missingReason}` } : item.currentDerived ? { note: item.currentDerived } : {}) }))]).slice(0, 80),
     comparison: offerBoxRows(offer, bill, context).map(([label, current, simulated]) => ({ label, bill: nodeText(current), offer: nodeText(simulated) })).slice(0, 20),
     // Tony (1/11): "semplificare per evitare domande e confusione": the customer's proposal never lists them.
     excluded: [],
@@ -886,7 +888,8 @@ function Receipt({ offer: quoted, today, business, context, bill, onPresentation
   // Tony (31/10, "come fa a costare meno con la stessa cte?"): with the CTE the bill was issued on there is no saving to sell;
   // the gap is what the bill charges beyond (or below) its own CTE.
   const same = isSameOffer({ billSupplier: context.currentSupplier, billOffer: currentOffer, offerSupplier: offer.supplier, offerCode: offer.calculation.sourceCte.offerCode, offerName: offer.offerName });
-  const headline = same ? (saving >= 0 ? "Stessa CTE della bolletta: la bolletta addebita più di quanto prevede la CTE" : "Stessa CTE della bolletta: la bolletta addebita meno di quanto prevede la CTE") : saving >= 0 ? "Risparmio sulla bolletta caricata" : "Costo in più sulla bolletta caricata";
+  // Tony (16/11/2026): with the same CTE the gap is a recalculation gap, never by itself "the bill charges more than due".
+  const headline = same ? sameCteHeadline(receipt.savingsPercent) : saving >= 0 ? "Risparmio sulla bolletta caricata" : "Costo in più sulla bolletta caricata";
   const note = basis && annualSaving !== null && !same ? annualGapNote(offer, context, bill, saving, annualSaving, basis) : "";
   // Tony (12/11/2026, regola 10): an annual saving on an estimated consumption says so, here and in the proposal.
   const basisText = basis ? basis.estimated ? `Risparmio annuo calcolato su consumi stimati: ${quantityText(basis.annual, unit)}, ${ANNUAL_ESTIMATE_LABEL}, ${annualEstimateOrigin(basis.detail, unit)}` : `Simulato su 12 mesi con ${quantityText(basis.annual, unit)} di consumo annuo dichiarato in bolletta` : "";
@@ -932,7 +935,7 @@ function Receipt({ offer: quoted, today, business, context, bill, onPresentation
         <th scope="row">{row.label}<VerificationNote bill={bill} rowKey={row.key} receipt={receipt} /></th><td>{euro(row.current)}</td><td>{euro(row.offer)}</td><td className={difference(row.difference ?? null)}>{signedEuro(row.difference ?? null)}</td>
       </tr>, ...(row.details ?? []).map((item) => <tr key={`${row.key}-${item.key}`} className={`quote-detail-row${item.difference !== null && Math.abs(item.difference) >= 0.01 ? " changed" : ""}`}>
         <th scope="row">{item.label}{row.key === "ENERGY" && item.current !== null ? <VerificationNote bill={bill} rowKey={item.key} /> : null}</th>
-        <td>{item.current === null ? (item.currentNote ? <><small className="muted">{item.currentNote}</small>{item.unitBasis ? perUnit("ENERGY", item.unitBasis.current) : null}</> : receipt.status === "COMPLETE" ? "non in bolletta" : "—") : <>{euro(item.current)}{perUnit(item.key, item.current)}</>}</td><td>{item.offer !== null ? <>{euro(item.offer)}{perUnit(item.key, item.offer)}</> : item.missingReason ? <small className="quote-check open">Non calcolato: {item.missingReason}</small> : item.offerNote ? <><small className="muted">{item.offerNote}</small>{item.unitBasis ? perUnit("ENERGY", item.unitBasis.offer) : null}</> : "non nella CTE"}</td><td className={difference(item.difference)}>{signedEuro(item.difference)}</td>
+        <td>{item.current === null ? (item.currentNote ? <><small className="muted">{item.currentNote}</small>{item.unitBasis ? perUnit("ENERGY", item.unitBasis.current) : null}</> : receipt.status === "COMPLETE" ? "non in bolletta" : "—") : <>{euro(item.current)}{perUnit(item.key, item.current)}{item.currentDerived ? <small className="muted">{item.currentDerived}</small> : null}</>}</td><td>{item.offer !== null ? <>{euro(item.offer)}{perUnit(item.key, item.offer)}</> : item.missingReason ? <small className="quote-check open">Non calcolato: {item.missingReason}</small> : item.offerNote ? <><small className="muted">{item.offerNote}</small>{item.unitBasis ? perUnit("ENERGY", item.unitBasis.offer) : null}</> : "non nella CTE"}</td><td className={difference(item.difference)}>{signedEuro(item.difference)}</td>
       </tr>)])}</tbody>
       {receipt.status === "COMPLETE" ? <tfoot><tr><th scope="row">{receipt.taxesIncluded ? "Totale" : "Totale imposte escluse"}</th><td>{euro(receipt.currentTotal)}</td><td>{euro(receipt.offerTotal)}</td><td className={difference(receipt.savings === null ? null : -receipt.savings)}>{signedEuro(receipt.savings === null ? null : -receipt.savings)}</td></tr></tfoot> : null}
     </table></div>

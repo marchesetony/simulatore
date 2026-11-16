@@ -13,9 +13,11 @@ assert.equal(isSameOffer({ ...base, offerCode: null, offerName: "BE Family CASA 
 assert.equal(isSameOffer({ ...base, offerCode: "003888ESVFL03XXXXXXXXXSMILFLEX26", offerName: "SMILE FLEX 26" }), false, "another BPower offer");
 assert.equal(isSameOffer({ ...base, offerSupplier: "Duferco Energia SpA", offerCode: "003888ESVFL02XXXXXXXCASAPROTETTA", offerName: "BE Family CASA PROTETTA" }), false, "another supplier");
 const flow = readFileSync(new URL("../app/components/QuickQuoteFlow.tsx", import.meta.url), "utf8");
-assert.match(flow, /Stessa CTE della bolletta: la bolletta addebita più di quanto prevede la CTE/);
+// Tony (16/11/2026): the same-CTE headline speaks of a recalculation gap, never by itself of an overcharge.
+assert.match(flow, /const headline = same \? sameCteHeadline\(receipt\.savingsPercent\)/);
 assert.match(flow, /annualSaving !== null && basis && !same/);
 // Cost detail: yearly POD fee as months and monthly amount; the footer is the sum of every line.
 assert.match(flow, /€\/mese \(\$\{CENTS\.format\(rate\)\} €\/POD all'anno\)/);
-assert.match(flow, /Totale nuova offerta \(imposte escluse\)/);
+// Tony (16/11/2026): the footer is a subtotal that leaves out reactive energy and taxes.
+assert.match(flow, /Subtotale nuova offerta: vendita, rete e oneri \(esclusi energia reattiva e imposte\)/);
 console.log("same offer version ok");
