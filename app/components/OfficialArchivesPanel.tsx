@@ -79,6 +79,27 @@ export default function OfficialArchivesPanel() {
   const needsAck = declared || equivalent;
   const canPublish = Boolean(preview && preview.status === "VALIDATED" && preview.checks.every((check) => check.ok) && confirmSha.trim().toLowerCase() === preview.sha256 && (!needsAck || acknowledge) && !busy);
   const alreadyPublished = preview ? (model?.archives ?? []).some((item) => item.history.some((entry) => entry.kind === "PUBLICATION" && entry.documentId === preview.documentId)) : false;
+  // "Riprendi pubblicazione" (Tony, 17/11/2026): after a refresh the preview is rebuilt from the documents the server already
+  // returns. Nothing is re-uploaded, no version is created and nothing is published here: the SHA-256 (and, when required, the
+  // provenance) confirmation starts empty again. Rejected, already published or superseded documents cannot be resumed; the
+  // server refuses them anyway (NOT_VALIDATED, ALREADY_PUBLISHED, OLDER_VERSION).
+  const documents = model?.documents ?? [];
+  const publishedIds = new Set((model?.archives ?? []).flatMap((item) => item.history.filter((entry) => entry.kind === "PUBLICATION" && entry.documentId).map((entry) => entry.documentId as string)));
+  const publishedVersion = new Map<string, number>();
+  for (const doc of documents) if (publishedIds.has(doc.documentId)) { const key = `${doc.code}|${doc.period}`; publishedVersion.set(key, Math.max(publishedVersion.get(key) ?? 0, doc.version)); }
+  const resumable = (documentId: string | null): Preview | null => {
+    const doc = documentId ? documents.find((item) => item.documentId === documentId) : undefined;
+    if (!doc || doc.status !== "VALIDATED" || !doc.checks.every((check) => check.ok) || doc.provenance.level === "DIFFERS_FROM_OFFICIAL_DOWNLOAD") return null;
+    if (publishedIds.has(doc.documentId)) return null;
+    const published = publishedVersion.get(`${doc.code}|${doc.period}`);
+    return published !== undefined && published >= doc.version ? null : doc;
+  };
+  const resume = (doc: Preview) => {
+    if (busy) return;
+    setError(undefined); setCode(doc.code); setPeriod(doc.period); setFile(null); setPreview(doc); setDuplicate(false); setConfirmSha(""); setAcknowledge(false);
+    setNotice(`Anteprima ripresa: ${doc.originalName}, versione ${doc.version}, validata il ${when(doc.uploadedAt)}. Nessun nuovo caricamento: controlla l'anteprima e conferma lo SHA-256 per pubblicare.`);
+    uploadRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+  };
 
   return <section id="archivi-ufficiali" className="content-stack official-archives" aria-labelledby="official-archives-title">
     <div className="ui-card">
@@ -98,7 +119,7 @@ export default function OfficialArchivesPanel() {
           <p><strong>Motivo:</strong> {alert.reason}</p><ol className="plain-list">{alert.instructions.map((step) => <li key={step}>{step}</li>)}</ol><p className="muted">Link ufficiale: <a href={alert.officialLink} target="_blank" rel="noreferrer">{alert.officialLink}</a><br />Percorso: {alert.uploadPath}</p></article>;
       })}</div>}
       <h4 className="official-archives-subtitle">Storico importazioni</h4>
-      {current.history.length === 0 ? <p className="muted">Nessuna operazione registrata.</p> : <div className="responsive-table"><table><thead><tr><th>Quando</th><th>Operazione</th><th>Documento</th><th>Periodo</th><th>Esito</th><th>Dettaglio</th></tr></thead><tbody>{current.history.map((entry, index) => <tr key={`${entry.at}-${index}`}><td>{when(entry.at)}</td><td>{KIND_LABEL[entry.kind] ?? entry.kind}</td><td>{entry.document}</td><td>{entry.period}</td><td><span className={`status-badge ${tone(entry.outcome)}`}>{entry.outcome}</span></td><td className="official-archive-detail">{entry.detail}{entry.actor ? ` · ${entry.actor}` : ""}</td></tr>)}</tbody></table></div>}
+      {current.history.length === 0 ? <p className="muted">Nessuna operazione registrata.</p> : <div className="responsive-table"><table><thead><tr><th>Quando</th><th>Operazione</th><th>Documento</th><th>Periodo</th><th>Esito</th><th>Dettaglio</th><th>Azione</th></tr></thead><tbody>{current.history.map((entry, index) => <tr key={`${entry.at}-${index}`}><td>{when(entry.at)}</td><td>{KIND_LABEL[entry.kind] ?? entry.kind}</td><td>{entry.document}</td><td>{entry.period}</td><td><span className={`status-badge ${tone(entry.outcome)}`}>{entry.outcome}</span></td><td className="official-archive-detail">{entry.detail}{entry.actor ? ` · ${entry.actor}` : ""}</td><td>{entry.kind === "VALIDATION" ? (() => { const doc = resumable(entry.documentId); return doc ? <button className="button secondary compact" type="button" disabled={Boolean(busy)} onClick={() => resume(doc)}>Riprendi pubblicazione</button> : null; })() : null}</td></tr>)}</tbody></table></div>}
     </div> : null}
 
     <div className="ui-card" ref={uploadRef} id="archivi-ufficiali-caricamento">
