@@ -21,12 +21,26 @@ export const UPLOADABLE_DOCUMENTS: readonly OfficialDocumentCode[] = ["ARERA_TIT
 /** First year of the TIT 2024-2027 period; a period beyond next year is not a published tariff yet. */
 const FIRST_SUPPORTED_YEAR = 2024;
 
-export type ProvenanceLevel = "MATCHES_OFFICIAL_DOWNLOAD" | "DIFFERS_FROM_OFFICIAL_DOWNLOAD" | "DECLARED_BY_PRODUCER";
+/**
+ * Provenienza (Tony, 17/11/2026, "correzione minima PROVENANCE"): tre esiti del confronto con il file scaricato dalla fonte.
+ * - MATCHES: impronta identica → verificata.
+ * - EQUIVALENT: impronta diversa ma valori tariffari del periodo identici (tensione, tipo, fascia, valore, soglia), stessa unità
+ *   e stesso anno → DA VERIFICARE: pubblicabile solo con la conferma esplicita del produttore; valori identici non provano
+ *   l'autenticità del file.
+ * - DIFFERS: valori diversi o equivalenza non dimostrabile → bloccato.
+ * Un download che non è un Excel con la Tabella 5 leggibile non è un riferimento: la sua impronta non è usata e la provenienza
+ * resta dichiarata (DECLARED_BY_PRODUCER, anch'essa da confermare).
+ */
+export type ProvenanceLevel = "MATCHES_OFFICIAL_DOWNLOAD" | "EQUIVALENT_TO_OFFICIAL_DOWNLOAD" | "DIFFERS_FROM_OFFICIAL_DOWNLOAD" | "DECLARED_BY_PRODUCER";
 export const PROVENANCE_LABEL: Readonly<Record<ProvenanceLevel, string>> = {
   MATCHES_OFFICIAL_DOWNLOAD: "Verificata: impronta identica al file scaricato dal sito ufficiale",
-  DIFFERS_FROM_OFFICIAL_DOWNLOAD: "Respinta: impronta diversa dal file pubblicato sul sito ufficiale",
+  EQUIVALENT_TO_OFFICIAL_DOWNLOAD: "Da verificare: impronta diversa dal file scaricato dal sito ufficiale, valori tariffari del periodo identici (non è prova di autenticità)",
+  DIFFERS_FROM_OFFICIAL_DOWNLOAD: "Bloccata: valori diversi dal file pubblicato sul sito ufficiale, o equivalenza non dimostrabile",
   DECLARED_BY_PRODUCER: "Solo dichiarata dal produttore: impronta non confrontata con il sito ufficiale (non è prova di autenticità)",
 };
+/** Levels that may be published only with the producer's explicit acknowledgment. */
+export const PROVENANCE_NEEDS_ACK: readonly ProvenanceLevel[] = ["EQUIVALENT_TO_OFFICIAL_DOWNLOAD", "DECLARED_BY_PRODUCER"];
+export type ProvenanceComparison = "IDENTICAL" | "EQUIVALENT" | "DIFFERENT" | "NOT_DEMONSTRABLE" | "INVALID_DOWNLOAD" | "UNREACHABLE" | "NOT_ATTEMPTED";
 
 export interface OfficialDocumentRecord {
   readonly documentId: string;
@@ -40,7 +54,17 @@ export interface OfficialDocumentRecord {
   readonly uploadedAt: string;
   readonly uploadedBy: string;
   readonly originalBase64: string;
-  readonly provenance: { readonly level: ProvenanceLevel; readonly officialLink: string; readonly officialSha256: string | null; readonly detail: string };
+  readonly provenance: {
+    readonly level: ProvenanceLevel;
+    readonly officialLink: string;
+    /** SHA-256 of the official reference: only a download that is a valid Excel with a readable Tabella 5. */
+    readonly officialSha256: string | null;
+    readonly detail: string;
+    /** Outcome of the comparison (absent on records created before 17/11/2026 correction). */
+    readonly comparison?: ProvenanceComparison;
+    /** Fingerprint of a download that was NOT a valid reference (kept for audit, never used as official). */
+    readonly discardedDownloadSha256?: string | null;
+  };
   readonly checks: readonly Table5Check[];
   readonly warnings: readonly string[];
   readonly status: "VALIDATED" | "REJECTED";
@@ -59,7 +83,7 @@ export interface OfficialPublicationRecord {
   readonly publishedAt: string;
   readonly publishedBy: string;
   readonly provenanceLevel: ProvenanceLevel;
-  /** True when the producer explicitly accepted a provenance that is only declared. */
+  /** True when the producer explicitly accepted a provenance that is not verified (declared, or equivalent but not identical). */
   readonly provenanceAcknowledged: boolean;
   /** Publication this one replaces for the same document and period, if any. */
   readonly supersedes: string | null;
@@ -111,16 +135,7 @@ export async function validateOfficialDocument(repositories: DocumentRepositorie
 
   // Provenance: the uploaded file is compared with the one on the official site when the site can be reached.
   const officialLink = officialLinkFor(entry, input.period);
-  let provenance: OfficialDocumentRecord["provenance"] = { level: "DECLARED_BY_PRODUCER", officialLink, officialSha256: null, detail: "provenienza dichiarata dal produttore: sito ufficiale non raggiungibile per il confronto dell'impronta" };
-  if (input.fetchOfficial && /\.xlsx$/i.test(officialLink)) {
-    const official = await input.fetchOfficial(officialLink).catch(() => null);
-    if (official) {
-      const officialSha256 = sha(official);
-      provenance = officialSha256 === sha256
-        ? { level: "MATCHES_OFFICIAL_DOWNLOAD", officialLink, officialSha256, detail: "impronta SHA-256 identica al file scaricato dal sito ARERA" }
-        : { level: "DIFFERS_FROM_OFFICIAL_DOWNLOAD", officialLink, officialSha256, detail: "impronta diversa dal file oggi pubblicato da ARERA: file modificato o versione diversa" };
-    }
-  }
+  const provenance = await compareWithOfficial({ officialLink, sha256, year, uploaded: period, fetchOfficial: input.fetchOfficial });
   checks.push({ code: "PROVENANCE", ok: provenance.level !== "DIFFERS_FROM_OFFICIAL_DOWNLOAD", detail: provenance.detail });
 
   const status = checks.every((item) => item.ok) ? "VALIDATED" : "REJECTED";
@@ -137,11 +152,36 @@ export async function validateOfficialDocument(repositories: DocumentRepositorie
   return { record, duplicate: false };
 }
 
+/** Tariff content that must match: classification, value and threshold of every row of the period (cell positions may move). */
+const tariffKey = (values: readonly Table5Value[]) => values.map((value) => [value.voltage, value.year, value.kind, value.band, value.centsPerKvarh, value.thresholdRatio].join("|")).sort().join(";");
+
+async function compareWithOfficial(input: { readonly officialLink: string; readonly sha256: string; readonly year: number; readonly uploaded: ReturnType<typeof validateTable5Year> | null; readonly fetchOfficial?: (url: string) => Promise<Uint8Array | null> }): Promise<OfficialDocumentRecord["provenance"]> {
+  const { officialLink } = input;
+  const declared = (comparison: ProvenanceComparison, detail: string, discardedDownloadSha256: string | null = null): OfficialDocumentRecord["provenance"] => ({ level: "DECLARED_BY_PRODUCER", officialLink, officialSha256: null, detail, comparison, discardedDownloadSha256 });
+  if (!input.fetchOfficial || !/\.xlsx$/i.test(officialLink)) return declared("NOT_ATTEMPTED", "provenienza dichiarata dal produttore: nessun file ufficiale da scaricare per il confronto dell'impronta");
+  const official = await input.fetchOfficial(officialLink).catch(() => null);
+  if (!official || official.byteLength === 0) return declared("UNREACHABLE", "provenienza dichiarata dal produttore: sito ufficiale non raggiungibile per il confronto dell'impronta");
+  const downloadSha256 = sha(official);
+  // The download is a reference only if it is itself a valid Excel with a readable Tabella 5 (not an HTML page, not a broken file).
+  let officialReading: ReturnType<typeof readTitTable5File>;
+  try { officialReading = readTitTable5File(official); } catch { return declared("INVALID_DOWNLOAD", "provenienza dichiarata dal produttore: il download dal sito ufficiale non è un Excel valido, la sua impronta non è usata come riferimento", downloadSha256); }
+  if (!officialReading.ok) return declared("INVALID_DOWNLOAD", "provenienza dichiarata dal produttore: nel download dal sito ufficiale la Tabella 5 non è leggibile, la sua impronta non è usata come riferimento", downloadSha256);
+  if (downloadSha256 === input.sha256) return { level: "MATCHES_OFFICIAL_DOWNLOAD", officialLink, officialSha256: downloadSha256, detail: "impronta SHA-256 identica al file scaricato dal sito ufficiale", comparison: "IDENTICAL", discardedDownloadSha256: null };
+  // Different fingerprint: equivalence must be demonstrated on the tariff content of the period, with the unit and year of both files.
+  const officialPeriod = validateTable5Year(officialReading, input.year);
+  const differs = (comparison: ProvenanceComparison, detail: string): OfficialDocumentRecord["provenance"] => ({ level: "DIFFERS_FROM_OFFICIAL_DOWNLOAD", officialLink, officialSha256: downloadSha256, detail, comparison, discardedDownloadSha256: null });
+  if (!input.uploaded?.ok || !officialPeriod.ok) return differs("NOT_DEMONSTRABLE", `impronta diversa dal file ufficiale (${downloadSha256.slice(0, 12)}…) e anno ${input.year} non leggibile in entrambi i file: equivalenza non dimostrabile`);
+  const unitOk = (checks: readonly Table5Check[]) => checks.some((check) => check.code === "UNIT" && check.ok);
+  if (!unitOk(officialReading.checks)) return differs("NOT_DEMONSTRABLE", "impronta diversa dal file ufficiale e unità di misura non confermata nel file ufficiale: equivalenza non dimostrabile");
+  if (tariffKey(input.uploaded.values) !== tariffKey(officialPeriod.values)) return differs("DIFFERENT", `impronta diversa dal file ufficiale (${downloadSha256.slice(0, 12)}…) e valori tariffari ${input.year} diversi: documento bloccato`);
+  return { level: "EQUIVALENT_TO_OFFICIAL_DOWNLOAD", officialLink, officialSha256: downloadSha256, detail: `impronta diversa dal file ufficiale (${downloadSha256.slice(0, 12)}…), ma ${input.uploaded.values.length} valori ${input.year} identici per tensione, tipo, fascia, valore e soglia, stessa unità c€/kvarh: da verificare, l'equivalenza non prova l'autenticità del file`, comparison: "EQUIVALENT", discardedDownloadSha256: null };
+}
+
 export interface PublishInput {
   readonly documentId: string;
   /** The producer re-types (or pastes) the SHA-256 shown in the preview: the explicit confirmation of what is published. */
   readonly confirmSha256: string;
-  /** Required when the provenance is only declared by the producer. */
+  /** Required when the provenance is only declared, or equivalent but not identical (DA VERIFICARE). */
   readonly acknowledgeDeclaredProvenance: boolean;
   readonly publishedBy: string;
   readonly now: string;
@@ -155,7 +195,7 @@ export async function publishOfficialDocument(repositories: DocumentRepositories
   if (document.status !== "VALIDATED" || !document.checks.every((check) => check.ok)) throw new Error("OFFICIAL_PUBLISH_NOT_VALIDATED");
   if (input.confirmSha256.trim().toLowerCase() !== document.sha256) throw new Error("OFFICIAL_PUBLISH_CONFIRMATION_MISMATCH");
   if (document.provenance.level === "DIFFERS_FROM_OFFICIAL_DOWNLOAD") throw new Error("OFFICIAL_PUBLISH_PROVENANCE_REJECTED");
-  if (document.provenance.level === "DECLARED_BY_PRODUCER" && input.acknowledgeDeclaredProvenance !== true) throw new Error("OFFICIAL_PUBLISH_PROVENANCE_ACK_REQUIRED");
+  if (PROVENANCE_NEEDS_ACK.includes(document.provenance.level) && input.acknowledgeDeclaredProvenance !== true) throw new Error("OFFICIAL_PUBLISH_PROVENANCE_ACK_REQUIRED");
   // The stored original is read again: fingerprint and values must be the ones that were validated.
   const original = new Uint8Array(Buffer.from(document.originalBase64, "base64"));
   if (sha(original) !== document.sha256) throw new Error("OFFICIAL_PUBLISH_INTEGRITY_FAILED");
@@ -170,7 +210,7 @@ export async function publishOfficialDocument(repositories: DocumentRepositories
   const publicationId = `official-publication_${createHash("sha256").update(`${document.documentId}|publish`, "utf8").digest("hex").slice(0, 40)}`;
   const publication: OfficialPublicationRecord = {
     publicationId, documentId: document.documentId, code: document.code, source: document.source, period: document.period, version: document.version, sha256: document.sha256,
-    publishedAt: input.now, publishedBy: input.publishedBy, provenanceLevel: document.provenance.level, provenanceAcknowledged: document.provenance.level === "DECLARED_BY_PRODUCER",
+    publishedAt: input.now, publishedBy: input.publishedBy, provenanceLevel: document.provenance.level, provenanceAcknowledged: PROVENANCE_NEEDS_ACK.includes(document.provenance.level),
     supersedes: current?.publicationId ?? null,
   };
   await repositories.publications.append({ tenantId: OFFICIAL_MONITOR_TENANT, recordId: publicationId, payload: publication, idempotencyKey: publicationId, now: input.now });

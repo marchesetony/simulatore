@@ -54,8 +54,8 @@ const MESSAGES: Readonly<Record<string, string>> = {
   OFFICIAL_PUBLISH_DOCUMENT_NOT_FOUND: "Documento non trovato",
   OFFICIAL_PUBLISH_NOT_VALIDATED: "Si pubblica solo un documento con tutti i controlli superati",
   OFFICIAL_PUBLISH_CONFIRMATION_MISMATCH: "L'impronta SHA-256 di conferma non corrisponde al documento validato",
-  OFFICIAL_PUBLISH_PROVENANCE_REJECTED: "Provenienza respinta: il file è diverso da quello pubblicato dalla fonte ufficiale",
-  OFFICIAL_PUBLISH_PROVENANCE_ACK_REQUIRED: "Provenienza solo dichiarata: serve la conferma esplicita di aver controllato il file sulla fonte ufficiale",
+  OFFICIAL_PUBLISH_PROVENANCE_REJECTED: "Provenienza bloccata: valori diversi dal file pubblicato dalla fonte ufficiale, o equivalenza non dimostrabile",
+  OFFICIAL_PUBLISH_PROVENANCE_ACK_REQUIRED: "Provenienza non verificata (dichiarata o da verificare): serve la conferma esplicita di aver controllato il file sulla fonte ufficiale",
   OFFICIAL_PUBLISH_INTEGRITY_FAILED: "Il file conservato non corrisponde più alla sua impronta: pubblicazione bloccata",
   OFFICIAL_PUBLISH_CONTENT_CHANGED: "La rilettura del file conservato non conferma i valori validati: pubblicazione bloccata",
   OFFICIAL_PUBLISH_ALREADY_PUBLISHED: "Questa versione è già pubblicata",
@@ -77,7 +77,7 @@ export async function POST(request: Request): Promise<Response> {
     if (!(file instanceof File) || file.size === 0) return bad("OFFICIAL_UPLOAD_FILE_MISSING", "Seleziona il file scaricato dalla fonte ufficiale");
     try {
       const { record, duplicate } = await validateOfficialDocument(monitor, { code, period, originalName: file.name, bytes: new Uint8Array(await file.arrayBuffer()), uploadedBy: principal.userId, now, fetchOfficial });
-      if (!duplicate) await audit.record({ principal, action: "official-document.validate", resourceType: "official-document", resourceId: record.documentId, outcome: record.status === "VALIDATED" ? "ALLOWED" : "FAILED", correlationId, timestamp: now, metadata: { code, period, version: record.version, sha256: record.sha256, status: record.status, provenance: record.provenance.level } });
+      if (!duplicate) await audit.record({ principal, action: "official-document.validate", resourceType: "official-document", resourceId: record.documentId, outcome: record.status === "VALIDATED" ? "ALLOWED" : "FAILED", correlationId, timestamp: now, metadata: { code, period, version: record.version, sha256: record.sha256, status: record.status, provenance: record.provenance.level, provenanceComparison: record.provenance.comparison ?? "NONE", officialSha256: record.provenance.officialSha256 ?? "NONE" } });
       // A rejected file is a processed validation: the answer carries every failed check, and the alert says "rifiutato".
       return Response.json({ document: documentPreview(record), duplicate }, { headers });
     } catch (error) {

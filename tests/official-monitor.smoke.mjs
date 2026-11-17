@@ -122,7 +122,8 @@ assert.equal(isPlatformOwner({ tenantId: "tenant_piattaforma", role: "ANALYST" }
   const { record: bad } = await validate(syntheticTitWorkbook({ omitMtYear: 2026 }));
   assert.equal(bad.status, "REJECTED"); assert.equal(bad.version, 1); assert.deepEqual(bad.values, [], "un file rifiutato non espone valori");
   assert.equal(await tab5Status(), "REJECTED");
-  const { record: differs } = await validate(workbook, { fetchOfficial: async () => new Uint8Array([1, 2, 3]) });
+  // Official download with different 2026 values: blocked (17/11 correction: a broken download is no longer a reference, see official-provenance).
+  const { record: differs } = await validate(workbook, { fetchOfficial: async () => syntheticTitWorkbook({ bt: { 2024: "1.169", 2025: "1.046", 2026: "1.099" } }) });
   assert.equal(differs.status, "REJECTED"); assert.equal(differs.provenance.level, "DIFFERS_FROM_OFFICIAL_DOWNLOAD");
   const outOfWindow = (await validateOfficialDocument(r, { code: "ARERA_TIT_TABLE5_REACTIVE", period: "2029", originalName: "x.xlsx", bytes: workbook, uploadedBy: "user_owner", now: NOW })).record;
   assert.equal(outOfWindow.status, "REJECTED"); assert.ok(outOfWindow.checks.some((check) => check.code === "PERIOD_WINDOW" && !check.ok), "periodo oltre l'anno prossimo rifiutato");

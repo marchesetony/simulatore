@@ -9,7 +9,7 @@ import { zipSync, strToU8 } from "fflate";
 const esc = (text) => text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 const colLetter = (col) => { let out = ""; let value = col; while (value > 0) { const rest = (value - 1) % 26; out = String.fromCharCode(65 + rest) + out; value = Math.floor((value - 1) / 26); } return out; };
 
-export function syntheticTitWorkbook({ extraNote, table5 = true, years = [2024, 2025, 2026], bt = { 2024: "1.169", 2025: "1.046", 2026: "1.0880000000000001" }, mt = { 2024: "0.408", 2025: "0.361", 2026: "0.377" }, unit = "centesimi di euro/kvarh", omitMtYear = null } = {}) {
+export function syntheticTitWorkbook({ extraNote, thresholdPercent = 33, table5 = true, years = [2024, 2025, 2026], bt = { 2024: "1.169", 2025: "1.046", 2026: "1.0880000000000001" }, mt = { 2024: "0.408", 2025: "0.361", 2026: "0.377" }, unit = "centesimi di euro/kvarh", omitMtYear = null } = {}) {
   const shared = [];
   const s = (text) => { let index = shared.indexOf(text); if (index < 0) { shared.push(text); index = shared.length - 1; } return index; };
   const rows = new Map(); const merges = [];
@@ -19,7 +19,7 @@ export function syntheticTitWorkbook({ extraNote, table5 = true, years = [2024, 
   if (table5) {
     put(4, 1, "Tabella 5: Corrispettivi per energia reattiva"); merges.push("A4:H4");
     put(5, 3, unit); merges.push(`C5:${colLetter(2 + years.length * 2)}5`);
-    years.forEach((year, index) => { const col = 3 + index * 2; put(6, col, `anno ${year}`); merges.push(`${colLetter(col)}6:${colLetter(col + 1)}6`); put(7, col, "energia reattiva prelevata eccedente il 33% dell'energia attiva"); put(7, col + 1, "energia reattiva immessa"); });
+    years.forEach((year, index) => { const col = 3 + index * 2; put(6, col, `anno ${year}`); merges.push(`${colLetter(col)}6:${colLetter(col + 1)}6`); put(7, col, `energia reattiva prelevata eccedente il ${thresholdPercent}% dell'energia attiva`); put(7, col + 1, "energia reattiva immessa"); });
     put(6, 1, "Fasce orarie");
     let row = 8;
     const block = (label, values, skipYear) => {

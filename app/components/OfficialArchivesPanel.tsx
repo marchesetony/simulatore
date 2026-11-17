@@ -17,7 +17,7 @@ type DocumentView = { readonly code: string; readonly document: string; readonly
 type HistoryEntry = { readonly at: string; readonly kind: string; readonly document: string; readonly period: string; readonly outcome: string; readonly detail: string; readonly actor: string | null; readonly documentId: string | null };
 type Archive = { readonly source: string; readonly label: string; readonly status: string; readonly statusLabel: string; readonly lastUpdate: string | null; readonly periodCovered: string; readonly officialLinks: readonly string[]; readonly missing: readonly { readonly code: string; readonly document: string; readonly period: string; readonly statusLabel: string }[]; readonly alerts: readonly Alert[]; readonly documents: readonly DocumentView[]; readonly history: readonly HistoryEntry[] };
 type Value = { readonly voltage: string; readonly year: number; readonly kind: string; readonly band: string; readonly centsPerKvarh: string; readonly thresholdRatio: string; readonly sheet: string; readonly cell: string };
-type Preview = { readonly documentId: string; readonly code: string; readonly source: string; readonly period: string; readonly version: number; readonly originalName: string; readonly size: number; readonly sha256: string; readonly status: string; readonly uploadedAt: string; readonly provenance: { readonly level: string; readonly detail: string }; readonly provenanceLabel: string; readonly checks: readonly { readonly code: string; readonly ok: boolean; readonly detail: string }[]; readonly warnings: readonly string[]; readonly values: readonly Value[]; readonly structure: { readonly sheet: string | null; readonly titleCell: string | null } };
+type Preview = { readonly documentId: string; readonly code: string; readonly source: string; readonly period: string; readonly version: number; readonly originalName: string; readonly size: number; readonly sha256: string; readonly status: string; readonly uploadedAt: string; readonly provenance: { readonly level: string; readonly detail: string; readonly officialSha256: string | null; readonly comparison?: string }; readonly provenanceLabel: string; readonly checks: readonly { readonly code: string; readonly ok: boolean; readonly detail: string }[]; readonly warnings: readonly string[]; readonly values: readonly Value[]; readonly structure: { readonly sheet: string | null; readonly titleCell: string | null } };
 type CatalogItem = { readonly code: string; readonly source: string; readonly document: string; readonly uploadable: boolean };
 type Model = { readonly archives: readonly Archive[]; readonly documents: readonly Preview[]; readonly catalog: readonly CatalogItem[] };
 
@@ -75,7 +75,9 @@ export default function OfficialArchivesPanel() {
   const confirmManual = (alert: Alert) => { const note = window.prompt("Cosa hai verificato sul sito ufficiale? (almeno 10 caratteri)"); if (!note) return; void act(alert.alertId, async () => { await requestJson("/api/system/control-room", { method: "POST", body: JSON.stringify({ action: "confirm", code: alert.code, period: alert.period, note }) }); return "Verifica registrata."; }); };
   const run = () => void act("run", async () => { const result = await requestJson<{ readonly checks: readonly unknown[] }>("/api/system/control-room", { method: "POST", body: JSON.stringify({ action: "run" }) }); return result.checks.length ? `Controlli eseguiti: ${result.checks.length}.` : "Nessun controllo previsto oggi."; });
   const declared = preview?.provenance.level === "DECLARED_BY_PRODUCER";
-  const canPublish = Boolean(preview && preview.status === "VALIDATED" && preview.checks.every((check) => check.ok) && confirmSha.trim().toLowerCase() === preview.sha256 && (!declared || acknowledge) && !busy);
+  const equivalent = preview?.provenance.level === "EQUIVALENT_TO_OFFICIAL_DOWNLOAD";
+  const needsAck = declared || equivalent;
+  const canPublish = Boolean(preview && preview.status === "VALIDATED" && preview.checks.every((check) => check.ok) && confirmSha.trim().toLowerCase() === preview.sha256 && (!needsAck || acknowledge) && !busy);
   const alreadyPublished = preview ? (model?.archives ?? []).some((item) => item.history.some((entry) => entry.kind === "PUBLICATION" && entry.documentId === preview.documentId)) : false;
 
   return <section id="archivi-ufficiali" className="content-stack official-archives" aria-labelledby="official-archives-title">
@@ -115,6 +117,7 @@ export default function OfficialArchivesPanel() {
           <div className="data-line"><span>Fonte dichiarata</span><strong>{preview.source} · {preview.provenanceLabel}</strong></div>
           <div className="data-line"><span>Periodo</span><strong>{preview.period}</strong></div>
           <div className="data-line"><span>SHA-256</span><strong><code>{preview.sha256}</code></strong></div>
+          <div className="data-line"><span>SHA-256 riferimento ufficiale</span><strong>{preview.provenance.officialSha256 ? <code>{preview.provenance.officialSha256}</code> : "nessun riferimento valido"}<br /><small className="muted">{preview.provenance.detail}</small></strong></div>
           <div className="data-line"><span>Tabella trovata</span><strong>{preview.structure.sheet ? `foglio ${preview.structure.sheet}, titolo in ${preview.structure.titleCell}` : "non trovata"}</strong></div>
           <div className="data-line"><span>Esito validazione</span><strong><span className={`status-badge ${tone(preview.status)}`}>{preview.status === "VALIDATED" ? "Validato" : "Rifiutato"}</span></strong></div>
         </div>
@@ -124,8 +127,9 @@ export default function OfficialArchivesPanel() {
         {preview.status === "VALIDATED" && !alreadyPublished ? <div className="official-archive-publish">
           <h4 className="official-archives-subtitle">Pubblica aggiornamento</h4>
           {declared ? <p className="warning-text">La provenienza è solo dichiarata: il sito ufficiale non è stato raggiunto per confrontare l&apos;impronta. Non è una prova di autenticità del documento.</p> : null}
+          {equivalent ? <p className="warning-text">Da verificare: l&apos;impronta è diversa dal file scaricato dal sito ufficiale, ma i valori tariffari del periodo sono identici. Valori identici non provano che il file sia autentico.</p> : null}
           <div className="form-field"><label htmlFor="official-confirm-sha">Per confermare, riscrivi o incolla lo SHA-256 del file</label><input id="official-confirm-sha" autoComplete="off" spellCheck={false} value={confirmSha} onChange={(event) => setConfirmSha(event.target.value)} /></div>
-          {declared ? <label className="check-field"><input type="checkbox" checked={acknowledge} onChange={(event) => setAcknowledge(event.target.checked)} />Ho verificato che questo file è quello pubblicato dalla fonte ufficiale e accetto la provenienza dichiarata.</label> : null}
+          {needsAck ? <label className="check-field"><input type="checkbox" checked={acknowledge} onChange={(event) => setAcknowledge(event.target.checked)} />Ho verificato questo file sulla fonte ufficiale e accetto una provenienza non verificata dall&apos;impronta.</label> : null}
           <div className="button-row"><button className="button primary" type="button" disabled={!canPublish} onClick={publish}>{busy === "publish" ? "Pubblicazione in corso" : "Pubblica aggiornamento"}</button></div>
         </div> : preview.status === "VALIDATED" ? <p className="inline-success">Questa versione è già pubblicata nell&apos;archivio globale.</p> : <p className="warning-text">Un documento rifiutato non si può pubblicare: carica il file corretto.</p>}
       </div> : null}
