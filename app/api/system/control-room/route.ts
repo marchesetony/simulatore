@@ -8,6 +8,11 @@ import { UPLOADABLE_DOCUMENTS, confirmManualVerification, detectOfficialUpload, 
 import type { OfficialAlert } from "../../../lib/official-monitor/monitor";
 import { runOfficialMonitor } from "../../../lib/official-monitor/monitor";
 import { liveProbes } from "../../../lib/official-monitor/probes";
+import { computeCoverage, type CoverageCopy, type CoverageReport } from "../../../lib/official-monitor/coverage";
+import type { OfficialCheck } from "../../../lib/official-monitor/monitor";
+import { allPublications, type OfficialPublicationRecord } from "../../../lib/official-monitor/documents";
+import { officialDataTenants } from "../../../lib/automation/official-data-tenants";
+import { configuredMarketRefreshTenants } from "../../../lib/market-refresh/config";
 
 export const runtime = "nodejs";
 export const maxDuration = 300;
@@ -33,13 +38,41 @@ function stores() {
   return { repositories, monitor: { alerts: repositories.officialAlerts, checks: repositories.officialChecks, documents: repositories.officialDocuments, publications: repositories.officialPublications } };
 }
 
+/**
+ * Copertura reale (17/11/2026): legge, senza scrivere nulla, l'archivio del produttore e la copia di ogni azienda cliente
+ * (valori regolatori con i loro domini di approvazione, archivi PUN/PSV), le pubblicazioni, i controlli e gli alert del
+ * monitor. Se la lettura fallisce la Control Room resta disponibile e dice che la copertura non è calcolabile.
+ */
+async function coverage(repositories: ReturnType<typeof runtimeRepositories>, now: string): Promise<{ coverage: CoverageReport | null; coverageError: string | null }> {
+  try {
+    const platform = "tenant_piattaforma";
+    const companies = await repositories.companies.list(platform).catch(() => []);
+    const names = new Map(companies.map((record) => [record.payload.tenantId, record.payload.name]));
+    const tenants = [platform, ...(await officialDataTenants(() => configuredMarketRefreshTenants(), repositories.companies).catch(() => []))];
+    const copies: CoverageCopy[] = await Promise.all(tenants.map(async (tenantId) => ({
+      tenantId, platform: tenantId === platform, label: tenantId === platform ? "Archivio produttore" : names.get(tenantId) ?? tenantId,
+      regulatoryValues: (await repositories.regulatoryValues.list(tenantId)).map((record) => record.payload),
+      approvalDomains: (await repositories.approvalDomains.list(tenantId)).map((record) => record.payload),
+      marketArchives: await repositories.marketArchiveRepository.list(tenantId),
+    })));
+    const [publications, checks, alerts] = await Promise.all([
+      allPublications(repositories.officialPublications) as Promise<OfficialPublicationRecord[]>,
+      repositories.officialChecks.list(platform).then((records) => records.map((record) => record.payload as OfficialCheck)),
+      repositories.officialAlerts.list(platform).then((records) => records.map((record) => record.payload as OfficialAlert)),
+    ]);
+    return { coverage: computeCoverage({ now, copies, publications, checks, alerts }), coverageError: null };
+  } catch {
+    return { coverage: null, coverageError: "Copertura non calcolabile: lettura degli archivi non riuscita. Riprova più tardi." };
+  }
+}
+
 export async function GET(request: Request): Promise<Response> {
   if (!(await producer(request))) return denied();
-  const { monitor } = stores();
+  const { monitor, repositories } = stores();
   const now = new Date().toISOString();
   const documents = (await monitor.documents.list("tenant_piattaforma")).map((record) => documentPreview(record.payload as OfficialDocumentRecord)).sort((a, b) => b.uploadedAt.localeCompare(a.uploadedAt));
   return Response.json({
-    archives: await archiveOverview(monitor), documents,
+    archives: await archiveOverview(monitor), documents, ...(await coverage(repositories, now)),
     catalog: OFFICIAL_CATALOG.map((entry) => ({ ...entry, uploadable: UPLOADABLE_DOCUMENTS.includes(entry.code) })), dueToday: dueChecks(now),
   }, { headers });
 }

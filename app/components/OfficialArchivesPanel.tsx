@@ -22,7 +22,10 @@ type Archive = { readonly source: string; readonly label: string; readonly statu
 type Value = { readonly voltage: string; readonly year: number; readonly kind: string; readonly band: string; readonly centsPerKvarh: string; readonly thresholdRatio: string; readonly sheet: string; readonly cell: string };
 type Preview = { readonly documentId: string; readonly code: string; readonly source: string; readonly period: string; readonly version: number; readonly originalName: string; readonly size: number; readonly sha256: string; readonly status: string; readonly uploadedAt: string; readonly provenance: { readonly level: string; readonly detail: string; readonly officialSha256: string | null; readonly comparison?: string }; readonly provenanceLabel: string; readonly checks: readonly { readonly code: string; readonly ok: boolean; readonly detail: string }[]; readonly warnings: readonly string[]; readonly values: readonly Value[]; readonly structure: { readonly sheet: string | null; readonly titleCell: string | null; readonly years: readonly number[] } };
 type CatalogItem = { readonly code: string; readonly source: string; readonly document: string; readonly uploadable: boolean };
-type Model = { readonly archives: readonly Archive[]; readonly documents: readonly Preview[]; readonly catalog: readonly CatalogItem[] };
+type CoverageIssue = { readonly id: string; readonly kind: string; readonly kindLabel: string; readonly severity: string; readonly severityLabel: string; readonly archive: string; readonly componentName: string; readonly source: string; readonly officialLink: string; readonly periodLabel: string; readonly copies: readonly string[]; readonly detail: string; readonly action: string };
+type ComponentCoverage = { readonly key: string; readonly name: string; readonly source: string; readonly officialLink: string; readonly expectedLabel: string; readonly lastAvailable: string | null; readonly missingLabel: string; readonly lastCheck: string | null; readonly lastData: string | null; readonly status: string; readonly statusLabel: string; readonly issues: readonly CoverageIssue[] };
+type Coverage = { readonly generatedAt: string; readonly copies: readonly { readonly tenantId: string; readonly label: string; readonly platform: boolean }[]; readonly archives: readonly { readonly source: string; readonly status: string; readonly statusLabel: string; readonly components: readonly ComponentCoverage[]; readonly issues: number }[]; readonly alerts: readonly CoverageIssue[]; readonly counts: Readonly<Record<string, number>> };
+type Model = { readonly archives: readonly Archive[]; readonly documents: readonly Preview[]; readonly catalog: readonly CatalogItem[]; readonly coverage?: Coverage | null; readonly coverageError?: string | null };
 type Detected = { readonly code: string; readonly period: string; readonly basis: string };
 type Destination = { readonly code: string; readonly period: string; readonly from: string };
 type Pending =
@@ -32,6 +35,9 @@ type Pending =
 const when = (value: string | null) => value ? new Date(value).toLocaleString("it-IT", { timeZone: "Europe/Rome", dateStyle: "short", timeStyle: "short" }) : "mai";
 const decimal = (value: string) => value.replace(".", ",");
 const tone = (status: string) => status === "UP_TO_DATE" || status === "RESOLVED" || status === "VALIDATED" || status === "PUBLISHED" || status === "COVERED" || status === "ACQUIRED" ? "positive" : status === "NEVER_CHECKED" || status === "FILE_UPLOADED" || status === "AWAITING_PUBLICATION" ? "" : "negative";
+const COVERAGE_KIND_LABEL: Readonly<Record<string, string>> = { MISSING: "Dati mancanti", STALE: "Presenti ma non aggiornati", UNVERIFIED: "Dati non verificati", DIVERGENT: "Copie aziendali divergenti" };
+const MONTH_NAMES = ["gennaio", "febbraio", "marzo", "aprile", "maggio", "giugno", "luglio", "agosto", "settembre", "ottobre", "novembre", "dicembre"];
+const periodText = (period: string) => /^\d{4}-\d{2}$/.test(period) ? `${MONTH_NAMES[Number(period.slice(5)) - 1]} ${period.slice(0, 4)}` : period;
 const KIND_LABEL: Readonly<Record<string, string>> = { CHECK: "Controllo", VALIDATION: "Validazione", PUBLICATION: "Pubblicazione" };
 /** Control Room codes in plain Italian (the shared client only knows the app-wide ones): same wording as the server's answers. */
 const CONTROL_ROOM_MESSAGES: Readonly<Record<string, string>> = {
@@ -166,6 +172,16 @@ export default function OfficialArchivesPanel() {
   const confirmManual = (alert: Alert) => { const note = window.prompt("Cosa hai verificato sul sito ufficiale? (almeno 10 caratteri)"); if (!note) return; void act(alert.alertId, async () => { await requestJson("/api/system/control-room", { method: "POST", body: JSON.stringify({ action: "confirm", code: alert.code, period: alert.period, note }) }); return "Verifica registrata."; }); };
   const run = () => void act("run", async () => { const result = await requestJson<{ readonly checks: readonly unknown[] }>("/api/system/control-room", { method: "POST", body: JSON.stringify({ action: "run" }) }); return result.checks.length ? `Controlli eseguiti: ${result.checks.length}.` : "Nessun controllo previsto oggi."; });
   const current = archives.find((item) => item.source === archive);
+  const coverage = model?.coverage ?? null;
+  const coverageOf = (source: string) => coverage?.archives.find((item) => item.source === source);
+  const relevant = coverage?.alerts.filter((item) => item.severity !== "INFO") ?? [];
+  const informative = coverage?.alerts.filter((item) => item.severity === "INFO") ?? [];
+  const issueCard = (item: CoverageIssue) => <article key={item.id} className="official-archive-alert">
+    <strong>{item.componentName}</strong>
+    <p><span className={`status-badge ${item.severity === "INFO" ? "" : "negative"}`}>{item.kindLabel}</span> · gravità {item.severityLabel.toLowerCase()} · {item.source}</p>
+    <p><strong>Periodo:</strong> {item.periodLabel}<br /><strong>Copie:</strong> {item.copies.join(", ")}<br /><strong>Motivo:</strong> {item.detail}</p>
+    <p><strong>Azione:</strong> {item.action} <a href={item.officialLink} target="_blank" rel="noreferrer">Fonte ufficiale</a></p>
+  </article>;
 
   const technical = (doc: Preview) => <details className="official-archive-technical"><summary>Dettagli tecnici del documento (SHA-256, valori, controlli)</summary>
     <div className="data-list">
@@ -185,7 +201,7 @@ export default function OfficialArchivesPanel() {
       {error ? <ErrorState message={error} /> : null}{notice ? <p className="inline-success" role="status">{notice}</p> : null}
       {!model && !error ? <p className="muted">Caricamento degli archivi…</p> : null}
       <h4 className="official-archives-subtitle">Aggiornamenti da completare</h4>
-      {model && pending.length === 0 ? <p className="notice-card"><span>Nessun aggiornamento da completare: gli archivi controllati sono aggiornati.</span></p> : null}
+      {model && pending.length === 0 ? <p className="notice-card"><span>Nessun documento da completare. La copertura dei dati è qui sotto.</span></p> : null}
       {pending.length ? <div className="official-archive-alerts" aria-label="Aggiornamenti da completare">{pending.map((item) => <article key={item.key} className="official-archive-alert">
         <strong>{nameOf(item.code)}</strong>
         <p>{item.source} · periodo {item.period}</p>
@@ -200,7 +216,15 @@ export default function OfficialArchivesPanel() {
           {item.kind === "UPLOAD" ? <p className="muted">Scarica il file dalla <a href={item.alert.officialLink} target="_blank" rel="noreferrer">fonte ufficiale</a> senza aprirlo né salvarlo di nuovo.</p> : null}
         </>}
       </article>)}</div> : null}
-      <div className="metric-grid official-archive-tabs" style={{ marginTop: 16 }} aria-label="Stato degli archivi">{archives.map((item) => <button key={item.source} type="button" className="metric-card official-archive-tab" onClick={() => openDetails(item.source)}><span>Archivio</span><strong>{item.label}</strong><span className={`status-badge ${tone(item.status)}`}>{item.statusLabel}</span><small>Ultimo aggiornamento: {when(item.lastUpdate)}</small><small>Periodo coperto: {item.periodCovered}</small></button>)}</div>
+      <h4 className="official-archives-subtitle" id="official-coverage-title">Anomalie nei dati</h4>
+      {model?.coverageError ? <ErrorState message={model.coverageError} /> : null}
+      {coverage ? <section aria-labelledby="official-coverage-title">
+        <div className="metric-grid official-coverage-counts" aria-label="Anomalie per tipo">{(["MISSING", "STALE", "UNVERIFIED", "DIVERGENT"] as const).map((kind) => <div key={kind} className="metric-card"><span>{COVERAGE_KIND_LABEL[kind]}</span><strong>{coverage.counts[kind] ?? 0}</strong></div>)}</div>
+        {relevant.length === 0 ? <p className="notice-card"><span>Nessun dato mancante, fermo o divergente nei periodi attesi.</span></p> : <div className="official-archive-alerts" aria-label="Anomalie da risolvere">{relevant.map(issueCard)}</div>}
+        {informative.length ? <details className="official-archive-technical"><summary>Avvisi informativi ({informative.length})</summary><div className="official-archive-alerts">{informative.map(issueCard)}</div></details> : null}
+        <p className="muted">Alert calcolati a ogni apertura leggendo gli archivi ({coverage.copies.map((copy) => copy.label).join(", ")}): non scrivono tariffe e non correggono nulla. Lo stato del monitoraggio, cioè i controlli eseguiti, è indicato a parte.</p>
+      </section> : null}
+      <div className="metric-grid official-archive-tabs" style={{ marginTop: 16 }} aria-label="Stato degli archivi">{archives.map((item) => { const cov = coverageOf(item.source); return <button key={item.source} type="button" className="metric-card official-archive-tab" onClick={() => openDetails(item.source)}><span>Archivio</span><strong>{item.label}</strong>{cov ? <span className={`status-badge ${cov.status === "COMPLETE" ? "positive" : "negative"}`}>Dati: {cov.statusLabel.toLowerCase()}{cov.issues ? ` (${cov.issues})` : ""}</span> : null}<span className={`status-badge ${tone(item.status)}`}>{item.statusLabel}</span><small>Ultimo controllo o pubblicazione: {when(item.lastUpdate)}</small></button>; })}</div>
     </div>
 
     {confirming ? <div className="ui-card official-archive-publish" ref={confirmRef} role="region" aria-label="Conferma aggiornamento">
@@ -247,7 +271,10 @@ export default function OfficialArchivesPanel() {
       <div className="button-row"><button className="button secondary" type="button" disabled={Boolean(busy)} onClick={run}>{busy === "run" ? "Controlli in corso" : "Esegui i controlli di oggi"}</button></div>
       <div className="vector-tabs" role="tablist" aria-label="Archivi">{archives.map((item) => <button key={item.source} role="tab" type="button" aria-selected={archive === item.source} className={archive === item.source ? "active" : ""} onClick={() => setArchive(item.source)}>{item.label}</button>)}</div>
       {current ? <div role="tabpanel" aria-label={`Archivio ${current.label}`}>
-        <p>Stato: {current.statusLabel}. Ultimo aggiornamento: {when(current.lastUpdate)}. Periodo coperto: {current.periodCovered}.</p>
+        <h4 className="official-archives-subtitle">Copertura per componente</h4>
+        {coverageOf(current.source) ? <div className="responsive-table"><table><thead><tr><th>Componente</th><th>Fonte</th><th>Periodo atteso</th><th>Ultimo periodo</th><th>Periodi mancanti</th><th>Ultimo controllo</th><th>Ultimo dato</th><th>Stato</th></tr></thead><tbody>{coverageOf(current.source)!.components.map((component) => <tr key={component.key}><td>{component.name}</td><td><a href={component.officialLink} target="_blank" rel="noreferrer">{component.source}</a></td><td>{component.expectedLabel}</td><td>{component.lastAvailable ? periodText(component.lastAvailable) : "nessuno"}</td><td>{component.missingLabel}</td><td>{when(component.lastCheck)}</td><td>{when(component.lastData)}</td><td><span className={`status-badge ${component.status === "COMPLETE" ? "positive" : component.issues.every((issue) => issue.severity === "INFO") ? "" : "negative"}`}>{component.statusLabel}</span></td></tr>)}</tbody></table></div> : <p className="muted">Copertura non disponibile.</p>}
+        <h4 className="official-archives-subtitle">Monitoraggio</h4>
+        <p>Stato del monitoraggio: {current.statusLabel}. Ultimo controllo o pubblicazione: {when(current.lastUpdate)}. Periodi controllati: {current.periodCovered}.</p>
         <div className="data-list">{current.documents.map((doc) => <div key={doc.code} className="data-line"><span>{doc.document}<br /><a href={doc.officialLink} target="_blank" rel="noreferrer">Fonte ufficiale</a></span><strong>{doc.coveredPeriods.length ? `Coperto: ${doc.coveredPeriods.join(", ")}` : "Nessun periodo coperto"}<br /><small className="muted">{doc.acquisition === "AUTOMATIC" ? "Acquisizione automatica" : doc.acquisition === "MANUAL_UPLOAD" ? doc.uploadable ? "Caricamento in Archivi ufficiali" : "Caricamento dalla scheda esistente" : "Verifica manuale"} · {when(doc.lastUpdate)}</small></strong></div>)}</div>
         <h4 className="official-archives-subtitle">Alert e istruzioni</h4>
         {current.alerts.filter((alert) => alert.status !== "RESOLVED").length === 0 ? <p className="muted">Nessun documento mancante.</p> : <div className="official-archive-alerts">{current.alerts.filter((alert) => alert.status !== "RESOLVED").map((alert) => <article key={alert.alertId} className="official-archive-alert"><strong>{alert.document}</strong><p>Periodo {alert.period} · <span className={`status-badge ${tone(alert.status)}`}>{alert.statusLabel}</span> · {alert.occurrences} controlli · ultimo {when(alert.lastCheckedAt)}</p>

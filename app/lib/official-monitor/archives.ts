@@ -12,11 +12,12 @@ export const ARCHIVE_SOURCES: readonly OfficialSource[] = ["ARERA", "GME", "TERN
 export const ARCHIVE_LABEL: Readonly<Record<OfficialSource, string>> = { ARERA: "ARERA", GME: "GME", TERNA: "Terna", ADM: "ADM" };
 
 export type ArchiveStatus = "UP_TO_DATE" | "ACTION_REQUIRED" | "AWAITING_PUBLICATION" | "NEVER_CHECKED";
+/** Stato del MONITORAGGIO (controlli eseguiti e pubblicazioni), non della copertura dei dati: quella è in coverage.ts. */
 export const ARCHIVE_STATUS_LABEL: Readonly<Record<ArchiveStatus, string>> = {
-  UP_TO_DATE: "Aggiornato",
-  ACTION_REQUIRED: "Azione richiesta",
+  UP_TO_DATE: "Monitoraggio regolare",
+  ACTION_REQUIRED: "Monitoraggio: azione richiesta",
   AWAITING_PUBLICATION: "Documento validato, da pubblicare",
-  NEVER_CHECKED: "Mai controllato",
+  NEVER_CHECKED: "Monitoraggio mai eseguito",
 };
 
 export interface ArchiveDocumentView {
