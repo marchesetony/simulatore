@@ -67,10 +67,10 @@ export const OFFICIAL_CATALOG: readonly CatalogEntry[] = [
     instructions: [
       "Apri la pagina ARERA della delibera di aggiornamento tariffario dell'anno (per il 2026: https://www.arera.it/atti-e-provvedimenti/dettaglio/25/575-25).",
       "Scarica l'allegato \"Tabelle TIT\" in formato Excel (per il 2026: 575-2025-R-eel-TABELLE_TIT.xlsx), senza aprirlo né salvarlo di nuovo.",
-      "Caricalo in Archivi ufficiali e premi \"Valida documento\": l'app cerca la Tabella 5 per testo, controlla unità, anno, tensioni e fasce, conserva il file e la sua impronta SHA-256.",
-      "Controlla l'anteprima (valori, celle, SHA-256, controlli) e premi \"Pubblica aggiornamento\" confermando l'impronta: solo allora la tariffa è disponibile a tutte le aziende.",
+      "Trascinalo in Archivi ufficiali (\"Carica un nuovo documento\") o premi \"Carica il file\" sull'aggiornamento da completare: l'app riconosce documento e anno dal contenuto, cerca la Tabella 5 per testo, controlla unità, anno, tensioni e fasce, conserva il file e la sua impronta SHA-256.",
+      "Controlla il riepilogo (fonte, periodo, provenienza, controlli) e premi \"Pubblica per tutte le aziende\", con la conferma esplicita se l'autenticità non è verificata: solo allora la tariffa è disponibile a tutte le aziende.",
     ],
-    uploadPath: `${CONTROL_ROOM_PATH} → archivio ARERA → alert \"Apri il documento\" (oppure Carica documento dal computer, documento \"TIT 2024-2027, Tabella 5\") → Valida documento → Pubblica aggiornamento`,
+    uploadPath: `${CONTROL_ROOM_PATH} → archivio ARERA, aggiornamento da completare → \"Carica il file\" (oppure trascina il file in \"Carica un nuovo documento\") → \"Completa aggiornamento\"`,
   },
   {
     code: "TERNA_DISPATCHING_CAPACITY", source: "TERNA", periodKind: "CHECK_DATE", acquisition: "AUTOMATIC",

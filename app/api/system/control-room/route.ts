@@ -4,7 +4,8 @@ import { AuditLogger } from "../../../lib/persistence/audit";
 import { runtimeRepositories } from "../../../lib/persistence/adapter";
 import { OFFICIAL_CATALOG, dueChecks, type OfficialDocumentCode } from "../../../lib/official-monitor/catalog";
 import { archiveOverview, documentPreview } from "../../../lib/official-monitor/archives";
-import { UPLOADABLE_DOCUMENTS, confirmManualVerification, publishOfficialDocument, validateOfficialDocument, type OfficialDocumentRecord } from "../../../lib/official-monitor/documents";
+import { UPLOADABLE_DOCUMENTS, confirmManualVerification, detectOfficialUpload, publishOfficialDocument, validateOfficialDocument, type DetectedUpload, type OfficialDocumentRecord } from "../../../lib/official-monitor/documents";
+import type { OfficialAlert } from "../../../lib/official-monitor/monitor";
 import { runOfficialMonitor } from "../../../lib/official-monitor/monitor";
 import { liveProbes } from "../../../lib/official-monitor/probes";
 
@@ -16,7 +17,8 @@ export const maxDuration = 300;
  * tenant_piattaforma), verificato qui sul server dalla sessione: il tenant o il ruolo indicati dal browser non sono mai letti.
  * Direttori, amministratori, agenti e subagenti delle aziende clienti ricevono 403 su lettura, validazione e pubblicazione.
  * Operazioni distinte: "validate" (multipart) conserva e controlla il file; "publish" (JSON) lo pubblica nell'archivio
- * globale solo dopo la validazione completa e la conferma esplicita dell'impronta.
+ * globale solo dopo la validazione completa e la conferma esplicita del produttore legata all'impronta della versione mostrata.
+ * Flusso semplificato (17/11/2026): senza "code" il tipo e il periodo sono rilevati dal contenuto del file (detectOfficialUpload).
  */
 const headers = { "cache-control": "no-store, private" };
 const denied = () => Response.json({ error: { code: "AUTHORIZATION_DENIED", message: "Riservato al produttore della piattaforma" } }, { status: 403, headers });
@@ -50,10 +52,17 @@ async function fetchOfficial(url: string): Promise<Uint8Array | null> {
   return new Uint8Array(await response.arrayBuffer());
 }
 
+const DETECT_MESSAGES: Readonly<Record<string, string>> = {
+  OFFICIAL_UPLOAD_TYPE_UNKNOWN: "Tipo di documento non riconosciuto dal contenuto del file: scegli documento e periodo manualmente",
+  OFFICIAL_UPLOAD_PERIOD_AMBIGUOUS: "Il file contiene più anni richiesti da alert aperti: scegli il periodo manualmente",
+  OFFICIAL_UPLOAD_PERIOD_UNDETERMINED: "Periodo non determinabile dal file: scegli il periodo manualmente",
+  OFFICIAL_UPLOAD_SIZE_INVALID: "File vuoto o oltre 2 MB",
+};
+
 const MESSAGES: Readonly<Record<string, string>> = {
   OFFICIAL_PUBLISH_DOCUMENT_NOT_FOUND: "Documento non trovato",
   OFFICIAL_PUBLISH_NOT_VALIDATED: "Si pubblica solo un documento con tutti i controlli superati",
-  OFFICIAL_PUBLISH_CONFIRMATION_MISMATCH: "L'impronta SHA-256 di conferma non corrisponde al documento validato",
+  OFFICIAL_PUBLISH_CONFIRMATION_MISMATCH: "La conferma non corrisponde alla versione validata conservata (impronta SHA-256 diversa): aggiorna la pagina e riprova",
   OFFICIAL_PUBLISH_PROVENANCE_REJECTED: "Provenienza bloccata: valori diversi dal file pubblicato dalla fonte ufficiale, o equivalenza non dimostrabile",
   OFFICIAL_PUBLISH_PROVENANCE_ACK_REQUIRED: "Provenienza non verificata (dichiarata o da verificare): serve la conferma esplicita di aver controllato il file sulla fonte ufficiale",
   OFFICIAL_PUBLISH_INTEGRITY_FAILED: "Il file conservato non corrisponde più alla sua impronta: pubblicazione bloccata",
@@ -72,14 +81,22 @@ export async function POST(request: Request): Promise<Response> {
   if ((request.headers.get("content-type") ?? "").includes("multipart/form-data")) {
     let form: FormData;
     try { form = await request.formData(); } catch { return bad("OFFICIAL_UPLOAD_FILE_MISSING", "Seleziona il file ufficiale"); }
-    const code = String(form.get("code") ?? "") as OfficialDocumentCode; const period = String(form.get("period") ?? ""); const file = form.get("file");
-    if (!UPLOADABLE_DOCUMENTS.includes(code)) return bad("OFFICIAL_UPLOAD_NOT_SUPPORTED", "Per questo documento il caricamento non è previsto: segui le istruzioni dell'archivio");
+    const requested = String(form.get("code") ?? ""); const file = form.get("file");
+    if (requested && !UPLOADABLE_DOCUMENTS.includes(requested as OfficialDocumentCode)) return bad("OFFICIAL_UPLOAD_NOT_SUPPORTED", "Per questo documento il caricamento non è previsto: segui le istruzioni dell'archivio");
     if (!(file instanceof File) || file.size === 0) return bad("OFFICIAL_UPLOAD_FILE_MISSING", "Seleziona il file scaricato dalla fonte ufficiale");
+    const bytes = new Uint8Array(await file.arrayBuffer());
+    // No document chosen: type and period come from the file content (never from its name), or the producer is asked to choose.
+    let detected: DetectedUpload | null = null;
+    if (!requested) {
+      try { detected = detectOfficialUpload(bytes, { openAlerts: (await monitor.alerts.list("tenant_piattaforma")).map((item) => item.payload as OfficialAlert), now }); }
+      catch (error) { const reason = error instanceof Error ? error.message : "OFFICIAL_UPLOAD_TYPE_UNKNOWN"; return bad(reason.startsWith("OFFICIAL_UPLOAD_") ? reason : "OFFICIAL_UPLOAD_TYPE_UNKNOWN", DETECT_MESSAGES[reason] ?? DETECT_MESSAGES.OFFICIAL_UPLOAD_TYPE_UNKNOWN, 422); }
+    }
+    const code = (detected?.code ?? requested) as OfficialDocumentCode; const period = detected?.period ?? String(form.get("period") ?? "");
     try {
-      const { record, duplicate } = await validateOfficialDocument(monitor, { code, period, originalName: file.name, bytes: new Uint8Array(await file.arrayBuffer()), uploadedBy: principal.userId, now, fetchOfficial });
-      if (!duplicate) await audit.record({ principal, action: "official-document.validate", resourceType: "official-document", resourceId: record.documentId, outcome: record.status === "VALIDATED" ? "ALLOWED" : "FAILED", correlationId, timestamp: now, metadata: { code, period, version: record.version, sha256: record.sha256, status: record.status, provenance: record.provenance.level, provenanceComparison: record.provenance.comparison ?? "NONE", officialSha256: record.provenance.officialSha256 ?? "NONE" } });
+      const { record, duplicate } = await validateOfficialDocument(monitor, { code, period, originalName: file.name, bytes, uploadedBy: principal.userId, now, fetchOfficial });
+      if (!duplicate) await audit.record({ principal, action: "official-document.validate", resourceType: "official-document", resourceId: record.documentId, outcome: record.status === "VALIDATED" ? "ALLOWED" : "FAILED", correlationId, timestamp: now, metadata: { code, period, version: record.version, sha256: record.sha256, status: record.status, provenance: record.provenance.level, provenanceComparison: record.provenance.comparison ?? "NONE", officialSha256: record.provenance.officialSha256 ?? "NONE", detected: detected ? "CONTENT" : "CHOSEN" } });
       // A rejected file is a processed validation: the answer carries every failed check, and the alert says "rifiutato".
-      return Response.json({ document: documentPreview(record), duplicate }, { headers });
+      return Response.json({ document: documentPreview(record), duplicate, detected }, { headers });
     } catch (error) {
       return bad("OFFICIAL_UPLOAD_REJECTED", error instanceof Error ? error.message : "Validazione non riuscita", 422);
     }

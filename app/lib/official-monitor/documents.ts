@@ -9,9 +9,11 @@ import { readTitTable5File, validateTable5Year, type Table5Check, type Table5Val
  * 1. "Valida documento": il file originale è conservato così com'è (base64) con impronta SHA-256, versione per documento e
  *    periodo, esito di ogni controllo e provenienza. Nessun dato diventa disponibile ai calcoli: l'alert passa solo a
  *    "File caricato, in validazione" (o "rifiutato").
- * 2. "Pubblica aggiornamento": solo per un documento VALIDATED, con conferma esplicita del produttore che riscrive lo SHA-256
- *    del file; se la provenienza è soltanto dichiarata (impronta non confrontata con il sito ufficiale) serve una seconda
- *    conferma esplicita. La pubblicazione è un record a sé (append-only), il documento non viene riscritto. Solo dopo la
+ * 2. "Pubblica aggiornamento": solo per un documento VALIDATED, con conferma esplicita del produttore legata a quel documento:
+ *    la schermata invia l'impronta SHA-256 della versione mostrata (il produttore non la trascrive più, Tony 17/11/2026 "flusso
+ *    semplificato") e il server la confronta con quella conservata, poi ricalcola l'impronta e rilegge i valori dal file
+ *    originale. Se la provenienza non è verificata (dichiarata, o equivalente ma non identica) serve la conferma esplicita del
+ *    produttore, che non è un'autenticazione presso la fonte. La pubblicazione è un record a sé (append-only), il documento non viene riscritto. Solo dopo la
  *    pubblicazione l'alert è risolto e il dato è nell'archivio globale letto da tutte le aziende.
  * Nessuna versione precedente viene modificata: la nuova si aggiunge; vale l'ultima pubblicata.
  */
@@ -152,6 +154,29 @@ export async function validateOfficialDocument(repositories: DocumentRepositorie
   return { record, duplicate: false };
 }
 
+/**
+ * Flusso semplificato (Tony, 17/11/2026): tipo e periodo rilevati dal contenuto quando sono verificabili, mai dal nome del file.
+ * Tipo: oggi solo la Tabella 5 del TIT ha un lettore verificato (titolo "Tabella 5 … reattiva" trovato nel file). Periodo:
+ * l'anno di un alert aperto per quel documento, se il file lo contiene; altrimenti l'anno in corso, se il file lo contiene.
+ * Più alert aperti o nessun anno riconoscibile: il periodo va scelto dal produttore. La validazione completa resta quella di
+ * validateOfficialDocument: il rilevamento decide soltanto dove il file va validato.
+ */
+export interface DetectedUpload { readonly code: OfficialDocumentCode; readonly period: string; readonly basis: string }
+export function detectOfficialUpload(bytes: Uint8Array, input: { readonly openAlerts: readonly { readonly code: string; readonly period: string; readonly status: string }[]; readonly now: string }): DetectedUpload {
+  if (bytes.byteLength === 0 || bytes.byteLength > MAX_ORIGINAL_BYTES) throw new Error("OFFICIAL_UPLOAD_SIZE_INVALID");
+  let reading: ReturnType<typeof readTitTable5File>;
+  try { reading = readTitTable5File(bytes); } catch { throw new Error("OFFICIAL_UPLOAD_TYPE_UNKNOWN"); }
+  if (!reading.structure.sheet) throw new Error("OFFICIAL_UPLOAD_TYPE_UNKNOWN");
+  const code: OfficialDocumentCode = "ARERA_TIT_TABLE5_REACTIVE";
+  const years = reading.structure.years.map(String);
+  const open = [...new Set(input.openAlerts.filter((alert) => alert.code === code && alert.status !== "RESOLVED" && years.includes(alert.period)).map((alert) => alert.period))];
+  if (open.length === 1) return { code, period: open[0], basis: `anno ${open[0]} richiesto dall'alert aperto e presente nel file` };
+  if (open.length > 1) throw new Error("OFFICIAL_UPLOAD_PERIOD_AMBIGUOUS");
+  const current = String(new Date(input.now).getUTCFullYear());
+  if (years.includes(current)) return { code, period: current, basis: `anno in corso ${current}, presente nel file` };
+  throw new Error("OFFICIAL_UPLOAD_PERIOD_UNDETERMINED");
+}
+
 /** Tariff content that must match: classification, value and threshold of every row of the period (cell positions may move). */
 const tariffKey = (values: readonly Table5Value[]) => values.map((value) => [value.voltage, value.year, value.kind, value.band, value.centsPerKvarh, value.thresholdRatio].join("|")).sort().join(";");
 
@@ -179,7 +204,10 @@ async function compareWithOfficial(input: { readonly officialLink: string; reado
 
 export interface PublishInput {
   readonly documentId: string;
-  /** The producer re-types (or pastes) the SHA-256 shown in the preview: the explicit confirmation of what is published. */
+  /**
+   * SHA-256 of the exact version the producer confirmed on screen (sent by the confirmation, no longer typed by hand). It binds the
+   * confirmation to that version: a different or changed document is refused, and the server re-checks the stored original anyway.
+   */
   readonly confirmSha256: string;
   /** Required when the provenance is only declared, or equivalent but not identical (DA VERIFICARE). */
   readonly acknowledgeDeclaredProvenance: boolean;
