@@ -60,6 +60,11 @@ export interface ProductionStorageAdapter {
   readonly proposalPresentations?: TenantRecordRepository<ProposalPresentation>;
   readonly accessAccounts?: TenantRecordRepository<AccessAccount>;
   readonly accessDirectory?: AccessDirectory;
+  /** Control Room produttore (Tony, 17/11): alert, esiti dei controlli e documenti ufficiali caricati. */
+  readonly officialAlerts?: TenantRecordRepository<unknown>;
+  readonly officialChecks?: TenantRecordRepository<unknown>;
+  readonly officialDocuments?: TenantRecordRepository<unknown>;
+  readonly officialPublications?: TenantRecordRepository<unknown>;
 }
 
 export interface RuntimeRepositories {
@@ -97,6 +102,10 @@ export interface RuntimeRepositories {
   readonly proposalPresentations: TenantRecordRepository<ProposalPresentation>;
   readonly accessAccounts: TenantRecordRepository<AccessAccount>;
   readonly accessDirectory: AccessDirectory;
+  readonly officialAlerts: TenantRecordRepository<unknown>;
+  readonly officialChecks: TenantRecordRepository<unknown>;
+  readonly officialDocuments: TenantRecordRepository<unknown>;
+  readonly officialPublications: TenantRecordRepository<unknown>;
 }
 
 let productionStorageAdapter: ProductionStorageAdapter | null = null;
@@ -149,7 +158,7 @@ function storedRepositories(): RuntimeRepositories {
   const config = getRuntimeConfig();
   if (config.runtimeMode === "production") {
     if (!productionStorageAdapter) throw new Error("PERSISTENCE_ADAPTER_UNAVAILABLE");
-    return { ...productionStorageAdapter, eligibilityOverrides: productionStorageAdapter.eligibilityOverrides ?? productionStorageAdapter.cteArchives as EligibilityOverrideRepository, marketRefreshState: productionStorageAdapter.marketRefreshState ?? productionStorageAdapter.marketDataArchives, marketRefreshRuns: productionStorageAdapter.marketRefreshRuns ?? productionStorageAdapter.marketDataArchives, marketRefreshLocks: productionStorageAdapter.marketRefreshLocks ?? productionStorageAdapter.marketDataArchives, orgChain: productionStorageAdapter.orgChain ?? unavailableHierarchyStore() as OrgChainRepository, cteAssignments: productionStorageAdapter.cteAssignments ?? unavailableHierarchyStore() as CteAssignmentRepository, companies: productionStorageAdapter.companies ?? unavailableHierarchyStore(), companyProfiles: productionStorageAdapter.companyProfiles ?? unavailableHierarchyStore(), commercialDiscounts: productionStorageAdapter.commercialDiscounts ?? unavailableHierarchyStore(), proposalPresentations: productionStorageAdapter.proposalPresentations ?? unavailableHierarchyStore(), accessAccounts: productionStorageAdapter.accessAccounts ?? unavailableHierarchyStore(), accessDirectory: productionStorageAdapter.accessDirectory ?? unavailableAccessDirectory() };
+    return { ...productionStorageAdapter, eligibilityOverrides: productionStorageAdapter.eligibilityOverrides ?? productionStorageAdapter.cteArchives as EligibilityOverrideRepository, marketRefreshState: productionStorageAdapter.marketRefreshState ?? productionStorageAdapter.marketDataArchives, marketRefreshRuns: productionStorageAdapter.marketRefreshRuns ?? productionStorageAdapter.marketDataArchives, marketRefreshLocks: productionStorageAdapter.marketRefreshLocks ?? productionStorageAdapter.marketDataArchives, orgChain: productionStorageAdapter.orgChain ?? unavailableHierarchyStore() as OrgChainRepository, cteAssignments: productionStorageAdapter.cteAssignments ?? unavailableHierarchyStore() as CteAssignmentRepository, companies: productionStorageAdapter.companies ?? unavailableHierarchyStore(), companyProfiles: productionStorageAdapter.companyProfiles ?? unavailableHierarchyStore(), commercialDiscounts: productionStorageAdapter.commercialDiscounts ?? unavailableHierarchyStore(), proposalPresentations: productionStorageAdapter.proposalPresentations ?? unavailableHierarchyStore(), accessAccounts: productionStorageAdapter.accessAccounts ?? unavailableHierarchyStore(), accessDirectory: productionStorageAdapter.accessDirectory ?? unavailableAccessDirectory(), officialAlerts: productionStorageAdapter.officialAlerts ?? unavailableHierarchyStore(), officialChecks: productionStorageAdapter.officialChecks ?? unavailableHierarchyStore(), officialDocuments: productionStorageAdapter.officialDocuments ?? unavailableHierarchyStore(), officialPublications: productionStorageAdapter.officialPublications ?? unavailableHierarchyStore() };
   }
   const local = new LocalFilesystemAdapter("var/phase6");
   return {
@@ -187,5 +196,9 @@ function storedRepositories(): RuntimeRepositories {
     marketRefreshLocks: local.collection("market-refresh-locks"),
     jobRuns: local.collection<JobRunRecord>("job-runs"),
     jobIncidents: local.collection<JobIncidentRecord>("job-incidents"),
+    officialAlerts: local.collection("official-alerts"),
+    officialChecks: local.collection("official-checks"),
+    officialDocuments: local.collection("official-documents"),
+    officialPublications: local.collection("official-publications"),
   };
 }

@@ -15,6 +15,10 @@
     {
       "path": "/api/cron/cte-expiry",
       "schedule": "30 5 * * *"
+    },
+    {
+      "path": "/api/cron/official-monitor",
+      "schedule": "0 6 * * *"
     }
   ]
 }

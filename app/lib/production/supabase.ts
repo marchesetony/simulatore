@@ -363,6 +363,10 @@ export class SupabaseProductionStorageAdapter implements ProductionStorageAdapte
   readonly proposalPresentations: TenantRecordRepository<ProposalPresentation>;
   readonly accessAccounts: TenantRecordRepository<AccessAccount>;
   readonly accessDirectory?: AccessDirectory;
+  readonly officialAlerts: TenantRecordRepository<unknown>;
+  readonly officialChecks: TenantRecordRepository<unknown>;
+  readonly officialDocuments: TenantRecordRepository<unknown>;
+  readonly officialPublications: TenantRecordRepository<unknown>;
 
   constructor(client: ProviderClient, storageBucket: string, authClient?: () => ProviderClient) {
     this.cteArchiveRepository = new SupabaseCteArchiveRepository(client);
@@ -391,6 +395,10 @@ export class SupabaseProductionStorageAdapter implements ProductionStorageAdapte
     this.marketRefreshLocks = new SupabaseRecordRepository(client, "market-refresh-locks");
     this.jobRuns = new SupabaseRecordRepository<JobRunRecord>(client, "job-runs");
     this.jobIncidents = new SupabaseRecordRepository<JobIncidentRecord>(client, "job-incidents");
+    this.officialAlerts = new SupabaseRecordRepository(client, "official-alerts");
+    this.officialChecks = new SupabaseRecordRepository(client, "official-checks");
+    this.officialDocuments = new SupabaseRecordRepository(client, "official-documents");
+    this.officialPublications = new SupabaseRecordRepository(client, "official-publications");
     this.orgChain = new SupabaseRecordRepository<OrgNode>(client, "org-chain") as SupabaseRecordRepository<OrgNode> & OrgChainRepository;
     this.cteAssignments = new SupabaseRecordRepository<CteAssignment>(client, "cte-assignments");
     this.companies = new SupabaseRecordRepository<Company>(client, "companies");
