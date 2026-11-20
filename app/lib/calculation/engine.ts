@@ -508,6 +508,9 @@ function addElectricityEnergy(target: ComponentDraft[], request: ElectricitySimu
     const rates = [f1!.value, f2!.value, f3!.value];
     // Monorario (PUN mensile): the month's single GME PUN on all the kWh, as the bill applies it (Tony, 29/10: same CTE, same bill).
     const monthly = electricityRecord.monthly;
+    // Tony (20/11/2026, PUN maggio 2026 a sole fasce): a monorario calculation needs the official monthly PUN; a month published
+    // with F1, F2, F3 only stops it here, it never falls back to the bands.
+    if (monthlyIndex && !monthly) fail("MARKET_MONTHLY_PUN_MISSING");
     if (monthlyIndex && monthly) {
       const quantity = values[0] + values[1] + values[2];
       target.push({ componentId: `energy:${market.month}:f0`, category: "ENERGY", label: `Energia EE indicizzata monoraria ${market.month}`, sign: "CHARGE", value: multiply(add(divide(fromNumber(monthly.value), fromNumber(1000)), fromNumber(pricing.spread.amount)), fromNumber(quantity)), formulaId: "EE_PUN_MWH_TO_KWH_PLUS_SPREAD", formulaInputs: { month: market.month, band: "F0", quantityKwh: quantity, punEurPerMwh: monthly.value, mwhToKwh: 1000, spreadPerKwh: pricing.spread.amount, marketRecordId: marketRecord.recordId, marketVersion: marketRecord.version, taxTreatment: pricing.spread.taxTreatment } });

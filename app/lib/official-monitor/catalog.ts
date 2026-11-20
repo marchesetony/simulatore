@@ -5,7 +5,7 @@
  * ufficiale con formato verificato (refresh notturni GME, ARERA, Terna); altrove l'alert chiede il caricamento o la verifica.
  */
 export type OfficialSource = "GME" | "ARERA" | "TERNA" | "ADM";
-export type OfficialDocumentCode = "GME_PUN_MONTH" | "ARERA_REGULATED_REFRESH" | "ARERA_TIME_TABLES" | "ARERA_TIT_TABLE5_REACTIVE" | "TERNA_DISPATCHING_CAPACITY" | "ADM_EXCISE_RATES";
+export type OfficialDocumentCode = "GME_PUN_MONTH" | "GME_PUN_BANDS_DOCUMENT" | "ARERA_REGULATED_REFRESH" | "ARERA_TIME_TABLES" | "ARERA_TIT_TABLE5_REACTIVE" | "TERNA_DISPATCHING_CAPACITY" | "ADM_EXCISE_RATES";
 export type Acquisition = "AUTOMATIC" | "MANUAL_UPLOAD" | "MANUAL_VERIFICATION";
 
 export interface CatalogEntry {
@@ -37,6 +37,20 @@ export const OFFICIAL_CATALOG: readonly CatalogEntry[] = [
       "Se è pubblicato, avvia l'aggiornamento da Stato sistema → Aggiorna dati ufficiali: il valore si legge solo dal GME, non si inserisce a mano.",
     ],
     uploadPath: "Menu Stato sistema → Aggiorna dati ufficiali → fonte PUN (nessun caricamento manuale: il PUN si legge solo dal GME)",
+  },
+  {
+    // Tony (20/11/2026, "PUN maggio 2026 — approvazione delle sole fasce"): the GME PDF of one month is conserved with its SHA-256
+    // and published, with the producer's explicit confirmation, as a new PUN version with F1, F2, F3 only (no monthly value).
+    code: "GME_PUN_BANDS_DOCUMENT", source: "GME", periodKind: "MONTH", acquisition: "MANUAL_UPLOAD",
+    document: "Prezzo medio per fasce GME del mese, PDF originale: solo F1, F2, F3 (€/MWh), senza valore mensile",
+    officialLink: "https://gme.mercatoelettrico.org/it-it/Home/Pubblicazioni/PrezzoMedioFasce",
+    linkByPeriod: { "2026-05": "https://gme.mercatoelettrico.org/Portals/0/Documents/it-IT/20260601PrezzomedioperfasceMaggio2026.pdf" },
+    instructions: [
+      "Apri la pagina GME \"Prezzo medio per fasce\" e scarica il PDF del mese (per maggio 2026: \"Prezzo medio per fasce - Maggio 2026\", pubblicato il 01/06/2026), senza aprirlo né salvarlo di nuovo.",
+      "Trascinalo in Archivi ufficiali (\"Carica un nuovo documento\"): l'app riconosce documento e mese dal contenuto, legge F1, F2, F3 con le ore, controlla unità, mese e finestra operativa, conserva il file e la sua impronta SHA-256.",
+      "Controlla il riepilogo e premi \"Pubblica per tutte le aziende\": si crea una nuova versione del PUN del mese con le sole fasce; il valore mensile non viene registrato.",
+    ],
+    uploadPath: `${CONTROL_ROOM_PATH} → \"Carica un nuovo documento\" → \"Completa aggiornamento\"`,
   },
   {
     code: "ARERA_REGULATED_REFRESH", source: "ARERA", periodKind: "CHECK_DATE", acquisition: "AUTOMATIC",

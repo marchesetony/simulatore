@@ -3,6 +3,8 @@ import type { TenantRecordRepository } from "../persistence/types";
 import { catalogEntry, officialLinkFor, type OfficialDocumentCode, type OfficialSource } from "./catalog";
 import { OFFICIAL_MONITOR_TENANT, setAlertStatus, type MonitorRepositories } from "./monitor";
 import { readTitTable5File, validateTable5Year, type Table5Check, type Table5Value } from "./tit-table5";
+import { GME_PUN_BANDS_DOCUMENT, compareBandsWithGme, detectGmeBandsPdf, publishBandsToMarket, readGmeBandsPdf, type GmeBandsValues } from "./gme-pun-bands";
+import type { MarketArchiveRepository } from "../market/types";
 
 /**
  * Control Room Produttore → Archivi ufficiali (Tony, 17/11/2026). Due operazioni distinte:
@@ -19,7 +21,7 @@ import { readTitTable5File, validateTable5Year, type Table5Check, type Table5Val
  */
 export const MAX_ORIGINAL_BYTES = 2 * 1024 * 1024;
 /** Documents that have a verified reader for a manual upload. The others come from the automatic refresh or a manual check. */
-export const UPLOADABLE_DOCUMENTS: readonly OfficialDocumentCode[] = ["ARERA_TIT_TABLE5_REACTIVE"];
+export const UPLOADABLE_DOCUMENTS: readonly OfficialDocumentCode[] = ["ARERA_TIT_TABLE5_REACTIVE", GME_PUN_BANDS_DOCUMENT];
 /** First year of the TIT 2024-2027 period; a period beyond next year is not a published tariff yet. */
 const FIRST_SUPPORTED_YEAR = 2024;
 
@@ -71,6 +73,8 @@ export interface OfficialDocumentRecord {
   readonly warnings: readonly string[];
   readonly status: "VALIDATED" | "REJECTED";
   readonly values: readonly Table5Value[];
+  /** GME "Prezzo medio per fasce": the three bands read from the PDF (no monthly value). */
+  readonly marketValues?: GmeBandsValues | null;
   readonly structure: { readonly sheet: string | null; readonly titleCell: string | null; readonly years: readonly number[] };
 }
 
@@ -89,6 +93,8 @@ export interface OfficialPublicationRecord {
   readonly provenanceAcknowledged: boolean;
   /** Publication this one replaces for the same document and period, if any. */
   readonly supersedes: string | null;
+  /** GME bands: the PUN versions written into each company's archive. */
+  readonly marketRecords?: readonly { readonly tenantId: string; readonly archiveId: string; readonly version: string; readonly reused: boolean }[];
 }
 
 export type DocumentRepositories = MonitorRepositories & { readonly documents: TenantRecordRepository<unknown>; readonly publications: TenantRecordRepository<unknown> };
@@ -112,6 +118,7 @@ export const allPublications = async (publications: TenantRecordRepository<unkno
 /** "Valida documento": reads and checks the file, stores it with its fingerprint. Never makes data available to calculations. */
 export async function validateOfficialDocument(repositories: DocumentRepositories, input: ValidateInput): Promise<ValidateResult> {
   if (!UPLOADABLE_DOCUMENTS.includes(input.code)) throw new Error(`OFFICIAL_UPLOAD_NOT_SUPPORTED:${input.code}`);
+  if (input.code === GME_PUN_BANDS_DOCUMENT) return validateGmeBandsDocument(repositories, input);
   if (!/^20\d\d$/.test(input.period)) throw new Error("OFFICIAL_UPLOAD_PERIOD_INVALID");
   if (input.bytes.byteLength === 0 || input.bytes.byteLength > MAX_ORIGINAL_BYTES) throw new Error("OFFICIAL_UPLOAD_SIZE_INVALID");
   const entry = catalogEntry(input.code);
@@ -164,6 +171,8 @@ export async function validateOfficialDocument(repositories: DocumentRepositorie
 export interface DetectedUpload { readonly code: OfficialDocumentCode; readonly period: string; readonly basis: string }
 export function detectOfficialUpload(bytes: Uint8Array, input: { readonly openAlerts: readonly { readonly code: string; readonly period: string; readonly status: string }[]; readonly now: string }): DetectedUpload {
   if (bytes.byteLength === 0 || bytes.byteLength > MAX_ORIGINAL_BYTES) throw new Error("OFFICIAL_UPLOAD_SIZE_INVALID");
+  const gmeMonth = detectGmeBandsPdf(bytes);
+  if (gmeMonth) return { code: GME_PUN_BANDS_DOCUMENT, period: gmeMonth, basis: `PDF GME "Prezzo medio per fasce" di ${gmeMonth}, letto dal contenuto` };
   let reading: ReturnType<typeof readTitTable5File>;
   try { reading = readTitTable5File(bytes); } catch { throw new Error("OFFICIAL_UPLOAD_TYPE_UNKNOWN"); }
   if (!reading.structure.sheet) throw new Error("OFFICIAL_UPLOAD_TYPE_UNKNOWN");
@@ -213,6 +222,8 @@ export interface PublishInput {
   readonly acknowledgeDeclaredProvenance: boolean;
   readonly publishedBy: string;
   readonly now: string;
+  /** GME bands only: the PUN archive and the companies the new version is written for. */
+  readonly market?: { readonly repository: MarketArchiveRepository; readonly tenants: readonly string[] };
 }
 
 /** "Pubblica aggiornamento": only a fully validated document, explicitly confirmed, re-checked from the stored original. */
@@ -227,6 +238,7 @@ export async function publishOfficialDocument(repositories: DocumentRepositories
   // The stored original is read again: fingerprint and values must be the ones that were validated.
   const original = new Uint8Array(Buffer.from(document.originalBase64, "base64"));
   if (sha(original) !== document.sha256) throw new Error("OFFICIAL_PUBLISH_INTEGRITY_FAILED");
+  if (document.code === GME_PUN_BANDS_DOCUMENT) return publishGmeBandsDocument(repositories, document, original, input);
   const again = validateTable5Year(readTitTable5File(original), Number(document.period));
   const fingerprint = (values: readonly Table5Value[]) => values.map((value) => [value.voltage, value.year, value.kind, value.band, value.centsPerKvarh, value.thresholdRatio, value.sheet, value.cell].join("|")).sort().join(";");
   if (!again.ok || fingerprint(again.values) !== fingerprint(document.values)) throw new Error("OFFICIAL_PUBLISH_CONTENT_CHANGED");
@@ -273,4 +285,55 @@ export async function confirmManualVerification(repositories: MonitorRepositorie
 /** Summary without the original bytes, for screens and API answers. */
 export function documentSummary(record: OfficialDocumentRecord): Omit<OfficialDocumentRecord, "originalBase64"> {
   const { originalBase64: _omitted, ...rest } = record; void _omitted; return rest;
+}
+
+// Tony (20/11/2026, "PUN maggio 2026 — approvazione delle sole fasce"): the GME PDF of one month, conserved and checked like the
+// TIT table; the publication writes a new PUN version with F1, F2, F3 only into every company's archive.
+async function validateGmeBandsDocument(repositories: DocumentRepositories, input: ValidateInput): Promise<ValidateResult> {
+  if (input.bytes.byteLength === 0 || input.bytes.byteLength > MAX_ORIGINAL_BYTES) throw new Error("OFFICIAL_UPLOAD_SIZE_INVALID");
+  const entry = catalogEntry(input.code);
+  const sha256 = sha(input.bytes);
+  const existing = (await allDocuments(repositories.documents)).filter((record) => record.code === input.code && record.period === input.period);
+  const same = existing.filter((record) => record.sha256 === sha256 && record.status === "VALIDATED").sort((a, b) => b.version - a.version)[0];
+  if (same) return { record: same, duplicate: true };
+  const reading = readGmeBandsPdf(input.bytes, input.period, input.now);
+  const checks: Table5Check[] = [{ code: "FORMAT_NAME", ok: /\.pdf$/i.test(input.originalName), detail: `nome "${input.originalName.slice(0, 160)}": atteso un file .pdf` }, ...reading.checks];
+  const known = entry.linkByPeriod?.[input.period] ?? null;
+  const provenance = await compareBandsWithGme({ pageLink: entry.officialLink, knownPdf: known, month: input.period, sha256, values: reading.values, now: input.now, fetchOfficial: input.fetchOfficial });
+  checks.push({ code: "PROVENANCE", ok: provenance.level !== "DIFFERS_FROM_OFFICIAL_DOWNLOAD", detail: provenance.detail });
+  const status = checks.every((item) => item.ok) && reading.values ? "VALIDATED" : "REJECTED";
+  const version = existing.reduce((highest, record) => Math.max(highest, record.version), 0) + 1;
+  const documentId = `official-document_${createHash("sha256").update(`${input.code}|${input.period}|${version}|${sha256}`, "utf8").digest("hex").slice(0, 40)}`;
+  const record: OfficialDocumentRecord = {
+    documentId, code: input.code, source: entry.source, period: input.period, version, originalName: input.originalName.slice(0, 160), size: input.bytes.byteLength, sha256,
+    uploadedAt: input.now, uploadedBy: input.uploadedBy, originalBase64: Buffer.from(input.bytes).toString("base64"), provenance, checks, warnings: [], status,
+    values: [], marketValues: status === "VALIDATED" ? reading.values : null, structure: { sheet: null, titleCell: null, years: [] },
+  };
+  await repositories.documents.append({ tenantId: OFFICIAL_MONITOR_TENANT, recordId: documentId, payload: record, idempotencyKey: documentId, now: input.now });
+  await setAlertStatus(repositories, input.code, input.period, status === "VALIDATED" ? "FILE_UPLOADED" : "REJECTED", status === "VALIDATED" ? `file v${version} validato (SHA-256 ${sha256.slice(0, 12)}…), in attesa di pubblicazione` : `file v${version} rifiutato: ${checks.filter((item) => !item.ok).map((item) => item.code).join(", ")}`, input.now);
+  return { record, duplicate: false };
+}
+
+async function publishGmeBandsDocument(repositories: DocumentRepositories, document: OfficialDocumentRecord, original: Uint8Array, input: PublishInput): Promise<OfficialPublicationRecord> {
+  if (!input.market || !input.market.tenants.length) throw new Error("OFFICIAL_PUBLISH_MARKET_UNAVAILABLE");
+  // The stored original is read again: the three bands must be the ones that were validated.
+  const again = readGmeBandsPdf(original, document.period, input.now);
+  const stored = document.marketValues;
+  if (!again.values || !stored || (["f1", "f2", "f3"] as const).some((band) => again.values![band] !== stored[band]) || again.values.hours.some((hours, index) => hours !== stored.hours[index])) throw new Error("OFFICIAL_PUBLISH_CONTENT_CHANGED");
+  if (!again.checks.every((check) => check.ok)) throw new Error("OFFICIAL_PUBLISH_NOT_VALIDATED");
+  const samePeriod = (await allPublications(repositories.publications)).filter((item) => item.code === document.code && item.period === document.period).sort((a, b) => b.version - a.version || b.publishedAt.localeCompare(a.publishedAt));
+  const current = samePeriod[0];
+  if (current?.documentId === document.documentId) throw new Error("OFFICIAL_PUBLISH_ALREADY_PUBLISHED");
+  if (current && current.version > document.version) throw new Error("OFFICIAL_PUBLISH_OLDER_VERSION");
+  const publicationId = `official-publication_${createHash("sha256").update(`${document.documentId}|publish`, "utf8").digest("hex").slice(0, 40)}`;
+  const officialLink = document.provenance.officialLink;
+  const marketRecords = await publishBandsToMarket({ repository: input.market.repository, tenants: input.market.tenants, values: again.values, sha256: document.sha256, officialLink, documentId: document.documentId, publicationId, publishedBy: input.publishedBy, now: input.now });
+  const publication: OfficialPublicationRecord = {
+    publicationId, documentId: document.documentId, code: document.code, source: document.source, period: document.period, version: document.version, sha256: document.sha256,
+    publishedAt: input.now, publishedBy: input.publishedBy, provenanceLevel: document.provenance.level, provenanceAcknowledged: PROVENANCE_NEEDS_ACK.includes(document.provenance.level),
+    supersedes: current?.publicationId ?? null, marketRecords,
+  };
+  await repositories.publications.append({ tenantId: OFFICIAL_MONITOR_TENANT, recordId: publicationId, payload: publication, idempotencyKey: publicationId, now: input.now });
+  await setAlertStatus(repositories, document.code, document.period, "RESOLVED", `pubblicato v${document.version} (SHA-256 ${document.sha256.slice(0, 12)}…) da ${input.publishedBy}: sole fasce F1, F2, F3`, input.now);
+  return publication;
 }

@@ -102,6 +102,9 @@ function complete(record: ElectricityMonthlyPunRecord): boolean {
 function canonicalMilli(value: number): number { return Math.round(value * 1000); }
 function valuesEqual(left: ElectricityMonthlyPunRecord, right: ElectricityMonthlyPunRecord): boolean {
   if (left.month !== right.month || left.effectiveFrom !== right.effectiveFrom || left.effectiveTo !== right.effectiveTo) return false;
+  // Tony (20/11/2026): a month published by the producer with F1, F2, F3 only (no official monthly value) is unchanged when the
+  // bands are the same: the refresh never adds a monthly value derived from the bands, nor approves one over that version.
+  if (left.monthly === undefined) return [left.f1, right.f1, left.f2, right.f2, left.f3, right.f3].every((rate) => rate !== undefined) && canonicalMilli(left.f1!.value) === canonicalMilli(right.f1!.value) && canonicalMilli(left.f2!.value) === canonicalMilli(right.f2!.value) && canonicalMilli(left.f3!.value) === canonicalMilli(right.f3!.value);
   return [left.monthly, right.monthly, left.f1, right.f1, left.f2, right.f2, left.f3, right.f3].every((rate) => rate !== undefined) && canonicalMilli(left.monthly!.value) === canonicalMilli(right.monthly!.value) && canonicalMilli(left.f1!.value) === canonicalMilli(right.f1!.value) && canonicalMilli(left.f2!.value) === canonicalMilli(right.f2!.value) && canonicalMilli(left.f3!.value) === canonicalMilli(right.f3!.value);
 }
 function officialHost(authority: "GME" | "ARERA"): (host: string) => boolean {
@@ -181,6 +184,9 @@ export async function runPunMarketRefresh(input: { readonly tenantId: string } &
         const sameMonth = existing.filter((record) => record.vector === "EE" && record.index === "PUN" && record.month === referenceMonth && record.status === "APPROVED").sort(compareMarketVersions);
         const current = sameMonth[0];
         if (current && valuesEqual(current.record as ElectricityMonthlyPunRecord, candidate.record)) { monthsComplete += 1; monthsUnchanged += 1; continue; }
+        // A version published from the Control Room with F1, F2, F3 only is never replaced by the automatic refresh: a different
+        // reading is reported for the producer to check, nothing is written or approved (Tony 20/11/2026).
+        if (current && (current.record as ElectricityMonthlyPunRecord).monthly === undefined) { monthsComplete += 1; errors.push(`${referenceMonth}:PUN_PUBLISHED_BANDS_DIFFER`); continue; }
         monthsComplete += 1;
         if (!dryRun) {
           const pending = pendingVersion(candidate.record, current, existing);

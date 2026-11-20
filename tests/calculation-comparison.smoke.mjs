@@ -108,6 +108,11 @@ try {
   assert.equal(bandEnergy.length, 3);
   const otherMono = (await calculateApprovedOffer(cteRepository, marketRepository, marchRequest, indexedEe.archiveId, { currentOffer: { ...sameMono, supplier: "Altro fornitore", offer: "Altra offerta" } })).components.filter((component) => component.formulaId === "EE_PUN_MWH_TO_KWH_PLUS_SPREAD");
   assert.equal(otherMono.length, 3, "another supplier's monorario bill does not decide this CTE's structure");
+  // Tony (20/11/2026, PUN maggio 2026 a sole fasce): a month without the official monthly PUN stops a monorario calculation with
+  // the same CTE; it never falls back to the bands. Band calculations of that month go on.
+  const januaryRequest = eeRequest({ supplyPeriod: { periodStart: "2026-01-01", periodEnd: "2026-02-01" }, consumption: { basis: "PERIOD", unit: "KWH", f1: 300, f2: 100, f3: 100 } });
+  await assert.rejects(() => calculateApprovedOffer(cteRepository, marketRepository, januaryRequest, indexedEe.archiveId, { currentOffer: sameMono }), /MARKET_MONTHLY_PUN_MISSING/);
+  assert.equal((await calculateApprovedOffer(cteRepository, marketRepository, januaryRequest, indexedEe.archiveId, { currentOffer: { ...sameMono, indexStructure: "BANDS" } })).components.filter((component) => component.formulaId === "EE_PUN_MWH_TO_KWH_PLUS_SPREAD").length, 3);
   // Tony (28/10, BPower BE Family Casa Protetta, "PUN Index GME + 0,03 €/kWh ... spread al lordo delle perdite di rete"):
   // the spread read again as a generic per-kWh fee is not charged twice.
   const grossSpread = await createCteArchive(cteRepository, { tenantId: tenant, contract: cte("EE", "cte-ee-gross-spread", { pricing: { mode: "INDEXED", reference: "PUN", spread: { ...price(0.01, "EUR_PER_KWH"), lossTreatment: "GROSS_OF_LOSSES" } }, variableFees: [fee("cte-ee-gross-spread-variable", "Quote variabili", 0.01, "EUR_PER_KWH"), fee("cte-ee-gross-spread-comm", "Commercializzazione", 0.01, "EUR_PER_KWH")] }), now: "2026-01-02T00:00:00.000Z", actor: "SMOKE" });

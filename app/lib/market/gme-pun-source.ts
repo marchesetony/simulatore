@@ -343,7 +343,7 @@ function pdfText(body: Uint8Array): string {
 
 function sourceHash(bytes: Uint8Array): string { return createHash("sha256").update(bytes).digest("hex"); }
 
-function publishedPdfText(body: Uint8Array): string {
+export function publishedPdfText(body: Uint8Array): string {
   const text = pdfText(body);
   if (!text.trim()) throw new Error("GME_PUBLICATION_TEXT_UNAVAILABLE");
   return text;

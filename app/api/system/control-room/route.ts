@@ -79,7 +79,8 @@ export async function GET(request: Request): Promise<Response> {
 
 async function fetchOfficial(url: string): Promise<Uint8Array | null> {
   const host = new URL(url).host;
-  if (host !== "www.arera.it" && host !== "arera.it") return null;
+  // ARERA files, and the GME "Prezzo medio per fasce" page and PDFs (Tony 20/11/2026), only from the official hosts.
+  if (host !== "www.arera.it" && host !== "arera.it" && !(host === "gme.mercatoelettrico.org" && new URL(url).protocol === "https:")) return null;
   const response = await fetch(url, { signal: AbortSignal.timeout(20_000), headers: { "User-Agent": "BillRegulatoryAuditEngine/1.0 (official-source-import)" } }).catch(() => null);
   if (!response?.ok) return null;
   return new Uint8Array(await response.arrayBuffer());
@@ -102,6 +103,8 @@ const MESSAGES: Readonly<Record<string, string>> = {
   OFFICIAL_PUBLISH_CONTENT_CHANGED: "La rilettura del file conservato non conferma i valori validati: pubblicazione bloccata",
   OFFICIAL_PUBLISH_ALREADY_PUBLISHED: "Questa versione è già pubblicata",
   OFFICIAL_PUBLISH_OLDER_VERSION: "È già pubblicata una versione più recente dello stesso documento e periodo",
+  OFFICIAL_PUBLISH_OUTSIDE_WINDOW: "Il mese è fuori dalla finestra operativa dei sei mesi chiusi: il PUN non viene pubblicato",
+  OFFICIAL_PUBLISH_MARKET_UNAVAILABLE: "Archivio PUN delle aziende non disponibile: pubblicazione non eseguita",
 };
 
 export async function POST(request: Request): Promise<Response> {
@@ -138,7 +141,9 @@ export async function POST(request: Request): Promise<Response> {
   if (body.action === "publish") {
     if (typeof body.documentId !== "string" || typeof body.confirmSha256 !== "string") return bad("OFFICIAL_PUBLISH_REQUEST_INVALID", "Indica il documento e conferma la sua impronta SHA-256");
     try {
-      const publication = await publishOfficialDocument(monitor, { documentId: body.documentId, confirmSha256: body.confirmSha256, acknowledgeDeclaredProvenance: body.acknowledgeDeclaredProvenance === true, publishedBy: principal.userId, now });
+      // GME bands: the new PUN version is written in the producer archive and for every company served by the official data.
+      const market = { repository: repositories.marketArchiveRepository, tenants: ["tenant_piattaforma", ...(await officialDataTenants(() => configuredMarketRefreshTenants(), repositories.companies))] };
+      const publication = await publishOfficialDocument(monitor, { documentId: body.documentId, confirmSha256: body.confirmSha256, acknowledgeDeclaredProvenance: body.acknowledgeDeclaredProvenance === true, publishedBy: principal.userId, now, market });
       await audit.record({ principal, action: "official-document.publish", resourceType: "official-document", resourceId: publication.documentId, outcome: "ALLOWED", correlationId, timestamp: now, metadata: { code: publication.code, period: publication.period, version: publication.version, sha256: publication.sha256, provenance: publication.provenanceLevel } });
       return Response.json({ publication }, { headers });
     } catch (error) {
