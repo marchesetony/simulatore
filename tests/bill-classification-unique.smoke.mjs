@@ -110,7 +110,8 @@ const economics = billReadSections(bill).find((section) => section.id === "ECONO
 const row = (label) => { const found = economics.rows.find((item) => item.label === label && item.group !== "SIMULATOR"); return found && { ...found, value: plain(found.value), note: found.note && plain(found.note) }; };
 assert.deepEqual([row("Energia reattiva").value, row("Energia reattiva").state, row("Energia reattiva").secondary], ["5,48 €", "READ", undefined], "Dati letti: read, in view");
 assert.match(row("Energia reattiva").note, /Stampata in fattura: "Energia reattiva immessa" 5,48 €/);
-assert.deepEqual([row("Vendita").value, row("Rete e trasporto").value, row("Rete complessiva").value, row("Oneri di sistema").value, row("Accise").value, row("IVA").value, row("Totale fattura").value], ["121,75 €", "18,54 €", "24,02 €", "18,64 €", "4,19 €", "36,43 €", "205,03 €"]);
+// Tony (19/11/2026, 072248E): the rete e oneri less the oneri is named for what it is (expectation changed: "Rete e trasporto").
+assert.deepEqual([row("Vendita").value, row("Rete e oneri meno oneri (calcolata, non è il trasporto stampato)").value, row("Rete complessiva").value, row("Oneri di sistema").value, row("Accise").value, row("IVA").value, row("Totale fattura").value], ["121,75 €", "18,54 €", "24,02 €", "18,64 €", "4,19 €", "36,43 €", "205,03 €"]);
 assert.equal(row("Rete complessiva").state, "CALCULATED", "rete complessiva is a sum of the simulator, marked as such");
 assert.equal(row("Totale fattura").note, undefined, "no unexplained 5,48 € difference on the total");
 assert.ok(!economics.rows.some((item) => /altre partite|bonus|canone/i.test(item.label)), "no altre partite, bonus or canone row");
@@ -187,7 +188,10 @@ assert.equal(unknownReceipt.quotas.find((item) => item.key === "REACTIVE")?.offe
 // 6. No double counting: the 5,48 € is once in the analysis, once in the scontrino, never inside rete e trasporto or altre partite.
 assert.equal(analysis.components.filter((line) => line.includedInReconciliation && num(line.amount) === 5.48).length, 1);
 assert.equal(cents(receipt.quotas.filter((item) => !["EXCISE", "VAT", "TAXES"].includes(item.key)).reduce((sum, item) => sum + item.current, 0) + 40.62), 205.03, "quotas + taxes = bill total, 5,48 counted once");
-assert.deepEqual([receipt.officialCheck.NETWORK.status, receipt.officialCheck.NETWORK.official, receipt.officialCheck.NETWORK.difference], ["VERIFIED", 18.54, 0], "the ARERA check compares the transport (18,54) without the reactive energy");
+// Tony (19/11/2026, 072248E): the transport is not printed apart here (rete e oneri of the sintetica less the oneri read), so it
+// is "non verificabile", never a billed amount checked against ARERA (expectation changed: it was VERIFIED with difference 0).
+// The ARERA value is still the transport alone (18,54), without the reactive energy, and no per-quota gap is shown.
+assert.deepEqual([receipt.officialCheck.NETWORK.status, receipt.officialCheck.NETWORK.official, receipt.officialCheck.NETWORK.difference, receipt.officialCheck.NETWORK.aggregateGaps], ["NOT_VERIFIABLE", 18.54, null, []], "the ARERA value is the transport (18,54) without the reactive energy");
 assert.deepEqual([receipt.officialCheck.SYSTEM.status, receipt.officialCheck.SYSTEM.official], ["VERIFIED", 18.64]);
 
 // 7. Backward compatibility, 071808E (no reactive energy): same quotas and totals as before.

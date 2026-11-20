@@ -58,6 +58,8 @@ export interface BillReading {
   readonly periodoDal: string;
   readonly periodoAl: string;
   readonly dataEmissione: string;
+  /** Tony (19/11/2026): the document number, to link a fattura di dettaglio to the sintetica of the same invoice. */
+  readonly numeroDocumento: string;
   readonly dataScadenzaPagamento: string;
   readonly consumoFatturato: string;
   readonly consumoF1: string;
@@ -101,7 +103,7 @@ export interface BillReading {
 export const BILL_READER_SCALARS = [
   "fornitore", "intestatario", "codiceCliente", "codiceFiscalePartitaIva", "pod", "pdr", "tipoClienteStampato", "tensioneStampata",
   "potenzaImpegnataKw", "potenzaDisponibileKw", "potenzaMassimaPrelevataKw", "classeAsos", "mercato",
-  "periodoStampato", "periodoDal", "periodoAl", "dataEmissione", "dataScadenzaPagamento",
+  "periodoStampato", "periodoDal", "periodoAl", "dataEmissione", "numeroDocumento", "dataScadenzaPagamento",
   "consumoFatturato", "consumoF1", "consumoF2", "consumoF3", "consumoPicco", "consumoFuoriPicco", "consumoSmc", "coefficienteC", "pcs", "consumoAnnuo",
   "offertaNome", "offertaCodice", "tipologiaOfferta", "tipologiaPrezzo", "indice", "spread", "pcvMensile", "attivazioneFornitura", "decorrenzaCondizioni", "scadenzaCondizioni", "scadenzaContratto",
   "prezzoEnergiaF1", "prezzoEnergiaF2", "prezzoEnergiaF3", "prezzoEnergiaF23", "prezzoEnergiaMonorario", "coefficientePerdite", "totaleBolletta",
@@ -125,6 +127,7 @@ const SCALAR_HELP: Readonly<Record<typeof BILL_READER_SCALARS[number], string>> 
   periodoDal: "Primo giorno del periodo fatturato in formato AAAA-MM-GG.",
   periodoAl: "Ultimo giorno del periodo fatturato in formato AAAA-MM-GG (es. 2026-09-30 per settembre).",
   dataEmissione: "Data di emissione AAAA-MM-GG.",
+  numeroDocumento: "Numero della fattura o del documento come stampato (es. \"Documento n. 123456A\" → 123456A), senza la data.",
   dataScadenzaPagamento: "Scadenza del pagamento AAAA-MM-GG.",
   consumoFatturato: "Consumo totale fatturato nel periodo (kWh luce, Smc gas): solo il numero come stampato.",
   consumoF1: "kWh fatturati in F1 nel periodo (consumo, non prezzo).",

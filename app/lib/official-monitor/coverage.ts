@@ -2,6 +2,7 @@ import type { RegulatoryValueRecord } from "../foundation/regulatory-types";
 import type { RegulatoryApprovalDomainState } from "../regulatory-approval-domain";
 import type { MarketArchiveRecord } from "../market/types";
 import { compareMarketVersions } from "../market/service";
+import { isRetentionRetirement, operationalMarketMonths, romeToday } from "../market/operational-window";
 import { ELECTRICITY_EXCISE_PERIODS } from "../calculation/electricity-taxes";
 import { catalogEntry, type OfficialDocumentCode, type OfficialSource } from "./catalog";
 import type { OfficialAlert, OfficialCheck } from "./monitor";
@@ -17,16 +18,19 @@ import type { OfficialPublicationRecord } from "./documents";
  * ogni lettura e non scrivono nulla: nessuna tariffa, nessuna correzione degli archivi. Lo stato del monitoraggio (controlli
  * eseguiti) resta separato dalla copertura dei dati.
  */
-export type CoverageIssueKind = "MISSING" | "STALE" | "UNVERIFIED" | "DIVERGENT";
+export type CoverageAnomalyKind = "MISSING" | "STALE" | "UNVERIFIED" | "DIVERGENT";
+/** OUTSIDE_WINDOW is only a notice (PUN/PSV approved for a month the calculations no longer read): never an anomaly. */
+export type CoverageIssueKind = CoverageAnomalyKind | "OUTSIDE_WINDOW";
 export type CoverageSeverity = "CRITICAL" | "WARNING" | "INFO";
-export type CoverageStatus = "COMPLETE" | CoverageIssueKind;
-export const COVERAGE_KIND_LABEL: Readonly<Record<CoverageIssueKind, string>> = {
+export type CoverageStatus = "COMPLETE" | CoverageAnomalyKind;
+const ANOMALY_KIND_LABEL: Readonly<Record<CoverageAnomalyKind, string>> = {
   MISSING: "Dati mancanti",
   STALE: "Presenti ma non aggiornati",
   UNVERIFIED: "Dati non verificati",
   DIVERGENT: "Copie aziendali divergenti",
 };
-export const COVERAGE_STATUS_LABEL: Readonly<Record<CoverageStatus, string>> = { COMPLETE: "Completo", ...COVERAGE_KIND_LABEL };
+export const COVERAGE_KIND_LABEL: Readonly<Record<CoverageIssueKind, string>> = { ...ANOMALY_KIND_LABEL, OUTSIDE_WINDOW: "Fuori dalla finestra operativa" };
+export const COVERAGE_STATUS_LABEL: Readonly<Record<CoverageStatus, string>> = { COMPLETE: "Completo", ...ANOMALY_KIND_LABEL };
 export const COVERAGE_SEVERITY_LABEL: Readonly<Record<CoverageSeverity, string>> = { CRITICAL: "Critica", WARNING: "Da verificare", INFO: "Informativa" };
 
 /** One copy of the official data: the producer's archive (tenant_piattaforma) or a client company's copy used by its calculations. */
@@ -93,10 +97,10 @@ export interface CoverageReport {
   readonly archives: readonly ArchiveCoverage[];
   /** Centralised informative alerts, most severe first. Computed, never stored. */
   readonly alerts: readonly CoverageIssue[];
-  readonly counts: Readonly<Record<CoverageIssueKind, number>>;
+  readonly counts: Readonly<Record<CoverageAnomalyKind, number>>;
 }
 
-type Latest = "CURRENT_MONTH" | "PUBLISHED_MONTH" | "YEAR";
+type Latest = "CURRENT_MONTH" | "PUBLISHED_MONTH" | "MARKET_WINDOW" | "YEAR";
 interface ComponentDef {
   readonly key: string;
   readonly archive: OfficialSource;
@@ -131,8 +135,8 @@ export const COVERAGE_COMPONENTS: readonly ComponentDef[] = [
   regulatory("ARERA", "ARERA", "CAPACITY_MARKET", "Corrispettivo mercato della capacità (TIV)", "ARERA, TIV", "ARERA_REGULATED_REFRESH"),
   regulatory("ARERA", "ARERA", "DISPATCHING_TOTAL", "Dispacciamento (TIV)", "ARERA, TIV", "ARERA_REGULATED_REFRESH"),
   { key: "ARERA:TIT_TABLE5", archive: "ARERA", name: "Energia reattiva, TIT Tabella 5", source: "ARERA, TIT Tabella 5", monitorCode: "ARERA_TIT_TABLE5_REACTIVE", latest: "YEAR", read: { type: "PUBLICATION", code: "ARERA_TIT_TABLE5_REACTIVE" }, action: "Carica il file ufficiale in Control Room → Carica un nuovo documento e completa l'aggiornamento." },
-  { key: "ARERA:PSV", archive: "ARERA", name: "PSV mensile (CMEM)", source: "ARERA, CMEM", monitorCode: "ARERA_REGULATED_REFRESH", latest: "PUBLISHED_MONTH", read: { type: "MARKET", index: "PSV" }, action: "Rilancia l'aggiornamento da Stato sistema → Aggiorna dati ufficiali → fonte PSV: il valore si legge solo da ARERA." },
-  { key: "GME:PUN", archive: "GME", name: "PUN Index mensile unico e F1/F2/F3", source: "GME, Prezzo medio per fasce", monitorCode: "GME_PUN_MONTH", latest: "PUBLISHED_MONTH", read: { type: "MARKET", index: "PUN" }, action: "Se il GME ha pubblicato il mese, avvia l'aggiornamento da Stato sistema → Aggiorna dati ufficiali → fonte PUN (si legge solo dal GME). Per i mesi di una bolletta il simulatore prova anche a scaricarlo al momento della simulazione." },
+  { key: "ARERA:PSV", archive: "ARERA", name: "PSV mensile (CMEM)", source: "ARERA, CMEM", monitorCode: "ARERA_REGULATED_REFRESH", latest: "MARKET_WINDOW", read: { type: "MARKET", index: "PSV" }, action: "Rilancia l'aggiornamento da Stato sistema → Aggiorna dati ufficiali → fonte PSV: il valore si legge solo da ARERA." },
+  { key: "GME:PUN", archive: "GME", name: "PUN Index mensile unico e F1/F2/F3", source: "GME, Prezzo medio per fasce", monitorCode: "GME_PUN_MONTH", latest: "MARKET_WINDOW", read: { type: "MARKET", index: "PUN" }, action: "Se il GME ha pubblicato il mese, avvia l'aggiornamento da Stato sistema → Aggiorna dati ufficiali → fonte PUN (si legge solo dal GME). Per i mesi di una bolletta il simulatore prova anche a scaricarlo al momento della simulazione." },
   regulatory("TERNA", "TERNA", "DISPATCHING_TOTAL", "Dispacciamento (Terna)", "Terna, corrispettivi", "TERNA_DISPATCHING_CAPACITY"),
   regulatory("TERNA", "TERNA", "CAPACITY_MARKET_OFF_PEAK", "Capacità, fuori picco (Terna)", "Terna, corrispettivi", "TERNA_DISPATCHING_CAPACITY"),
   { key: "ADM:EXCISE", archive: "ADM", name: "Accise sull'energia elettrica", source: "ADM, D.Lgs. 504/1995 Allegato I", monitorCode: "ADM_EXCISE_RATES", latest: "YEAR", read: { type: "EXCISE" }, action: "Verifica sul portale ADM le aliquote dell'anno e conferma la verifica in Control Room; se sono cambiate va richiesto l'aggiornamento del calcolo." },
@@ -163,6 +167,9 @@ function expectedPeriods(latest: Latest, now: string): readonly string[] {
   const local = new Date(new Date(now).toLocaleString("en-US", { timeZone: "Europe/Rome" }));
   const year = local.getFullYear(); const month = local.getMonth() + 1; const day = local.getDate();
   if (latest === "YEAR") return month === 12 && day >= 15 ? [String(year), String(year + 1)] : [String(year)];
+  // Tony (17/11/2026): PUN and PSV are expected only inside the six operational months the calculations read (the same
+  // window as operationalMarketView); the previous month only from the 15th, after the GME check of the 5th–14th.
+  if (latest === "MARKET_WINDOW") { const months = [...operationalMarketMonths(romeToday(new Date(now)))].reverse(); return day >= 15 ? months : months.slice(0, -1); }
   const current = monthOf(year, month);
   // Monthly indexes are published at the start of the following month: the GME check runs from the 5th to the 14th, so the
   // previous month is expected from the 15th; before that, the month before it.
@@ -207,15 +214,17 @@ function readCopy(def: ComponentDef, copy: CoverageCopy, expected: readonly stri
     }
   } else if (def.read.type === "MARKET") {
     const { index } = def.read;
-    const records = copy.marketArchives.filter((record) => record.index === index);
+    // Records retired by the retention rule are kept for audit only: they are neither missing nor unverified data.
+    const records = copy.marketArchives.filter((record) => record.index === index && !isRetentionRetirement(record));
     for (const period of expected) {
       const month = records.filter((record) => record.month === period);
       const approvedRecords = month.filter((record) => record.status === "APPROVED").sort(compareMarketVersions);
       const value = approvedRecords[0]?.record as unknown as Readonly<Record<string, { readonly value?: unknown } | undefined>> | undefined;
-      const parts = index === "PUN" ? ["monthly", "f1", "f2", "f3"] : ["monthly"];
+      // The PSV record carries its monthly value in `value` (GasMonthlyPsvRecord), the PUN in `monthly` plus F1/F2/F3.
+      const parts = index === "PUN" ? ["monthly", "f1", "f2", "f3"] : ["value"];
       const present = value ? parts.filter((part) => typeof value[part]?.value === "number") : [];
-      if (value && (index === "PSV" || present.length === parts.length)) { usable.set(period, parts.map((part) => `${part}=${round(value[part]?.value)}`).join(";")); later(approvedRecords[0].updatedAt); }
-      else if (value) unusable.set(period, `approvato senza ${parts.filter((part) => !present.includes(part)).map((part) => part === "monthly" ? "valore mensile unico" : part.toUpperCase()).join(", ")}`);
+      if (value && present.length === parts.length) { usable.set(period, parts.map((part) => `${part}=${round(value[part]?.value)}`).join(";")); later(approvedRecords[0].updatedAt); }
+      else if (value) unusable.set(period, `approvato senza ${parts.filter((part) => !present.includes(part)).map((part) => part === "monthly" ? "valore mensile unico" : part === "value" ? "valore mensile" : part.toUpperCase()).join(", ")}`);
       else if (month.length) unusable.set(period, `presente con stato ${[...new Set(month.map((record) => record.status))].join("/")}, non approvato`);
     }
   }
@@ -223,7 +232,7 @@ function readCopy(def: ComponentDef, copy: CoverageCopy, expected: readonly stri
 }
 
 const SEVERITY_ORDER: Readonly<Record<CoverageSeverity, number>> = { CRITICAL: 0, WARNING: 1, INFO: 2 };
-const KIND_ORDER: Readonly<Record<CoverageIssueKind, number>> = { MISSING: 0, STALE: 1, UNVERIFIED: 2, DIVERGENT: 3 };
+const KIND_ORDER: Readonly<Record<CoverageIssueKind, number>> = { MISSING: 0, STALE: 1, UNVERIFIED: 2, DIVERGENT: 3, OUTSIDE_WINDOW: 4 };
 
 export function computeCoverage(input: CoverageInput): CoverageReport {
   const now = input.now;
@@ -299,8 +308,17 @@ export function computeCoverage(input: CoverageInput): CoverageReport {
         if (values.length) issue("DIVERGENT", "WARNING", values, readings.map(({ copy }) => copy.label), "le copie hanno valori o voci diverse per gli stessi periodi", "Confronta le copie con la fonte ufficiale e rilancia l'aggiornamento per tutte le aziende. Nessuna correzione automatica.");
       }
     }
-    const worst = [...issues].sort((a, b) => KIND_ORDER[a.kind] - KIND_ORDER[b.kind])[0];
-    const status: CoverageStatus = worst ? worst.kind : "COMPLETE";
+    if (def.read.type === "MARKET" && def.latest === "MARKET_WINDOW") {
+      // PUN/PSV still approved for a month older than the window: the calculations already ignore it; the next refresh retires it.
+      const { index } = def.read;
+      const oldest = operationalMarketMonths(romeToday(new Date(now))).at(-1)!;
+      const stale = copies.map((copy) => ({ copy, months: [...new Set(copy.marketArchives.filter((record) => record.index === index && record.status === "APPROVED" && record.month < oldest).map((record) => record.month))].sort() })).filter((item) => item.months.length);
+      const periods = [...new Set(stale.flatMap((item) => item.months))].sort();
+      if (periods.length) issue("OUTSIDE_WINDOW", "INFO", periods, stale.map((item) => item.copy.label), "approvati ma fuori dai sei mesi operativi: i calcoli non li usano già; restano in archivio finché il prossimo aggiornamento non li ritira (storico e audit conservati)", "Nessuna azione obbligatoria. Il ritiro avviene al prossimo aggiornamento PUN/PSV; nessun dato viene cancellato.");
+    }
+    const anomalies = issues.filter((item) => item.kind !== "OUTSIDE_WINDOW");
+    const worst = [...anomalies].sort((a, b) => KIND_ORDER[a.kind] - KIND_ORDER[b.kind])[0];
+    const status: CoverageStatus = worst ? worst.kind as CoverageAnomalyKind : "COMPLETE";
     components.push({
       key: def.key, archive: def.archive, name: def.name, source: def.source, officialLink: entry.officialLink, expected, expectedLabel: formatPeriods(expected), lastAvailable,
       missing: missingAll, missingLabel: missingAll.length ? formatPeriods(missingAll) : "nessuno", lastCheck, lastData, status, statusLabel: COVERAGE_STATUS_LABEL[status], issues,
@@ -309,11 +327,11 @@ export function computeCoverage(input: CoverageInput): CoverageReport {
   const alerts = components.flatMap((component) => component.issues).sort((a, b) => SEVERITY_ORDER[a.severity] - SEVERITY_ORDER[b.severity] || KIND_ORDER[a.kind] - KIND_ORDER[b.kind] || a.archive.localeCompare(b.archive));
   const archives = (["ARERA", "GME", "TERNA", "ADM"] as const).map((source) => {
     const own = components.filter((component) => component.archive === source);
-    const worst = own.flatMap((component) => component.issues).sort((a, b) => KIND_ORDER[a.kind] - KIND_ORDER[b.kind])[0];
-    const status: CoverageStatus = worst ? worst.kind : "COMPLETE";
-    return { source, status, statusLabel: COVERAGE_STATUS_LABEL[status], components: own, issues: own.reduce((sum, component) => sum + component.issues.length, 0) };
+    const worst = own.flatMap((component) => component.issues).filter((item) => item.kind !== "OUTSIDE_WINDOW").sort((a, b) => KIND_ORDER[a.kind] - KIND_ORDER[b.kind])[0];
+    const status: CoverageStatus = worst ? worst.kind as CoverageAnomalyKind : "COMPLETE";
+    return { source, status, statusLabel: COVERAGE_STATUS_LABEL[status], components: own, issues: own.reduce((sum, component) => sum + component.issues.filter((item) => item.kind !== "OUTSIDE_WINDOW").length, 0) };
   });
-  const counts = { MISSING: 0, STALE: 0, UNVERIFIED: 0, DIVERGENT: 0 } as Record<CoverageIssueKind, number>;
-  for (const alert of alerts) counts[alert.kind] += 1;
+  const counts = { MISSING: 0, STALE: 0, UNVERIFIED: 0, DIVERGENT: 0 } as Record<CoverageAnomalyKind, number>;
+  for (const alert of alerts) if (alert.kind !== "OUTSIDE_WINDOW") counts[alert.kind] += 1;
   return { generatedAt: now, copies: copies.map(({ tenantId, label, platform }) => ({ tenantId, label, platform })), archives, alerts, counts };
 }

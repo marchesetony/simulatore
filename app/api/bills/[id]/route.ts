@@ -13,7 +13,7 @@ import { runtimeRepositories } from "../../../lib/persistence/adapter";
 import { recordRuntimeAudit } from "../../../lib/persistence/audit";
 import { attachOfficialPun, ensureOfficialPunForBill, withDocumentPriceRows } from "../../../lib/market/pun-reference";
 import { billPunRefresh } from "../../../lib/market-refresh/bill-pun";
-import { deleteBillPermanently } from "../../../lib/foundation/bill-retention";
+import { deleteArchivedBill } from "../../../lib/foundation/bill-archive";
 import { billVisibilityScope, getBillInScope } from "../../../lib/foundation/bill-visibility";
 import { billDeleteDecision, proposalsFromBill } from "../../../lib/foundation/bill-delete";
 import { isBillFeature, resolveBillFeaturePermissions, sanitizeBillForFeatureAccess, type BillFeature } from "../../../lib/foundation/bill-feature-permissions";
@@ -149,8 +149,9 @@ export async function DELETE(request: Request, context: { params: Promise<{ id: 
       return Response.json({ id, outcome: decision.outcome, ...(decision.linkedProposals ? { linkedProposals: decision.linkedProposals } : {}), error: { code, message: messageFor(code), correlationId: CORRELATION_ID } }, { status: decision.status, headers: NO_STORE_HEADERS });
     }
     // Tony (31/10): "serve un tasto cancella le bollette". Any bill the user can see and edit is removed for good.
-    const audit = { async record(event: { readonly type: string; readonly documentId: string; readonly outcome: string }) { await recordRuntimeAudit({ principal, action: "BILL_DELETED_BY_USER", resourceType: "BILL", resourceId: event.documentId, outcome: event.outcome === "ALLOWED" ? "ALLOWED" : "DENIED", correlationId: CORRELATION_ID }); } };
-    await deleteBillPermanently({ tenantId: principal.tenantId, documentId: document.id, repositories: { bills: repositories.billRepository, storage: repositories.documentStorage, audit } });
+    // Tony (20/11/2026, Fase 2): with its fattura di dettaglio and the records derived from it, audit first
+    // (deleteArchivedBill, the same path as the archive's multiple deletion).
+    await deleteArchivedBill(principal, repositories, document, CORRELATION_ID);
     return Response.json({ deleted: true, id: document.id, outcome: "DELETED" }, { headers: NO_STORE_HEADERS });
   } catch (error) {
     const code = publicErrorCode(error);

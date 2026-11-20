@@ -5,7 +5,9 @@ import { resolveAnnualConsumption, type AnnualConsumption } from "./annual-consu
 // @ts-expect-error Node's strip-only test runner requires the explicit extension.
 import { assertSimulationWithinLimits, canAuthorizeCte, cteUsability, loadHierarchyAccess } from "../hierarchy/service.ts";
 // @ts-expect-error Node's strip-only test runner requires the explicit extension.
-import { quoteWindowStart, supplyPeriodTooOld } from "./quote-window.ts";
+import { quoteWindowStart, supplyPeriodAdmission, supplyPeriodTooOld } from "./quote-window.ts";
+// @ts-expect-error Node's strip-only test runner requires the explicit extension.
+import { operationalMarketView, romeToday } from "../market/operational-window.ts";
 import type { BillDocument, BillVersion } from "../foundation/real-bill";
 // @ts-expect-error Node's strip-only test runner requires the explicit extension.
 import { getBillInScope } from "../foundation/bill-visibility.ts";
@@ -22,7 +24,7 @@ import type { CustomerLegalType, IdentifierType, SupplyUseScope, EligibilityReas
 // @ts-expect-error Node's strip-only test runner requires the explicit extension.
 import { deriveBillEligibilityContext } from "../eligibility/domain.ts";
 // @ts-expect-error Node's strip-only test runner requires the explicit extension.
-import { assertUsableEligibilityOverride, isEligibilityOverrideable, type EligibilityOverrideProvenance, type EligibilityOverride } from "../eligibility/override.ts";
+import { assertUsableEligibilityOverride, forcingActorOf, forcingAuthorityReader, isEligibilityOverrideable, overrideAuthorityHolds, type EligibilityOverrideProvenance, type EligibilityOverride } from "../eligibility/override.ts";
 // @ts-expect-error Node's strip-only test runner requires the explicit extension.
 import { queryApprovedHistoricalMarketData } from "../market/service.ts";
 // @ts-expect-error Node's strip-only test runner requires the explicit extension.
@@ -182,6 +184,8 @@ export interface BillDrivenExecutionInput {
   readonly taxTreatment: TaxInclusionState;
   readonly calculationDate: string;
   readonly eligibilityOverrideId?: string;
+  /** Server-side reference date of the quote window (Italian date). Routes never take it from the client; tests fix it. */
+  readonly today?: string;
 }
 
 export interface BillDrivenBinding {
@@ -429,9 +433,13 @@ async function applyAuthorizedOverride(principal: AuthenticatedPrincipal, reposi
   if (!repositories.eligibilityOverrides || candidate.finalStatus !== "NOT_ELIGIBLE" || !candidate.reasonCodes?.length || !candidate.reasonCodes.every(isEligibilityOverrideable)) return candidate;
   const records = await repositories.eligibilityOverrides.list(principal.tenantId);
   const at = new Date().toISOString();
-  const match = records
+  const matches = records
     .map((record) => record.payload as EligibilityOverride)
-    .find((override) => override.status === "AUTHORIZED" && override.billId === context.billId && override.billVersionId === context.billVersionId && override.cteId === candidate.cteId && (!override.expiresAt || override.expiresAt > at) && candidate.reasonCodes!.every((reason) => override.overrideScope.includes(reason as never)));
+    .filter((override) => override.status === "AUTHORIZED" && override.billId === context.billId && override.billVersionId === context.billVersionId && override.cteId === candidate.cteId && (!override.expiresAt || override.expiresAt > at) && candidate.reasonCodes!.every((reason) => override.overrideScope.includes(reason as never)));
+  if (!matches.length) return candidate;
+  // Tony (20/11/2026): an authorization whose author lost "Può forzare" is no longer offered.
+  const authorityOf = await forcingAuthorityReader(repositories, principal.tenantId, forcingActorOf(principal));
+  const match = matches.find((override) => overrideAuthorityHolds(override, (userId) => authorityOf(userId, at)));
   return match ? { ...candidate, finalStatus: "ELIGIBLE_BY_OVERRIDE", eligibilityOverrideId: match.overrideId } : candidate;
 }
 
@@ -534,19 +542,22 @@ async function ensureOfficialIndexes(repositories: BillDrivenRepositories, conte
   }
 }
 
-export async function prepareBillDrivenSimulation(principal: AuthenticatedPrincipal, repositories: BillDrivenRepositories, billId: string, taxTreatment?: TaxInclusionState, asOf = new Date().toISOString().slice(0, 10)): Promise<BillDrivenPreparation> {
+export async function prepareBillDrivenSimulation(principal: AuthenticatedPrincipal, repositories: BillDrivenRepositories, billId: string, taxTreatment?: TaxInclusionState, asOf = new Date().toISOString().slice(0, 10), today: string = romeToday()): Promise<BillDrivenPreparation> {
   if (typeof billId !== "string" || !billId.trim()) fail("SOURCE_BILL_ID_REQUIRED");
   const documentValue = await getBillInScope(principal, repositories, billId);
   if (!documentValue) fail("SOURCE_BILL_NOT_FOUND");
   const document = documentValue as BillDocument;
   const version = approvedVersion(document);
   const context = buildContext(document, version);
-  // Bills whose supply period ended before the quote window are discarded.
-  if (context.billingPeriod.periodStart && supplyPeriodTooOld(context.billingPeriod, asOf)) fail("SOURCE_BILL_TOO_OLD");
+  // Tony (17/11/2026): only a bill whose whole supply period lies in the last five months (server date) can be quoted.
+  const admission = supplyPeriodAdmission(context.billingPeriod, today);
+  if (!admission.admitted) fail(admission.code);
   const records = await repositories.cteArchiveRepository.list(principal.tenantId);
   const hierarchy = repositories.orgChain && repositories.cteAssignments ? await loadHierarchyAccess(principal, { foundationMemberships: repositories.foundationMemberships, orgChain: repositories.orgChain, cteAssignments: repositories.cteAssignments }, asOf) : null;
   if (hierarchy) assertSimulationWithinLimits(hierarchy, context.vector, context.customerType);
   await ensureOfficialIndexes(repositories, context);
+  // PUN and PSV outside the six operational months are never read, even before a refresh retires them.
+  const marketView = operationalMarketView(repositories.marketArchiveRepository, today);
   const candidates: CteEligibilityCandidate[] = [];
   const unlisted: UnlistedCte[] = [];
   // Tony (29/10, "la BE SMILE non la propone, ed è presente in archivio"): a CTE of the bill's commodity that is in the
@@ -564,7 +575,7 @@ export async function prepareBillDrivenSimulation(principal: AuthenticatedPrinci
     if (usability !== "USABLE") { unlist(record, usability === "EXPIRED" ? "ASSIGNMENT_EXPIRED" : usability === "NOT_YET_VALID" ? "ASSIGNMENT_NOT_YET_VALID" : usability); continue; }
     const current = currentApprovedCteVersion(record);
     if (!current) { unlist(record, "NOT_APPROVED"); continue; }
-    candidates.push(await applyAuthorizedOverride(principal, repositories, context, await evaluateCte(repositories.marketArchiveRepository, context, record, current, taxTreatment, asOf)));
+    candidates.push(await applyAuthorizedOverride(principal, repositories, context, await evaluateCte(marketView, context, record, current, taxTreatment, asOf)));
   }
   return { context, candidates, ...(unlisted.length ? { unlisted } : {}), canAuthorizeCte: hierarchy ? canAuthorizeCte(hierarchy) : false };
 }
@@ -578,18 +589,18 @@ export async function listBillDrivenSources(principal: AuthenticatedPrincipal, r
       try { approvedVersion(visible); scoped.push(visible); } catch { /* An approved pointer without an authoritative contract is not a usable source. */ }
     }
   }
-  const today = new Date().toISOString().slice(0, 10);
+  const today = romeToday();
   return scoped.map((document) => {
     const versionId = document.currentApprovedVersionId as string;
     const version = document.versions.find((candidate) => candidate.versionId === versionId);
     const contract = version?.energyContract;
     const period = contract?.billingPeriod ?? null;
-    return { billId: document.id, billVersionId: versionId, tenantId: document.tenantId, ownerUserId: document.ownerUserId ?? null, vector: contract?.vector ?? null, supplier: contract?.currentSupplier ?? null, period, status: "APPROVED", tooOld: period?.periodStart ? supplyPeriodTooOld(period, today) : false, quoteWindowStart: quoteWindowStart(today) };
+    return { billId: document.id, billVersionId: versionId, tenantId: document.tenantId, ownerUserId: document.ownerUserId ?? null, vector: contract?.vector ?? null, supplier: contract?.currentSupplier ?? null, period, status: "APPROVED", tooOld: period?.periodStart ? supplyPeriodTooOld(period, today) : false, ...(period ? { admission: supplyPeriodAdmission(period, today) } : {}), quoteWindowStart: quoteWindowStart(today) };
   });
 }
 
 export async function resolveBillDrivenExecution(principal: AuthenticatedPrincipal, repositories: BillDrivenRepositories, input: BillDrivenExecutionInput): Promise<BillDrivenResolvedExecution> {
-  const prepared = await prepareBillDrivenSimulation(principal, repositories, input.billId, input.taxTreatment, input.calculationDate);
+  const prepared = await prepareBillDrivenSimulation(principal, repositories, input.billId, input.taxTreatment, input.calculationDate, input.today ?? romeToday());
   if (prepared.context.billVersionId !== input.billVersionId) fail("SOURCE_BILL_VERSION_MISMATCH");
   const candidateValue = prepared.candidates.find((item) => item.archiveId === input.cteId || item.cteId === input.cteId);
   if (!candidateValue) fail("CTE_NOT_COMPATIBLE");

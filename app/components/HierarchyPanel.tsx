@@ -8,9 +8,9 @@ type Level = "AZIENDA" | "DIRETTORE" | "AREA_MANAGER" | "AGENTE" | "SUB_AGENTE";
 type Vector = "EE" | "GAS";
 type Category = "RESIDENTIAL" | "NON_RESIDENTIAL";
 type Limits = { readonly vectors: readonly Vector[] | null; readonly customerCategories: readonly Category[] | null; readonly excludedCteArchiveIds: readonly string[] };
-type Node = { readonly userId: string; readonly level: Level; readonly parentUserId: string | null; readonly displayName: string | null; readonly limits: Limits; readonly canAuthorizeCte?: boolean; readonly effectiveCanAuthorizeCte?: boolean; readonly canManageDiscount?: boolean; readonly effectiveCanManageDiscount?: boolean; readonly effectiveLimits: Limits; readonly ancestorUserIds: readonly string[]; readonly version: number };
+type Node = { readonly userId: string; readonly level: Level; readonly parentUserId: string | null; readonly displayName: string | null; readonly limits: Limits; readonly canAuthorizeCte?: boolean; readonly effectiveCanAuthorizeCte?: boolean; readonly canDelegateCte?: boolean; readonly effectiveCanDelegateCte?: boolean; readonly canManageDiscount?: boolean; readonly effectiveCanManageDiscount?: boolean; readonly effectiveLimits: Limits; readonly ancestorUserIds: readonly string[]; readonly version: number };
 type Member = { readonly userId: string; readonly displayName: string | null; readonly role: string; readonly allowedLevels: readonly Level[]; readonly placed: boolean };
-type Chain = { readonly actor: { readonly userId: string; readonly role: string; readonly level: Level | null; readonly effectiveLimits: Limits; readonly canManageCompany: boolean; readonly canAuthorizeCte?: boolean; readonly canManageDiscount?: boolean }; readonly nodes: readonly Node[]; readonly members: readonly Member[] };
+type Chain = { readonly actor: { readonly userId: string; readonly role: string; readonly level: Level | null; readonly effectiveLimits: Limits; readonly canManageCompany: boolean; readonly canAuthorizeCte?: boolean; readonly canDelegateCte?: boolean; readonly canManageDiscount?: boolean }; readonly nodes: readonly Node[]; readonly members: readonly Member[] };
 type Assignment = { readonly validFrom: string; readonly validTo: string | null; readonly scope: "ALL" | "BRANCHES"; readonly assigneeUserIds: readonly string[]; readonly version: number };
 type Cte = { readonly archiveId: string; readonly cteId: string; readonly vector: Vector; readonly supplier: string | null; readonly offerName: string | null; readonly offerCode: string | null; readonly approved: boolean; readonly assignment: Assignment | null; readonly usability: string };
 type CteList = { readonly asOf: string; readonly canAssign: boolean; readonly ctes: readonly Cte[] };
@@ -34,7 +34,7 @@ function toggle<T>(list: readonly T[], item: T): readonly T[] { return list.incl
 function ChainTree({ nodes, canEdit, onEdit }: { readonly nodes: readonly Node[]; readonly canEdit: (node: Node) => boolean; readonly onEdit: (node: Node) => void }) {
   const byParent = useMemo(() => { const map = new Map<string | null, Node[]>(); for (const node of nodes) { const parent = nodes.some((item) => item.userId === node.parentUserId) ? node.parentUserId : null; map.set(parent, [...(map.get(parent) ?? []), node]); } return map; }, [nodes]);
   const render = (parent: string | null, depth: number): React.ReactNode => (byParent.get(parent) ?? []).map((node) => <li key={node.userId} style={{ paddingLeft: depth * 20 }}>
-    <div className="chain-row"><span className="status-badge">{LEVEL_LABEL[node.level]}</span><strong>{nodeName(node, node.userId)}</strong><span className="muted">{limitsSummary(node.effectiveLimits)}{node.level !== "AZIENDA" && node.effectiveCanAuthorizeCte ? " · autorizza CTE" : ""}</span>{canEdit(node) ? <button className="button secondary compact" type="button" onClick={() => onEdit(node)}>Modifica</button> : null}</div>
+    <div className="chain-row"><span className="status-badge">{LEVEL_LABEL[node.level]}</span><strong>{nodeName(node, node.userId)}</strong><span className="muted">{limitsSummary(node.effectiveLimits)}{node.level !== "AZIENDA" && node.effectiveCanAuthorizeCte ? node.effectiveCanDelegateCte ? " · può forzare e delegare CTE" : " · può forzare CTE" : ""}</span>{canEdit(node) ? <button className="button secondary compact" type="button" onClick={() => onEdit(node)}>Modifica</button> : null}</div>
     <ul className="chain-list">{render(node.userId, depth + 1)}</ul>
   </li>);
   return nodes.length ? <ul className="chain-list">{render(null, 0)}</ul> : <p className="muted">La catena è vuota: inizia inserendo l&apos;azienda.</p>;
@@ -50,6 +50,7 @@ export default function HierarchyPanel() {
   const [userId, setUserId] = useState(""); const [level, setLevel] = useState<Level>("AGENTE"); const [parentUserId, setParentUserId] = useState(""); const [displayName, setDisplayName] = useState("");
   const [vectors, setVectors] = useState<readonly Vector[] | null>(null); const [categories, setCategories] = useState<readonly Category[] | null>(null); const [excluded, setExcluded] = useState<readonly string[]>([]);
   const [authorizeCte, setAuthorizeCte] = useState(false);
+  const [delegateCte, setDelegateCte] = useState(false);
   const [manageDiscount, setManageDiscount] = useState(false);
 
   const load = useCallback(async () => {
@@ -67,14 +68,14 @@ export default function HierarchyPanel() {
   function edit(node: Node | null, nextUserId = "") {
     setMessage(undefined); setError(undefined);
     setUserId(node?.userId ?? nextUserId); setLevel(node?.level ?? (chain?.members.find((item) => item.userId === nextUserId)?.allowedLevels[0] ?? "AGENTE")); setParentUserId(node?.parentUserId ?? ""); setDisplayName(node?.displayName ?? chain?.members.find((item) => item.userId === nextUserId)?.displayName ?? "");
-    setVectors(node?.limits.vectors ?? null); setCategories(node?.limits.customerCategories ?? null); setExcluded(node?.limits.excludedCteArchiveIds ?? []); setAuthorizeCte(node?.canAuthorizeCte === true); setManageDiscount(node?.canManageDiscount === true);
+    setVectors(node?.limits.vectors ?? null); setCategories(node?.limits.customerCategories ?? null); setExcluded(node?.limits.excludedCteArchiveIds ?? []); setAuthorizeCte(node?.canAuthorizeCte === true); setDelegateCte(node?.canDelegateCte === true); setManageDiscount(node?.canManageDiscount === true);
   }
 
   async function save(event: FormEvent) {
     event.preventDefault(); if (!userId || pending) return;
     setPending(true); setError(undefined); setMessage(undefined);
     try {
-      await requestJson("/api/hierarchy", { method: "PUT", body: JSON.stringify({ userId, level, parentUserId: level === "AZIENDA" ? null : parentUserId || null, displayName: displayName.trim() || null, limits: { vectors, customerCategories: categories, excludedCteArchiveIds: excluded }, canAuthorizeCte: level !== "AZIENDA" && authorizeCte, canManageDiscount: level !== "AZIENDA" && manageDiscount, expectedVersion: existing?.version ?? null }) });
+      await requestJson("/api/hierarchy", { method: "PUT", body: JSON.stringify({ userId, level, parentUserId: level === "AZIENDA" ? null : parentUserId || null, displayName: displayName.trim() || null, limits: { vectors, customerCategories: categories, excludedCteArchiveIds: excluded }, canAuthorizeCte: level !== "AZIENDA" && authorizeCte, canDelegateCte: level !== "AZIENDA" && authorizeCte && delegateCte, canManageDiscount: level !== "AZIENDA" && manageDiscount, expectedVersion: existing?.version ?? null }) });
       setMessage("Catena aggiornata."); await load();
     } catch (cause) { setError(errorText(cause)); } finally { setPending(false); }
   }
@@ -110,8 +111,14 @@ export default function HierarchyPanel() {
           <fieldset className="fieldset"><legend className="form-label">Forniture</legend><label><input type="checkbox" checked={vectors === null} onChange={() => setVectors(vectors === null ? ["EE"] : null)} /> Come il responsabile</label>{vectors !== null ? (["EE", "GAS"] as const).map((item) => <label key={item}><input type="checkbox" checked={vectors.includes(item)} onChange={() => setVectors(toggle(vectors, item))} /> {VECTOR_LABEL[item]}</label>) : null}</fieldset>
           <fieldset className="fieldset"><legend className="form-label">Clienti</legend><label><input type="checkbox" checked={categories === null} onChange={() => setCategories(categories === null ? ["RESIDENTIAL"] : null)} /> Come il responsabile</label>{categories !== null ? (["RESIDENTIAL", "NON_RESIDENTIAL"] as const).map((item) => <label key={item}><input type="checkbox" checked={categories.includes(item)} onChange={() => setCategories(toggle(categories, item))} /> {CATEGORY_LABEL[item]}</label>) : null}</fieldset>
           <fieldset className="fieldset"><legend className="form-label">CTE escluse per questo ramo</legend>{ctes.ctes.length ? ctes.ctes.map((cte) => <label key={cte.archiveId}><input type="checkbox" checked={excluded.includes(cte.archiveId)} onChange={() => setExcluded(toggle(excluded, cte.archiveId))} /> {cte.supplier ?? cte.cteId} {cte.offerCode ?? ""}</label>) : <p className="muted">Nessuna CTE disponibile.</p>}</fieldset>
-          {/* Tony (29/10): the administrator decides, down the chain, who may authorize a CTE the rules leave out for a bill. */}
-          {level !== "AZIENDA" ? <fieldset className="fieldset"><legend className="form-label">Autorizzazione CTE escluse</legend><label><input type="checkbox" checked={authorizeCte} disabled={!chain.actor.canAuthorizeCte && !authorizeCte} onChange={() => setAuthorizeCte(!authorizeCte)} /> Può autorizzare, per una bolletta, una CTE che le regole escludono, e dare questo permesso al suo ramo</label>{existing && existing.canAuthorizeCte && !existing.effectiveCanAuthorizeCte ? <p className="muted">Sospeso: il suo responsabile non ha questo permesso.</p> : null}</fieldset> : null}
+          {/* Tony (29/10, 20/11/2026): the administrator decides, down the chain, who may force a CTE the rules leave out for a
+              bill ("Può forzare") and, separately, who may pass that permission on ("Può delegare"). Only who holds "Può
+              delegare" may turn either on; anybody who may edit the node may turn them off (the server checks both). */}
+          {level !== "AZIENDA" ? <fieldset className="fieldset"><legend className="form-label">Forzatura CTE</legend>
+            <label><input type="checkbox" checked={authorizeCte} disabled={!chain.actor.canDelegateCte && !authorizeCte} onChange={() => { const next = !authorizeCte; setAuthorizeCte(next); if (!next) setDelegateCte(false); }} /> Può forzare: autorizzare, per una bolletta, una CTE che le regole escludono</label>
+            <label><input type="checkbox" checked={delegateCte} disabled={!authorizeCte || (!chain.actor.canDelegateCte && !delegateCte)} onChange={() => setDelegateCte(!delegateCte)} /> Può delegare: dare il permesso di forzare alle persone del suo ramo</label>
+            {existing && existing.canAuthorizeCte && !existing.effectiveCanAuthorizeCte ? <p className="muted">Sospeso: il suo responsabile non può forzare.</p> : existing && existing.canDelegateCte && !existing.effectiveCanDelegateCte ? <p className="muted">Delega sospesa: il suo responsabile non può delegare.</p> : null}
+          </fieldset> : null}
           {/* Tony (1/11): the commercial discount box is managed by the administrator and, down the chain, by whom they authorize. */}
           {level !== "AZIENDA" ? <fieldset className="fieldset"><legend className="form-label">Sconto commerciale aziendale</legend><label><input type="checkbox" checked={manageDiscount} disabled={!chain.actor.canManageDiscount && !manageDiscount} onChange={() => setManageDiscount(!manageDiscount)} /> Può vedere e modificare lo sconto commerciale aziendale, e dare questo permesso al suo ramo</label>{existing && existing.canManageDiscount && !existing.effectiveCanManageDiscount ? <p className="muted">Sospeso: il suo responsabile non ha questo permesso.</p> : null}</fieldset> : null}
           {existing ? <div className="button-row"><button className="button secondary" type="button" disabled={pending} onClick={() => void remove()}>Rimuovi dalla catena</button></div> : null}

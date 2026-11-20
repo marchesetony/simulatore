@@ -2,7 +2,7 @@
 import { readingHasScontrino } from "../ingestion/printed-scontrino.ts";
 // @ts-expect-error Node's strip-only test runner requires the explicit extension.
 import { withCurrentReadingChecks } from "../reading/stored-reading-checks.ts";
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { mkdir, readFile, rm, unlink, writeFile } from "node:fs/promises";
 import path from "node:path";
 // @ts-expect-error Node's strip-only test runner requires the explicit extension.
@@ -25,6 +25,8 @@ import { resolveBillingAddressFromPdf } from "./bill-pdf-layout.ts";
 import { mergeBillCoreAndAnalyst, stripBillAnalystData, type BillAnalystWireExtraction } from "../ingestion/bill-two-stage.ts";
 // @ts-expect-error Node's strip-only test runner requires the explicit extension.
 import { buildBillAnalystReview, type BillAnalystReviewDTO } from "./bill-analyst-review.ts";
+// @ts-expect-error Node's strip-only test runner requires the explicit extension.
+import { billDetailCoherence, withDetailLines, type BillDetailCheck, type BillDetailLink } from "./bill-detail-link.ts";
 // @ts-expect-error Node's strip-only test runner requires the explicit extension.
 import { extractDocumentMonthlyBandEvidence, extractDocumentPriceRows, extractDocumentOfferName, extractDocumentOfferBox, reconcileMonthlyBandsWithDocumentEvidence } from "../ingestion/document-numeric-evidence.ts";
 // @ts-expect-error Node's strip-only test runner requires the explicit extension.
@@ -124,6 +126,8 @@ export type BillDocument = {
   readonly versions: readonly BillVersion[];
   readonly provenance: readonly BillProvenanceEvent[];
   readonly approvals: readonly BillApprovalRecord[];
+  /** Tony (19/11/2026): the fattura di dettaglio of the same invoice, linked after the sintetica was registered (bill-detail-link.ts). */
+  readonly detailDocument?: BillDetailLink;
 };
 export type PublicBillVersion = {
   readonly versionId: string;
@@ -185,6 +189,8 @@ export type PublicBillDocument = {
   readonly featurePermissions?: BillFeatureAccessSnapshot;
   readonly verificationSummary?: BillVerificationSummary | null;
   readonly analystReview: BillAnalystReviewDTO;
+  /** The linked fattura di dettaglio, without its file location: its lines are already inside structuredBill and the analysis. */
+  readonly detailDocument?: { readonly fileName: string; readonly linkedAt: string; readonly checks: readonly BillDetailCheck[] } | null;
 };
 type BillStore = {
   readonly schemaVersion: 1;
@@ -237,7 +243,7 @@ export interface EnergyContractMapperInput {
 }
 export type EnergyContractMapper = (input: EnergyContractMapperInput) => BillContract;
 export interface AuditSink {
-  record(event: { readonly type: "UPLOAD" | "VALIDATION" | "EXTRACTION" | "EXTRACTION_FAILURE" | "MANUAL_REVIEW" | "CORRECTION" | "APPROVAL" | "LIFECYCLE"; readonly tenantId: string; readonly documentId: string; readonly outcome: "ALLOWED" | "DENIED" | "FAILED" }): Promise<void>;
+  record(event: { readonly type: "UPLOAD" | "VALIDATION" | "EXTRACTION" | "EXTRACTION_FAILURE" | "MANUAL_REVIEW" | "CORRECTION" | "APPROVAL" | "LIFECYCLE" | "DETAIL_LINK"; readonly tenantId: string; readonly documentId: string; readonly outcome: "ALLOWED" | "DENIED" | "FAILED" }): Promise<void>;
 }
 
 export const fieldNames: readonly FieldName[] = ["supplier", "pod", "customerName", "billingPeriod", "annualConsumption", "billedConsumption", "totalAmount"];
@@ -636,13 +642,15 @@ export function toPublicDocumentVersion(document: BillDocument, versionId: strin
       })),
     normalized: working.energyContract ? publicBillProfile(working.energyContract, working.fields) : null,
     // Tony (11/11/2026): the stored checks are shown as the current check sees them; the stored reading is not changed.
-    structuredBill: working.structuredBill ? withCurrentReadingChecks(working.structuredBill) : null,
+    // Tony (19/11/2026): a linked fattura di dettaglio adds its own charge lines, as a PDF holding both would be read.
+    structuredBill: working.structuredBill ? withCurrentReadingChecks(document.detailDocument ? withDetailLines(working.structuredBill, document.detailDocument.structuredBill) : working.structuredBill) : null,
     // Tony (1/11, "mancano i raffronti con lo scontrino della bolletta inserita"): also a reading that holds no charge line at
     // all (second reading not run, or empty) offers the re-read, not only a failed one.
     chargeLinesUnread: working.structuredBill ? (working.structuredBill.analystExtractionStatus === "FAILED" && !readingHasScontrino(working.structuredBill)) || (working.structuredBill.economicChargeLines?.length ?? 0) === 0 : false,
     resolvedVector,
     invoicePunReferences: [],
     regulatoryAudit: null,
+    detailDocument: document.detailDocument ? { fileName: document.detailDocument.fileName, linkedAt: document.detailDocument.linkedAt, checks: document.detailDocument.checks } : null,
   };
   const analystReview = buildBillAnalystReview(publicDocument);
   const billingAddress = resolveBillingAddressFromPdf(document.objectKey, { customerName: analystReview.customer.name.value, taxCode: analystReview.customer.taxIdentifier.value, supplyAddress: analystReview.supply.address.value });
@@ -1715,7 +1723,95 @@ export function validateStoredDocument(value: unknown, allowLegacyEmptyProvenanc
     versions,
     provenance,
     approvals,
+    ...(value.detailDocument === undefined || value.detailDocument === null ? {} : { detailDocument: parseBillDetailLink(value.detailDocument) }),
   });
+}
+
+const DETAIL_CHECK_CODES = new Set(["VECTOR", "SUPPLIER", "SUPPLY_POINT", "BILLING_PERIOD", "INVOICE_NUMBER", "ISSUE_DATE", "DETAIL_LINES", "AMOUNTS"]);
+const DETAIL_CHECK_OUTCOMES = new Set(["OK", "FAILED", "NOT_DETERMINABLE"]);
+function parseBillDetailLink(value: unknown): BillDetailLink {
+  if (!isRecord(value)) throw metadataInvalid();
+  const sha256 = readRequiredString(value.sha256);
+  if (!/^[a-f0-9]{64}$/.test(sha256)) throw metadataInvalid();
+  const checks = readArray(value.checks).map((item): BillDetailCheck => {
+    if (!isRecord(item) || !DETAIL_CHECK_CODES.has(String(item.code)) || !DETAIL_CHECK_OUTCOMES.has(String(item.outcome)) || typeof item.message !== "string") throw metadataInvalid();
+    return { code: item.code as BillDetailCheck["code"], outcome: item.outcome as BillDetailCheck["outcome"], message: item.message };
+  });
+  // A stored link is a link that passed every check: anything else is not a valid record.
+  if (checks.some((check) => check.outcome === "FAILED")) throw metadataInvalid();
+  return {
+    linkId: readRequiredString(value.linkId),
+    fileName: readRequiredString(value.fileName),
+    objectKey: readRequiredString(value.objectKey),
+    size: readNonNegativeNumber(value.size),
+    sha256,
+    linkedAt: readTimestamp(value.linkedAt),
+    actorId: readOptionalActorId(value.actorId),
+    structuredBill: normalizeStoredStructuredBillExtraction(value.structuredBill),
+    checks,
+  };
+}
+
+export type BillDetailLinkErrorCode = "DOCUMENT_NOT_FOUND" | "BILL_NOT_ACTIVE" | "BILL_NOT_READ" | "DETAIL_ALREADY_LINKED" | "DETAIL_NOT_COHERENT";
+export class BillDetailLinkError extends Error {
+  readonly code: BillDetailLinkErrorCode;
+  readonly checks: readonly BillDetailCheck[];
+  constructor(code: BillDetailLinkErrorCode, checks: readonly BillDetailCheck[] = []) { super(code); this.name = "BillDetailLinkError"; this.code = code; this.checks = checks; }
+}
+
+/**
+ * Tony (19/11/2026): link the fattura di dettaglio to a sintetica already registered, in the same tenant. The detail is read by
+ * the same reader, checked against the sintetica (billDetailCoherence) and stored under its own id; the sintetica's file and
+ * reading are not changed. The same file linked again is a no-op; a different one when a detail is already linked, or one
+ * that is not shown to be the same invoice, is refused and nothing is stored.
+ */
+export async function linkBillDetail(input: {
+  readonly tenantId: string;
+  readonly documentId: string;
+  readonly fileName: string;
+  readonly contentType: string;
+  readonly bytes: Uint8Array;
+  readonly maxBytes: number;
+  readonly storage: DocumentStoragePort;
+  readonly structuredExtractor: StructuredBillExtractionProvider;
+  readonly repository: BillRepository;
+  readonly audit: AuditSink;
+  readonly actorId?: string | null;
+}): Promise<{ readonly document: BillDocument; readonly outcome: "LINKED" | "ALREADY_LINKED"; readonly checks: readonly BillDetailCheck[] }> {
+  const tenantId = validateTenantId(input.tenantId);
+  const document = await input.repository.get(tenantId, input.documentId);
+  // Tenant isolation: a bill of another tenant is not found, whatever its id.
+  if (!document || document.tenantId !== tenantId) throw new BillDetailLinkError("DOCUMENT_NOT_FOUND");
+  if (document.lifecycleState === "DELETED" || document.lifecycleState === "SCHEDULED_DELETION") throw new BillDetailLinkError("BILL_NOT_ACTIVE");
+  const version = currentVersion(document);
+  const summary = version.structuredBill;
+  if (!summary) throw new BillDetailLinkError("BILL_NOT_READ");
+  const safeName = validateBillDocument(input.fileName, input.contentType, input.bytes, input.maxBytes);
+  const sha256 = createHash("sha256").update(input.bytes).digest("hex");
+  if (document.detailDocument) {
+    if (document.detailDocument.sha256 === sha256) return { document, outcome: "ALREADY_LINKED", checks: document.detailDocument.checks };
+    await input.audit.record({ type: "DETAIL_LINK", tenantId, documentId: document.id, outcome: "DENIED" });
+    throw new BillDetailLinkError("DETAIL_ALREADY_LINKED", document.detailDocument.checks);
+  }
+  const detail = await input.structuredExtractor.extract({ bytes: input.bytes, contentType: input.contentType });
+  validateStructuredBillExtraction(detail);
+  const coherence = billDetailCoherence(summary, detail);
+  if (!coherence.coherent) {
+    await input.audit.record({ type: "DETAIL_LINK", tenantId, documentId: document.id, outcome: "DENIED" });
+    throw new BillDetailLinkError("DETAIL_NOT_COHERENT", coherence.checks);
+  }
+  const linkId = randomUUID();
+  const objectKey = await input.storage.store(tenantId, linkId, input.bytes);
+  const now = new Date().toISOString();
+  const updated = sanitizeDocument({ ...document, updatedAt: now, detailDocument: { linkId, fileName: safeName, objectKey, size: input.bytes.length, sha256, linkedAt: now, actorId: input.actorId ?? null, structuredBill: detail, checks: coherence.checks } });
+  try {
+    await input.repository.saveIfCurrentVersion(updated, version.versionId, version);
+  } catch (error) {
+    await input.storage.remove(tenantId, linkId).catch(() => undefined);
+    throw error;
+  }
+  await input.audit.record({ type: "DETAIL_LINK", tenantId, documentId: document.id, outcome: "ALLOWED" });
+  return { document: updated, outcome: "LINKED", checks: coherence.checks };
 }
 
 function parseBillVersion(value: unknown, tenantId: string, documentId: string): BillVersion {

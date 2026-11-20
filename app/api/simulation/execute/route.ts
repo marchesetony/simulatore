@@ -7,6 +7,7 @@ import { ProductionCteRegulatoryRuntimeResolver } from "../../../lib/calculation
 import { resolveTrustedElectricityContextWithReason } from "../../../lib/calculation/source-bill-context";
 import { resolveBillDrivenExecution, BillDrivenSimulationError, NO_STORE_HEADERS, type BillDrivenExecutionInput } from "../../../lib/calculation/bill-driven";
 import { markEligibilityOverrideUsed } from "../../../lib/eligibility/override";
+import { operationalMarketView } from "../../../lib/market/operational-window";
 
 export const runtime = "nodejs";
 
@@ -43,7 +44,7 @@ export async function POST(request: Request): Promise<Response> {
       const regulatoryBridge = new ProductionRegulatoryPersistenceBridge(repositories.regulatoryValues, repositories.approvalDomains, { readArchiveOncePerRequest: true });
       dependencies = { ...(trustedElectricityContext ? { trustedElectricityContext } : {}), ...(reason ? { regulatedUnavailableReason: reason } : {}), ...(currentOffer ? { currentOffer } : {}), ...(billPeakEnergy ? { billPeakEnergy } : {}), regulatoryBridge, regulatoryRuntimeResolver: new ProductionCteRegulatoryRuntimeResolver(regulatoryBridge), regulatoryRefreshState: repositories.regulatoryRefreshState };
     }
-    const result = await calculateApprovedOffer(repositories.cteArchiveRepository, repositories.marketArchiveRepository, resolved.simulation, resolved.cte.record.archiveId, dependencies);
+    const result = await calculateApprovedOffer(repositories.cteArchiveRepository, operationalMarketView(repositories.marketArchiveRepository), resolved.simulation, resolved.cte.record.archiveId, dependencies);
     if (result.tenantId !== resolved.binding.tenantId || result.normalizedInput.sourceBill?.billId !== resolved.binding.billId || result.normalizedInput.sourceBill?.version !== resolved.binding.billVersionId || result.sourceCte.versionId !== resolved.binding.selectedCteVersionId) throw new BillDrivenSimulationError("SIMULATION_SOURCE_BINDING_INVALID");
     await repositories.calculationResults.put({ tenantId: principal.tenantId, recordId: result.calculationId, payload: { calculationId: result.calculationId, fingerprint: result.fingerprint, result }, idempotencyKey: result.fingerprint });
     if (resolved.binding.eligibilityOverride) await markEligibilityOverrideUsed(principal, repositories, resolved.binding.eligibilityOverride.overrideId, input.calculationDate);

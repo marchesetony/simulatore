@@ -9,6 +9,7 @@ import { runtimeRepositories } from "../../../lib/persistence/adapter";
 import { NO_STORE_HEADERS } from "../../../lib/calculation/bill-driven";
 import { runTechnicalDerogation } from "../../../lib/calculation/technical-derogation";
 import type { TaxInclusionState } from "../../../lib/energy/types";
+import { operationalMarketView } from "../../../lib/market/operational-window";
 
 export const runtime = "nodejs";
 export const maxDuration = 120;
@@ -32,7 +33,7 @@ export async function POST(request: Request): Promise<Response> {
         asos = trustedElectricityContext ? { asosClass: trustedElectricityContext.asosClass, temporalStatus: trustedElectricityContext.asosClassTemporalStatus } : null;
         dependencies = { ...(trustedElectricityContext ? { trustedElectricityContext } : {}), ...(reason ? { regulatedUnavailableReason: reason } : {}), ...(currentOffer ? { currentOffer } : {}), ...(billPeakEnergy ? { billPeakEnergy } : {}), regulatoryBridge, regulatoryRuntimeResolver: new ProductionCteRegulatoryRuntimeResolver(regulatoryBridge), regulatoryRefreshState: repositories.regulatoryRefreshState };
       }
-      return { result: await calculateApprovedOffer(repositories.cteArchiveRepository, repositories.marketArchiveRepository, simulation, cteId, dependencies), asos };
+      return { result: await calculateApprovedOffer(repositories.cteArchiveRepository, operationalMarketView(repositories.marketArchiveRepository), simulation, cteId, dependencies), asos };
     });
     return Response.json({ result }, { headers: NO_STORE_HEADERS });
   } catch (error) {

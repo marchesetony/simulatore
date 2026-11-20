@@ -161,6 +161,9 @@ export interface StructuredBillExtraction {
   readonly readingSources?: readonly { readonly field: string; readonly page: number; readonly text: string }[];
   /** True when the bill was read a second time because the first reading did not add up. */
   readonly readingReread?: boolean;
+  /** Tony (20/11/2026, "CHIUSURA FASE 2", punto 2): the kind of document as the reader recognized it from the content (quadro
+   *  sintetico, detail lines), never from the file name. Absent on bills read before 20/11/2026: then it is "not recognized". */
+  readonly documentType?: StructuredBillDocumentType;
   /** Two-stage metadata; absent on legacy/CORE-only fixtures. */
   readonly analystExtractionStatus?: "NOT_RUN" | "EXTRACTED" | "FAILED";
   readonly analystDiagnostic?: {
@@ -246,9 +249,13 @@ function validateDocumentEvidenceArray(value: unknown, path: string, expectedBan
   }
 }
 
+export type StructuredBillDocumentType = "BOLLETTA_SINTETICA" | "BOLLETTA_COMPLETA" | "FATTURA_DETTAGLIO";
+export const STRUCTURED_BILL_DOCUMENT_TYPES: readonly StructuredBillDocumentType[] = ["BOLLETTA_SINTETICA", "BOLLETTA_COMPLETA", "FATTURA_DETTAGLIO"];
+
 export function validateStructuredBillExtraction(value: unknown): asserts value is StructuredBillExtraction {
   const item = record(value);
   if (item.schemaVersion !== 1) throw new StructuredBillExtractionError("BILL_STRUCTURED_SCHEMA_INVALID");
+  if (item.documentType !== undefined && !STRUCTURED_BILL_DOCUMENT_TYPES.includes(item.documentType as StructuredBillDocumentType)) throw new StructuredBillExtractionError("BILL_STRUCTURED_FIELD_INVALID:documentType");
   for (const key of extractionKeys) {
     if (!(key in item)) throw new StructuredBillExtractionError(`BILL_STRUCTURED_FIELD_MISSING:${key}`);
     validateField(item[key], key);

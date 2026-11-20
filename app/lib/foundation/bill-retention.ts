@@ -59,6 +59,8 @@ export async function runBillRetention(input: {
       }
       await audit(input.repositories.audit, input.tenantId, current.id, "ALLOWED");
       await input.repositories.storage.remove(input.tenantId, current.id);
+      // Tony (19/11/2026): the linked fattura di dettaglio goes with the bill it belongs to.
+      if (current.detailDocument) await input.repositories.storage.remove(input.tenantId, current.detailDocument.linkId);
       const deletionAt = new Date(Date.parse(input.now) + 1000).toISOString();
       const deletedDocument = transitionBillLifecycle({ document: current, tenantId: input.tenantId, expectedLifecycleVersion: current.lifecycleVersion, toState: "DELETED", at: deletionAt, actorId, reason: "RETENTION_EXECUTED" });
       await persist(input.repositories.bills, deletedDocument, current);
@@ -102,8 +104,12 @@ export function billTooOld(document: BillDocument, now: string): boolean {
 export async function deleteBillPermanently(input: { readonly tenantId: string; readonly documentId: string; readonly repositories: BillRetentionRepositories }): Promise<void> {
   validTenant(input.tenantId);
   if (!input.repositories.bills.delete) throw new Error("BILL_DELETE_UNAVAILABLE");
-  try { await input.repositories.storage.remove(input.tenantId, input.documentId); } catch (error) {
-    if (!/NOT_FOUND|ENOENT/.test(error instanceof Error ? error.message : String(error))) throw error;
+  // Tony (19/11/2026): the linked fattura di dettaglio, if any, is removed with the bill.
+  const linked = typeof input.repositories.bills.get === "function" ? (await input.repositories.bills.get(input.tenantId, input.documentId))?.detailDocument?.linkId ?? null : null;
+  for (const id of [input.documentId, ...(linked ? [linked] : [])]) {
+    try { await input.repositories.storage.remove(input.tenantId, id); } catch (error) {
+      if (!/NOT_FOUND|ENOENT/.test(error instanceof Error ? error.message : String(error))) throw error;
+    }
   }
   await input.repositories.bills.delete(input.tenantId, input.documentId);
   await audit(input.repositories.audit, input.tenantId, input.documentId, "ALLOWED");

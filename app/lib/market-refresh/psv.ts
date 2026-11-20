@@ -1,11 +1,13 @@
 import type { GasMonthlyPsvRecord } from "../energy/market-data.ts";
 // @ts-expect-error Node's strip-only test runner requires the explicit extension.
-import { approveMarketArchive, compareMarketVersions, createMarketArchive } from "../market/service.ts";
+import { approveMarketArchive, compareMarketVersions, createMarketArchive, retireMarketArchive } from "../market/service.ts";
 import type { MarketArchiveRecord, MarketArchiveRepository } from "../market/types.ts";
 // @ts-expect-error Node's strip-only test runner requires the explicit extension.
 import { fetchAreraCmem, psvRecordFromCmem, type AreraCmemFetcher, type AreraCmemRow } from "../market/arera-cmem-source.ts";
 // @ts-expect-error Node's strip-only test runner requires the explicit extension.
 import { closedPunTargetMonths } from "./service.ts";
+// @ts-expect-error Node's strip-only test runner requires the explicit extension.
+import { PSV_RETENTION_REASON } from "../market/operational-window.ts";
 
 export interface PsvSourceReader {
   load(): Promise<{ readonly rows: readonly AreraCmemRow[]; readonly sourceSha256: string }>;
@@ -17,6 +19,7 @@ export interface PsvRefreshSummary {
   readonly months: readonly { readonly month: string; readonly status: "CREATED" | "CORRECTED" | "UNCHANGED" | "NOT_PUBLISHED" | "FAILED"; readonly eurPerSmc?: number; readonly error?: string }[];
   readonly monthsCreated: number;
   readonly monthsFailed: number;
+  readonly monthsRetired: number;
   readonly errors: readonly string[];
 }
 
@@ -34,7 +37,7 @@ export async function runPsvMarketRefresh(input: { readonly tenantId: string; re
   try { source = await reader.load(); }
   catch (error) {
     const message = error instanceof Error ? error.message : "PSV_SOURCE_FAILED";
-    return { status: "FAILED", targetMonths, months: targetMonths.map((month) => ({ month, status: "FAILED" as const, error: message })), monthsCreated: 0, monthsFailed: targetMonths.length, errors: [message] };
+    return { status: "FAILED", targetMonths, months: targetMonths.map((month) => ({ month, status: "FAILED" as const, error: message })), monthsCreated: 0, monthsFailed: targetMonths.length, monthsRetired: 0, errors: [message] };
   }
   const months: PsvRefreshSummary["months"][number][] = [];
   const errors: string[] = [];
@@ -63,6 +66,17 @@ export async function runPsvMarketRefresh(input: { readonly tenantId: string; re
       errors.push(`${month}:${message}`);
     }
   }
+  // Retention rule (Tony 17/11/2026), as for the PUN: PSV older than the six kept months leaves the active archive. The record
+  // stays stored with its history and source fingerprint; it is retired (REJECTED with the retention reason), not deleted.
+  let monthsRetired = 0;
+  const oldest = targetMonths[targetMonths.length - 1];
+  if (oldest) {
+    const expired = (await input.repositories.marketArchiveRepository.list(input.tenantId)).filter((record) => record.vector === "GAS" && record.index === "PSV" && record.status === "APPROVED" && record.month < oldest);
+    for (const record of expired) {
+      try { await retireMarketArchive(input.repositories.marketArchiveRepository, input.tenantId, record.archiveId, actor, PSV_RETENTION_REASON, now); monthsRetired += 1; }
+      catch (error) { errors.push(`${record.month}:RETENTION:${error instanceof Error ? error.message : "PSV_RETENTION_FAILED"}`); }
+    }
+  }
   const monthsFailed = months.filter((item) => item.status === "FAILED").length;
-  return { status: monthsFailed === 0 ? "SUCCESS" : monthsFailed === targetMonths.length ? "FAILED" : "PARTIAL_FAILURE", targetMonths, months, monthsCreated, monthsFailed, errors };
+  return { status: monthsFailed === 0 ? "SUCCESS" : monthsFailed === targetMonths.length ? "FAILED" : "PARTIAL_FAILURE", targetMonths, months, monthsCreated, monthsFailed, monthsRetired, errors };
 }

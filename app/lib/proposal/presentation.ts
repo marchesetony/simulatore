@@ -1,3 +1,4 @@
+import type { QuoteCostSummary } from "../quote/annual-saving";
 /**
  * Tony (31/10): "l'offerta deve essere formulata come una bolletta come lo scontrino elettrico, con logo dell'azienda dati
  * aziendali percentuale e importo di risparmio annuale e mensile, oltre al nome della cte utilizzata e a uno specchietto che
@@ -33,6 +34,8 @@ export interface ProposalPresentation {
   readonly scontrino?: readonly ProposalScontrinoLine[];
   /** The uploaded bill's own scontrino, same layout (Tony 1/11, "dove è lo scontrino della fattura?"). */
   readonly billScontrino?: readonly ProposalScontrinoLine[];
+  /** Tony (16/11/2026, "costi una tantum e risparmio annuo"): period, one-off, comparable month and year, as on screen. */
+  readonly costs?: QuoteCostSummary;
 }
 export interface ProposalScontrinoLine { readonly kind: "section" | "main" | "sub" | "item" | "total"; readonly label: string; readonly quantity?: string; readonly price?: string; readonly amount: number | null }
 const SCONTRINO_KINDS = ["section", "main", "sub", "item", "total"] as const;
@@ -42,6 +45,22 @@ function text(value: unknown, max = 200): string { if (value === undefined || va
 function amount(value: unknown): number | null { if (value === null || value === undefined) return null; if (typeof value !== "number" || !Number.isFinite(value) || Math.abs(value) > 1e9) fail(); return value; }
 function list(value: unknown, max: number): readonly unknown[] { if (value === undefined) return []; if (!Array.isArray(value) || value.length > max) fail(); return value; }
 function object(value: unknown): Record<string, unknown> { if (typeof value !== "object" || value === null || Array.isArray(value)) fail(); return value as Record<string, unknown>; }
+
+function costsOf(value: unknown): QuoteCostSummary {
+  const input = object(value);
+  const need = (raw: unknown) => amount(raw) ?? fail();
+  const oneOff = input.oneOff === null || input.oneOff === undefined ? null : object(input.oneOff);
+  const monthly = object(input.monthly);
+  const annual = input.annual === null || input.annual === undefined ? null : object(input.annual);
+  const basis = monthly.basis === "ANNUAL_AVERAGE" || monthly.basis === "PERIOD" ? monthly.basis : fail();
+  return {
+    periodCurrent: need(input.periodCurrent), periodOffer: need(input.periodOffer), periodSaving: need(input.periodSaving),
+    oneOff: oneOff && { net: need(oneOff.net), taxes: need(oneOff.taxes), total: need(oneOff.total) },
+    periodOfferRecurring: need(input.periodOfferRecurring), periodRecurringSaving: need(input.periodRecurringSaving),
+    monthly: { current: need(monthly.current), offer: need(monthly.offer), saving: need(monthly.saving), basis },
+    annual: annual && { current: need(annual.current), offerRecurring: need(annual.offerRecurring), oneOff: need(annual.oneOff), offer: need(annual.offer), saving: need(annual.saving), recurringSaving: need(annual.recurringSaving) },
+  };
+}
 
 export function parseProposalPresentation(value: unknown): ProposalPresentation | null {
   if (value === undefined || value === null) return null;
@@ -58,6 +77,7 @@ export function parseProposalPresentation(value: unknown): ProposalPresentation 
     comparison: list(input.comparison, 20).map((item) => { const row = object(item); return { label: text(row.label, 80), bill: text(row.bill, 160), offer: text(row.offer, 160) }; }),
     excluded: list(input.excluded, 20).map((item) => { const row = object(item); return { label: text(row.label, 120), amount: amount(row.amount) ?? 0 }; }),
     scontrino: list(input.scontrino, 40).map((item) => { const row = object(item); const kind = SCONTRINO_KINDS.find((value) => value === row.kind) ?? fail(); return { kind, label: text(row.label, 200), ...(row.quantity ? { quantity: text(row.quantity, 60) } : {}), ...(row.price ? { price: text(row.price, 60) } : {}), amount: amount(row.amount) }; }),
+    ...(input.costs === undefined || input.costs === null ? {} : { costs: costsOf(input.costs) }),
     billScontrino: list(input.billScontrino, 40).map((item) => { const row = object(item); const kind = SCONTRINO_KINDS.find((value) => value === row.kind) ?? fail(); return { kind, label: text(row.label, 200), ...(row.quantity ? { quantity: text(row.quantity, 60) } : {}), ...(row.price ? { price: text(row.price, 60) } : {}), amount: amount(row.amount) }; }),
   };
 }

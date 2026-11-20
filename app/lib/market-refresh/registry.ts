@@ -2,9 +2,8 @@ export type PunMarketDomain = "PUN_MONTHLY" | "PUN_F1" | "PUN_F2" | "PUN_F3";
 
 export const PUN_REFRESH_FREQUENCY = "DAILY" as const;
 export const PUN_REFRESH_CRON = "15 4 * * *" as const;
-/** PUN and PSV are kept for the last six closed months, no older. */
-// Product rule: the official PUN is kept in the archive for about five closed months.
-export const MINIMUM_PUN_HISTORY_MONTHS = 5 as const;
+/** PUN and PSV are kept for the last six closed months, no older (Tony 17/11/2026, binding; was five since 26/10). */
+export const MINIMUM_PUN_HISTORY_MONTHS = 6 as const;
 export const PUN_REFRESH_STALE_DAYS = 35 as const;
 export const CALCULATED_PUN_DOMAINS: readonly PunMarketDomain[] = ["PUN_MONTHLY", "PUN_F1", "PUN_F2", "PUN_F3"];
 export const AUTO_REFRESH_REGISTERED_PUN_DOMAINS = CALCULATED_PUN_DOMAINS;

@@ -44,7 +44,10 @@ try {
   const cron = await readFile(new URL("../app/api/cron/bill-retention/route.ts", import.meta.url), "utf8");
   const flow = await readFile(new URL("../app/components/QuickQuoteFlow.tsx", import.meta.url), "utf8");
   assert.match(list, /!billTooOld\(document, now\)/);
-  assert.match(cron, /purgeOldBills\(\{ tenantId, repositories: retentionRepositories, now \}\)/);
+  // Tony (20/11/2026, "CHIUSURA FASE 2", punto 1): declared rule change. The nightly job no longer deletes bills by age (the
+  // archive stays searchable); billTooOld still only hides them from the "Nuova simulazione" picker, as before.
+  assert.doesNotMatch(cron, /purgeOldBills\(/, "the nightly job deletes no bill by age");
+  assert.match(cron, /runBillRetention\(/);
   assert.match(flow, /method: "DELETE"/);
   assert.match(flow, /Cancella bollette caricate/);
   console.log("bill age purge ok");

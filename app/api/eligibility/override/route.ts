@@ -60,7 +60,7 @@ export async function POST(request: Request): Promise<Response> {
     return Response.json({ override: result }, { status: 201, headers: HEADERS });
   } catch (error) {
     const code = error instanceof Error ? error.message : "OVERRIDE_REQUEST_FAILED";
-    const status = code.startsWith("AUTHENTICATION") ? 401 : code.includes("DENIED") || code.includes("SELF_APPROVAL") || code.includes("TENANT") ? 403 : code.includes("NOT_FOUND") ? 404 : 409;
-    return Response.json({ error: { code, message: "Eligibility override denied" } }, { status, headers: HEADERS });
+    const status = code.startsWith("AUTHENTICATION") ? 401 : code.includes("DENIED") || code.includes("SELF_APPROVAL") || code.includes("TENANT") ? 403 : code.includes("NOT_FOUND") ? 404 : code.startsWith("OVERRIDE_REASON_") ? 422 : 409;
+    return Response.json({ error: { code, message: code === "OVERRIDE_REASON_TOO_LONG" ? "Il motivo supera i 256 caratteri: accorcialo. Non viene mai tagliato." : "Eligibility override denied" } }, { status, headers: HEADERS });
   }
 }

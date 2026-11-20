@@ -1,4 +1,6 @@
 // @ts-expect-error Node's strip-only test runner requires the explicit extension.
+import { SPECIAL_CONDITIONS_FOOTNOTE, SPECIAL_CONDITIONS_TITLE, specialConditionLines } from "../eligibility/special-conditions.ts";
+// @ts-expect-error Node's strip-only test runner requires the explicit extension.
 import { pdfBytes, pdfText, type PdfImage, type PdfPage } from "./pdf.ts";
 // @ts-expect-error Node's strip-only test runner requires the explicit extension.
 import { jpegSize } from "../company/profile.ts";
@@ -119,7 +121,7 @@ function box(sheet: Sheet, x: number, top: number, width: number, title: string,
   return height;
 }
 
-export function renderReceiptProposal(proposal: ProposalCanonicalSnapshot, presentation: ProposalPresentation, profile: CompanyProfile | null): Uint8Array {
+export function renderReceiptProposal(proposal: ProposalCanonicalSnapshot, presentation: ProposalPresentation, profile: CompanyProfile | null, specialConditionCodes: readonly string[] = []): Uint8Array {
   const images: PdfImage[] = [];
   const logoBytes = profile?.logo ? new Uint8Array(Buffer.from(profile.logo.slice(profile.logo.indexOf(",") + 1), "base64")) : null;
   const logoSize = logoBytes ? jpegSize(logoBytes) : null;
@@ -198,11 +200,24 @@ export function renderReceiptProposal(proposal: ProposalCanonicalSnapshot, prese
   } else {
     const word = (value: number | null) => value !== null && value < 0 ? "Costo in più" : "Risparmio";
     cell(0, `${word(annual)} annuo`, annual === null ? "—" : euro(Math.abs(annual)), annualPercent === null ? presentation.annualBasisLabel || "su 12 mesi" : `${PERCENT.format(Math.abs(annualPercent))}% della spesa annua`);
-    cell(1, `${word(annual)} mensile`, annual === null ? "—" : euro(Math.abs(annual) / 12), "media su 12 mesi");
+    // Tony (16/11/2026, "costi una tantum"): the monthly saving is the comparable recurring month, never the one-off spread
+    // over 12 months; without the costs summary (older screens) it stays the annual average.
+    const monthly = presentation.costs ? presentation.costs.monthly.saving : annual === null ? null : annual / 12;
+    cell(1, `${word(monthly)} mensile`, monthly === null ? "—" : euro(Math.abs(monthly)), presentation.costs ? (presentation.costs.monthly.basis === "ANNUAL_AVERAGE" ? "media mensile, senza una tantum" : "costo ricorrente del periodo") : "media su 12 mesi");
     cell(2, `${word(saving)} sulla bolletta`, saving === null ? "—" : euro(Math.abs(saving)), presentation.savingsPercent === null ? "sulla bolletta simulata" : `${PERCENT.format(Math.abs(presentation.savingsPercent))}% della bolletta simulata`);
   }
   sheet.y = sTop - savingsHeight - 4;
   if (presentation.annualBasisLabel && !presentation.sameOffer) { sheet.y -= 4; sheet.paragraph(presentation.annualBasisLabel, L, R - L, 7.5, { color: MUTED }); }
+  // Tony (16/11/2026): the one-off initial cost, the recurring cost and the annual spend, the same lines as on screen.
+  const costs = presentation.sameOffer ? undefined : presentation.costs;
+  if (costs) {
+    const parts = [
+      costs.oneOff ? `Costo iniziale una tantum ${euro(costs.oneOff.total)} (${euro(costs.oneOff.net)}${presentation.taxesIncluded ? ` + IVA ${euro(costs.oneOff.taxes)}` : ""}), dovuto una sola volta sulla prima bolletta: la bolletta simulata costa ${euro(costs.periodOffer)}, le successive ${euro(costs.periodOfferRecurring)} (risparmio ricorrente ${euro(costs.periodRecurringSaving)}).` : "",
+      `Costo mensile ricorrente confrontabile: bolletta attuale ${euro(costs.monthly.current)}, nuova offerta ${euro(costs.monthly.offer)}.`,
+      costs.annual ? `Spesa annua prevista: attuale ${euro(costs.annual.current)}, nuova offerta ${euro(costs.annual.offer)}${costs.annual.oneOff ? ` (ricorrente ${euro(costs.annual.offerRecurring)} + una tantum ${euro(costs.annual.oneOff)} una sola volta)` : ""}.` : "",
+    ].filter(Boolean);
+    sheet.y -= 2; sheet.paragraph(parts.join(" "), L, R - L, 7.5, { color: MUTED });
+  }
 
   // Tony (1/11, "queste le voci che dobbiamo avere visibili nell'offerta come una fattura reale, poi il dettaglio con il
   // paragone"): the new offer first as the ARERA "Scontrino dell'energia" (quantità × prezzo medio = importi).
@@ -300,6 +315,16 @@ export function renderReceiptProposal(proposal: ProposalCanonicalSnapshot, prese
       sheet.y -= height;
       sheet.line(L, sheet.y, R, sheet.y);
     }
+  }
+
+  // Tony (20/11/2026): an offer obtained through an authorized forcing states the conditions actually applied, in the
+  // customer's words; nothing about who authorized it or the company's permissions.
+  const conditions = specialConditionLines(specialConditionCodes);
+  if (conditions.length) {
+    sheet.section(SPECIAL_CONDITIONS_TITLE);
+    sheet.paragraph("Offerta proposta in deroga ai seguenti requisiti di accesso della CTE:", L, R - L, 8.5, { bold: true });
+    for (const line of conditions) sheet.paragraph(`- ${line}`, L + 8, R - L - 8, 8.5);
+    sheet.paragraph(SPECIAL_CONDITIONS_FOOTNOTE, L, R - L, 7.5, { color: MUTED });
   }
 
   sheet.section("Note");

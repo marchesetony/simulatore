@@ -1,3 +1,4 @@
+import type { CteForcingRecord } from "../eligibility/forcing";
 import type { CteAssignmentRepository, OrgChainRepository } from "../hierarchy/service";
 import type { CteAssignment, OrgNode } from "../hierarchy/types";
 import type { AccessAccount, AccessDirectory, Company } from "../access/types";
@@ -367,6 +368,7 @@ export class SupabaseProductionStorageAdapter implements ProductionStorageAdapte
   readonly officialChecks: TenantRecordRepository<unknown>;
   readonly officialDocuments: TenantRecordRepository<unknown>;
   readonly officialPublications: TenantRecordRepository<unknown>;
+  readonly cteForcingRecords: TenantRecordRepository<CteForcingRecord>;
 
   constructor(client: ProviderClient, storageBucket: string, authClient?: () => ProviderClient) {
     this.cteArchiveRepository = new SupabaseCteArchiveRepository(client);
@@ -399,6 +401,7 @@ export class SupabaseProductionStorageAdapter implements ProductionStorageAdapte
     this.officialChecks = new SupabaseRecordRepository(client, "official-checks");
     this.officialDocuments = new SupabaseRecordRepository(client, "official-documents");
     this.officialPublications = new SupabaseRecordRepository(client, "official-publications");
+    this.cteForcingRecords = new SupabaseRecordRepository<CteForcingRecord>(client, "cte-forcing-records");
     this.orgChain = new SupabaseRecordRepository<OrgNode>(client, "org-chain") as SupabaseRecordRepository<OrgNode> & OrgChainRepository;
     this.cteAssignments = new SupabaseRecordRepository<CteAssignment>(client, "cte-assignments");
     this.companies = new SupabaseRecordRepository<Company>(client, "companies");

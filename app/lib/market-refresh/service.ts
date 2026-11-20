@@ -14,6 +14,8 @@ import { createOfficialPunSourceReader, type PunSourceBundle, type PunSourceCand
 import { withBoundedRetry } from "../automation/retry.ts";
 // @ts-expect-error Node's strip-only test runner requires the explicit extension.
 import { CALCULATED_PUN_DOMAINS, MINIMUM_PUN_HISTORY_MONTHS, PUN_REFRESH_STALE_DAYS, assertPunRefreshCoverage } from "./registry.ts";
+// @ts-expect-error Node's strip-only test runner requires the explicit extension.
+import { operationalMarketMonths, romeToday, PUN_RETENTION_REASON } from "../market/operational-window.ts";
 
 export type PunRefreshRunStatus = "SUCCESS" | "PARTIAL_FAILURE" | "FAILED" | "ALREADY_RUNNING";
 export type PunRefreshSourceStatus = "FRESH" | "STALE" | "FAILED_REVIEW_REQUIRED" | "NEVER_SUCCESSFUL" | "RUNNING";
@@ -89,11 +91,9 @@ const stateId = (tenantId: string): string => deterministicRecordId("market-refr
 const runRecordId = (runId: string, tenantId: string): string => deterministicRecordId("market-refresh-run", tenantId, runId);
 const lockId = (tenantId: string): string => deterministicRecordId("market-refresh-lock", tenantId, "pun-market-refresh");
 
-function monthKey(date: Date): string { return `${date.getUTCFullYear()}-${String(date.getUTCMonth() + 1).padStart(2, "0")}`; }
-export function closedPunTargetMonths(now: string, count = MINIMUM_PUN_HISTORY_MONTHS): readonly string[] {
-  const date = new Date(validDate(now));
-  const firstClosed = new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth() - 1, 1));
-  return Array.from({ length: count }, (_, index) => monthKey(new Date(Date.UTC(firstClosed.getUTCFullYear(), firstClosed.getUTCMonth() - index, 1))));
+/** The closed months (most recent first) the refresh keeps: the operational window measured on the Italian date of `now`. */
+export function closedPunTargetMonths(now: string, count: number = MINIMUM_PUN_HISTORY_MONTHS): readonly string[] {
+  return operationalMarketMonths(romeToday(new Date(validDate(now))), count);
 }
 
 function complete(record: ElectricityMonthlyPunRecord): boolean {
@@ -191,12 +191,12 @@ export async function runPunMarketRefresh(input: { readonly tenantId: string } &
         } else if (current) monthsCorrected += 1; else monthsCreated += 1;
       } catch (error) { monthsFailed += 1; errors.push(`${referenceMonth}:${errorText(error)}`); }
     }
-    // Retention rule (owner, 2026-10-26): about five closed months are kept; older PUN leaves the active archive.
+    // Retention rule (Tony 17/11/2026): six closed months are kept; older PUN leaves the active archive, history kept.
     const oldest = targetMonths[targetMonths.length - 1];
     if (!dryRun && oldest) {
       const expired = (await input.repositories.marketArchiveRepository.list(input.tenantId)).filter((record) => record.vector === "EE" && record.index === "PUN" && record.status === "APPROVED" && record.month < oldest);
       for (const record of expired) {
-        try { await retireMarketArchive(input.repositories.marketArchiveRepository, input.tenantId, record.archiveId, actor, `PUN_RETENTION_${MINIMUM_PUN_HISTORY_MONTHS}_MONTHS`, now); monthsRetired += 1; }
+        try { await retireMarketArchive(input.repositories.marketArchiveRepository, input.tenantId, record.archiveId, actor, PUN_RETENTION_REASON, now); monthsRetired += 1; }
         catch (error) { errors.push(`${record.month}:RETENTION:${errorText(error)}`); }
       }
     }

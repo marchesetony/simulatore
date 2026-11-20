@@ -92,7 +92,7 @@ function detailItems(reading: BillReading): BillAnalystWireItem[] {
 function factItems(reading: BillReading): BillAnalystWireItem[] {
   const facts: [string, string, string, string?][] = [
     ["BILLING_PERIOD_RAW", "Periodo fatturato", reading.periodoStampato],
-    ["BILL_ISSUE_DATE", "Data emissione", reading.dataEmissione], ["BILL_DUE_DATE", "Scadenza pagamento", reading.dataScadenzaPagamento],
+    ["BILL_ISSUE_DATE", "Data emissione", reading.dataEmissione], ["INVOICE_NUMBER", "Numero documento", reading.numeroDocumento ?? ""], ["BILL_DUE_DATE", "Scadenza pagamento", reading.dataScadenzaPagamento],
     ["CONTRACT_START_DATE", "Attivazione fornitura", reading.attivazioneFornitura],
     ["ECONOMIC_CONDITIONS_START_DATE", "Decorrenza condizioni economiche", reading.decorrenzaCondizioni],
     ["ECONOMIC_EXPIRY", "Scadenza condizioni economiche", reading.scadenzaCondizioni],
@@ -182,6 +182,22 @@ export function printedComponents(reading: BillReading): StructuredBillPrintedCo
 
 export interface ReaderOutcome { readonly reading: BillReading; readonly checks: readonly ReadingCheck[]; readonly reread: boolean }
 
+/**
+ * Tony (20/11/2026, "CHIUSURA FASE 2", punto 2): the kind of document, from what it contains, never from the file name.
+ * - quadro sintetico (scontrino) without detail lines: sintetica;
+ * - detail lines without quadro sintetico: fattura di dettaglio, also when it is the only PDF uploaded;
+ * - both: one PDF holding both, unless the reader recognized a sintetica that prints a few detail lines of its own;
+ * - neither read: the kind the reader recognized on the page, when it is a bill kind; otherwise none (shown "not recognized").
+ */
+export function recognizedDocumentType(reading: Pick<BillReading, "tipoDocumento" | "scontrino" | "dettaglio">): "BOLLETTA_SINTETICA" | "BOLLETTA_COMPLETA" | "FATTURA_DETTAGLIO" | null {
+  if (reading.tipoDocumento === "NON_BOLLETTA") return null;
+  const summary = reading.scontrino.length > 0; const detail = reading.dettaglio.length > 0;
+  if (summary && !detail) return "BOLLETTA_SINTETICA";
+  if (detail && !summary) return "FATTURA_DETTAGLIO";
+  if (summary && detail) return reading.tipoDocumento === "BOLLETTA_SINTETICA" ? "BOLLETTA_SINTETICA" : "BOLLETTA_COMPLETA";
+  return reading.tipoDocumento === "BOLLETTA_SINTETICA" || reading.tipoDocumento === "BOLLETTA_COMPLETA" || reading.tipoDocumento === "FATTURA_DETTAGLIO" ? reading.tipoDocumento : null;
+}
+
 /** The structure the engine reads, with the reading, the checks still failing and the empty fields with their reason. */
 export function toStructuredBill(outcome: ReaderOutcome): StructuredBillExtraction {
   const { reading } = outcome;
@@ -201,5 +217,6 @@ export function toStructuredBill(outcome: ReaderOutcome): StructuredBillExtracti
     readingAbsent: reading.assenti.map((absent) => ({ field: absent.campo, reason: absent.motivo })),
     readingSources: reading.fonti.map((source) => ({ field: source.campo, page: source.pagina, text: source.testo.slice(0, 200) })),
     readingReread: outcome.reread,
+    ...(recognizedDocumentType(reading) ? { documentType: recognizedDocumentType(reading) as NonNullable<StructuredBillExtraction["documentType"]> } : {}),
   };
 }

@@ -7,7 +7,7 @@ import type { DeletableTenantRecordRepository, FoundationMembershipRecord, Tenan
 import { deterministicRecordId } from "../persistence/types.ts";
 // @ts-expect-error Node's strip-only test runner requires the explicit extension.
 import { foundationRoleToCanonical, legacyAuthRoleToCanonical } from "../auth/roles.ts";
-import type { CommercialLimits, CteAssignment, CteAssignmentScope, CteAssignmentView, LimitCustomerCategory, LimitVector, OrgLevel, OrgNode, OrgNodeView } from "./types";
+import type { CommercialLimits, CteAssignment, CteAssignmentScope, CteAssignmentView, CtePermissionGrant, LimitCustomerCategory, LimitVector, OrgLevel, OrgNode, OrgNodeView } from "./types";
 
 export type OrgChainRepository = DeletableTenantRecordRepository<OrgNode>;
 export type CteAssignmentRepository = TenantRecordRepository<CteAssignment>;
@@ -63,7 +63,19 @@ export function validateOrgNode(value: unknown): OrgNode {
   assertId(item.updatedBy, "ORG_NODE_INVALID");
   if (item.canAuthorizeCte !== undefined && typeof item.canAuthorizeCte !== "boolean") fail("ORG_NODE_INVALID");
   if (item.canManageDiscount !== undefined && typeof item.canManageDiscount !== "boolean") fail("ORG_NODE_INVALID");
-  return { userId: item.userId, level, parentUserId: parentUserId as string | null, displayName: displayName === null ? null : (displayName as string).trim(), limits: validateLimits(item.limits), ...(item.canAuthorizeCte === true ? { canAuthorizeCte: true } : {}), ...(item.canManageDiscount === true ? { canManageDiscount: true } : {}), updatedBy: item.updatedBy };
+  if (item.canDelegateCte !== undefined && typeof item.canDelegateCte !== "boolean") fail("ORG_NODE_INVALID");
+  // "Può delegare" without "Può forzare" is meaningless: nobody passes on what they cannot use themselves.
+  if (item.canDelegateCte === true && item.canAuthorizeCte !== true) fail("ORG_CTE_DELEGATION_REQUIRES_FORCING");
+  const forcingGrant = item.canAuthorizeCte === true ? permissionGrant(item.cteForcingGrant) : null;
+  const delegationGrant = item.canDelegateCte === true ? permissionGrant(item.cteDelegationGrant) : null;
+  return { userId: item.userId, level, parentUserId: parentUserId as string | null, displayName: displayName === null ? null : (displayName as string).trim(), limits: validateLimits(item.limits), ...(item.canAuthorizeCte === true ? { canAuthorizeCte: true } : {}), ...(item.canDelegateCte === true ? { canDelegateCte: true } : {}), ...(forcingGrant ? { cteForcingGrant: forcingGrant } : {}), ...(delegationGrant ? { cteDelegationGrant: delegationGrant } : {}), ...(item.canManageDiscount === true ? { canManageDiscount: true } : {}), updatedBy: item.updatedBy };
+}
+
+/** A stored grant record; anything malformed is dropped rather than trusted. */
+function permissionGrant(value: unknown): CtePermissionGrant | null {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) return null;
+  const item = value as Record<string, unknown>;
+  return typeof item.grantedBy === "string" && ID_PATTERN.test(item.grantedBy) && typeof item.grantedAt === "string" && Number.isFinite(Date.parse(item.grantedAt)) ? { grantedBy: item.grantedBy, grantedAt: item.grantedAt } : null;
 }
 
 export function validateCteAssignment(value: unknown): CteAssignment {
@@ -157,6 +169,21 @@ export function canAuthorizeCte(access: Pick<HierarchyAccess, "actor" | "index">
   return access.actor.role === "SUPER_ADMIN" || nodeCanAuthorizeCte(access.index, access.actor.userId);
 }
 
+// Tony (20/11/2026, "FORZATURA CTE E AUTORIZZAZIONI A CASCATA"): "Può forzare" and "Può delegare" are separate. The company
+// administrator holds both by role; anybody else passes "Può forzare" on only when holding "Può delegare", and holds it only
+// while holding "Può forzare" and while every manager above holds "Può delegare" too: a manager who loses the right to
+// delegate takes it away from the branch, never more than received and never outside the hierarchy.
+export function nodeCanDelegateCte(index: OrgChainIndex, userId: string): boolean {
+  const node = index.nodes.get(userId)?.payload;
+  if (!node) return false;
+  if (node.level === "AZIENDA") return true;
+  return node.canDelegateCte === true && nodeCanAuthorizeCte(index, userId) && [...ancestorUserIds(index, userId)].every((id) => { const above = index.nodes.get(id)?.payload; return !above || above.level === "AZIENDA" || above.canDelegateCte === true; });
+}
+
+export function canDelegateCte(access: Pick<HierarchyAccess, "actor" | "index">): boolean {
+  return access.actor.role === "SUPER_ADMIN" || nodeCanDelegateCte(access.index, access.actor.userId);
+}
+
 export function effectiveLimits(index: OrgChainIndex, userId: string): CommercialLimits {
   if (!index.nodes.has(userId)) return UNRESTRICTED_LIMITS;
   return [userId, ...ancestorUserIds(index, userId)].reverse().reduce((limits, id) => combineLimits(limits, index.nodes.get(id)?.payload.limits ?? UNRESTRICTED_LIMITS), UNRESTRICTED_LIMITS);
@@ -198,7 +225,7 @@ function membershipFitsLevel(membership: FoundationMembershipRecord, level: OrgL
 }
 
 function nodeView(index: OrgChainIndex, record: TenantRecord<OrgNode>): OrgNodeView {
-  return { ...record.payload, version: record.version, updatedAt: record.updatedAt, effectiveLimits: effectiveLimits(index, record.payload.userId), effectiveCanManageDiscount: nodeCanManageDiscount(index, record.payload.userId), effectiveCanAuthorizeCte: nodeCanAuthorizeCte(index, record.payload.userId), ancestorUserIds: ancestorUserIds(index, record.payload.userId) };
+  return { ...record.payload, version: record.version, updatedAt: record.updatedAt, effectiveLimits: effectiveLimits(index, record.payload.userId), effectiveCanManageDiscount: nodeCanManageDiscount(index, record.payload.userId), effectiveCanAuthorizeCte: nodeCanAuthorizeCte(index, record.payload.userId), effectiveCanDelegateCte: nodeCanDelegateCte(index, record.payload.userId), ancestorUserIds: ancestorUserIds(index, record.payload.userId) };
 }
 
 /** Company admins see the whole chain; everybody else sees their own path up and their branch down. */
@@ -224,6 +251,7 @@ export interface SaveOrgNodeInput {
   readonly displayName?: unknown;
   readonly limits?: unknown;
   readonly canAuthorizeCte?: unknown;
+  readonly canDelegateCte?: unknown;
   readonly canManageDiscount?: unknown;
   readonly expectedVersion?: unknown;
 }
@@ -245,9 +273,14 @@ function conflict(error: unknown, code: string): never {
 }
 
 export async function saveOrgNode(stores: HierarchyStores, actor: HierarchyActor, input: SaveOrgNodeInput, now?: string): Promise<OrgNodeView> {
-  const node = validateOrgNode({ userId: input.userId, level: input.level, parentUserId: input.parentUserId ?? null, displayName: input.displayName ?? null, limits: input.limits, canAuthorizeCte: input.canAuthorizeCte ?? false, canManageDiscount: input.canManageDiscount ?? false, updatedBy: actor.userId });
+  // Grant records are never taken from the request: they are written below from who is acting and when.
+  const requested = validateOrgNode({ userId: input.userId, level: input.level, parentUserId: input.parentUserId ?? null, displayName: input.displayName ?? null, limits: input.limits, canAuthorizeCte: input.canAuthorizeCte ?? false, canDelegateCte: input.canDelegateCte ?? false, canManageDiscount: input.canManageDiscount ?? false, updatedBy: actor.userId });
   const index = buildOrgChainIndex(await stores.orgChain.list(actor.tenantId));
-  const existing = index.nodes.get(node.userId) ?? null;
+  const existing = index.nodes.get(requested.userId) ?? null;
+  const grantedAt = now ?? new Date().toISOString();
+  const forcingGrant = requested.canAuthorizeCte !== true ? null : existing?.payload.canAuthorizeCte === true && existing.payload.cteForcingGrant ? existing.payload.cteForcingGrant : existing?.payload.canAuthorizeCte === true ? null : { grantedBy: actor.userId, grantedAt };
+  const delegationGrant = requested.canDelegateCte !== true ? null : existing?.payload.canDelegateCte === true && existing.payload.cteDelegationGrant ? existing.payload.cteDelegationGrant : existing?.payload.canDelegateCte === true ? null : { grantedBy: actor.userId, grantedAt };
+  const node: OrgNode = { ...requested, ...(forcingGrant ? { cteForcingGrant: forcingGrant } : {}), ...(delegationGrant ? { cteDelegationGrant: delegationGrant } : {}) };
   const expectedVersion = expectedVersionOf(input.expectedVersion, existing !== null, "ORG");
   if (existing && existing.version !== expectedVersion) fail("ORG_VERSION_CONFLICT");
   assertEditAuthority(index, actor, node.userId, node.parentUserId);
@@ -269,10 +302,16 @@ export async function saveOrgNode(stores: HierarchyStores, actor: HierarchyActor
     if (rank((index.nodes.get(childId) as TenantRecord<OrgNode>).payload.level) <= rank(node.level)) fail("ORG_CHILD_LEVEL_CONFLICT");
   }
   assertLimitsWithin(node.limits, parentEffective);
-  // Only who may authorize CTEs passes the permission on, and only below a manager who holds it.
+  // Tony (20/11/2026): only who holds "Può delegare" passes "Può forzare" on, and only below a manager who holds "Può forzare";
+  // only who holds "Può delegare" passes "Può delegare" on, and only below a manager who holds it. Taking either away is
+  // always allowed to whoever may edit the node. The company administrator holds both by role.
   if (node.canAuthorizeCte === true && existing?.payload.canAuthorizeCte !== true) {
-    if (actor.role !== "SUPER_ADMIN" && !nodeCanAuthorizeCte(index, actor.userId)) fail("ORG_CTE_AUTHORIZATION_GRANT_DENIED");
+    if (actor.role !== "SUPER_ADMIN" && !nodeCanDelegateCte(index, actor.userId)) fail("ORG_CTE_AUTHORIZATION_GRANT_DENIED");
     if (node.parentUserId !== null && !nodeCanAuthorizeCte(index, node.parentUserId)) fail("ORG_CTE_AUTHORIZATION_PARENT_MISSING");
+  }
+  if (node.canDelegateCte === true && existing?.payload.canDelegateCte !== true) {
+    if (actor.role !== "SUPER_ADMIN" && !nodeCanDelegateCte(index, actor.userId)) fail("ORG_CTE_DELEGATION_GRANT_DENIED");
+    if (node.parentUserId !== null && !nodeCanDelegateCte(index, node.parentUserId)) fail("ORG_CTE_DELEGATION_PARENT_MISSING");
   }
   if (node.canManageDiscount === true && existing?.payload.canManageDiscount !== true) {
     if (actor.role !== "SUPER_ADMIN" && actor.role !== "ADMIN" && !nodeCanManageDiscount(index, actor.userId)) fail("ORG_DISCOUNT_GRANT_DENIED");

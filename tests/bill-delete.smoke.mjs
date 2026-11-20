@@ -57,7 +57,10 @@ try {
   const panel = await (await import("node:fs/promises")).readFile(new URL("../app/components/BillOperationalPanel.tsx", import.meta.url), "utf8");
   assert.match(source, /export async function DELETE/);
   assert.match(source, /requestPrincipal\(request, "WRITE"\)/);
-  assert.match(source, /deleteBillPermanently\(\{ tenantId: principal\.tenantId, documentId: document\.id/);
+  // Tony (20/11/2026, Fase 2): the route deletes through deleteArchivedBill, which ends in deleteBillPermanently for the
+  // same document (declared change of where the call is written, same deletion).
+  assert.match(source, /deleteArchivedBill\(principal, repositories, document, CORRELATION_ID\)/);
+  assert.match(await (await import("node:fs/promises")).readFile(new URL("../app/lib/foundation/bill-archive.ts", import.meta.url), "utf8"), /deleteBillPermanently\(\{ tenantId, documentId: document\.id/);
   assert.match(source, /getBillInScope\(principal, repositories, id\)/);
   assert.match(panel, /requestJson\("\/api\/bills\/" \+ encodeURIComponent\(id\), \{ method: "DELETE" \}\)/);
   assert.match(panel, /setSelected\(null\)/);

@@ -3,7 +3,7 @@ import { AuthenticationError } from "../auth/errors";
 import { runtimeRepositories } from "../persistence/adapter";
 import { recordMutationAudit } from "../auth/mutation-audit";
 import { currentApprovedCteVersion } from "../cte/archive/service";
-import { buildHierarchyAccess, canAuthorizeCte, canManageDiscount, cteUsability, hierarchyActor, membershipPayloads, removeOrgNode, saveCteAssignment, saveOrgNode, subtreeUserIds, visibleOrgNodes } from "./service";
+import { buildHierarchyAccess, canAuthorizeCte, canDelegateCte, canManageDiscount, cteUsability, hierarchyActor, membershipPayloads, removeOrgNode, saveCteAssignment, saveOrgNode, subtreeUserIds, visibleOrgNodes } from "./service";
 
 const HEADERS = { "cache-control": "no-store, private", "vary": "Cookie, Authorization", "x-content-type-options": "nosniff" };
 const LEVEL_FOR_ROLE: Readonly<Record<string, readonly string[]>> = { PRODUCT_OWNER: ["AZIENDA"], PLATFORM_OWNER: ["AZIENDA"], TENANT_ADMIN: ["AZIENDA"], SALES_MANAGER: ["DIRETTORE", "AREA_MANAGER"], SALES_OPERATOR: ["AGENTE", "SUB_AGENTE"] };
@@ -33,13 +33,13 @@ export async function hierarchyResponse(principal: AuthenticatedPrincipal): Prom
     .map((record) => ({ userId: record.userId, displayName: names.get(record.userId) ?? null, role: record.role, allowedLevels: LEVEL_FOR_ROLE[record.role] ?? [], placed: placed.has(record.userId) }))
     .sort((left, right) => left.userId.localeCompare(right.userId));
   const own = access.index.nodes.get(actor.userId);
-  return Response.json({ actor: { userId: actor.userId, role: actor.role, level: own?.payload.level ?? null, effectiveLimits: access.limits, canManageCompany: actor.role === "SUPER_ADMIN", canAuthorizeCte: canAuthorizeCte(access), canManageDiscount: canManageDiscount(access) }, nodes: visible, members }, { headers: HEADERS });
+  return Response.json({ actor: { userId: actor.userId, role: actor.role, level: own?.payload.level ?? null, effectiveLimits: access.limits, canManageCompany: actor.role === "SUPER_ADMIN", canAuthorizeCte: canAuthorizeCte(access), canDelegateCte: canDelegateCte(access), canManageDiscount: canManageDiscount(access) }, nodes: visible, members }, { headers: HEADERS });
 }
 
 export async function saveOrgNodeResponse(principal: AuthenticatedPrincipal, body: Record<string, unknown>): Promise<Response> {
   const { repositories, memberships, actor } = await context(principal);
   const node = await saveOrgNode({ orgChain: repositories.orgChain, memberships }, actor, { ...body, userId: body.userId, level: body.level });
-  await recordMutationAudit({ principal, action: "ORG_CHAIN_NODE_SAVED", resourceType: "ORG_CHAIN", resourceId: node.userId, targetUserId: node.userId, metadata: { level: node.level, parentUserId: node.parentUserId ?? "NONE", version: node.version } });
+  await recordMutationAudit({ principal, action: "ORG_CHAIN_NODE_SAVED", resourceType: "ORG_CHAIN", resourceId: node.userId, targetUserId: node.userId, metadata: { level: node.level, parentUserId: node.parentUserId ?? "NONE", version: node.version, canForceCte: node.canAuthorizeCte === true, canDelegateCte: node.canDelegateCte === true } });
   return Response.json({ node }, { headers: HEADERS });
 }
 

@@ -117,7 +117,7 @@ function relabelTotal(lines: readonly ScontrinoLine[], label: string): readonly 
   return lines.map((line) => line.kind === "total" ? { ...line, label } : line);
 }
 
-const COMPARED_QUOTAS: readonly QuoteReceiptQuota["key"][] = ["CONSUMPTION", "FIXED", "POWER", "REACTIVE", "OTHER", "BONUS"];
+const COMPARED_QUOTAS: readonly QuoteReceiptQuota["key"][] = ["CONSUMPTION", "FIXED", "POWER", "REACTIVE", "ONE_OFF", "OTHER", "BONUS"];
 const TAX_QUOTAS: readonly QuoteReceiptQuota["key"][] = ["EXCISE", "VAT", "TAXES"];
 const TAX_SUBS: readonly string[] = ["accise e IVA non separate in fattura", "di cui accise", "di cui IVA"];
 

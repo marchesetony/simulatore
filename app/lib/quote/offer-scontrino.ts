@@ -66,6 +66,8 @@ export function offerScontrino(input: { readonly quotas: readonly QuoteReceiptQu
   if (discount) lines.push({ kind: "item", label: "Sconto commerciale aziendale", amount: cents(discount) });
   // Tony (16/11/2026, "classificazione unica"): the energia reattiva is named as such, never "Altre partite".
   const reactive = quota("REACTIVE"); if (reactive && reactive.offer) lines.push({ kind: "item", label: "Energia reattiva", amount: reactive.offer });
+  // Tony (16/11/2026, "costi una tantum"): the CTE's one-off fee is a cost of the first bill only, named as such.
+  const oneOff = quota("ONE_OFF"); if (oneOff && oneOff.offer) lines.push({ kind: "item", label: "Corrispettivo una tantum (solo prima bolletta)", price: "non ricorrente", amount: oneOff.offer });
   const other = quota("OTHER"); if (other && other.offer) lines.push({ kind: "item", label: "Altre partite", amount: other.offer });
   const excluded = side === "current" ? (input.excluded ?? []).filter((item) => Math.abs(item.amount) >= 0.005) : [];
   for (const item of excluded) lines.push({ kind: "item", label: item.label, amount: cents(item.amount) });
@@ -123,6 +125,8 @@ export function areraNote(receipt: Pick<QuoteReceipt, "officialCheck">): string 
   if (both.every((check) => check.status === "NOT_AVAILABLE" && check.official === null)) return `Rete e oneri dell'offerta: valori della bolletta, non verificati su ARERA (${both.find((check) => check.reason)?.reason ?? "valori ARERA del periodo non disponibili"})`;
   const gap = both.reduce((sum, check) => sum + (check.status === "DIFFERENCE" ? check.difference ?? 0 : 0), 0);
   if (Math.abs(gap) >= 0.01) return `Rete e oneri dell'offerta: valori ARERA del periodo (${money(official)}). La bolletta addebita ${money(Math.abs(gap))} ${gap > 0 ? "in più" : "in meno"} di ARERA`;
+  // Tony (19/11/2026): amounts the bill does not print on their own line are not checked against ARERA, nor called a gap.
+  if (checks.NETWORK.status === "NOT_VERIFIABLE") return `Rete e oneri dell'offerta: valori ARERA del periodo (${money(official)}). Trasporto della bolletta non verificabile: non stampato separatamente`;
   if (both.every((check) => check.status === "VERIFIED")) return `Rete e oneri: verificati sui valori ARERA del periodo (${money(official)}), uguali per ogni fornitore`;
   return `Rete e oneri dell'offerta: valori ARERA del periodo (${money(official)})`;
 }

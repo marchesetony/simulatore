@@ -25,6 +25,15 @@ import { assertProposalInScope } from "./scope.ts";
 
 export const PROPOSAL_CORRELATION_ID = "commercial-proposal-export-v1";
 
+/** The special conditions of a forced offer, from its trace; none for any other offer. A trace that cannot be read stops the
+ *  export rather than producing a forced offer's PDF without its conditions. */
+export async function specialConditionCodesOf(repositories: Pick<ReturnType<typeof runtimeRepositories>, "cteForcingRecords">, tenantId: string, proposalId: string): Promise<readonly string[]> {
+  const trace = await repositories.cteForcingRecords.get(tenantId, proposalId);
+  if (!trace) return [];
+  if (trace.payload.proposalId !== proposalId || trace.payload.tenantId !== tenantId) throw new Error("PROPOSAL_FORCING_TRACE_INVALID");
+  return trace.payload.specialConditions.map((item) => item.code);
+}
+
 export async function readCanonicalProposal(tenantId: string, proposalId: string): Promise<{ readonly record: Awaited<ReturnType<ReturnType<typeof runtimeRepositories>["proposals"]["get"]>>; readonly proposal: ReturnType<typeof assertProposalSnapshot> }> {
   const record = await runtimeRepositories().proposals.get(tenantId, proposalId);
   if (!record) throw new Error("PROPOSAL_NOT_FOUND");
@@ -42,7 +51,7 @@ async function canonicalProposal(body: Record<string, unknown>, tenantId: string
 
 export function proposalError(error: unknown, fallback = "PROPOSAL_REQUEST_INVALID"): Response {
   const code = error instanceof Error && /^[A-Z0-9_:-]+$/.test(error.message) ? error.message : fallback;
-  const status = code === "TENANT_ACCESS_DENIED" ? 403 : code.endsWith("NOT_FOUND") ? 404 : code.includes("MISMATCH") || code.includes("EXCLUDED") || code.startsWith("CTE_COMMERCIAL_") ? 409 : 400;
+  const status = code === "TENANT_ACCESS_DENIED" ? 403 : code.endsWith("NOT_FOUND") ? 404 : code.includes("MISMATCH") || code.includes("EXCLUDED") || code.startsWith("CTE_COMMERCIAL_") || code.startsWith("SOURCE_BILL_") ? 409 : 400;
   return Response.json({ error: { code, message: "Proposal request denied", correlationId: PROPOSAL_CORRELATION_ID } }, { status });
 }
 
@@ -57,7 +66,8 @@ async function receiptPdf(proposal: Awaited<ReturnType<typeof canonicalProposal>
   if (presentation) await repositories.proposalPresentations.put({ tenantId, recordId: proposal.proposalId, payload: presentation, ...(stored ? { expectedVersion: stored.version } : {}) }).catch(() => undefined);
   else presentation = stored?.payload ?? fallbackPresentation(proposal);
   const profile = (await repositories.companyProfiles.get(tenantId, COMPANY_PROFILE_RECORD_ID).catch(() => null))?.payload ?? null;
-  const body = renderReceiptProposal(proposal, presentation, profile);
+  // Tony (20/11/2026): a forced offer's PDF states the conditions applied, read from its trace (never from the request).
+  const body = renderReceiptProposal(proposal, presentation, profile, await specialConditionCodesOf(repositories, tenantId, proposal.proposalId));
   assertProposalOutputSize(body);
   return { format: "PDF", contentType: "application/pdf", filename: safeProposalFilename(proposal, "PDF"), body };
 }

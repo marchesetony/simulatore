@@ -120,6 +120,9 @@ export function classifyBillEconomicComponent(code: string | null | undefined, d
   // seller's own per-kWh charges ("sono dei costi che il venditore camuffa"): they belong to the spesa per la vendita, not to the ARERA transport or the other items.
   if (/^QUOTA_VARIABILE_.*(SMART|CVS)/.test(d)) return "COMMERCIALIZATION_VARIABLE_FEE";
   if (/^QUOTA_VARIABILE_VOCI_DI_/.test(d)) return "OTHER_SELLER_ENERGY_CHARGE";
+  // Tony (19/11/2026, 072248E): the fattura di dettaglio prints "Oneri di sistema (quote variabili / fisse / potenza)" apart
+  // from "Trasporto": the reader gives them the generic network code, but they are oneri generali di sistema, never transport.
+  if (c === "NETWORK_SYSTEM" && (/(^|_)(ASOS|ARIM)(_|$)/.test(d) || /^ONERI_(GENERALI_)?DI_SISTEMA/.test(d))) return "ARERA_SYSTEM_CHARGES";
   if (["NETWORK_SYSTEM", "NETWORK_FIXED", "POWER_CHARGE", "METERING_FIXED", "NETWORK_ENERGY", "NETWORK_POWER", "TRANSMISSION_ENERGY"].includes(c)) return "ARERA_NETWORK";
   if (["ASOS", "ARIM", "UC3", "UC6", "ARERA_SYSTEM_CHARGES"].includes(c)) return "ARERA_SYSTEM_CHARGES";
   if (["TERNA_DISPATCHING_REFERENCES", "DISPATCHING_TERNA_OPERATION", "DISPATCHING_ESSENTIAL_UNITS_REINTEGRATION"].includes(c)) return "TERNA_DISPATCHING_REFERENCES";

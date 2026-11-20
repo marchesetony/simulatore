@@ -1,5 +1,6 @@
 "use client";
 
+import { SPECIAL_CONDITIONS_TITLE, specialConditionsSentence } from "../lib/eligibility/special-conditions";
 import { isValidElement, useCallback, useEffect, useRef, useState, type ChangeEvent, type ReactNode } from "react";
 import type { ProposalPresentation } from "../lib/proposal/presentation";
 import { areraNote, billedMonths, offerScontrino, pairScontrini, type ScontrinoLine, type ScontrinoPairRow } from "../lib/quote/offer-scontrino";
@@ -13,7 +14,7 @@ import { BillArchivePicker } from "./BillArchivePicker";
 import { requestBillDelete, approvedBillEntry, archiveLoadError, canDeleteBills, deleteConfirmText, deleteReportText, deleteSelectedBills, deleteSummaryText, pendingBillEntry, type ArchiveList, type BillArchiveEntry, type BillDeleteReport } from "../lib/ui/bill-archive";
 import { downloadExport, MAX_UPLOAD_BYTES, requestJson, requestUpload, toUiError, UiApiError } from "../lib/ui/client";
 import { buildQuoteReceipt, comparisonAnalysis, effectiveBillSpread, isSameOffer, regulatedVerification, sameCteHeadline, sameOfferDifferences, type QuoteReceipt, type RegulatedDomain } from "../lib/quote/receipt";
-import { annualSaving, annualSavingUnderDiscount } from "../lib/quote/annual-saving";
+import { annualSaving, annualSavingUnderDiscount, quoteCostSummary, type AnnualProjection, type QuoteCostSummary } from "../lib/quote/annual-saving";
 import { customerTypeOf } from "../lib/ingestion/customer-type";
 import { exclusionRank } from "../lib/quote/exclusion-order";
 import { ANNUAL_ESTIMATE_LABEL, resolveAnnualConsumption, type AnnualConsumption } from "../lib/calculation/annual-consumption";
@@ -22,7 +23,7 @@ import { reviewSubmission } from "../lib/ui/bill-review-submission";
 import type { ApprovedBillSummaryModel, BillDocumentModel, CalculationModel, ComparisonModel, ProposalModel } from "../lib/ui/models";
 
 type Step = "bill" | "review" | "offers";
-type Pending = "upload" | "open" | "confirm" | "offers" | "proposal" | "reread" | "technical";
+type Pending = "upload" | "open" | "confirm" | "offers" | "proposal" | "reread" | "technical" | "detail";
 type Context = {
   readonly billId: string; readonly billVersionId: string; readonly vector: "EE" | "GAS"; readonly customerType: "RESIDENTIAL" | "NON_RESIDENTIAL";
   readonly supply: { readonly pod: string | null; readonly pdr: string | null; readonly voltageLevel: "LV" | "MV" | "HV" | "EHV" | null; readonly contractedPowerKw?: number | null; readonly availablePowerKw?: number | null; readonly maximumDrawnPowerKw?: number | null };
@@ -164,14 +165,28 @@ function factValue(bill: BillDocumentModel, ...codes: readonly string[]): string
 }
 // Monthly PCV: the seller's fixed fee (PCV, quota fissa di vendita, commercializzazione) per month, never network or power charges.
 // Over 12 months the energy part scales with the annual consumption, while fixed fees (PCV, annual options such as Flex) count once per month.
-function annualProjection(offer: Offer, context: Context, bill: BillDocumentModel): { readonly saving: number; readonly current: number | null } | null {
+/** Months of the billed period (inclusive end), at least one. */
+export function billedMonthsOf(context: Context): number {
+  const days = (Date.parse(`${context.billingPeriod.periodEnd}T00:00:00Z`) - Date.parse(`${context.billingPeriod.periodStart}T00:00:00Z`)) / 86_400_000 + 1;
+  return Math.max(1, Math.round(days / 30.4375));
+}
+// Tony (16/11/2026, "costi una tantum e risparmio annuo", 070789E with Be Smile 11.25): the charges billed per month are the
+// quota fissa and the quota potenza of each side as the receipt splits them (PCV, rete and oneri), taken from the same bill
+// analysis for every user. They were the bill's PCV read from the technical reading, missing for users without "Dettaglio
+// tecnico": the bill's 18 €/mese then counted as consumption (× 29,6) against 15 €/mese × 12 of the offer, and the annual
+// saving read 499,09 € instead of 113,08 €. Without the monthly quotas the annual saving is not determinable, never guessed.
+export function annualProjection(offer: Offer, context: Context): AnnualProjection | null {
   const basis = annualBasis(context);
   const receipt = offer.receipt;
   if (!basis || receipt.status !== "COMPLETE" || receipt.savings === null) return null;
-  const days = (Date.parse(`${context.billingPeriod.periodEnd}T00:00:00Z`) - Date.parse(`${context.billingPeriod.periodStart}T00:00:00Z`)) / 86_400_000 + 1;
-  const months = Math.max(1, Math.round(days / 30.4375));
-  const net = (category: string) => offer.calculation.components.filter((component) => component.category === category).reduce((sum, component) => sum + (component.sign === "DISCOUNT" ? -1 : 1) * component.amount.amount, 0);
-  const projected = annualSaving({ savings: receipt.savings, currentTotal: receipt.currentTotal, billFixed: (monthlyPcv(bill) ?? 0) * months, offerFixed: net("FIXED_FEE"), oneOff: net("ONE_OFF_FEE"), vat: receipt.taxesIncluded ? 1 + (receipt.vatRate ?? 0) : 1, months, factor: basis.annual / basis.billed });
+  const months = billedMonthsOf(context);
+  const monthly = (side: "current" | "offer") => {
+    const values = receipt.quotas.filter((quota) => quota.key === "FIXED" || quota.key === "POWER").map((quota) => quota[side]);
+    return values.length && values.every((value) => value !== null) ? values.reduce<number>((sum, value) => sum + (value ?? 0), 0) : null;
+  };
+  const billFixed = monthly("current"); const offerFixed = monthly("offer");
+  if (billFixed === null || offerFixed === null) return null;
+  const projected = annualSaving({ savings: receipt.savings, currentTotal: receipt.currentTotal, billFixed, offerFixed, oneOff: receipt.oneOff?.net ?? 0, vat: receipt.taxesIncluded ? 1 + (receipt.vatRate ?? 0) : 1, months, factor: basis.annual / basis.billed });
   // Tony (1/11, "come scrivi risparmio e sotto costo in più sulla be smile flex"): a quote brought under the bill by the company
   // discount keeps that saving on every bill of the year, so its annual saving is the same percentage of the annual cost.
   return annualSavingUnderDiscount(projected, discountOf(offer) !== null, offer.discount?.targetSavingPercent ?? null);
@@ -181,13 +196,13 @@ function annualProjection(offer: Offer, context: Context, bill: BillDocumentMode
  * is not the bill's saving times 12. The consumption part follows the annual kWh (here 2.642 kWh of 6.034: the bill is 44% of
  * the year), the quota fissa is paid every month. When the annual saving is lower, the card says why in one sentence.
  */
-function annualGapNote(offer: Offer, context: Context, bill: BillDocumentModel, saving: number, annual: number, basis: { readonly annual: number; readonly billed: number }): string {
+function annualGapNote(offer: Offer, context: Context, saving: number, annual: number, basis: { readonly annual: number; readonly billed: number }): string {
   if (annual >= saving - 0.005) return "";
-  const days = (Date.parse(`${context.billingPeriod.periodEnd}T00:00:00Z`) - Date.parse(`${context.billingPeriod.periodStart}T00:00:00Z`)) / 86_400_000 + 1;
-  const months = Math.max(1, Math.round(days / 30.4375));
+  const months = billedMonthsOf(context);
   const share = Math.round(basis.billed / basis.annual * 100);
-  const billPcv = monthlyPcv(bill);
-  const offerPcv = offer.calculation.components.filter((component) => component.category === "FIXED_FEE").reduce((sum, component) => sum + (component.sign === "DISCOUNT" ? -1 : 1) * component.amount.amount, 0) / months;
+  const fixedQuota = offer.receipt.quotas.find((quota) => quota.key === "FIXED");
+  const billPcv = fixedQuota?.currentSeller == null ? null : fixedQuota.currentSeller / months;
+  const offerPcv = (fixedQuota?.offerSeller ?? 0) / months;
   const unit = context.vector === "EE" ? "kWh" : "Smc";
   const consumption = `il consumo di questa bolletta (${amount(basis.billed, unit)}) è il ${share}% di quello annuo`;
   const fixed = billPcv !== null && offerPcv > billPcv + 0.005 ? `, mentre la quota fissa di vendita dell'offerta (${euro(offerPcv)} al mese contro ${euro(billPcv)} della bolletta) si paga per 12 mesi` : "";
@@ -412,7 +427,7 @@ function offersFrom(bill: BillDocumentModel, context: Context, candidates: reado
     // Only the CTEs the eligibility check allows for this bill are offered.
     const candidate = candidates.find((item) => item.archiveId === calculation.sourceCte.archiveId && (item.finalStatus === "ELIGIBLE" || item.finalStatus === "ELIGIBLE_BY_OVERRIDE"));
     if (!candidate) return [];
-    const receipt = buildQuoteReceipt({ vector: calculation.vector, offerSupplyCost: calculation.totalCommercialCost.amount, analysis: comparisonAnalysis(bill.analystReview.economics), domestic: context.classification.domestic, validUntil: candidate.validity.periodEnd, offerComponents: calculation.components, warnings: calculation.warnings, householdSpread: householdSpreadOf(context, calculation), commercialDiscount: discount });
+    const receipt = buildQuoteReceipt({ vector: calculation.vector, offerSupplyCost: calculation.totalCommercialCost.amount, analysis: comparisonAnalysis(bill.analystReview.economics), printedNetwork: printedTransport(bill), domestic: context.classification.domestic, validUntil: candidate.validity.periodEnd, offerComponents: calculation.components, warnings: calculation.warnings, householdSpread: householdSpreadOf(context, calculation), commercialDiscount: discount });
     return [{ rank: entry.rank, calculation, supplier: entry.supplier, offerName: candidate.offer.name || entry.offerCode, receipt, candidate, discount }];
   });
 }
@@ -425,10 +440,13 @@ const UNLISTED_LABEL: Readonly<Record<string, string>> = { NOT_APPROVED: "CTE no
 // Tony (29/10, "la cte di questa è la BE SMILE ma non la vedo"): the CTEs left out are listed with their reason also when
 // other offers are shown.
 // Tony (29/10): whoever holds the permission authorizes, for this bill, a CTE the rules leave out, giving a reason.
+/** Same limit as the server (OVERRIDE_REASON_MAX_LENGTH): the reason goes whole into the mandatory audit. */
+const OVERRIDE_REASON_LIMIT = 256;
+
 function AuthorizeCte({ onAuthorize }: { readonly onAuthorize: (reason: string) => Promise<void> }): ReactNode {
   const [open, setOpen] = useState(false); const [reason, setReason] = useState(""); const [busy, setBusy] = useState(false); const [failure, setFailure] = useState<string>();
   if (!open) return <button className="button secondary compact" type="button" onClick={() => setOpen(true)}>Autorizza per questa bolletta</button>;
-  return <span className="quote-authorize"><input aria-label="Motivo dell'autorizzazione" placeholder="Motivo (es. contratto già firmato con questa offerta)" value={reason} maxLength={500} onChange={(event) => setReason(event.target.value)} disabled={busy} /><button className="button primary compact" type="button" disabled={busy || !reason.trim()} onClick={() => { setBusy(true); setFailure(undefined); void onAuthorize(reason.trim()).catch((cause) => { setFailure(message(cause)); setBusy(false); }); }}>{busy ? "Autorizzazione" : "Conferma"}</button><button className="button secondary compact" type="button" disabled={busy} onClick={() => setOpen(false)}>Annulla</button>{failure ? <small className="negative">{failure}</small> : null}</span>;
+  return <span className="quote-authorize"><input aria-label="Motivo dell'autorizzazione" placeholder="Motivo (es. contratto già firmato con questa offerta)" value={reason} onChange={(event) => setReason(event.target.value)} disabled={busy} /><button className="button primary compact" type="button" disabled={busy || !reason.trim() || reason.trim().length > OVERRIDE_REASON_LIMIT} onClick={() => { setBusy(true); setFailure(undefined); void onAuthorize(reason.trim()).catch((cause) => { setFailure(message(cause)); setBusy(false); }); }}>{busy ? "Autorizzazione" : "Conferma"}</button><button className="button secondary compact" type="button" disabled={busy} onClick={() => setOpen(false)}>Annulla</button>{/* Tony (20/11/2026): never cut a reason; say it is too long and how much. */}<small className={reason.trim().length > OVERRIDE_REASON_LIMIT ? "negative" : "muted"}>{reason.trim().length > OVERRIDE_REASON_LIMIT ? `Motivo troppo lungo: ${reason.trim().length} caratteri su ${OVERRIDE_REASON_LIMIT}. Accorcialo per confermare.` : `${reason.trim().length}/${OVERRIDE_REASON_LIMIT}`}</small>{failure ? <small className="negative">{failure}</small> : null}</span>;
 }
 
 /** The CTEs the agent can calculate with when the automatic choice failed, one button each (Tony, 31/10). */
@@ -690,6 +708,11 @@ function billOfferName(bill: BillDocumentModel | null, context: Context): string
   const name = context.currentOffer?.name?.trim() || receipt?.offerName.value?.trim() || bill?.structuredBill?.documentOfferName?.trim() || null;
   return name ? name.replace(/\s*\((?=[A-Z0-9]*\d)[A-Z0-9]{10,}\)\s*$/, "").replace(/\s+/g, " ").trim() || null : null;
 }
+// The transport the bill prints apart (its printed components), if any: the ARERA check is made on it (Tony 19/11/2026).
+function printedTransport(bill: BillDocumentModel): number | null {
+  const items = (bill.structuredBill?.printedComponents ?? []).filter((item) => item.category === "NETWORK");
+  return items.length ? Math.round(items.reduce((total, item) => total + item.amount, 0) * 100) / 100 : null;
+}
 // Official check of the regulated charges, shown under each section and charge it covers.
 const SOURCE_OF: Readonly<Record<RegulatedDomain, string>> = { NETWORK: "ARERA", SYSTEM_CHARGES: "ARERA", DISPATCHING: "Terna/ARERA", CAPACITY_MARKET: "Terna" };
 const DOMAIN_OF_ROW: Readonly<Record<string, RegulatedDomain>> = { NETWORK: "NETWORK", SYSTEM: "SYSTEM_CHARGES", DISPATCHING: "DISPATCHING", CAPACITY: "CAPACITY_MARKET" };
@@ -698,6 +721,12 @@ function VerificationNote({ bill, rowKey, receipt }: { readonly bill: BillDocume
   if (!domain) return null;
   // Transport and system charges: the bill's aggregates against the official ARERA amounts on the same consumption.
   const official = rowKey === "NETWORK" || rowKey === "SYSTEM" ? receipt?.officialCheck?.[rowKey] : undefined;
+  // Tony (19/11/2026): a transport derived by difference from the sintetica is not billed on its own line, so it is never
+  // shown as a "maggiore addebito ARERA"; the gap of the sintetica's aggregate is shown per quota, to check on the dettaglio.
+  if (official?.status === "NOT_VERIFIABLE") {
+    const gaps = official.aggregateGaps ?? [];
+    return <small className="quote-check open">Non verificabile su ARERA: {official.reason}{gaps.length ? `. Scostamento dell'aggregato sintetico rispetto al trasporto ARERA: ${gaps.map((gap) => `${gap.label} ${gap.gap > 0 ? "+" : "−"}${EURO.format(Math.abs(gap.gap))}`).join(", ")}, da verificare sulla fattura di dettaglio` : ""}. La simulazione applica i valori ARERA ({EURO.format(official.official ?? 0)}).</small>;
+  }
   if (official?.status === "VERIFIED") return <small className="quote-check ok">✓ Verificato sui valori ARERA del periodo ({EURO.format(official.official ?? 0)})</small>;
   // Tony (31/10): the note says how the bill and the simulation each stand against ARERA, not the gap between the two columns.
   if (official?.status === "DIFFERENCE" && official.difference !== null) {
@@ -757,7 +786,9 @@ function offerBoxRows(offer: Offer, bill: BillDocumentModel, context: Context): 
   const billSpread = !billFixed && bill.currentSpread?.status === "CALCULATED" ? bill.currentSpread.spread : null;
   // What the household bill really charges above the index, against the CTE's single spread (Tony, 29/10).
   const effective = ee && billSpread !== null ? effectiveBillSpread(offer.receipt, offer.calculation.components) : null;
-  const billPcv = monthlyPcv(bill);
+  // The PCV read from the bill, else the seller's part of the quota fissa of the same analysis (users without the technical reading).
+  const fixedSeller = offer.receipt.quotas.find((quota) => quota.key === "FIXED")?.currentSeller ?? null;
+  const billPcv = monthlyPcv(bill) ?? (fixedSeller === null ? null : fixedSeller / billedMonthsOf(context));
   const billUnit = energyRow?.current != null && basis ? energyRow.current / basis.billed : null;
   const index = offer.candidate.pricingReference === "PSV" || !ee ? "PSV" : "PUN";
   const offerType = offer.candidate.pricingType === "FIXED" ? "Prezzo fisso" : offer.candidate.pricingType === "INDEXED" ? `Indicizzato ${index}` : "Non indicato";
@@ -862,9 +893,25 @@ function ScontrinoTable({ title, lines, empty }: { readonly title: string; reado
     </table> : <p className="inline-warning">{empty}</p>}
   </div>;
 }
+/** Tony (16/11/2026): the one-off initial cost apart from the recurring cost, then the comparable month and the year. */
+export function QuoteCosts({ costs, taxesIncluded }: { readonly costs: QuoteCostSummary; readonly taxesIncluded: boolean }): ReactNode {
+  const taxes = taxesIncluded ? "imposte comprese" : "imposte escluse";
+  return <div className="quote-costs" role="group" aria-label="Costi una tantum, ricorrenti e annui">
+    <div className="responsive-table"><table>
+      <thead><tr><th scope="col">Confronto ({taxes})</th><th scope="col">Bolletta attuale</th><th scope="col">Nuova offerta</th><th scope="col">Risparmio</th></tr></thead>
+      <tbody>
+        <tr><th scope="row">Costo simulato del periodo{costs.oneOff ? " (prima bolletta)" : ""}</th><td>{euro(costs.periodCurrent)}</td><td>{euro(costs.periodOffer)}</td><td>{euro(costs.periodSaving)}</td></tr>
+        {costs.oneOff ? <tr><th scope="row">di cui costo iniziale una tantum<small>{EURO.format(costs.oneOff.net)} € {taxesIncluded ? `+ IVA ${EURO.format(costs.oneOff.taxes)} €, ` : ""}dovuto una sola volta, sulla prima bolletta della nuova fornitura</small></th><td>—</td><td>{euro(costs.oneOff.total)}</td><td>—</td></tr> : null}
+        {costs.oneOff ? <tr><th scope="row">Costo ricorrente del periodo</th><td>{euro(costs.periodCurrent)}</td><td>{euro(costs.periodOfferRecurring)}</td><td>{euro(costs.periodRecurringSaving)}</td></tr> : null}
+        <tr><th scope="row">Costo mensile ricorrente confrontabile<small>{costs.monthly.basis === "ANNUAL_AVERAGE" ? "media mensile della spesa annua, senza una tantum" : "costo ricorrente del periodo per mese, senza una tantum"}</small></th><td>{euro(costs.monthly.current)}</td><td>{euro(costs.monthly.offer)}</td><td>{euro(costs.monthly.saving)}</td></tr>
+        {costs.annual ? <tr><th scope="row">Spesa annua prevista<small>{costs.annual.oneOff ? `ricorrente ${EURO.format(costs.annual.offerRecurring)} € + una tantum ${EURO.format(costs.annual.oneOff)} € una sola volta` : "nessun costo una tantum"}</small></th><td>{euro(costs.annual.current)}</td><td>{euro(costs.annual.offer)}</td><td>{euro(costs.annual.saving)}</td></tr> : null}
+      </tbody>
+    </table></div>
+  </div>;
+}
 function Receipt({ offer: quoted, today, business, context, bill, onPresentation, showExcluded = false }: { readonly showExcluded?: boolean; readonly offer: Offer; readonly today: string; readonly business: boolean; readonly context: Context; readonly bill: BillDocumentModel; readonly onPresentation?: (presentation: ProposalPresentation) => void }): ReactNode {
   const [offerVatRate, setOfferVatRate] = useState<number | null>(null);
-  const receipt = offerVatRate === null ? quoted.receipt : buildQuoteReceipt({ vector: quoted.calculation.vector, offerSupplyCost: quoted.calculation.totalCommercialCost.amount, analysis: comparisonAnalysis(bill.analystReview.economics), domestic: context.classification.domestic, validUntil: quoted.candidate.validity.periodEnd, offerComponents: quoted.calculation.components, warnings: quoted.calculation.warnings, offerVatRate, householdSpread: householdSpreadOf(context, quoted.calculation), commercialDiscount: quoted.discount ?? null });
+  const receipt = offerVatRate === null ? quoted.receipt : buildQuoteReceipt({ vector: quoted.calculation.vector, offerSupplyCost: quoted.calculation.totalCommercialCost.amount, analysis: comparisonAnalysis(bill.analystReview.economics), printedNetwork: printedTransport(bill), domestic: context.classification.domestic, validUntil: quoted.candidate.validity.periodEnd, offerComponents: quoted.calculation.components, warnings: quoted.calculation.warnings, offerVatRate, householdSpread: householdSpreadOf(context, quoted.calculation), commercialDiscount: quoted.discount ?? null });
   const offer: Offer = { ...quoted, receipt };
   // Tony (1/11, "mancano i kwh sulla quale si calcola il costo, serve anche il costo per kwh"): the kWh of the period (same for
   // both columns) and, on every line priced per kWh, its cost per kWh.
@@ -879,7 +926,7 @@ function Receipt({ offer: quoted, today, business, context, bill, onPresentation
   // Same saving per kWh (or Smc) as on the bill, simulated over 12 months of the annual consumption.
   const basis = annualBasis(context);
   const factor = basis ? basis.annual / basis.billed : null;
-  const projection = annualProjection(offer, context, bill);
+  const projection = annualProjection(offer, context);
   const annualSaving = projection?.saving ?? null;
   const annualCurrent = projection?.current ?? (receipt.currentTotal !== null && factor !== null ? receipt.currentTotal * factor : null);
   const unit = context.vector === "EE" ? "kWh" : "Smc";
@@ -891,7 +938,7 @@ function Receipt({ offer: quoted, today, business, context, bill, onPresentation
   const same = isSameOffer({ billSupplier: context.currentSupplier, billOffer: currentOffer, offerSupplier: offer.supplier, offerCode: offer.calculation.sourceCte.offerCode, offerName: offer.offerName });
   // Tony (16/11/2026): with the same CTE the gap is a recalculation gap, never by itself "the bill charges more than due".
   const headline = same ? sameCteHeadline(receipt.savingsPercent) : saving >= 0 ? "Risparmio sulla bolletta caricata" : "Costo in più sulla bolletta caricata";
-  const note = basis && annualSaving !== null && !same ? annualGapNote(offer, context, bill, saving, annualSaving, basis) : "";
+  const note = basis && annualSaving !== null && !same ? annualGapNote(offer, context, saving, annualSaving, basis) : "";
   // Tony (12/11/2026, regola 10): an annual saving on an estimated consumption says so, here and in the proposal.
   const basisText = basis ? basis.estimated ? `Risparmio annuo calcolato su consumi stimati: ${quantityText(basis.annual, unit)}, ${ANNUAL_ESTIMATE_LABEL}, ${annualEstimateOrigin(basis.detail, unit)}` : `Simulato su 12 mesi con ${quantityText(basis.annual, unit)} di consumo annuo dichiarato in bolletta` : "";
   const basisLabel = basis ? `${basisText}${note ? `. ${note}` : ""}` : "";
@@ -901,7 +948,10 @@ function Receipt({ offer: quoted, today, business, context, bill, onPresentation
   const regulatedNote = areraNote(receipt);
   const offerLines: readonly ScontrinoLine[] = regulatedNote ? [...scontrino, { kind: "sub", label: regulatedNote, amount: null }] : scontrino;
   const billScontrino = receipt.status === "COMPLETE" ? offerScontrino({ quotas: receipt.quotas, offerTotal: receipt.currentTotal, taxesIncluded: receipt.taxesIncluded, vector: context.vector, quantity: periodQuantity, months: billedMonths(context.billingPeriod.periodStart, context.billingPeriod.periodEnd), powerKw: powerQuotaKw(context), side: "current", excluded: billOutsideComparison(comparisonAnalysis(bill.analystReview.economics), receipt.currentTotal) }) : [];
-  const presentation = { ...presentationOf(offer, receipt, bill, context, same ? null : annualSaving, annualCurrent, basisLabel, same), scontrino: offerLines, billScontrino };
+  // Tony (16/11/2026, "costi una tantum e risparmio annuo"): period, one-off, recurring monthly and annual, one source for
+  // the screen and the proposal.
+  const costs = receipt.status === "COMPLETE" && !same ? quoteCostSummary(receipt, billedMonthsOf(context), projection) : null;
+  const presentation = { ...presentationOf(offer, receipt, bill, context, same ? null : annualSaving, annualCurrent, basisLabel, same), scontrino: offerLines, billScontrino, ...(costs ? { costs } : {}) };
   const presentationKey = JSON.stringify(presentation);
   useEffect(() => { onPresentation?.(JSON.parse(presentationKey) as ProposalPresentation); }, [presentationKey, onPresentation]);
   return <section className="ui-card quote-receipt" aria-label="Scontrino dell'energia">
@@ -917,6 +967,7 @@ function Receipt({ offer: quoted, today, business, context, bill, onPresentation
         {annualCurrent ? <small>Spesa annua attuale {euro(annualCurrent)} · con la nuova offerta {euro(annualCurrent - annualSaving)}{receipt.taxesIncluded ? " (imposte comprese)" : " (imposte escluse)"}</small> : null}</span>
       <strong>{euro(Math.abs(annualSaving))}{annualCurrent ? ` (${PERCENT.format(Math.abs(annualSaving / annualCurrent * 100))}%)` : ""}</strong>
     </div> : null}
+    {costs ? <QuoteCosts costs={costs} taxesIncluded={receipt.taxesIncluded} /> : null}
     {receipt.status === "COMPLETE" ? null : <p className="inline-warning" role="status">La bolletta non riporta la spesa per la vendita di energia: mostriamo solo il costo della nuova offerta.</p>}
     {/* Tony (1/11): the new offer as a real bill's "Scontrino dell'energia" (ARERA facsimile), beside the uploaded bill's own
         scontrino ("dove è lo scontrino della fattura?"), then the comparison. */}
@@ -1158,6 +1209,34 @@ export default function QuickQuoteFlow({ readonly, showExcluded = false }: { rea
     <button className="button secondary" type="button" onClick={() => void rereadAnalyst(bill.id)} disabled={Boolean(pending)}>{pending === "reread" ? "Lettura delle voci in corso…" : "Rileggi le voci della bolletta"}</button>
   </details></>;
 
+  // Tony (19/11/2026): the fattura di dettaglio issued as a separate PDF is linked to the sintetica already loaded. The server
+  // links it only when it is the same invoice of the same supply point; the sintetica stays the total, the detail the split.
+  const [detailChecks, setDetailChecks] = useState<readonly { readonly code: string; readonly outcome: string; readonly message: string }[]>([]);
+  const linkDetail = async (billId: string, event: ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0]; event.target.value = "";
+    if (!file || readonly || pending) return;
+    if (file.size > MAX_BILL_BYTES) { setError("Il file supera 20 MB."); return; }
+    setPending("detail"); setError(undefined); setDetailChecks([]);
+    try {
+      const result = await requestUpload<{ readonly document: BillDocumentModel; readonly checks: readonly { readonly code: string; readonly outcome: string; readonly message: string }[] }>(`/api/bills/${encodeURIComponent(billId)}/detail`, file);
+      setDetailChecks(result.checks);
+      setQuote(null); setProposal(null);
+      setDraft(result.document);
+      startReview(result.document);
+    } catch (cause) {
+      const failure = toUiError(cause);
+      setError(`Fattura di dettaglio non collegata. ${failure.message}${failure.detail ? ` ${failure.detail}.` : ""}`);
+    } finally { setPending(undefined); }
+  };
+  const billDetailLink = (bill: BillDocumentModel) => readonly ? null : bill.detailDocument
+    ? <p className="muted" role="status">Fattura di dettaglio collegata ({bill.detailDocument.fileName}): prevale per la ripartizione delle voci, il totale resta quello della sintetica.</p>
+    : <details className="bill-reread">
+      <summary>Collega la fattura di dettaglio</summary>
+      <p className="muted">Se il venditore emette la fattura di dettaglio in un PDF separato, caricala qui: viene collegata solo se fornitore, POD, periodo, numero e data del documento e importi coincidono con questa bolletta. Il totale resta quello della sintetica, la ripartizione delle voci quella del dettaglio.</p>
+      <label className="button secondary">{pending === "detail" ? "Collegamento in corso…" : "Scegli il PDF della fattura di dettaglio"}<input type="file" accept="application/pdf" hidden onChange={(event) => void linkDetail(bill.id, event)} disabled={Boolean(pending)} /></label>
+      {detailChecks.length ? <ul>{detailChecks.map((check) => <li key={check.code}>{check.outcome === "OK" ? "✓" : check.outcome === "FAILED" ? "✗" : "–"} {check.message}</li>)}</ul> : null}
+    </details>;
+
   // An already loaded bill opens on its read data first, like a new upload.
   const openBill = async (billId: string) => {
     if (pending) return;
@@ -1250,7 +1329,7 @@ export default function QuickQuoteFlow({ readonly, showExcluded = false }: { rea
           </div> : null}
           {deleteReports.length ? <div className="bill-archive-report" role="status"><p><strong>{deleteSummaryText(deleteReports)}</strong></p><ul>{deleteReports.map((report) => <li key={report.id} className={report.result === "DELETED" ? "inline-success" : "warning-text"}>{report.label}: {deleteReportText(report)}</li>)}</ul></div> : null}
           {canDelete && !readonly && archive.length ? <details className="quote-bill-manage"><summary>Cancella bollette caricate</summary>
-            <p className="muted">Le bollette con data di oltre 4 mesi fa vengono eliminate in automatico.</p>
+            <p className="muted">Qui compaiono le bollette degli ultimi 4 mesi; le altre restano nell&apos;Archivio bollette.</p>
             <ul>{billChoices(archive, billQuery).map((bill) => <li key={bill.id}><span>{billLabel(bill)}</span>{deleteId === bill.id
               ? <span className="button-row"><button className="button compact danger" type="button" onClick={() => void deleteBill(bill.id)} disabled={readonly || deleting}>{deleting ? "Cancellazione…" : "Conferma"}</button><button className="button compact secondary" type="button" onClick={() => setDeleteId(null)} disabled={deleting}>Annulla</button></span>
               : <button className="button compact danger" type="button" onClick={() => setDeleteId(bill.id)} disabled={readonly || deleting}>Cancella</button>}</li>)}</ul>
@@ -1260,6 +1339,7 @@ export default function QuickQuoteFlow({ readonly, showExcluded = false }: { rea
     {step === "review" && draft ? <section className="ui-card">
       <h3>Dati letti dalla bolletta</h3><p className="muted">Usati per trovare le CTE adatte.</p>
       {analystRetry(draft) ?? billReread(draft)}
+      {billDetailLink(draft)}
       {/* Tony (5/11/2026): what does not add up after the reading, or is not printed, is said here instead of a wrong number. */}
       {readBill?.structuredBill?.readingChecks?.length ? <div className="warning-text" role="status"><strong>Da controllare sulla bolletta</strong><ul>{readBill.structuredBill.readingChecks.map((check) => <li key={check}>{check}</li>)}</ul></div> : null}
       {readBill ? <BillReadDetails sections={billReadSections(readBill)} calculated={calculatedFacts(readBill)} /> : null}
@@ -1279,18 +1359,21 @@ export default function QuickQuoteFlow({ readonly, showExcluded = false }: { rea
       <section className="ui-card"><h3>Offerte utilizzabili per {quote.context.vector === "EE" ? "questa fornitura di luce" : "questa fornitura di gas"}</h3>
         {visibleOffers.length ? <div className="quote-offers">{visibleOffers.map((offer, index) => <button key={offer.calculation.calculationId} type="button" className={`quote-offer${offer.calculation.calculationId === selectedId ? " selected" : ""}${index === 0 ? " best" : ""}`} onClick={() => { setSelectedId(offer.calculation.calculationId); setProposal(null); }} aria-pressed={offer.calculation.calculationId === selectedId}>
           {index === 0 ? <span className="status-badge positive">La più conveniente</span> : null}
-          {offer.candidate.finalStatus === "ELIGIBLE_BY_OVERRIDE" ? <span className="status-badge">Autorizzata per questa bolletta</span> : null}
+          {/* Tony (20/11/2026): a forced offer states the conditions actually applied, never who authorized it. */}
+          {offer.candidate.finalStatus === "ELIGIBLE_BY_OVERRIDE" ? <><span className="status-badge">{SPECIAL_CONDITIONS_TITLE}</span><small className="quote-offer-scope">{specialConditionsSentence(offer.candidate.reasonCodes)}</small></> : null}
           {chosen[offer.calculation.calculationId] ? <small className="quote-offer-scope">Scelta con motivazione: {chosen[offer.calculation.calculationId]}</small> : null}
           <strong>{offer.supplier}</strong><span>{offer.offerName}</span>
           {termLines(offer.candidate).map((line) => <span key={line} className="quote-offer-term">{line}</span>)}
           {offer.candidate.scope ? <small className="quote-offer-scope">Per {offer.candidate.scope.customer}{offer.candidate.scope.voltage.length ? ` · ${offer.candidate.scope.voltage.map((level) => level === "LV" ? "BT" : level === "MV" ? "MT" : level === "HV" ? "AT" : level).join("/")}` : ""}{offer.candidate.scope.consumption ? ` · consumo ${offer.candidate.scope.consumption}` : ""}</small> : null}
           <span className="quote-offer-total">{euro(offer.receipt.offerTotal ?? offer.receipt.rows[0].offer)}</span>
+          {/* Tony (16/11/2026): the one-off is a cost of the first bill only, said beside the total it is part of. */}
+          {offer.receipt.oneOff ? <small className="quote-offer-scope">di cui {euro(offer.receipt.oneOff.total)} una tantum, solo sulla prima bolletta</small> : null}
           {/* Tony (3/11): "un totale presentato come definitivo, quando mancano componenti economiche rilevanti, sarebbe fuorviante". */}
           {offer.receipt.undetermined?.length ? <small className="quote-offer-scope negative">Totale provvisorio: non determinabili {offer.receipt.undetermined.join(", ").toLowerCase()}</small> : null}
           {/* Tony (1/11): two quotes at the same discounted price still say which one costs more before the discount. */}
           {(() => { const off = discountOf(offer); if (off === null || offer.receipt.offerTotal === null) return null; const gross = offer.receipt.offerTotal + off * (offer.receipt.taxesIncluded ? 1 + (offer.receipt.vatRate ?? 0) : 1); return <small className="quote-offer-scope">Prezzo pieno {euro(Math.round(gross * 100) / 100)}, con sconto commerciale aziendale</small>; })()}
           {offer.receipt.savingsPercent !== null ? <small className={offer.receipt.savingsPercent >= 0 ? "positive" : "negative"}>{offer.receipt.savingsPercent >= 0 ? "Risparmio" : "Più cara"} {PERCENT.format(Math.abs(offer.receipt.savingsPercent))}%</small> : null}
-          {(() => { if (isSameOffer({ billSupplier: quote.context.currentSupplier, billOffer: billOfferName(quote.bill, quote.context), offerSupplier: offer.supplier, offerCode: offer.calculation.sourceCte.offerCode, offerName: offer.offerName })) return <small>Stessa CTE della bolletta: verifica di fatturazione</small>; const projection = annualProjection(offer, quote.context, quote.bill); return projection ? <small className={projection.saving >= 0 ? "positive" : "negative"}>{projection.saving >= 0 ? "Risparmio annuo previsto" : "Costo in più annuo"} {euro(Math.abs(projection.saving))}</small> : null; })()}
+          {(() => { if (isSameOffer({ billSupplier: quote.context.currentSupplier, billOffer: billOfferName(quote.bill, quote.context), offerSupplier: offer.supplier, offerCode: offer.calculation.sourceCte.offerCode, offerName: offer.offerName })) return <small>Stessa CTE della bolletta: verifica di fatturazione</small>; const projection = annualProjection(offer, quote.context); return projection ? <small className={projection.saving >= 0 ? "positive" : "negative"}>{projection.saving >= 0 ? "Risparmio annuo previsto" : "Costo in più annuo"} {euro(Math.abs(projection.saving))}</small> : null; })()}
           <small>Valida fino al {date(offer.receipt.validUntil)}</small>
         </button>)}</div> : null}
         {showExcluded && incoherentOffers(quote.offers).length ? <div className="quote-check open" role="alert"><strong>Verifica di coerenza non superata</strong><ul>{incoherentOffers(quote.offers).map((issue) => <li key={issue}>{issue}</li>)}</ul></div> : null}

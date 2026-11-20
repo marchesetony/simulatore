@@ -40,14 +40,36 @@ export interface QuoteReceipt {
   readonly quotas: readonly QuoteReceiptQuota[];
   /** The bill's transport and system charges checked against the official ARERA values computed on the same consumption. */
   readonly officialCheck?: Readonly<Record<"NETWORK" | "SYSTEM", OfficialCheck>>;
+  /** Tony (19/11/2026, "prevalenza dettaglio per componenti, sintetica per totale"): how the bill column was split, and where
+   *  the quadro sintetico and the fattura di dettaglio of the same document split the same total differently. */
+  readonly summaryDetail?: SummaryDetailComparison;
   /** Bill items left out of the comparison (prior-period adjustments, late-payment interest, deposits, TV licence...). */
   readonly excluded?: readonly { readonly label: string; readonly amount: number }[];
   /** Tony (3/11, Atlante delle voci): charges the CTE does not make determinable (losses, dispatching, capacity). While any
    *  is listed the offer total is not definitive and is shown as such. */
   readonly undetermined?: readonly string[];
+  /** Tony (16/11/2026, "costi una tantum"): the CTE's one-off fees in this simulation (first bill of the new supply only), net,
+   *  their VAT and the total. Already inside offerTotal; the recurring bill is offerTotal minus total. */
+  readonly oneOff?: { readonly net: number; readonly taxes: number; readonly total: number } | null;
 }
-export interface OfficialCheck { readonly status: "VERIFIED" | "DIFFERENCE" | "NOT_AVAILABLE"; readonly official: number | null; readonly difference: number | null; readonly reason: string | null }
-export type QuoteReceiptQuotaKey = "CONSUMPTION" | "FIXED" | "POWER" | "REACTIVE" | "OTHER" | "BONUS" | "EXCISE" | "VAT" | "TAXES";
+/** NOT_VERIFIABLE (Tony 19/11/2026): the bill's amount is not printed on its own but derived by difference from an aggregate
+ *  of the quadro sintetico, so it is never compared with ARERA as if it were billed; the gap per quota is only exposed. */
+export interface OfficialCheck { readonly status: "VERIFIED" | "DIFFERENCE" | "NOT_AVAILABLE" | "NOT_VERIFIABLE"; readonly official: number | null; readonly difference: number | null; readonly reason: string | null; readonly aggregateGaps?: readonly AggregateGap[] }
+/** A quota of the quadro sintetico whose "rete e oneri" less the oneri differs from the ARERA transport of the same quota. */
+export interface AggregateGap { readonly quota: "CONSUMPTION" | "FIXED" | "POWER"; readonly label: string; readonly derived: number; readonly official: number; readonly gap: number }
+/** One quota where the quadro sintetico and the fattura di dettaglio split the same money differently. */
+export interface SummaryDetailQuotaDifference { readonly quota: "CONSUMPTION" | "FIXED" | "POWER"; readonly label: string; readonly summarySeller: number | null; readonly detailSeller: number; readonly summaryNetworkAndSystem: number | null; readonly detailNetworkAndSystem: number }
+export interface SummaryDetailComparison {
+  /** DETAIL_PREVAILS: detail lines for vendita, trasporto and oneri whose sum equals the sintetica's; the detail gives the split.
+   *  INCOHERENT: detail lines whose sum differs from the sintetica's: no association is assumed, the sintetica is kept.
+   *  SUMMARY_ONLY: no detail lines for the three families: the sintetica as printed, nothing derived counts as printed. */
+  readonly status: "DETAIL_PREVAILS" | "INCOHERENT" | "SUMMARY_ONLY";
+  readonly summary: { readonly seller: number | null; readonly networkAndSystem: number | null };
+  readonly detail: { readonly seller: number | null; readonly network: number | null; readonly system: number | null };
+  readonly quotas: readonly SummaryDetailQuotaDifference[];
+  readonly note: string | null;
+}
+export type QuoteReceiptQuotaKey = "CONSUMPTION" | "FIXED" | "POWER" | "REACTIVE" | "ONE_OFF" | "OTHER" | "BONUS" | "EXCISE" | "VAT" | "TAXES";
 /** One line of the scontrino: what the bill paid, what the simulated CTE pays, and how much of it is the seller's. */
 export interface QuoteReceiptQuota { readonly key: QuoteReceiptQuotaKey; readonly label: string; readonly basis: string; readonly current: number | null; readonly offer: number | null; readonly difference: number | null; readonly currentSeller: number | null; readonly offerSeller: number | null; readonly details: readonly QuoteReceiptDetail[] }
 /** One named charge inside a quota (energia, dispacciamento, capacity, sbilanciamento, PCV, trasporto, oneri), bill against CTE. */
@@ -74,6 +96,9 @@ export interface QuoteReceiptInput {
   readonly warnings?: readonly string[];
   /** Household offer from 1/4/2026: one spread covers commercializzazione and sbilanciamento (delibera 386/2025, Tony 29/10). */
   readonly householdSpread?: boolean;
+  /** Transport printed apart in the bill (its printed components), when the bill column can only derive it from the sintetica:
+   *  the ARERA check is then made on this printed amount (Tony 19/11/2026). */
+  readonly printedNetwork?: number | null;
   /** The company's commercial discount for quotes costing slightly more than the bill (Tony, 1/11). */
   readonly commercialDiscount?: Pick<CommercialDiscountPolicy, "enabled" | "maxGapPercent" | "targetSavingPercent"> | null;
 }
@@ -294,6 +319,9 @@ function offerDetail(component: QuoteReceiptOfferComponent): string {
 
 function quotasOf(input: QuoteReceiptInput, currentEnergy: number | null, offerEnergy: number, network: number | null, system: number | null, currentTaxes: number | null, offerTaxes: number | null, offerNetwork: number | null = network, offerSystem: number | null = system): readonly QuoteReceiptQuota[] {
   const hasOfficial = officialOf(input, "NETWORK").length + officialOf(input, "SYSTEM").length > 0;
+  // Tony (19/11/2026): with a verified fattura di dettaglio its lines give each quota's split; the per-quota anchoring to the
+  // sintetica below is for details read only in part.
+  const detailPrevails = summaryDetailComparison(input).status === "DETAIL_PREVAILS";
   const lines = (input.analysis?.components ?? []).filter((line) => line.includedInReconciliation !== false && !line.aggregate && SUPPLY_GROUPS.has(line.group ?? ""));
   const bill = { CONSUMPTION: { all: 0, seller: 0 }, FIXED: { all: 0, seller: 0 }, POWER: { all: 0, seller: 0 } };
   const detail = { CONSUMPTION: new Map<string, { current: number | null; offer: number | null }>(), FIXED: new Map<string, { current: number | null; offer: number | null }>(), POWER: new Map<string, { current: number | null; offer: number | null }>(), ONE_OFF: new Map<string, { current: number | null; offer: number | null }>() };
@@ -312,7 +340,7 @@ function quotasOf(input: QuoteReceiptInput, currentEnergy: number | null, offerE
   // alla fattura reale"): the detail read had only the oneri of the quota fissa (1,33 €) and left out the rete (2,41 €). The bill
   // column follows the quadro sintetico as printed (Tony, 1/11, "attenersi all'originale"): when a quota prints its "di cui
   // spesa per la rete e gli oneri", that amount is the bill's rete e oneri of the quota, the oneri read stay and the rest is rete.
-  for (const quota of ["CONSUMPTION", "FIXED", "POWER"] as const) {
+  if (!detailPrevails) for (const quota of ["CONSUMPTION", "FIXED", "POWER"] as const) {
     const printed = (input.analysis?.components ?? []).filter((line) => line.includedInReconciliation === false && !line.aggregate && billQuota(line) === quota && /^\s*quota\b[^\n]*\bdi cui spesa per la rete\b/i.test(line.description));
     if (printed.length !== 1) continue;
     const regulatedPrinted = amountOf(printed[0].amount);
@@ -332,7 +360,7 @@ function quotasOf(input: QuoteReceiptInput, currentEnergy: number | null, offerE
   // only part of it. The part the detail does not name stays inside its quota, as printed, and never goes to "Altre voci",
   // which keeps only what the bill does not tie to a quota. Applied only while the quotas stay within the bill's supply total.
   const sellerRest = { CONSUMPTION: 0, FIXED: 0, POWER: 0 };
-  for (const quota of ["CONSUMPTION", "FIXED", "POWER"] as const) {
+  if (!detailPrevails) for (const quota of ["CONSUMPTION", "FIXED", "POWER"] as const) {
     const printed = (input.analysis?.components ?? []).filter((line) => line.includedInReconciliation === false && !line.aggregate && SELLER_GROUPS.has(line.group ?? "") && billQuota(line) === quota && /\bdi cui spesa per (?:la )?vendita\b/i.test(line.description));
     const sellerPrinted = printed.length === 1 ? amountOf(printed[0].amount) : null;
     if (sellerPrinted !== null && Math.abs(sellerPrinted - bill[quota].seller) > 0.02) sellerRest[quota] = cents(sellerPrinted - bill[quota].seller);
@@ -375,6 +403,10 @@ function quotasOf(input: QuoteReceiptInput, currentEnergy: number | null, offerE
   // the same amount on both sides (it is in the rete of both columns), never folded into "Altre voci" as a difference.
   const reactive = sumKnown(reactiveLines(input).map((line) => amountOf(line.amount)));
   if (reactive !== null && Math.abs(reactive) >= 0.005) rows.push(row("REACTIVE", "Energia reattiva", "importo stampato in bolletta (uguale nelle due colonne)", withBill ? reactive : null, reactive));
+  // Tony (16/11/2026, "costi una tantum e risparmio annuo"): the CTE's one-off fee is its own line, a cost of the first bill of
+  // the new supply only, never mixed with "Altre voci" nor with the recurring charges.
+  const oneOff = cents(offer.ONE_OFF);
+  if (Math.abs(oneOff) >= 0.005) rows.push(row("ONE_OFF", "Corrispettivo una tantum", "dovuto una sola volta, sulla prima bolletta della nuova fornitura", withBill ? 0 : null, oneOff, null, oneOff, detailsOf("ONE_OFF", false)));
   // Whatever the bill does not tie to a quota (a line without unit) and the CTE's one-off fees, so the quotas add up to the same totals.
   const supplyCurrent = currentEnergy === null ? null : currentEnergy + (network ?? 0) + (system ?? 0);
   const supplyOffer = offerEnergy + (offerNetwork ?? 0) + (offerSystem ?? 0);
@@ -382,7 +414,7 @@ function quotasOf(input: QuoteReceiptInput, currentEnergy: number | null, offerE
   const placedOffer = rows.reduce((total, item) => total + (item.offer ?? 0), 0);
   const otherCurrent = supplyCurrent === null ? null : cents(supplyCurrent - placedCurrent);
   const otherOffer = cents(supplyOffer - placedOffer);
-  if (Math.abs(otherCurrent ?? 0) >= 0.01 || Math.abs(otherOffer) >= 0.01) rows.push(row("OTHER", "Altre voci della fornitura", "corrispettivi senza unit\u00e0 in bolletta e una tantum della CTE", otherCurrent, otherOffer, null, null, detailsOf("ONE_OFF", false)));
+  if (Math.abs(otherCurrent ?? 0) >= 0.01 || Math.abs(otherOffer) >= 0.01) rows.push(row("OTHER", "Altre voci della fornitura", "corrispettivi senza unit\u00e0 in bolletta", otherCurrent, otherOffer));
   const bonus = bonusOf(input);
   if (bonus !== 0 && currentTaxes !== null && offerTaxes !== null) rows.push(row("BONUS", "Bonus sociale", "uguale con ogni fornitore", bonus, bonus));
   if (currentTaxes !== null && offerTaxes !== null) {
@@ -506,43 +538,17 @@ function withDetails(input: QuoteReceiptInput, rows: readonly QuoteReceiptRow[],
   });
 }
 
-// Tony (31/10, bolletta BPower MACRI settembre 2026: "quota energia, macri leggi male la bolletta"). The quadro sintetico
-// prints "di cui spesa per la rete e gli oneri" 21,68 € and "di cui spesa per la vendita" 107,80 €, while the fattura di
-// dettaglio of the same document charges transport 5,75 € (= ARERA) and vendita 110,80 €: the sintetica moves 3,00 € of
-// vendita into the rete. Transport read from a sintetica is only "rete e oneri" less the oneri, so when the ARERA value of
-// that quota is known, the bill's transport is the ARERA value and the rest is the seller's line of the same quota. The
-// bill's total never changes.
-function summaryNetworkToSeller(input: QuoteReceiptInput): { readonly input: QuoteReceiptInput; readonly moved: number } {
-  const analysis = input.analysis;
-  const official = officialOf(input, "NETWORK");
-  if (!analysis?.totals || !official.length) return { input, moved: 0 };
-  const live = analysis.components.filter((line) => line.includedInReconciliation !== false && !line.aggregate && amountOf(line.amount) !== null);
-  const replaced = new Map<string, BillLine>();
-  let moved = 0;
-  for (const quota of ["CONSUMPTION", "FIXED"] as const) {
-    const derived = live.filter((line) => line.normalizedCode === "NETWORK_FROM_SUMMARY" && billQuota(line) === quota);
-    if (derived.length !== 1) continue;
-    const network = live.filter((line) => line.group === "REGULATED_NETWORK" && billQuota(line) === quota).reduce((total, line) => total + (amountOf(line.amount) ?? 0), 0);
-    const shift = cents(network - official.filter((component) => regulatedQuota(component) === quota).reduce((total, component) => total + signed(component), 0));
-    const sellerLines = live.filter((line) => line.group === "ENERGY_PRICE" && billQuota(line) === quota);
-    const target = sellerLines.find((line) => billDetail(line) === (quota === "FIXED" ? "PCV" : "ENERGY")) ?? sellerLines[0];
-    const own = amountOf(derived[0].amount) ?? 0;
-    // Only what the sintetica could have put there: never more than the derived amount itself.
-    if (!target || Math.abs(shift) < 0.01 || shift > own) continue;
-    const write = (value: number) => value.toFixed(2).replace(".", ",");
-    replaced.set(derived[0].lineId, { ...derived[0], amount: write(own - shift), origin: "ASSUMED", derivation: "trasporto ARERA del periodo sulla stessa quota" });
-    replaced.set(target.lineId, { ...target, amount: write((amountOf(target.amount) ?? 0) + shift), origin: "CALCULATED", derivation: `${write(amountOf(target.amount) ?? 0)} € stampati + ${write(shift)} € che la pagina sintetica mette nella rete` });
-    moved = cents(moved + shift);
-  }
-  if (!moved) return { input, moved: 0 };
-  const totals = analysis.totals;
-  return { moved, input: { ...input, analysis: { ...analysis, components: analysis.components.map((line) => replaced.get(line.lineId) ?? line), totals: { ...totals, sellerEnergyTotal: cents((totals.sellerEnergyTotal ?? 0) + moved), regulatedNetworkTotal: totals.regulatedNetworkTotal === null ? null : cents(totals.regulatedNetworkTotal - moved) } } } };
-}
+// Tony (31/10, MACRI) had the bill's transport set to the ARERA value and the rest moved to the vendita when only the sintetica
+// was read. Tony (19/11/2026, 072248E) withdrew it: without the fattura di dettaglio nothing documents that move, so the
+// derived transport is "non verificabile" and the gap is exposed per quota (see aggregateGaps); with the dettaglio, its own
+// lines give the split (see summaryDetailComparison). No amount is ever moved between vendita and rete to make totals match.
 
 // Tony (1/11, "attenersi all'originale"): the bill column follows the quadro sintetico as printed. When the lines read from
 // the detail give another spesa per la vendita, rete e oneri or imposte, the printed summary wins; the transport is then the
 // printed rete e oneri less the oneri read, the same split the bill uses.
-function anchoredToPrintedSummary(input: QuoteReceiptInput): QuoteReceiptInput {
+// Tony (19/11/2026) integrates it: with a fattura di dettaglio of the same document whose lines add up to the same total, the
+// detail prevails for the split between vendita, trasporto and oneri (keepDetailSplit); the sintetica stays the total.
+function anchoredToPrintedSummary(input: QuoteReceiptInput, keepDetailSplit = false): QuoteReceiptInput {
   const analysis = input.analysis;
   const printed = analysis?.totals.printedSummary;
   if (!analysis || !printed) return input;
@@ -552,8 +558,8 @@ function anchoredToPrintedSummary(input: QuoteReceiptInput): QuoteReceiptInput {
   const reactive = sumKnown(reactiveLines(input).map((line) => amountOf(line.amount)));
   const regulated = sumKnown([totals.regulatedNetworkTotal, totals.systemChargesTotal]);
   const next = { ...totals };
-  if (differs(printed.seller, seller)) Object.assign(next, { sellerEnergyTotal: cents((printed.seller ?? 0) - (totals.sellerCommercializationTotal ?? 0) - (totals.sellerOtherTotal ?? 0)) });
-  if (differs(printed.networkAndSystem, regulated) && differs(printed.networkAndSystem, regulated === null ? null : cents(regulated + (reactive ?? 0)))) Object.assign(next, { regulatedNetworkTotal: cents((printed.networkAndSystem ?? 0) - (totals.systemChargesTotal ?? 0)) });
+  if (!keepDetailSplit && differs(printed.seller, seller)) Object.assign(next, { sellerEnergyTotal: cents((printed.seller ?? 0) - (totals.sellerCommercializationTotal ?? 0) - (totals.sellerOtherTotal ?? 0)) });
+  if (!keepDetailSplit && differs(printed.networkAndSystem, regulated) && differs(printed.networkAndSystem, regulated === null ? null : cents(regulated + (reactive ?? 0)))) Object.assign(next, { regulatedNetworkTotal: cents((printed.networkAndSystem ?? 0) - (totals.systemChargesTotal ?? 0)) });
   if (differs(printed.taxes, totals.taxTotal)) Object.assign(next, { taxTotal: printed.taxes, fiscalTotal: printed.taxes });
   return next === totals || JSON.stringify(next) === JSON.stringify(totals) ? input : { ...input, analysis: { ...analysis, totals: next } };
 }
@@ -591,11 +597,75 @@ function splitPrintedNetworkAndSystem(input: QuoteReceiptInput): QuoteReceiptInp
 }
 
 export function buildQuoteReceipt(original: QuoteReceiptInput): QuoteReceipt {
-  const { input, moved } = summaryNetworkToSeller(splitPrintedNetworkAndSystem(anchoredToPrintedSummary(original)));
+  const summaryDetail = summaryDetailComparison(original);
+  const input = splitPrintedNetworkAndSystem(anchoredToPrintedSummary(original, summaryDetail.status === "DETAIL_PREVAILS"));
   const receipt = withCommercialDiscount(buildReceipt(input), original.commercialDiscount);
-  if (!moved) return receipt;
-  const note = `in bolletta comprende ${moved.toFixed(2).replace(".", ",")} € che la pagina sintetica mette nella spesa per la rete: la rete addebitata è il valore ARERA, come nella fattura di dettaglio`;
-  return { ...receipt, rows: receipt.rows.map((row) => row.key !== "ENERGY" ? row : { ...row, details: (row.details ?? []).map((item) => item.key === "ENERGY" && item.current !== null ? { ...item, label: `${item.label}; ${note}` } : item) }) };
+  return summaryDetail.status === "SUMMARY_ONLY" && summaryDetail.note === null ? receipt : { ...receipt, summaryDetail };
+}
+
+// Lines of the quadro sintetico, or obtained from it by difference: never a printed transport, vendita or oneri of their own.
+const SUMMARY_DERIVED_CODES = new Set(["NETWORK_FROM_SUMMARY", "NETWORK_AND_SYSTEM_FROM_TOTAL"]);
+const isSummaryLine = (line: BillLine): boolean => SUMMARY_DERIVED_CODES.has(line.normalizedCode) || /di cui spesa per la (?:vendita|rete)/i.test(`${line.description} ${line.rawDescription ?? ""}`);
+const QUOTA_NAME: Readonly<Record<Quota, string>> = { CONSUMPTION: "quota per consumi", FIXED: "quota fissa", POWER: "quota potenza" };
+
+/**
+ * Tony (19/11/2026, "approvazione intervento minimo lettura fatture"): the sintetica stays authoritative for the total; the
+ * dettaglio of the same document prevails for the split of the economic components. The detail prevails only when it has
+ * vendita, trasporto and oneri lines of its own and they add up to the sintetica's vendita plus rete e oneri: otherwise the
+ * two are not shown to be the same money and nothing is associated. Differences are exposed, never applied to the documents.
+ */
+export function summaryDetailComparison(input: Pick<QuoteReceiptInput, "analysis">): SummaryDetailComparison {
+  const analysis = input.analysis;
+  const printed = analysis?.totals.printedSummary;
+  const summary = { seller: printed?.seller ?? null, networkAndSystem: printed?.networkAndSystem ?? null };
+  const components = analysis?.components ?? [];
+  const live = components.filter((line) => liveLine(line) && !isSummaryLine(line) && line.origin !== "ASSUMED");
+  const sellerLines = live.filter((line) => SELLER_GROUPS.has(line.group ?? ""));
+  const networkLines = live.filter((line) => line.group === "REGULATED_NETWORK");
+  const systemLines = live.filter((line) => line.group === "SYSTEM_CHARGES");
+  const total = (lines: readonly BillLine[]) => lines.length ? cents(lines.reduce((sum, line) => sum + (amountOf(line.amount) ?? 0), 0)) : null;
+  const detail = { seller: total(sellerLines), network: total(networkLines), system: total(systemLines) };
+  if (!sellerLines.length || !networkLines.length || !systemLines.length) return { status: "SUMMARY_ONLY", summary, detail, quotas: [], note: null };
+  const detailSupply = cents((detail.seller ?? 0) + (detail.network ?? 0) + (detail.system ?? 0));
+  const summarySupply = summary.seller === null || summary.networkAndSystem === null ? null : cents(summary.seller + summary.networkAndSystem);
+  // A bill without quadro sintetico has nothing to differ from: its detail lines are the bill's lines. A sintetica printing only
+  // one of vendita and rete e oneri cannot show the detail is the same money: its split is kept, as before.
+  if (summary.seller === null && summary.networkAndSystem === null) return { status: "DETAIL_PREVAILS", summary, detail, quotas: [], note: null };
+  if (summarySupply === null) return { status: "INCOHERENT", summary, detail, quotas: [], note: "la sintetica non stampa sia la vendita sia la rete e oneri: la corrispondenza con le voci di dettaglio non è dimostrata, vale la ripartizione della sintetica" };
+  if (Math.abs(detailSupply - summarySupply) > 0.02) {
+    return { status: "INCOHERENT", summary, detail, quotas: [], note: `le voci di dettaglio lette sommano ${euroText(detailSupply)} tra vendita, trasporto e oneri, la sintetica ${euroText(summarySupply)}: corrispondenza non dimostrata, vale la ripartizione della sintetica` };
+  }
+  const summaryOf = (pattern: RegExp, quota: Quota): number | null => {
+    const lines = components.filter((line) => pattern.test(`${line.description} ${line.rawDescription ?? ""}`) && billQuota(line) === quota && amountOf(line.amount) !== null);
+    return lines.length ? cents(amountOf(lines[0].amount) ?? 0) : null;
+  };
+  const quotas: SummaryDetailQuotaDifference[] = [];
+  for (const quota of ["CONSUMPTION", "FIXED", "POWER"] as const) {
+    const detailSeller = total(sellerLines.filter((line) => billQuota(line) === quota)) ?? 0;
+    const detailRegulated = cents((total(networkLines.filter((line) => billQuota(line) === quota)) ?? 0) + (total(systemLines.filter((line) => billQuota(line) === quota)) ?? 0));
+    const summarySeller = summaryOf(/di cui spesa per la vendita/i, quota);
+    const summaryRegulated = summaryOf(/di cui spesa per la rete/i, quota);
+    const differs = (printedValue: number | null, detailValue: number) => Math.abs((printedValue ?? 0) - detailValue) >= 0.01;
+    if (differs(summarySeller, detailSeller) || differs(summaryRegulated, detailRegulated)) quotas.push({ quota, label: QUOTA_NAME[quota], summarySeller, detailSeller, summaryNetworkAndSystem: summaryRegulated, detailNetworkAndSystem: detailRegulated });
+  }
+  const moved = quotas.map((item) => `${euroText(Math.abs(cents(item.detailSeller - (item.summarySeller ?? 0))))} della ${item.label}`);
+  const note = quotas.length ? `la sintetica ripartisce diversamente tra vendita e rete e oneri ${moved.join(", ")}; prevalgono le voci di dettaglio, il totale resta quello della sintetica` : null;
+  return { status: "DETAIL_PREVAILS", summary, detail, quotas, note };
+}
+
+/** The bill's transport derived by difference from the sintetica's "rete e oneri", against the ARERA transport, per quota. */
+function aggregateGaps(input: QuoteReceiptInput, derivedLines: readonly BillLine[]): readonly AggregateGap[] {
+  const official = officialOf(input, "NETWORK");
+  const gaps: AggregateGap[] = [];
+  for (const quota of ["CONSUMPTION", "FIXED", "POWER"] as const) {
+    const lines = derivedLines.filter((line) => billQuota(line) === quota);
+    const components = official.filter((component) => regulatedQuota(component) === quota);
+    if (!lines.length || !components.length) continue;
+    const derived = cents(lines.reduce((sum, line) => sum + (amountOf(line.amount) ?? 0), 0));
+    const value = cents(components.reduce((sum, component) => sum + signed(component), 0));
+    gaps.push({ quota, label: QUOTA_NAME[quota], derived, official: value, gap: cents(derived - value) });
+  }
+  return gaps;
 }
 
 function buildReceipt(input: QuoteReceiptInput): QuoteReceipt {
@@ -618,7 +688,18 @@ function buildReceipt(input: QuoteReceiptInput): QuoteReceipt {
   const officialNetwork = officialOf(input, "NETWORK");
   const officialSystem = officialOf(input, "SYSTEM");
   const hasOfficial = officialNetwork.length + officialSystem.length > 0;
-  const check = { NETWORK: officialCheck(billNetwork, officialNetwork, hasOfficial, regulatedUnavailable(input)), SYSTEM: officialCheck(system, officialSystem, hasOfficial, regulatedUnavailable(input)) };
+  const rawCheck = { NETWORK: officialCheck(billNetwork, officialNetwork, hasOfficial, regulatedUnavailable(input)), SYSTEM: officialCheck(system, officialSystem, hasOfficial, regulatedUnavailable(input)) };
+  // Tony (19/11/2026): a transport or oneri amount the bill does not print on its own line (derived from the sintetica's
+  // "rete e oneri", or the ARERA oneri assumed to split it) is not a billed value: never a "maggiore addebito ARERA".
+  const regulatedLines = (input.analysis?.components ?? []).filter((line) => liveLine(line) && (line.group === "REGULATED_NETWORK" || line.group === "SYSTEM_CHARGES"));
+  const derivedNetwork = regulatedLines.filter((line) => line.group === "REGULATED_NETWORK" && (isSummaryLine(line) || line.origin === "ASSUMED"));
+  const assumedSystem = regulatedLines.filter((line) => line.group === "SYSTEM_CHARGES" && line.origin === "ASSUMED");
+  const notVerifiable = (current: OfficialCheck, reason: string, gaps?: readonly AggregateGap[]): OfficialCheck => current.official === null ? current : { status: "NOT_VERIFIABLE", official: current.official, difference: null, reason, ...(gaps ? { aggregateGaps: gaps } : {}) };
+  const check = {
+    NETWORK: derivedNetwork.length && input.printedNetwork !== null && input.printedNetwork !== undefined ? { ...officialCheck(input.printedNetwork, officialNetwork, hasOfficial, regulatedUnavailable(input)), reason: "controllo sul trasporto stampato separatamente in bolletta" }
+      : derivedNetwork.length ? notVerifiable(rawCheck.NETWORK, "trasporto non stampato separatamente: ricavato per differenza dalla spesa per la rete e gli oneri della sintetica, non è un importo addebitato", aggregateGaps(input, derivedNetwork).filter((gap) => Math.abs(gap.gap) >= 0.01)) : rawCheck.NETWORK,
+    SYSTEM: assumedSystem.length ? notVerifiable(rawCheck.SYSTEM, "oneri non stampati tra le voci della bolletta: assunti pari ai valori ARERA del periodo per separarli dal trasporto") : rawCheck.SYSTEM,
+  };
   const offerNetwork = hasOfficial ? cents((check.NETWORK.official ?? 0) + (reactive ?? 0)) : network;
   const offerSystem = hasOfficial ? check.SYSTEM.official ?? 0 : system;
   const printedRate = input.analysis ? billVatRate(input.analysis) : null;
@@ -653,14 +734,17 @@ function buildReceipt(input: QuoteReceiptInput): QuoteReceipt {
     { key: "TAXES", label: "Imposte (accise e IVA)", current: taxesIncluded ? currentTaxes : null, offer: offerTaxes },
   ];
   const bonusShown = bonusTotal !== 0 && taxesIncluded ? bonusTotal : 0;
+  const oneOffNet = cents((input.offerComponents ?? []).filter((component) => offerQuota(component) === "ONE_OFF").reduce((total, component) => total + signed(component), 0));
+  const oneOffTaxes = taxesIncluded ? cents(oneOffNet * (chosenRate ?? vatRate)) : 0;
+  const oneOff = Math.abs(oneOffNet) >= 0.005 ? { net: oneOffNet, taxes: oneOffTaxes, total: cents(oneOffNet + oneOffTaxes) } : null;
   if (currentEnergy === null) {
-    return { status: "OFFER_ONLY", rows: withDetails(input, rows, false), currentTotal: null, offerTotal: null, savings: null, savingsPercent: null, taxesIncluded: false, vatRate: null, vatRateEstimated: false, validUntil: input.validUntil, quotas: quotasOf(input, null, offerEnergy, network, system, null, null, offerNetwork, offerSystem), officialCheck: check, excluded, undetermined: undeterminedOf(input) };
+    return { status: "OFFER_ONLY", rows: withDetails(input, rows, false), currentTotal: null, offerTotal: null, savings: null, savingsPercent: null, taxesIncluded: false, vatRate: null, vatRateEstimated: false, validUntil: input.validUntil, quotas: quotasOf(input, null, offerEnergy, network, system, null, null, offerNetwork, offerSystem), officialCheck: check, excluded, undetermined: undeterminedOf(input), oneOff: oneOff && { ...oneOff, taxes: 0, total: oneOff.net } };
   }
   const currentTotal = cents(currentEnergy + (network ?? 0) + (system ?? 0) + bonusShown + (taxesIncluded ? currentTaxes : 0));
   const offerTotal = cents(offerEnergy + (offerNetwork ?? 0) + (offerSystem ?? 0) + bonusShown + (offerTaxes ?? 0));
   const savings = cents(currentTotal - offerTotal);
   const savingsPercent = currentTotal > 0 ? Math.round((savings / currentTotal) * 1000) / 10 : null;
-  return { status: "COMPLETE", rows: withDetails(input, rows, true), currentTotal, offerTotal, savings, savingsPercent, taxesIncluded, vatRate: taxesIncluded ? chosenRate ?? vatRate : null, vatRateEstimated: taxesIncluded && chosenRate === null && printedRate === null, billVatRate: taxesIncluded ? vatRate : null, validUntil: input.validUntil, quotas: quotasOf(input, currentEnergy, offerEnergy, network, system, taxesIncluded ? currentTaxes : null, offerTaxes, offerNetwork, offerSystem), officialCheck: check, excluded, undetermined: undeterminedOf(input) };
+  return { status: "COMPLETE", rows: withDetails(input, rows, true), currentTotal, offerTotal, savings, savingsPercent, taxesIncluded, vatRate: taxesIncluded ? chosenRate ?? vatRate : null, vatRateEstimated: taxesIncluded && chosenRate === null && printedRate === null, billVatRate: taxesIncluded ? vatRate : null, validUntil: input.validUntil, quotas: quotasOf(input, currentEnergy, offerEnergy, network, system, taxesIncluded ? currentTaxes : null, offerTaxes, offerNetwork, offerSystem), officialCheck: check, excluded, undetermined: undeterminedOf(input), oneOff };
 }
 
 /**

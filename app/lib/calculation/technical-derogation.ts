@@ -47,6 +47,8 @@ export interface TechnicalDerogationInput {
   readonly cteVersionId: string;
   readonly taxTreatment: TaxInclusionState;
   readonly calculationDate: string;
+  /** Server-side reference date of the quote window; never taken from the client. */
+  readonly today?: string;
 }
 
 /** What the screen shows: no calculation id or fingerprint, so nothing can refer to it as a commercial calculation. */
@@ -86,7 +88,7 @@ export async function runTechnicalDerogation(principal: AuthenticatedPrincipal, 
     fail("TECHNICAL_DEROGATION_DENIED");
   }
   // Same tenant-scoped preparation as an ordinary quote: approved bill version in the operator's scope, assigned approved CTEs.
-  const prepared = await prepareBillDrivenSimulation(principal, repositories, input.billId, input.taxTreatment, input.calculationDate);
+  const prepared = await prepareBillDrivenSimulation(principal, repositories, input.billId, input.taxTreatment, input.calculationDate, input.today);
   if (prepared.context.billVersionId !== input.billVersionId) fail("SOURCE_BILL_VERSION_MISMATCH");
   const candidate = prepared.candidates.find((item) => item.archiveId === input.archiveId);
   if (!candidate || candidate.cteVersionId !== input.cteVersionId) fail("TECHNICAL_DEROGATION_CTE_UNAVAILABLE");

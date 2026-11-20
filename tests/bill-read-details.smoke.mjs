@@ -148,7 +148,10 @@ assert.equal(rowOf(sections, "CONTRACT", "Quota variabile voci di trasporto").va
 const economics = section(sections, "ECONOMICS").rows;
 assert.equal(rowOf(sections, "ECONOMICS", "Vendita").value, "722,35 €");
 assert.equal(rowOf(sections, "ECONOMICS", "Rete e oneri di sistema").value, "249,22 €");
-const network = rowOf(sections, "ECONOMICS", "Rete e trasporto");
+// Tony (19/11/2026, 072248E): the difference of printed aggregates is named for what it is, never "rete e trasporto"
+// (expectation changed: the label was "Rete e trasporto").
+const DERIVED_NETWORK = "Rete e oneri meno oneri (calcolata, non è il trasporto stampato)";
+const network = rowOf(sections, "ECONOMICS", DERIVED_NETWORK);
 assert.equal(network.value, "134,30 €");
 assert.equal(network.state, "CALCULATED", "the network share is a difference: labelled calculated");
 assert.equal(rowOf(sections, "ECONOMICS", "Oneri di sistema").value, "114,92 €");
@@ -196,13 +199,13 @@ assert.deepEqual(secondary("CONTRACT"), [`Attivazione=${NOT_READ}`, "Decorrenza 
 // are technical details under "Altri dettagli"; there is no separate simulator block in the costs any more.
 assert.deepEqual(secondary("ECONOMICS"), ["Rete e oneri di sistema=249,22 €", "Accise e IVA=254,49 €", "Vendita=448,78 €", "Rete e trasporto=132,34 €"], "aggregate and simulator grouping one click away");
 const costsInView = section(sections, "ECONOMICS").rows.filter((item) => !item.secondary);
-assert.deepEqual(costsInView.map((item) => `${item.label}=${plain(item).value}`), ["Vendita=722,35 €", "Rete e trasporto=134,30 €", "Oneri di sistema=114,92 €", "Accise=33,40 €", "IVA=221,09 €", "Totale fattura=1.226,06 €"]);
+assert.deepEqual(costsInView.map((item) => `${item.label}=${plain(item).value}`), ["Vendita=722,35 €", `${DERIVED_NETWORK}=134,30 €`, "Oneri di sistema=114,92 €", "Accise=33,40 €", "IVA=221,09 €", "Totale fattura=1.226,06 €"]);
 assert.deepEqual(costsInView.map((item) => item.state), ["READ", "CALCULATED", "CALCULATED", "READ", "READ", "READ"], "calculated values keep their asterisk");
 assert.ok(costsInView.every((item) => !item.noteShown), "no technical description written in the summary");
-assert.match(plain(rowOf(sections, "ECONOMICS", "Rete e oneri di sistema")).note, /rete e trasporto calcolata: 249,22 € − oneri di sistema 114,92 € = 134,30 €$/, "the subtraction stays in the technical details");
-assert.match(rowOf(sections, "ECONOMICS", "Rete e trasporto").note, /^Calcolata: /, "and on the calculated value itself");
+assert.match(plain(rowOf(sections, "ECONOMICS", "Rete e oneri di sistema")).note, /rete e oneri meno oneri \(calcolata, non è il trasporto stampato\): 249,22 € − oneri di sistema 114,92 € = 134,30 €$/, "the subtraction stays in the technical details");
+assert.match(rowOf(sections, "ECONOMICS", DERIVED_NETWORK).note, /^Calcolata: /, "and on the calculated value itself");
 assert.ok(section(sections, "ECONOMICS").rows.filter((item) => item.group === "SIMULATOR").every((item) => item.secondary), "the simulator grouping is kept, as a technical detail");
-for (const label of ["Intestatario", "Fornitore", "POD", "Periodo", "Consumo totale (F0)", "F1", "F2", "F3", "Potenza impegnata", "Potenza massima", "Prezzo", "Fasce", "Indice", "Spread", "PCV", "Scadenza condizioni", "Scadenza contratto", "Vendita", "Rete e trasporto", "Oneri di sistema", "Accise", "IVA", "Totale fattura"]) {
+for (const label of ["Intestatario", "Fornitore", "POD", "Periodo", "Consumo totale (F0)", "F1", "F2", "F3", "Potenza impegnata", "Potenza massima", "Prezzo", "Fasce", "Indice", "Spread", "PCV", "Scadenza condizioni", "Scadenza contratto", "Vendita", DERIVED_NETWORK, "Oneri di sistema", "Accise", "IVA", "Totale fattura"]) {
   const found = sections.flatMap((entry) => entry.rows).find((item) => item.label === label && item.group !== "SIMULATOR");
   assert.ok(found && !found.secondary, `${label} is in view`);
 }

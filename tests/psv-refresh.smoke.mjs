@@ -25,9 +25,9 @@ const fetcherFor = (html, status = 200) => async (url) => { assert.equal(url, AR
 // 1. On 19 October the six closed months April to September are taken and approved.
 const first = await runPsvMarketRefresh({ tenantId, repositories, fetcher: fetcherFor(page()), now: "2026-10-19T04:15:00.000Z", runId: "psv_first" });
 assert.equal(first.status, "SUCCESS", JSON.stringify(first));
-// Product rule (owner, 2026-10-26): about five closed months are kept in the archive.
-assert.deepEqual(first.targetMonths, ["2026-09", "2026-08", "2026-07", "2026-06", "2026-05"]);
-assert.equal(first.monthsCreated, 5);
+// Rule changed by Tony on 17/11/2026: six closed months are kept in the archive (was five).
+assert.deepEqual(first.targetMonths, ["2026-09", "2026-08", "2026-07", "2026-06", "2026-05", "2026-04"]);
+assert.equal(first.monthsCreated, 6);
 const september = repository.records.find((record) => record.month === "2026-09");
 assert.equal(september.status, "APPROVED"); assert.equal(september.vector, "GAS"); assert.equal(september.index, "PSV");
 assert.deepEqual(september.record.value, { value: 0.843182, currency: "EUR", unit: "EUR_PER_SMC" });
@@ -40,7 +40,14 @@ assert.equal(again.monthsCreated, 0); assert.ok(again.months.every((item) => ite
 
 // 3. Early November, October is not out yet: that is expected, not an error.
 const early = await runPsvMarketRefresh({ tenantId, repositories, fetcher: fetcherFor(page()), now: "2026-11-02T04:15:00.000Z", runId: "psv_early" });
-assert.equal(early.status, "SUCCESS"); assert.deepEqual(early.months.map((item) => item.status), ["NOT_PUBLISHED", "UNCHANGED", "UNCHANGED", "UNCHANGED", "UNCHANGED"]);
+assert.equal(early.status, "SUCCESS"); assert.deepEqual(early.months.map((item) => item.status), ["NOT_PUBLISHED", "UNCHANGED", "UNCHANGED", "UNCHANGED", "UNCHANGED", "UNCHANGED"]);
+// New in the 17/11 rule: on 2 November the window is May–October, so April leaves the active archive. It is retired with
+// the retention reason and its history, never deleted, and stays readable for audit.
+assert.equal(early.monthsRetired, 1);
+const april = repository.records.find((record) => record.vector === "GAS" && record.month === "2026-04");
+assert.equal(april.status, "REJECTED"); assert.equal(april.record.approval.reason, "PSV_RETENTION_6_MONTHS");
+assert.ok(april.approvals.at(-1).decisionId.startsWith("retired-")); assert.equal(april.history.at(-1).reason, "PSV_RETENTION_6_MONTHS");
+assert.equal(april.record.source.authority, "ARERA"); assert.equal(april.record.value.value, 0.492325, "value and source kept");
 const published = await runPsvMarketRefresh({ tenantId, repositories, fetcher: fetcherFor(page([["ottobre", "81,2000", "22,555556", "0,868840"]])), now: "2026-11-03T04:15:00.000Z", runId: "psv_published" });
 assert.equal(published.months[0].status, "CREATED"); assert.equal(published.months[0].eurPerSmc, 0.86884);
 const late = await runPsvMarketRefresh({ tenantId: "tenant_psv-late", repositories: { marketArchiveRepository: new repository.constructor() }, fetcher: fetcherFor(page()), now: "2026-11-15T04:15:00.000Z", runId: "psv_late" });
@@ -60,6 +67,6 @@ assert.equal(offline.status, "FAILED"); assert.deepEqual(offline.errors, ["ARERA
 class MemoryRepository { constructor() { this.records = new Map(); } async get(t, id) { return this.records.get(id) ?? null; } async list() { return [...this.records.values()]; } async put(input) { const existing = this.records.get(input.recordId); const next = { ...input, version: (existing?.version ?? 0) + 1, payload: structuredClone(input.payload) }; this.records.set(input.recordId, next); return next; } async append(input) { return this.put(input); } }
 const pun = (month) => ({ schemaVersion: 1, recordId: `gme-${month}`, version: "1", parentVersionId: null, tenantId, approval: { status: "NEEDS_REVIEW", reason: "TEST" }, recordType: "MONTHLY_MARKET_DATA", vector: "EE", index: "PUN", month, publicationDate: null, effectiveFrom: `${month}-01`, effectiveTo: new Date(Date.UTC(Number(month.slice(0, 4)), Number(month.slice(5)), 1)).toISOString().slice(0, 10), source: { sourceId: "GME", name: "GME", url: "https://gme.mercatoelettrico.org/x", authority: "GME", sourceType: "OFFICIAL" }, f1: { value: 120, currency: "EUR", unit: "EUR_PER_MWH" }, f2: { value: 110, currency: "EUR", unit: "EUR_PER_MWH" }, f3: { value: 100, currency: "EUR", unit: "EUR_PER_MWH" }, monthly: { value: 112, currency: "EUR", unit: "EUR_PER_MWH" } });
 const punResult = await runPunMarketRefresh({ tenantId, repositories: { marketArchiveRepository: repository, marketRefreshState: new MemoryRepository(), marketRefreshRuns: new MemoryRepository(), marketRefreshLocks: new MemoryRepository() }, sourceReader: { async load({ referenceMonth }) { return { gme: { record: pun(referenceMonth) } }; } }, now: "2026-10-23T04:15:00.000Z", runId: "pun_with_psv", trigger: "TEST" });
-assert.equal(punResult.status, "SUCCESS", JSON.stringify(punResult)); assert.equal(punResult.monthsCreated, 5); assert.equal(punResult.monthsCorrected, 0);
+assert.equal(punResult.status, "SUCCESS", JSON.stringify(punResult)); assert.equal(punResult.monthsCreated, 6); assert.equal(punResult.monthsCorrected, 0);
 
 console.log("psv refresh smoke passed");

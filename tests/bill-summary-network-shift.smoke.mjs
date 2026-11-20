@@ -6,6 +6,9 @@ import { buildQuoteReceipt } from "../app/lib/quote/receipt.ts";
 // bolletta" and "la bolletta che tu segni totale 181,62 non esiste". The sintetica prints rete e oneri 21,68 for the quota
 // per consumi; its fattura di dettaglio charges transport 5,75 (= ARERA) and vendita 123,80. The receipt showed rete 22,53
 // "3,00 EUR in più di ARERA" and a total of 181,62 (the bill without the bonus).
+// Tony (19/11/2026, 072248E, "prevalenza dettaglio per componenti, sintetica per totale"): read from the sintetica alone, the
+// transport is only rete e oneri less the oneri. It is not a billed amount: no "in più di ARERA" warning, and no 3,00 EUR moved
+// from the rete to the vendita without the fattura di dettaglio that documents it (the 31/10 move is withdrawn).
 const line = (description, amount, unit = null, quantity = null, code = null) => ({ code, description, amount, quantity, unitPrice: null, unit, period: null });
 const bill = buildCurrentBillEconomicAnalysis([
   line("Quota per consumi", "129,48", "kWh", "390"),
@@ -32,9 +35,11 @@ const official = [
 ];
 const receipt = buildQuoteReceipt({ vector: "EE", offerSupplyCost: 123.80, analysis: bill, domestic: true, validUntil: null, offerComponents: official });
 const row = (key) => receipt.rows.find((item) => item.key === key);
-assert.equal(row("ENERGY").current, 123.8, "vendita as in the fattura di dettaglio");
-assert.equal(row("NETWORK").current, 19.53, "rete as in the fattura di dettaglio (= ARERA)");
-assert.equal(receipt.officialCheck.NETWORK.status, "VERIFIED", "no '3,00 EUR in più di ARERA' warning");
+assert.equal(row("ENERGY").current, 120.8, "vendita as printed in the sintetica: nothing moved without the dettaglio");
+assert.equal(row("NETWORK").current, 22.53, "rete e oneri of the sintetica less the oneri read");
+assert.equal(receipt.officialCheck.NETWORK.status, "NOT_VERIFIABLE", "no '3,00 EUR in più di ARERA' warning");
+assert.equal(receipt.officialCheck.NETWORK.difference, null);
+assert.deepEqual(receipt.officialCheck.NETWORK.aggregateGaps.find((gap) => gap.quota === "CONSUMPTION"), { quota: "CONSUMPTION", label: "quota per consumi", derived: 8.75, official: 5.75, gap: 3 }, "the sintetica's gap is shown, per quota");
 assert.equal(row("SYSTEM").current, 12.93);
 assert.equal(row("BONUS").current, -12, "bonus on its own line");
 assert.equal(row("BONUS").offer, -12, "the same bonus with the new offer");
@@ -42,7 +47,7 @@ assert.equal(row("TAXES").current, 24.16, "accise e IVA as printed");
 assert.equal(receipt.currentTotal, 168.42, "the bill's own total");
 assert.equal(receipt.savings, 0, "same supply cost: the bonus and the split move nothing");
 assert.ok(!receipt.excluded.some((item) => /bonus/i.test(item.label)), "the bonus is no longer among the excluded items");
-assert.match(row("ENERGY").details.find((item) => item.key === "ENERGY").label, /3,00 € che la pagina sintetica/);
+assert.doesNotMatch(JSON.stringify(receipt.rows), /pagina sintetica mette/, "no move from the rete to the vendita");
 const quotas = receipt.quotas.reduce((total, item) => total + (item.current ?? 0), 0);
 assert.equal(Math.round(quotas * 100) / 100, 168.42, "the scontrino adds up to the bill's total");
 console.log("BILL_SUMMARY_NETWORK_SHIFT=PASS");

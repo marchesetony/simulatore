@@ -16,9 +16,10 @@ assert.match(shell, /const visibleSection = \(id: SectionId\): boolean => platfo
 assert.match(shell, /const companyAdmin = context\?\.role === "ADMIN";/);
 const menu = (role, tenantId = "tenant_x") => tenantId === "tenant_piattaforma" ? PLATFORM : role === "ADMIN" ? ADMIN : role === "ANALYST" ? MANAGER : SALES;
 
-assert.deepEqual(menu("ADMIN"), ["quote", "proposals", "cte", "market", "chain", "access"], "Amministratore: menu invariato");
-assert.deepEqual(menu("ANALYST"), ["quote", "proposals", "cte"], "Direttore/Area Manager: Archivio CTE in più");
-assert.deepEqual(menu("VIEWER"), ["quote", "proposals"], "Agente: menu invariato");
+// Tony (20/11/2026, Fase 2): "Archivio bollette" added for every company role (declared change of the expected menus).
+assert.deepEqual(menu("ADMIN"), ["quote", "archive", "proposals", "cte", "market", "chain", "access"], "Amministratore: Archivio bollette in più");
+assert.deepEqual(menu("ANALYST"), ["quote", "archive", "proposals", "cte"], "Direttore/Area Manager: Archivio CTE e Archivio bollette");
+assert.deepEqual(menu("VIEWER"), ["quote", "archive", "proposals"], "Agente: Archivio bollette (solo le sue)");
 assert.deepEqual(menu("ADMIN", "tenant_piattaforma"), ["dashboard", "access", "system"], "Piattaforma: invariata");
 for (const role of ["ADMIN", "ANALYST", "VIEWER"]) for (const id of ["quote", "proposals"]) assert.ok(menu(role).includes(id), `${role} conserva ${id}`);
 for (const id of ["market", "chain", "access"]) assert.ok(!menu("ANALYST").includes(id), `ANALYST non vede ${id}`);

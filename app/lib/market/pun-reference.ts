@@ -9,6 +9,8 @@ import { buildBillAnalystReview } from "../foundation/bill-analyst-review.ts";
 import { attachBillRegulatoryAudit } from "../foundation/bill-public-audit.ts";
 // @ts-expect-error Node's strip-only test runner requires the explicit extension.
 import { estimateBillSpread } from "./bill-spread.ts";
+// @ts-expect-error Node's strip-only test runner requires the explicit extension.
+import { operationalMarketMonths, operationalMarketView, romeToday } from "./operational-window.ts";
 
 export type PunTariffStructure = "MONO" | "F1_F2_F3";
 
@@ -147,14 +149,18 @@ export function withReadBillingPeriodField<T extends { readonly structuredBill?:
 /** Fetches the official PUN of the bill months when the archive lacks them (the cron only runs in production). */
 export async function ensureOfficialPunForBill(document: Pick<PublicBillDocument, "tenantId" | "resolvedVector" | "normalized" | "structuredBill">, repository: MarketArchiveRepository, refresh: (() => Promise<unknown>) | null): Promise<void> {
   const input = officialPunInputFromPublicBill(document);
-  const months = deriveInvoiceReferenceMonths(input.billingPeriod);
+  // Only months of the operational window can be fetched and used (Tony 17/11/2026); older ones never trigger a refresh.
+  const window = new Set(operationalMarketMonths(romeToday()));
+  const months = deriveInvoiceReferenceMonths(input.billingPeriod).filter((month) => window.has(month));
   if (input.vector !== "EE" || months.length === 0 || !refresh) return;
   const records = await repository.list(input.tenantId);
   if (months.every((month) => records.some((record) => record.status === "APPROVED" && record.vector === "EE" && record.index === "PUN" && record.month === month && isOfficialPunSource(record)))) return;
   try { await refresh(); } catch { /* A GME outage leaves the spread marked as not calculable. */ }
 }
 
-export async function attachOfficialPun(document: PublicBillDocument, repository: MarketArchiveRepository): Promise<PublicBillDocument> {
+export async function attachOfficialPun(document: PublicBillDocument, archive: MarketArchiveRepository): Promise<PublicBillDocument> {
+  // The PUN shown with a bill and its spread estimate are calculations too: PUN outside the six operational months is not read.
+  const repository = operationalMarketView(archive);
   const input = officialPunInputFromPublicBill(document);
   const invoicePunReferences = await resolveOfficialPunForBill(repository, input);
   const currentSpread = input.vector === "EE" ? estimateBillSpread(document.structuredBill, deriveInvoiceReferenceMonths(input.billingPeriod), await repository.list(input.tenantId), isOfficialPunSource) : null;

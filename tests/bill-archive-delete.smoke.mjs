@@ -81,7 +81,8 @@ try {
   const route = await readFile("app/api/bills/[id]/route.ts", "utf8");
   const deleteRoute = route.slice(route.indexOf("export async function DELETE"), route.indexOf("const INTERNAL_TO_PUBLIC_CODE"));
   assert.match(deleteRoute, /requestPrincipal\(request, "WRITE"\)/);
-  assert.ok(deleteRoute.indexOf("billDeleteDecision(") < deleteRoute.indexOf("deleteBillPermanently("), "the decision comes before any deletion");
+  // Tony (20/11/2026, Fase 2): the deletion now goes through deleteArchivedBill (audit first, dettaglio and derived records too).
+  assert.ok(deleteRoute.indexOf("billDeleteDecision(") >= 0 && deleteRoute.indexOf("billDeleteDecision(") < deleteRoute.indexOf("deleteArchivedBill("), "the decision comes before any deletion");
   assert.doesNotMatch(deleteRoute, /if \(!document\) return Response\.json\(\{ deleted: true \}/, "no fictitious success any more");
   assert.match(deleteRoute, /return Response\.json\(\{ deleted: true, id: document\.id, outcome: "DELETED" \}/);
   assert.match(route, /if \(code === "BILL_DELETE_FORBIDDEN"\) return 403;/);
@@ -195,7 +196,7 @@ try {
   const client = await readFile("app/lib/ui/client.ts", "utf8");
   assert.match(client, /BILL_DELETE_ALL_DISABLED: "La cancellazione di tutte le bollette è disattivata/);
   // Single and selective deletion untouched by the change: the single route still decides and deletes per document.
-  assert.match(deleteRoute, /billDeleteDecision\(/); assert.match(deleteRoute, /deleteBillPermanently\(\{ tenantId: principal\.tenantId, documentId: document\.id/);
+  assert.match(deleteRoute, /billDeleteDecision\(/); assert.match(deleteRoute, /deleteArchivedBill\(principal, repositories, document, CORRELATION_ID\)/); // Tony 20/11/2026, Fase 2: shared deletion path
   console.log("BILL_DELETE_ALL_DISABLED=PASS");
 
   // Protezione "Svuota archivio" (Tony 10/11/2026): command gone from the screen, POST /api/archive/purge refuses everything.

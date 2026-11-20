@@ -87,7 +87,9 @@ const punC = component("GME:PUN");
 assert.equal(punC.expected.at(-1), "2026-10"); assert.equal(punC.lastCheck, "2026-11-10T06:00:00.000Z"); assert.equal(punC.lastAvailable, "2026-10");
 const punUnverified = issues("GME:PUN", "UNVERIFIED").find((issue) => issue.copies.includes("Energia Priva"));
 assert.deepEqual(punUnverified.periods, ["2026-05", "2026-09"]); assert.match(punUnverified.detail, /senza F3/); assert.match(punUnverified.detail, /REJECTED/);
-assert.deepEqual(issues("GME:PUN", "MISSING").find((issue) => issue.copies.includes("Archivio produttore")).periods, months(1, 5).map(ym));
+// Regola cambiata il 17/11 (Tony): il PUN si attende solo nei sei mesi operativi (maggio–ottobre al 17/11), non da gennaio.
+assert.deepEqual(punC.expected, months(5, 10).map(ym));
+assert.deepEqual(issues("GME:PUN", "MISSING").find((issue) => issue.copies.includes("Archivio produttore")).periods, ["2026-05"]);
 assert.ok(issues("GME:PUN", "DIVERGENT").some((issue) => issue.periods.includes("2026-09")), "settembre usabile solo nella piattaforma");
 
 // Tabella 5: pubblicata con provenienza confermata dal produttore → informativa, non un'autenticazione ARERA.

@@ -4,6 +4,7 @@ import type { SupplyProfileField } from "../ingestion/bill-supply-profile";
 import { BANDS_SUM_TOLERANCE_KWH, printedComponentChecks } from "../reading/bill-reader-checks";
 import { formatKwh } from "./format";
 import { isReactiveEnergy } from "../foundation/bill-economic-analysis";
+import { summaryDetailComparison } from "../quote/receipt";
 import { ANNUAL_ESTIMATE_LABEL } from "../calculation/annual-consumption";
 import { annualEstimateOrigin, billAnnualConsumption, quantityText } from "./annual-consumption";
 
@@ -236,6 +237,8 @@ function scontrinoNetworkAndSystem(bill: Bill, fallback: number | null): number 
   return parts.length ? round2(parts.reduce((total, value) => total + value, 0)) : fallback;
 }
 
+const DERIVED_NETWORK_LABEL = "Rete e oneri meno oneri (calcolata, non è il trasporto stampato)";
+const SPLIT_DIFFERENCE_LABEL = "Ripartizione diversa tra sintetica e dettaglio";
 function economicsSection(bill: Bill): BillReadSection {
   const totals = bill.analystReview.economics.economicAnalysis?.totals;
   const printed = totals?.printedSummary;
@@ -266,22 +269,37 @@ function economicsSection(bill: Bill): BillReadSection {
     return problem ? { label, value: euro(component.amount), state: "REVIEW", note: `${TO_CHECK}: ${problem} · ${component.note}`, noteShown: true } : { label, value: euro(component.amount), state: "READ", note: component.note };
   };
   const rows: BillReadRow[] = [];
+  // Tony (19/11/2026, "prevalenza dettaglio per componenti, sintetica per totale"): with a fattura di dettaglio of the same
+  // document whose lines add up to the sintetica's, vendita, trasporto and oneri are the detail's printed lines; the sintetica's
+  // own split stays shown as printed, and the difference between the two is shown, never applied to either document.
+  const analysis = bill.analystReview.economics.economicAnalysis;
+  const split = analysis ? summaryDetailComparison({ analysis }) : null;
+  const detailPrevails = split?.status === "DETAIL_PREVAILS" && split.detail.seller !== null && split.detail.network !== null && split.detail.system !== null && printed?.seller != null && printed.networkAndSystem != null;
+  if (split && detailPrevails) {
+    const detail = { seller: split.detail.seller ?? 0, network: split.detail.network ?? 0, system: split.detail.system ?? 0 };
+    rows.push({ label: "Spesa per la vendita di energia", value: euro(detail.seller), state: "READ", note: `Fattura di dettaglio: voci di vendita stampate, prevalgono per la ripartizione · quadro sintetico ${euro(printed.seller ?? 0)}` });
+    rows.push({ label: "Spesa per la rete e gli oneri generali di sistema", value: euro(round2(detail.network + detail.system)), state: "READ", note: `Fattura di dettaglio: trasporto ${euro(detail.network)} + oneri ${euro(detail.system)} · quadro sintetico ${euro(printed.networkAndSystem ?? 0)}` });
+    rows.push({ label: "di cui spesa per la rete e il trasporto", value: euro(detail.network), state: "READ", note: "Fattura di dettaglio: voci di trasporto e gestione del contatore stampate" });
+  } else {
   // Original values: the quadro sintetico as printed and the detail rows as printed.
   rows.push(money("Spesa per la vendita di energia", printed?.seller ?? null, "Quadro sintetico: somma dei \"di cui spesa per la vendita\""));
   if (printed?.networkAndSystem != null) {
     rows.push(money("Spesa per la rete e gli oneri generali di sistema", printed.networkAndSystem, "Quadro sintetico, come stampato (rete e oneri insieme)"));
     if (printedNetwork) rows.push(printedRow("di cui spesa per la rete e il trasporto", printedNetwork, "COMPONENTS_NETWORK_SYSTEM"));
     else if (oneri !== null) {
-      rows.push(calc("di cui spesa per la rete e il trasporto", round2(printed.networkAndSystem - oneri), printedOneri ? "Calcolata: rete e oneri stampati meno gli oneri di sistema stampati" : "Calcolata: rete e oneri stampati meno gli oneri ASOS e ARIM del dettaglio"));
+      // Tony (19/11/2026): a difference of printed aggregates, never the transport billed (072248E: the sintetica puts 1,28 € of
+      // vendita in the rete e oneri of the quota per consumi).
+      rows.push(calc(DERIVED_NETWORK_LABEL, round2(printed.networkAndSystem - oneri), printedOneri ? "Calcolata: rete e oneri stampati meno gli oneri di sistema stampati; la sintetica può includere nella rete e oneri voci di altra natura, solo la fattura di dettaglio stampa il trasporto" : "Calcolata: rete e oneri stampati meno gli oneri ASOS e ARIM del dettaglio; solo la fattura di dettaglio stampa il trasporto"));
       // Tony (14/11/2026): the subtraction is not described in the summary; it stays in the technical details, on the printed
       // aggregate it comes from.
       const aggregate = rows.length - 2;
-      rows[aggregate] = { ...rows[aggregate], note: `${rows[aggregate].note} · rete e trasporto calcolata: ${euro(printed.networkAndSystem)} − oneri di sistema ${euro(oneri)} = ${euro(round2(printed.networkAndSystem - oneri))}` };
+      rows[aggregate] = { ...rows[aggregate], note: `${rows[aggregate].note} · rete e oneri meno oneri (calcolata, non è il trasporto stampato): ${euro(printed.networkAndSystem)} − oneri di sistema ${euro(oneri)} = ${euro(round2(printed.networkAndSystem - oneri))}` };
     }
     else rows.push(missing("di cui spesa per la rete e il trasporto", "NETWORK"));
   } else {
     rows.push(missing("Spesa per la rete e gli oneri generali di sistema"));
     if (printedNetwork) rows.push(printedRow("di cui spesa per la rete e il trasporto", printedNetwork, "COMPONENTS_NETWORK_SYSTEM"));
+  }
   }
   // Tony (16/11/2026, "classificazione unica", 070789E): the energia reattiva the bill prints apart (5,48 €) is shown as read,
   // under its own name, with the line it comes from; it is outside the printed "rete e oneri", so never subtracted from it.
@@ -292,7 +310,7 @@ function economicsSection(bill: Bill): BillReadSection {
     const ordinary = printedNetwork?.amount ?? (printed?.networkAndSystem != null && oneri !== null ? round2(printed.networkAndSystem - oneri) : null);
     if (ordinary !== null) rows.push(calc("Rete complessiva (rete e trasporto ed energia reattiva)", round2(ordinary + reactive), `Calcolata: rete e trasporto ${euro(ordinary)} + energia reattiva ${euro(reactive)}`));
   }
-  rows.push(printedOneri ? printedRow("Oneri generali di sistema", printedOneri, "COMPONENTS_NETWORK_SYSTEM") : oneri === null ? missing("Oneri generali di sistema", "SYSTEM_CHARGES") : { label: "Oneri generali di sistema", value: euro(oneri), state: "CALCULATED", note: `Somma delle ${oneriLines.length} righe ASOS e ARIM stampate nel dettaglio` });
+  rows.push(printedOneri ? printedRow("Oneri generali di sistema", printedOneri, "COMPONENTS_NETWORK_SYSTEM") : detailPrevails && split ? { label: "Oneri generali di sistema", value: euro(split.detail.system ?? 0), state: "READ", note: "Fattura di dettaglio: voci di oneri generali di sistema stampate" } : oneri === null ? missing("Oneri generali di sistema", "SYSTEM_CHARGES") : { label: "Oneri generali di sistema", value: euro(oneri), state: "CALCULATED", note: `Somma delle ${oneriLines.length} righe ASOS e ARIM stampate nel dettaglio` });
   rows.push(printedExcise ? printedRow("Accise", printedExcise, "COMPONENTS_TAXES") : money("Accise", excise, "Righe di accisa del dettaglio", "EXCISE"));
   rows.push(printedVat ? printedRow("IVA", printedVat, "COMPONENTS_TAXES") : money("IVA", vat, "Righe IVA del dettaglio", "VAT"));
   // Tony (14/11/2026, "semplificazione visualizzazione costi"): the printed "Accise e IVA" is always kept; the screen shows it in
@@ -307,19 +325,26 @@ function economicsSection(bill: Bill): BillReadSection {
     const gap = round2(components - printedTotal);
     if (gap !== 0) totalNote = `Le componenti stampate sommano ${euro(components)}: differenza di ${euro(gap)} (altre partite, bonus o canone non inclusi; calcolata)`;
   }
+  // Detail lines read only in part (INCOHERENT) keep the sintetica's split as before: nothing to show beside it.
+  if (split?.note && split.status === "DETAIL_PREVAILS") {
+    const moved = round2(split.quotas.reduce((total, quota) => total + Math.abs(quota.detailSeller - (quota.summarySeller ?? 0)), 0));
+    const perQuota = split.quotas.map((quota) => `${quota.label}: vendita ${euro(quota.summarySeller ?? 0)} in sintetica, ${euro(quota.detailSeller)} in dettaglio; rete e oneri ${euro(quota.summaryNetworkAndSystem ?? 0)} in sintetica, ${euro(quota.detailNetworkAndSystem)} in dettaglio`).join(" · ");
+    rows.push({ label: SPLIT_DIFFERENCE_LABEL, value: euro(moved), state: "CALCULATED", note: `${split.note[0].toUpperCase()}${split.note.slice(1)}${perQuota ? ` (${perQuota})` : ""}. I documenti originali non sono modificati.`, noteShown: true });
+  }
   rows.push(printedTotal === null ? { label: "Totale fatturato", value: NOT_IN_BILL, state: "ABSENT" } : { label: "Totale fatturato", value: euro(printedTotal), state: "READ", ...(totalNote ? { note: totalNote } : {}) });
   // The simulator's own grouping, shown apart and labelled, only where it differs from what the bill prints (Tony, 10/11,
   // "solo le differenze rilevanti"): it may place a seller charge printed under rete elsewhere.
   const normalized: BillReadRow[] = [];
   if (totals) {
     const seller = [totals.sellerEnergyTotal, totals.sellerCommercializationTotal, totals.sellerOtherTotal].filter((value): value is number => value !== null);
-    const network = printedNetwork?.amount ?? (printed?.networkAndSystem != null && oneri !== null ? round2(printed.networkAndSystem - oneri) : null);
+    const network = detailPrevails ? split?.detail.network ?? null : printedNetwork?.amount ?? (printed?.networkAndSystem != null && oneri !== null ? round2(printed.networkAndSystem - oneri) : null);
     const add = (label: string, value: number | null, printedValue: number | null | undefined) => {
       if (value === null || (printedValue !== null && printedValue !== undefined && Math.abs(round2(value - printedValue)) < 0.01)) return;
       normalized.push({ label: `${label} (classificazione del simulatore)`, value: euro(value), state: "CALCULATED", note: printedValue === null || printedValue === undefined ? "Raggruppamento normalizzato delle righe lette, non stampato in fattura" : `Raggruppamento normalizzato delle righe lette: in fattura ${euro(printedValue)}` });
     };
-    add("Vendita", seller.length ? round2(seller.reduce((total, value) => total + value, 0)) : null, printed?.seller);
-    add("Rete e trasporto", totals.regulatedNetworkTotal, network);
+    add("Vendita", seller.length ? round2(seller.reduce((total, value) => total + value, 0)) : null, detailPrevails ? split?.detail.seller : printed?.seller);
+    // Without oneri among the engine's lines its "rete" is the whole printed rete e oneri: not a transport to show (19/11/2026).
+    if (totals.systemChargesTotal !== null || printed?.networkAndSystem == null) add("Rete e trasporto", totals.regulatedNetworkTotal, network);
     add("Oneri generali di sistema", totals.systemChargesTotal, oneri);
     add("Accise e IVA", totals.taxTotal, taxes);
   }
@@ -382,7 +407,7 @@ const ORDER: Readonly<Record<BillReadSectionId, readonly string[]>> = {
   SUPPLY: ["Intestatario", "Fornitore", "POD", "PDR", "Periodo", "Uso", "Mercato"],
   TECHNICAL: ["Consumo totale (F0)", "F1", "F2", "F3", "Consumo annuo", ANNUAL_ESTIMATE_LABEL, "Tensione", "Potenza impegnata", "Potenza massima"],
   CONTRACT: ["Offerta", "Prezzo", "Fasce", "Indice", "Spread", "PCV", "Scadenza condizioni", "Scadenza contratto"],
-  ECONOMICS: ["Vendita", "Rete e oneri di sistema", "Rete e trasporto", "Energia reattiva", "Rete complessiva", "Oneri di sistema", "Accise", "IVA", "Accise e IVA", "Totale fattura"],
+  ECONOMICS: ["Vendita", "Rete e oneri di sistema", "Rete e trasporto", DERIVED_NETWORK_LABEL, "Energia reattiva", "Rete complessiva", "Oneri di sistema", "Accise", "IVA", "Accise e IVA", SPLIT_DIFFERENCE_LABEL, "Totale fattura"],
 };
 const isZero = (value: string) => { const amounts = [...value.matchAll(/-?\d[\d.]*,\d+|-?\d+(?:\.\d+)?/g)].map((match) => amountOf(match[0])); return amounts.length > 0 && amounts.every((amount) => amount === 0); };
 
@@ -417,11 +442,13 @@ const ECONOMIC_SPLITS: readonly (readonly [string, readonly [string, string]])[]
 const hasValue = (row: BillReadRow | undefined) => row !== undefined && (row.state === "READ" || row.state === "REVIEW" || row.state === "CALCULATED");
 function economicSecondary(row: BillReadRow, rows: readonly BillReadRow[]): boolean {
   if (row.label === "Totale fattura") return false;
-  const find = (label: string) => rows.find((item) => item.label === label && item.group !== "SIMULATOR");
+  // The rete e oneri less the oneri, calculated (Tony 19/11/2026), takes the transport's place in the layout, under its own name.
+  const same = (label: string, wanted: string) => label === wanted || (wanted === "Rete e trasporto" && label === DERIVED_NETWORK_LABEL);
+  const find = (label: string) => rows.find((item) => same(item.label, label) && item.group !== "SIMULATOR");
   for (const [aggregate, parts] of ECONOMIC_SPLITS) {
     const complete = parts.every((part) => hasValue(find(part)));
     if (row.label === aggregate) return complete || !hasValue(row);
-    if (parts.includes(row.label)) return complete ? false : hasValue(find(aggregate)) || !hasValue(row);
+    if (parts.some((part) => same(row.label, part))) return complete ? false : hasValue(find(aggregate)) || !hasValue(row);
   }
   return !hasValue(row);
 }

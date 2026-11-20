@@ -210,6 +210,8 @@ export interface BillDocumentModel {
   readonly featurePermissions?: import("../foundation/bill-feature-permissions").BillFeatureAccessSnapshot;
   readonly verificationSummary?: import("../foundation/bill-feature-permissions").BillVerificationSummary | null;
   readonly analystReview: import("../foundation/bill-analyst-review").BillAnalystReviewDTO;
+  /** Tony (19/11/2026): the fattura di dettaglio linked to this bill, if any. */
+  readonly detailDocument?: { readonly fileName: string; readonly linkedAt: string; readonly checks: readonly { readonly code: string; readonly outcome: string; readonly message: string }[] } | null;
 }
 
 export interface ApprovedBillSummaryModel {

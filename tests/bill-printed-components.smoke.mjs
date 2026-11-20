@@ -161,12 +161,16 @@ try {
   const rereadBill = toPublicDocument(await ingest(toStructuredBill({ reading: reread, checks: checkBillReading(reread), reread: false }), "prova-g.pdf"));
   const costs = billReadSections(billForReading(rereadBill)).find((section) => section.id === "ECONOMICS").rows;
   const inView = costs.filter((row) => !row.secondary);
-  assert.deepEqual(inView.map((row) => [row.label, plain(row.value), row.state]), [["Vendita", "17,92 €", "READ"], ["Rete e trasporto", "6,69 €", "CALCULATED"], ["Oneri di sistema", "3,95 €", "READ"], ["Accise", "0,13 €", "READ"], ["IVA", "6,31 €", "READ"], ["Totale fattura", "35,00 €", "READ"]]);
-  assert.match(inView[1].note, /^Calcolata: rete e oneri stampati meno gli oneri di sistema stampati$/, "never attributed to the reading");
+  // Tony (19/11/2026, 072248E): the difference of printed aggregates is not the transport printed (expectation changed: the
+  // row was "Rete e trasporto" and its note ended after "stampati").
+  const DERIVED_NETWORK = "Rete e oneri meno oneri (calcolata, non è il trasporto stampato)";
+  assert.deepEqual(inView.map((row) => [row.label, plain(row.value), row.state]), [["Vendita", "17,92 €", "READ"], [DERIVED_NETWORK, "6,69 €", "CALCULATED"], ["Oneri di sistema", "3,95 €", "READ"], ["Accise", "0,13 €", "READ"], ["IVA", "6,31 €", "READ"], ["Totale fattura", "35,00 €", "READ"]]);
+  assert.match(inView[1].note, /^Calcolata: rete e oneri stampati meno gli oneri di sistema stampati; .*solo la fattura di dettaglio stampa il trasporto$/, "never attributed to the reading");
   assert.match(plain(inView[2].note), /^Somma di 6 importi stampati \(pagina 5, Oneri generali di sistema: "Componente ASOS - quota potenza" 1,85;/);
   const details = costs.filter((row) => row.secondary && !row.group).map((row) => [row.label, plain(row.value), plain(row.note ?? "")]);
-  assert.deepEqual(details, [["Rete e oneri di sistema", "10,64 €", "Quadro sintetico, come stampato (rete e oneri insieme) · rete e trasporto calcolata: 10,64 € − oneri di sistema 3,95 € = 6,69 €"], ["Accise e IVA", "6,44 €", "Quadro sintetico, come stampato (insieme)"]], "the printed aggregates kept in the details, not in the summary");
-  assert.equal(costs.filter((row) => row.label === "Rete e trasporto" && !row.group).length, 1, "rete e trasporto once");
+  assert.deepEqual(details, [["Rete e oneri di sistema", "10,64 €", "Quadro sintetico, come stampato (rete e oneri insieme) · rete e oneri meno oneri (calcolata, non è il trasporto stampato): 10,64 € − oneri di sistema 3,95 € = 6,69 €"], ["Accise e IVA", "6,44 €", "Quadro sintetico, come stampato (insieme)"]], "the printed aggregates kept in the details, not in the summary");
+  assert.equal(costs.filter((row) => row.label === DERIVED_NETWORK && !row.group).length, 1, "rete e oneri meno oneri once");
+  assert.equal(costs.filter((row) => row.label === "Rete e trasporto" && !row.group).length, 0, "never named transport");
 } finally {
   await rm(root, { recursive: true, force: true });
 }
