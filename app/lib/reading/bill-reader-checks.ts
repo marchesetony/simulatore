@@ -111,8 +111,51 @@ export function scontrinoAggregates(rows: readonly ScontrinoRow[]): PrintedAggre
 }
 
 /** The printed components of one category added up (a bill may print VAT at two rates); null when none is printed. */
-export function printedComponentSum(rows: readonly { readonly categoria: string; readonly importo: string }[], category: PrintedComponentCategory): number | null {
-  const values = rows.filter((row) => row.categoria === category).map((row) => italianNumber(row.importo)).filter((value): value is number => value !== null);
+/** One printed amount of a category as seen by withoutPrintedTotals. */
+export interface PrintedAmountView { readonly amount: number | null; readonly label: string; readonly section: string; readonly page: number }
+
+const normalizedText = (value: string) => value.toLowerCase().replace(/\s+/g, " ").trim();
+/** The period printed beside an amount (in its description or section title); "" when none is printed: the bill's own period. */
+function printedPeriodKey(view: PrintedAmountView): string {
+  const text = `${view.label} ${view.section}`;
+  const dates = [...text.matchAll(/(\d{1,2})[/.-](\d{1,2})[/.-](\d{2,4})/g)].map((match) => `${match[3].length === 2 ? `20${match[3]}` : match[3]}-${match[2].padStart(2, "0")}-${match[1].padStart(2, "0")}`);
+  const months = [...normalizedText(text).matchAll(/\b(gennaio|febbraio|marzo|aprile|maggio|giugno|luglio|agosto|settembre|ottobre|novembre|dicembre)\s+(\d{4})\b/g)].map((match) => `${match[2]}-${match[1]}`);
+  return [...new Set([...dates, ...months])].sort().join("|");
+}
+/** A row the document itself calls a total or subtotal ("Totale oneri generali di sistema", "Subtotale trasporto"). */
+const declaredTotal = (view: PrintedAmountView) => /\b(sub)?total[ei]?\b/i.test(view.label);
+const cent = (value: number) => Math.round(value * 100);
+
+/**
+ * Tony (20/11/2026, ELIOS EE20365/2026, "mai sommare una voce analitica al proprio subtotale"): ASOS 10,82 € and ARIM 0,15 €
+ * printed on one page and "Totale oneri generali di sistema" 10,97 € on another are oneri for 10,97 €, never 21,94 €.
+ * The amounts here are already of one category. An amount is set aside only on what the document shows, never on equal
+ * amounts alone:
+ * - a total: the row calls itself a total or subtotale, and the analytic rows of the same printed period add up to it
+ *   (to the cent); the analytic rows are kept, the total is not added to them;
+ * - the same total printed again: a second row calling itself a total, same amount and same printed period;
+ * - the same section printed again on another page: same description, same amount, same printed period, different page.
+ * Two autonomous charges of the same amount (ASOS 0,15 € and ARIM 0,15 €, or two equal rows on the same page) both stay;
+ * a total whose parts do not add up stays as well, and the printed-total check then asks to re-read it.
+ */
+export function withoutPrintedTotals<T>(items: readonly T[], view: (item: T) => PrintedAmountView): readonly T[] {
+  const kept: { readonly item: T; readonly view: PrintedAmountView; readonly period: string }[] = [];
+  for (const item of items) {
+    const current = view(item); const period = printedPeriodKey(current);
+    const repeated = current.amount !== null && kept.some((other) => other.period === period && other.view.amount !== null && cent(other.view.amount) === cent(current.amount!)
+      && ((declaredTotal(current) && declaredTotal(other.view)) || (normalizedText(other.view.label) === normalizedText(current.label) && other.view.page !== current.page)));
+    if (!repeated) kept.push({ item, view: current, period });
+  }
+  return kept.filter((entry) => {
+    if (!declaredTotal(entry.view) || entry.view.amount === null) return true;
+    const parts = kept.filter((other) => other !== entry && !declaredTotal(other.view) && other.period === entry.period && other.view.amount !== null);
+    return !parts.length || cent(parts.reduce((sum, other) => sum + (other.view.amount ?? 0), 0)) !== cent(entry.view.amount);
+  }).map((entry) => entry.item);
+}
+
+export function printedComponentSum(rows: readonly { readonly categoria: string; readonly importo: string; readonly etichetta?: string; readonly sezione?: string; readonly pagina?: number }[], category: PrintedComponentCategory): number | null {
+  const own = withoutPrintedTotals(rows.filter((row) => row.categoria === category), (row) => ({ amount: italianNumber(row.importo), label: row.etichetta ?? "", section: row.sezione ?? "", page: row.pagina ?? 0 }));
+  const values = own.map((row) => italianNumber(row.importo)).filter((value): value is number => value !== null);
   return values.length ? values.reduce((left, right) => left + right, 0) : null;
 }
 

@@ -1,0 +1,1156 @@
+{
+ "pcs": {
+  "value": null,
+  "source": "DOCUMENT_AI",
+  "status": "NOT_FOUND",
+  "confidence": 0
+ },
+ "pdr": {
+  "value": null,
+  "source": "DOCUMENT_AI",
+  "status": "NOT_FOUND",
+  "confidence": 0
+ },
+ "pod": {
+  "value": "IT000E00000099",
+  "source": "DOCUMENT_AI",
+  "status": "FOUND",
+  "confidence": 0.9
+ },
+ "reader": "CLAUDE_DIRETTO",
+ "vector": {
+  "value": "EE",
+  "source": "DOCUMENT_AI",
+  "status": "FOUND",
+  "confidence": 0.9
+ },
+ "powerKw": {
+  "value": 3,
+  "source": "DOCUMENT_AI",
+  "status": "FOUND",
+  "confidence": 0.9
+ },
+ "supplier": {
+  "value": "VENDITORE DI PROVA S.R.L.",
+  "source": "DOCUMENT_AI",
+  "status": "FOUND",
+  "confidence": 0.9
+ },
+ "totalAmount": {
+  "value": 62.9,
+  "source": "DOCUMENT_AI",
+  "status": "FOUND",
+  "confidence": 0.9
+ },
+ "customerName": {
+  "value": "CLIENTE DI PROVA",
+  "source": "DOCUMENT_AI",
+  "status": "FOUND",
+  "confidence": 0.9
+ },
+ "customerType": {
+  "value": "RESIDENTIAL",
+  "source": "DOCUMENT_AI",
+  "status": "FOUND",
+  "confidence": 0.9
+ },
+ "documentType": "BOLLETTA_COMPLETA",
+ "voltageLevel": {
+  "value": "LV",
+  "source": "DOCUMENT_AI",
+  "status": "FOUND",
+  "confidence": 0.9
+ },
+ "billingPeriod": {
+  "value": {
+   "to": "2026-09-30",
+   "raw": "2026-09-01 - 2026-09-30",
+   "from": "2026-09-01"
+  },
+  "source": "DOCUMENT_AI",
+  "status": "FOUND",
+  "confidence": 0.9
+ },
+ "extendedFacts": [
+  {
+   "code": "BILLING_PERIOD_RAW",
+   "value": "01/09/2026 - 30/09/2026",
+   "status": "FOUND"
+  },
+  {
+   "code": "ECONOMIC_CONDITIONS_START_DATE",
+   "value": "2026-05-01",
+   "status": "FOUND"
+  },
+  {
+   "code": "ECONOMIC_EXPIRY",
+   "value": "2027-04-30",
+   "status": "FOUND"
+  },
+  {
+   "code": "CONTRACT_EXPIRY",
+   "value": "2027-04-30",
+   "status": "FOUND"
+  },
+  {
+   "code": "PRICE_MECHANISM_RAW",
+   "value": "a prezzo variabile",
+   "status": "FOUND"
+  },
+  {
+   "code": "PRICE_TIME_STRUCTURE_RAW",
+   "value": "a fasce",
+   "status": "FOUND"
+  },
+  {
+   "code": "INDEX_NAME",
+   "value": "PUN, periodicità di aggiornamento mensile",
+   "status": "FOUND"
+  },
+  {
+   "code": "SPREAD",
+   "unit": "EUR/KWH",
+   "value": "0,012 €/kWh",
+   "status": "FOUND"
+  },
+  {
+   "code": "PCV",
+   "unit": "EUR/mese",
+   "value": "6,35",
+   "status": "FOUND"
+  },
+  {
+   "code": "PRICE_F1",
+   "unit": "EUR/KWH",
+   "value": "0,218350",
+   "status": "FOUND"
+  },
+  {
+   "code": "PRICE_F2",
+   "unit": "EUR/KWH",
+   "value": "0,239580",
+   "status": "FOUND"
+  },
+  {
+   "code": "PRICE_F3",
+   "unit": "EUR/KWH",
+   "value": "0,209020",
+   "status": "FOUND"
+  },
+  {
+   "code": "POWER_COMMITTED",
+   "unit": "KW",
+   "value": "3,0",
+   "status": "FOUND"
+  },
+  {
+   "code": "POWER_MAXIMUM_DRAWN",
+   "unit": "KW",
+   "value": "3,0",
+   "status": "FOUND"
+  },
+  {
+   "code": "NOMINAL_VOLTAGE",
+   "value": "220,0 V",
+   "status": "FOUND"
+  },
+  {
+   "code": "SUPPLY_USE_CATEGORY_RAW",
+   "value": "domestico non residente",
+   "status": "FOUND"
+  },
+  {
+   "code": "MARKET_REGIME_RAW",
+   "value": "MERCATO LIBERO",
+   "status": "FOUND"
+  }
+ ],
+ "f1Consumption": {
+  "value": 31.31,
+  "source": "DOCUMENT_AI",
+  "status": "FOUND",
+  "confidence": 0.9
+ },
+ "f2Consumption": {
+  "value": 22.03,
+  "source": "DOCUMENT_AI",
+  "status": "FOUND",
+  "confidence": 0.9
+ },
+ "f3Consumption": {
+  "value": 39.07,
+  "source": "DOCUMENT_AI",
+  "status": "FOUND",
+  "confidence": 0.9
+ },
+ "readingAbsent": [
+  {
+   "field": "pdr",
+   "reason": "non stampato: fornitura luce"
+  },
+  {
+   "field": "potenzaDisponibileKw",
+   "reason": "non stampata"
+  },
+  {
+   "field": "classeAsos",
+   "reason": "non stampata"
+  },
+  {
+   "field": "consumoPicco",
+   "reason": "non stampato: fasce F1/F2/F3"
+  },
+  {
+   "field": "consumoFuoriPicco",
+   "reason": "non stampato: fasce F1/F2/F3"
+  },
+  {
+   "field": "consumoSmc",
+   "reason": "non stampato: fornitura luce"
+  },
+  {
+   "field": "coefficienteC",
+   "reason": "non stampato: fornitura luce"
+  },
+  {
+   "field": "pcs",
+   "reason": "non stampato: fornitura luce"
+  },
+  {
+   "field": "attivazioneFornitura",
+   "reason": "non stampata"
+  },
+  {
+   "field": "prezzoEnergiaF23",
+   "reason": "non stampato: offerta a tre fasce"
+  },
+  {
+   "field": "prezzoEnergiaMonorario",
+   "reason": "non stampato: prezzo a fasce"
+  },
+  {
+   "field": "coefficientePerdite",
+   "reason": "non stampato come coefficiente; solo righe Perdite di rete in dettaglio"
+  }
+ ],
+ "schemaVersion": 1,
+ "supplyProfile": {
+  "asosClass": "UNKNOWN",
+  "marketRegime": {
+   "status": "FOUND",
+   "rawValue": "MERCATO LIBERO",
+   "normalizedValue": "MERCATO_LIBERO"
+  },
+  "voltageClass": {
+   "status": "NOT_FOUND",
+   "rawValue": null,
+   "normalizedValue": null
+  },
+  "nominalVoltage": {
+   "status": "FOUND",
+   "rawValue": "220,0 V",
+   "normalizedValue": null
+  },
+  "powerAvailable": {
+   "status": "NOT_FOUND",
+   "rawValue": null,
+   "normalizedValue": null
+  },
+  "powerCommitted": {
+   "status": "FOUND",
+   "rawValue": "3,0 KW",
+   "normalizedValue": null
+  },
+  "asosClassEvidence": {
+   "status": "NOT_FOUND",
+   "asosClass": "UNKNOWN",
+   "sourceKind": null,
+   "effectiveTo": null,
+   "evidenceText": null,
+   "effectiveFrom": null,
+   "sourceReference": null
+  },
+  "powerBillingBasis": {
+   "status": "NOT_FOUND",
+   "rawValue": null,
+   "normalizedValue": "UNKNOWN"
+  },
+  "powerMaximumDrawn": {
+   "status": "FOUND",
+   "rawValue": "3,0 KW",
+   "normalizedValue": null
+  },
+  "supplyUseCategory": {
+   "status": "FOUND",
+   "rawValue": "domestico non residente",
+   "normalizedValue": "DOMESTIC"
+  },
+  "domesticResidenceStatus": {
+   "status": "NOT_FOUND",
+   "rawValue": null,
+   "normalizedValue": "UNKNOWN"
+  },
+  "contractualTariffCategory": {
+   "status": "NOT_FOUND",
+   "rawValue": null,
+   "normalizedValue": null
+  }
+ },
+ "smcConsumption": {
+  "value": null,
+  "source": "DOCUMENT_AI",
+  "status": "NOT_FOUND",
+  "confidence": 0
+ },
+ "annualConsumption": {
+  "value": 1574,
+  "source": "DOCUMENT_AI",
+  "status": "FOUND",
+  "confidence": 0.9
+ },
+ "billedConsumption": {
+  "value": 92.42,
+  "source": "DOCUMENT_AI",
+  "status": "FOUND",
+  "confidence": 0.9
+ },
+ "printedComponents": [
+  {
+   "page": 6,
+   "label": "Totale tariffa per l'uso della rete elettrica",
+   "amount": 13.27,
+   "source": "DOCUMENT_READING",
+   "section": "Elementi di dettaglio",
+   "category": "NETWORK",
+   "rawAmount": "13,27"
+  },
+  {
+   "page": 3,
+   "label": "Componente ASOS a copertura dei costi per il sostegno delle fonti rinnovabili e da cogenerazione",
+   "amount": 10.82,
+   "source": "DOCUMENT_READING",
+   "section": "Oneri generali di sistema",
+   "category": "SYSTEM_CHARGES",
+   "rawAmount": "10,82"
+  },
+  {
+   "page": 3,
+   "label": "Componente ARIM a copertura di altri oneri relativi ad attività di interesse generale",
+   "amount": 0.15,
+   "source": "DOCUMENT_READING",
+   "section": "Oneri generali di sistema",
+   "category": "SYSTEM_CHARGES",
+   "rawAmount": "0,15"
+  },
+  {
+   "page": 6,
+   "label": "Totale oneri generali di sistema",
+   "amount": 10.97,
+   "source": "DOCUMENT_READING",
+   "section": "Elementi di dettaglio",
+   "category": "SYSTEM_CHARGES",
+   "rawAmount": "10,97"
+  },
+  {
+   "page": 3,
+   "label": "Accisa sull'energia elettrica",
+   "amount": 2.09,
+   "source": "DOCUMENT_READING",
+   "section": "IMPOSTE",
+   "category": "EXCISE",
+   "rawAmount": "2,09"
+  },
+  {
+   "page": 3,
+   "label": "Addizionale Enti Locali",
+   "amount": 0,
+   "source": "DOCUMENT_READING",
+   "section": "IMPOSTE",
+   "category": "EXCISE",
+   "rawAmount": "0,00"
+  },
+  {
+   "page": 3,
+   "label": "Aliquota ridotta 10%",
+   "amount": 5.72,
+   "source": "DOCUMENT_READING",
+   "section": "RIEPILOGO IVA",
+   "category": "VAT",
+   "rawAmount": "5,72"
+  }
+ ],
+ "economicChargeLines": [
+  {
+   "code": "OTHER_CHARGE",
+   "unit": "kWh",
+   "amount": "32,97 €",
+   "status": "FOUND",
+   "quantity": "92,42",
+   "periodRaw": "",
+   "unitPrice": "0,356741",
+   "description": "Quota per consumi",
+   "documentEvidence": "pagina 2"
+  },
+  {
+   "code": "OTHER_CHARGE",
+   "unit": "€/kWh",
+   "amount": "24,50 €",
+   "status": "FOUND",
+   "quantity": "",
+   "periodRaw": "",
+   "unitPrice": "0,265094",
+   "description": "Quota per consumi - di cui spesa per la vendita di energia elettrica",
+   "rawDescription": "di cui spesa per vendita energia elettrica",
+   "documentEvidence": "pagina 2"
+  },
+  {
+   "code": "NETWORK_SYSTEM",
+   "unit": "€/kWh",
+   "amount": "8,47 €",
+   "status": "FOUND",
+   "quantity": "",
+   "periodRaw": "",
+   "unitPrice": "0,091647",
+   "description": "Quota per consumi - di cui spesa per la rete e gli oneri generali di sistema",
+   "rawDescription": "di cui spesa per la rete e oneri generali di sistema",
+   "documentEvidence": "pagina 2"
+  },
+  {
+   "code": "OTHER_CHARGE",
+   "unit": "mesi",
+   "amount": "16,19 €",
+   "status": "FOUND",
+   "quantity": "1",
+   "periodRaw": "",
+   "unitPrice": "16,19",
+   "description": "Quota fissa",
+   "documentEvidence": "pagina 2"
+  },
+  {
+   "code": "OTHER_CHARGE",
+   "unit": "€/mese",
+   "amount": "6,35 €",
+   "status": "FOUND",
+   "quantity": "",
+   "periodRaw": "",
+   "unitPrice": "6,35",
+   "description": "Quota fissa - di cui spesa per la vendita di energia elettrica",
+   "rawDescription": "di cui spesa per vendita energia elettrica",
+   "documentEvidence": "pagina 2"
+  },
+  {
+   "code": "NETWORK_SYSTEM",
+   "unit": "€/mese",
+   "amount": "9,84 €",
+   "status": "FOUND",
+   "quantity": "",
+   "periodRaw": "",
+   "unitPrice": "9,84",
+   "description": "Quota fissa - di cui spesa per la rete e gli oneri generali di sistema",
+   "rawDescription": "di cui spesa per la rete e oneri generali di sistema",
+   "documentEvidence": "pagina 2"
+  },
+  {
+   "code": "OTHER_CHARGE",
+   "unit": "kW",
+   "amount": "5,93 €",
+   "status": "FOUND",
+   "quantity": "3",
+   "periodRaw": "",
+   "unitPrice": "1,976667",
+   "description": "Quota potenza",
+   "documentEvidence": "pagina 2"
+  },
+  {
+   "code": "NETWORK_SYSTEM",
+   "unit": "€/kW/mese",
+   "amount": "5,93 €",
+   "status": "FOUND",
+   "quantity": "",
+   "periodRaw": "",
+   "unitPrice": "1,976667",
+   "description": "Quota potenza - di cui spesa per la rete e gli oneri generali di sistema",
+   "rawDescription": "di cui spesa per la rete e oneri generali di sistema",
+   "documentEvidence": "pagina 2"
+  },
+  {
+   "code": "TAX_SUBTOTAL",
+   "unit": "",
+   "amount": "7,81 €",
+   "status": "FOUND",
+   "quantity": "",
+   "periodRaw": "",
+   "unitPrice": "",
+   "description": "Accise e IVA",
+   "documentEvidence": "pagina 2"
+  },
+  {
+   "code": "BILL_TOTAL",
+   "unit": "",
+   "amount": "62,90 €",
+   "status": "FOUND",
+   "quantity": "",
+   "periodRaw": "",
+   "unitPrice": "",
+   "description": "Totale bolletta",
+   "documentEvidence": "pagina 2"
+  },
+  {
+   "code": "PCV",
+   "unit": "Euro/POD/mese",
+   "amount": "6,35",
+   "status": "FOUND",
+   "rawUnit": "Euro/POD/mese",
+   "quantity": "1",
+   "rawValue": "6,35",
+   "periodRaw": "01/09/2026-30/09/2026",
+   "rawAmount": "6,35",
+   "rawPeriod": "01/09/2026-30/09/2026",
+   "unitPrice": "6,350000",
+   "description": "Commercializzazione e vendita",
+   "rawQuantity": "1",
+   "rawUnitPrice": "6,350000",
+   "classification": "PCV",
+   "rawDescription": "Commercializzazione e vendita",
+   "calculationCheck": "MATCH",
+   "documentEvidence": "Commercializzazione e vendita"
+  },
+  {
+   "code": "OTHER_SELLER_FIXED_CHARGE",
+   "unit": "Euro/POD/mese",
+   "amount": "0,00",
+   "status": "FOUND",
+   "rawUnit": "Euro/POD/mese",
+   "quantity": "1",
+   "rawValue": "0,00",
+   "periodRaw": "01/09/2026-30/09/2026",
+   "rawAmount": "0,00",
+   "rawPeriod": "01/09/2026-30/09/2026",
+   "unitPrice": "0,000000",
+   "description": "Corrispettivo Aggr. Misure TERNA",
+   "rawQuantity": "1",
+   "rawUnitPrice": "0,000000",
+   "classification": "OTHER_SELLER_FIXED_CHARGE",
+   "rawDescription": "Corrispettivo Aggr. Misure TERNA",
+   "calculationCheck": "MATCH",
+   "documentEvidence": "Corrispettivo Aggr. Misure TERNA"
+  },
+  {
+   "code": "ENERGY_INDEX",
+   "unit": "Euro/KWH",
+   "amount": "6,77",
+   "status": "FOUND",
+   "rawUnit": "Euro/KWH",
+   "quantity": "31,00",
+   "rawValue": "6,77",
+   "periodRaw": "01/09/2026-30/09/2026",
+   "rawAmount": "6,77",
+   "rawPeriod": "01/09/2026-30/09/2026",
+   "unitPrice": "0,218350",
+   "description": "Energia - F1",
+   "rawQuantity": "31,00",
+   "rawUnitPrice": "0,218350",
+   "classification": "ENERGY_INDEX",
+   "rawDescription": "Energia - F1",
+   "calculationCheck": "MATCH",
+   "documentEvidence": "Energia - F1"
+  },
+  {
+   "code": "ENERGY_INDEX",
+   "unit": "Euro/KWH",
+   "amount": "5,27",
+   "status": "FOUND",
+   "rawUnit": "Euro/KWH",
+   "quantity": "22,00",
+   "rawValue": "5,27",
+   "periodRaw": "01/09/2026-30/09/2026",
+   "rawAmount": "5,27",
+   "rawPeriod": "01/09/2026-30/09/2026",
+   "unitPrice": "0,239580",
+   "description": "Energia - F2",
+   "rawQuantity": "22,00",
+   "rawUnitPrice": "0,239580",
+   "classification": "ENERGY_INDEX",
+   "rawDescription": "Energia - F2",
+   "calculationCheck": "MATCH",
+   "documentEvidence": "Energia - F2"
+  },
+  {
+   "code": "ENERGY_INDEX",
+   "unit": "Euro/KWH",
+   "amount": "8,15",
+   "status": "FOUND",
+   "rawUnit": "Euro/KWH",
+   "quantity": "39,00",
+   "rawValue": "8,15",
+   "periodRaw": "01/09/2026-30/09/2026",
+   "rawAmount": "8,15",
+   "rawPeriod": "01/09/2026-30/09/2026",
+   "unitPrice": "0,209020",
+   "description": "Energia - F3",
+   "rawQuantity": "39,00",
+   "rawUnitPrice": "0,209020",
+   "classification": "ENERGY_INDEX",
+   "rawDescription": "Energia - F3",
+   "calculationCheck": "MATCH",
+   "documentEvidence": "Energia - F3"
+  },
+  {
+   "code": "NETWORK_LOSS_CHARGE",
+   "unit": "Euro/KWH",
+   "amount": "0,66",
+   "status": "FOUND",
+   "rawUnit": "Euro/KWH",
+   "quantity": "3,00",
+   "rawValue": "0,66",
+   "periodRaw": "01/09/2026-30/09/2026",
+   "rawAmount": "0,66",
+   "rawPeriod": "01/09/2026-30/09/2026",
+   "unitPrice": "0,218350",
+   "description": "Perdite di rete - F1",
+   "rawQuantity": "3,00",
+   "rawUnitPrice": "0,218350",
+   "classification": "NETWORK_LOSS_CHARGE",
+   "rawDescription": "Perdite di rete - F1",
+   "calculationCheck": "MATCH",
+   "documentEvidence": "Perdite di rete - F1"
+  },
+  {
+   "code": "NETWORK_LOSS_CHARGE",
+   "unit": "Euro/KWH",
+   "amount": "0,48",
+   "status": "FOUND",
+   "rawUnit": "Euro/KWH",
+   "quantity": "2,00",
+   "rawValue": "0,48",
+   "periodRaw": "01/09/2026-30/09/2026",
+   "rawAmount": "0,48",
+   "rawPeriod": "01/09/2026-30/09/2026",
+   "unitPrice": "0,239580",
+   "description": "Perdite di rete - F2",
+   "rawQuantity": "2,00",
+   "rawUnitPrice": "0,239580",
+   "classification": "NETWORK_LOSS_CHARGE",
+   "rawDescription": "Perdite di rete - F2",
+   "calculationCheck": "MATCH",
+   "documentEvidence": "Perdite di rete - F2"
+  },
+  {
+   "code": "NETWORK_LOSS_CHARGE",
+   "unit": "Euro/KWH",
+   "amount": "0,84",
+   "status": "FOUND",
+   "rawUnit": "Euro/KWH",
+   "quantity": "4,00",
+   "rawValue": "0,84",
+   "periodRaw": "01/09/2026-30/09/2026",
+   "rawAmount": "0,84",
+   "rawPeriod": "01/09/2026-30/09/2026",
+   "unitPrice": "0,209020",
+   "description": "Perdite di rete - F3",
+   "rawQuantity": "4,00",
+   "rawUnitPrice": "0,209020",
+   "classification": "NETWORK_LOSS_CHARGE",
+   "rawDescription": "Perdite di rete - F3",
+   "calculationCheck": "MATCH",
+   "documentEvidence": "Perdite di rete - F3"
+  },
+  {
+   "code": "IMBALANCE",
+   "unit": "Euro/KWH",
+   "amount": "0,09",
+   "status": "FOUND",
+   "rawUnit": "Euro/KWH",
+   "quantity": "92,00",
+   "rawValue": "0,09",
+   "periodRaw": "01/09/2026-30/09/2026",
+   "rawAmount": "0,09",
+   "rawPeriod": "01/09/2026-30/09/2026",
+   "unitPrice": "0,001000",
+   "description": "Sbilanciamento",
+   "rawQuantity": "92,00",
+   "rawUnitPrice": "0,001000",
+   "classification": "BALANCING_CHARGE",
+   "rawDescription": "Sbilanciamento",
+   "calculationCheck": "MATCH",
+   "documentEvidence": "Sbilanciamento"
+  },
+  {
+   "code": "CAPACITY_MARKET",
+   "unit": "Euro/KWH",
+   "amount": "1,12",
+   "status": "FOUND",
+   "rawUnit": "Euro/KWH",
+   "quantity": "102,00",
+   "rawValue": "1,12",
+   "periodRaw": "01/09/2026-30/09/2026",
+   "rawAmount": "1,12",
+   "rawPeriod": "01/09/2026-30/09/2026",
+   "unitPrice": "0,011000",
+   "description": "Corrispettivo mercato capacità",
+   "rawQuantity": "102,00",
+   "rawUnitPrice": "0,011000",
+   "classification": "CAPACITY_MARKET_SELLER_CHARGE",
+   "rawDescription": "Corrispettivo mercato capacità",
+   "calculationCheck": "MATCH",
+   "documentEvidence": "Corrispettivo mercato capacità"
+  },
+  {
+   "code": "DISPATCHING",
+   "unit": "Euro/KWH",
+   "amount": "0,05",
+   "status": "FOUND",
+   "rawUnit": "Euro/KWH",
+   "quantity": "102,00",
+   "rawValue": "0,05",
+   "periodRaw": "01/09/2026-30/09/2026",
+   "rawAmount": "0,05",
+   "rawPeriod": "01/09/2026-30/09/2026",
+   "unitPrice": "0,000520",
+   "description": "Dispacciamento Art. 25bis",
+   "rawQuantity": "102,00",
+   "rawUnitPrice": "0,000520",
+   "classification": "DISPATCHING_SELLER_CHARGE",
+   "rawDescription": "Dispacciamento Art. 25bis",
+   "calculationCheck": "MATCH",
+   "documentEvidence": "Dispacciamento Art. 25bis"
+  },
+  {
+   "code": "DISPATCHING",
+   "unit": "Euro/KWH",
+   "amount": "0,34",
+   "status": "FOUND",
+   "rawUnit": "Euro/KWH",
+   "quantity": "102,00",
+   "rawValue": "0,34",
+   "periodRaw": "01/09/2026-30/09/2026",
+   "rawAmount": "0,34",
+   "rawPeriod": "01/09/2026-30/09/2026",
+   "unitPrice": "0,003326",
+   "description": "Corrispettivo unitario uplift per l'approvvigionamento dei servizi ancillari nazionali globali",
+   "rawQuantity": "102,00",
+   "rawUnitPrice": "0,003326",
+   "classification": "DISPATCHING_SELLER_CHARGE",
+   "rawDescription": "Corrispettivo unitario uplift per l'approvvigionamento dei servizi ancillari nazionali globali",
+   "calculationCheck": "MATCH",
+   "documentEvidence": "Corrispettivo unitario uplift per l'approvvigionamento dei servizi ancillari nazionali globali"
+  },
+  {
+   "code": "DISPATCHING",
+   "unit": "Euro/KWH",
+   "amount": "0,00",
+   "status": "FOUND",
+   "rawUnit": "Euro/KWH",
+   "quantity": "102,00",
+   "rawValue": "0,00",
+   "periodRaw": "01/09/2026-30/09/2026",
+   "rawAmount": "0,00",
+   "rawPeriod": "01/09/2026-30/09/2026",
+   "unitPrice": "0,000001",
+   "description": "Corrispettivo unitario a copertura dei costi degli impianti essenziali per la sicurezza del sistema in regime ordinario",
+   "rawQuantity": "102,00",
+   "rawUnitPrice": "0,000001",
+   "classification": "DISPATCHING_SELLER_CHARGE",
+   "rawDescription": "Corrispettivo unitario a copertura dei costi degli impianti essenziali per la sicurezza del sistema in regime ordinario",
+   "calculationCheck": "MATCH",
+   "documentEvidence": "Corrispettivo unitario a copertura dei costi degli impianti essenziali per la sicurezza del sistema in regime ordinario"
+  },
+  {
+   "code": "DISPATCHING",
+   "unit": "Euro/KWH",
+   "amount": "0,31",
+   "status": "FOUND",
+   "rawUnit": "Euro/KWH",
+   "quantity": "102,00",
+   "rawValue": "0,31",
+   "periodRaw": "01/09/2026-30/09/2026",
+   "rawAmount": "0,31",
+   "rawPeriod": "01/09/2026-30/09/2026",
+   "unitPrice": "0,003041",
+   "description": "Corrispettivo unitario a copertura dei costi degli impianti essenziali per la sicurezza del sistema in regime di reintegrazione dei costi",
+   "rawQuantity": "102,00",
+   "rawUnitPrice": "0,003041",
+   "classification": "DISPATCHING_SELLER_CHARGE",
+   "rawDescription": "Corrispettivo unitario a copertura dei costi degli impianti essenziali per la sicurezza del sistema in regime di reintegrazione dei costi",
+   "calculationCheck": "MATCH",
+   "documentEvidence": "Corrispettivo unitario a copertura dei costi degli impianti essenziali per la sicurezza del sistema in regime di reintegrazione dei costi"
+  },
+  {
+   "code": "DISPATCHING",
+   "unit": "Euro/KWH",
+   "amount": "0,07",
+   "status": "FOUND",
+   "rawUnit": "Euro/KWH",
+   "quantity": "102,00",
+   "rawValue": "0,07",
+   "periodRaw": "01/09/2026-30/09/2026",
+   "rawAmount": "0,07",
+   "rawPeriod": "01/09/2026-30/09/2026",
+   "unitPrice": "0,000652",
+   "description": "Corrispettivo unitario a copertura dei costi riconosciuti per il funzionamento di TERNA ai fini del dispacciamento",
+   "rawQuantity": "102,00",
+   "rawUnitPrice": "0,000652",
+   "classification": "DISPATCHING_SELLER_CHARGE",
+   "rawDescription": "Corrispettivo unitario a copertura dei costi riconosciuti per il funzionamento di TERNA ai fini del dispacciamento",
+   "calculationCheck": "MATCH",
+   "documentEvidence": "Corrispettivo unitario a copertura dei costi riconosciuti per il funzionamento di TERNA ai fini del dispacciamento"
+  },
+  {
+   "code": "DISPATCHING",
+   "unit": "Euro/KWH",
+   "amount": "0,13",
+   "status": "FOUND",
+   "rawUnit": "Euro/KWH",
+   "quantity": "102,00",
+   "rawValue": "0,13",
+   "periodRaw": "01/09/2026-30/09/2026",
+   "rawAmount": "0,13",
+   "rawPeriod": "01/09/2026-30/09/2026",
+   "unitPrice": "0,001301",
+   "description": "Corrispettivo unitario a copertura dei costi per la remunerazione del servizio di modulazione straordinaria",
+   "rawQuantity": "102,00",
+   "rawUnitPrice": "0,001301",
+   "classification": "DISPATCHING_SELLER_CHARGE",
+   "rawDescription": "Corrispettivo unitario a copertura dei costi per la remunerazione del servizio di modulazione straordinaria",
+   "calculationCheck": "MATCH",
+   "documentEvidence": "Corrispettivo unitario a copertura dei costi per la remunerazione del servizio di modulazione straordinaria"
+  },
+  {
+   "code": "DISPATCHING",
+   "unit": "Euro/KWH",
+   "amount": "-0,01",
+   "status": "FOUND",
+   "rawUnit": "Euro/KWH",
+   "quantity": "102,00",
+   "rawValue": "-0,01",
+   "periodRaw": "01/09/2026-30/09/2026",
+   "rawAmount": "-0,01",
+   "rawPeriod": "01/09/2026-30/09/2026",
+   "unitPrice": "-0,000084",
+   "description": "Corrispettivo unitario a copertura dei costi della mancata produzione",
+   "rawQuantity": "102,00",
+   "rawUnitPrice": "-0,000084",
+   "classification": "DISPATCHING_SELLER_CHARGE",
+   "rawDescription": "Corrispettivo unitario a copertura dei costi della mancata produzione",
+   "calculationCheck": "MATCH",
+   "documentEvidence": "Corrispettivo unitario a copertura dei costi della mancata produzione"
+  },
+  {
+   "code": "DISPATCHING",
+   "unit": "Euro/KWH",
+   "amount": "0,23",
+   "status": "FOUND",
+   "rawUnit": "Euro/KWH",
+   "quantity": "102,00",
+   "rawValue": "0,23",
+   "periodRaw": "01/09/2026-30/09/2026",
+   "rawAmount": "0,23",
+   "rawPeriod": "01/09/2026-30/09/2026",
+   "unitPrice": "0,002264",
+   "description": "Corrispettivo a copertura delle ulteriori partite economiche relative al servizio di dispacciamento",
+   "rawQuantity": "102,00",
+   "rawUnitPrice": "0,002264",
+   "classification": "DISPATCHING_SELLER_CHARGE",
+   "rawDescription": "Corrispettivo a copertura delle ulteriori partite economiche relative al servizio di dispacciamento",
+   "calculationCheck": "MATCH",
+   "documentEvidence": "Corrispettivo a copertura delle ulteriori partite economiche relative al servizio di dispacciamento"
+  },
+  {
+   "code": "NETWORK_FIXED",
+   "unit": "Eurocent/mese",
+   "amount": "1,92",
+   "status": "FOUND",
+   "rawUnit": "Eurocent/mese",
+   "quantity": "1",
+   "rawValue": "1,92",
+   "periodRaw": "01/09/2026-30/09/2026",
+   "rawAmount": "1,92",
+   "rawPeriod": "01/09/2026-30/09/2026",
+   "unitPrice": "192,000000",
+   "description": "Distribuzione elettrica - Corrispettivo fisso",
+   "rawQuantity": "1",
+   "rawUnitPrice": "192,000000",
+   "classification": "ARERA_NETWORK",
+   "rawDescription": "Distribuzione elettrica - Corrispettivo fisso",
+   "calculationCheck": "MISMATCH",
+   "documentEvidence": "Distribuzione elettrica - Corrispettivo fisso"
+  },
+  {
+   "code": "NETWORK_FIXED",
+   "unit": "Eurocent/mese",
+   "amount": "0,00",
+   "status": "FOUND",
+   "rawUnit": "Eurocent/mese",
+   "quantity": "1",
+   "rawValue": "0,00",
+   "periodRaw": "01/09/2026-30/09/2026",
+   "rawAmount": "0,00",
+   "rawPeriod": "01/09/2026-30/09/2026",
+   "unitPrice": "0,000000",
+   "description": "UC6 - Componente fissa",
+   "rawQuantity": "1",
+   "rawUnitPrice": "0,000000",
+   "classification": "ARERA_NETWORK",
+   "rawDescription": "UC6 - Componente fissa",
+   "calculationCheck": "MATCH",
+   "documentEvidence": "UC6 - Componente fissa"
+  },
+  {
+   "code": "POWER_CHARGE",
+   "unit": "Eurocent/KW/mese",
+   "amount": "5,88",
+   "status": "FOUND",
+   "rawUnit": "Eurocent/KW/mese",
+   "quantity": "3,0",
+   "rawValue": "5,88",
+   "periodRaw": "01/09/2026-30/09/2026",
+   "rawAmount": "5,88",
+   "rawPeriod": "01/09/2026-30/09/2026",
+   "unitPrice": "196,000000",
+   "description": "Distribuzione elettrica - Componente di potenza",
+   "rawQuantity": "3,0",
+   "rawUnitPrice": "196,000000",
+   "classification": "ARERA_NETWORK",
+   "rawDescription": "Distribuzione elettrica - Componente di potenza",
+   "calculationCheck": "MISMATCH",
+   "documentEvidence": "Distribuzione elettrica - Componente di potenza"
+  },
+  {
+   "code": "POWER_CHARGE",
+   "unit": "Eurocent/KW/mese",
+   "amount": "0,05",
+   "status": "FOUND",
+   "rawUnit": "Eurocent/KW/mese",
+   "quantity": "3,0",
+   "rawValue": "0,05",
+   "periodRaw": "01/09/2026-30/09/2026",
+   "rawAmount": "0,05",
+   "rawPeriod": "01/09/2026-30/09/2026",
+   "unitPrice": "1,656667",
+   "description": "UC6 - Componente potenza",
+   "rawQuantity": "3,0",
+   "rawUnitPrice": "1,656667",
+   "classification": "ARERA_NETWORK",
+   "rawDescription": "UC6 - Componente potenza",
+   "calculationCheck": "MISMATCH",
+   "documentEvidence": "UC6 - Componente potenza"
+  },
+  {
+   "code": "NETWORK_SYSTEM",
+   "unit": "Euro/KWH",
+   "amount": "1,09",
+   "status": "FOUND",
+   "rawUnit": "Euro/KWH",
+   "quantity": "92,00",
+   "rawValue": "1,09",
+   "periodRaw": "01/09/2026-30/09/2026",
+   "rawAmount": "1,09",
+   "rawPeriod": "01/09/2026-30/09/2026",
+   "unitPrice": "0,011900",
+   "description": "Distribuzione elettrica - Componente di energia - Scaglione 1",
+   "rawQuantity": "92,00",
+   "rawUnitPrice": "0,011900",
+   "classification": "ARERA_NETWORK",
+   "rawDescription": "Distribuzione elettrica - Componente di energia - Scaglione 1",
+   "calculationCheck": "MATCH",
+   "documentEvidence": "Distribuzione elettrica - Componente di energia - Scaglione 1"
+  },
+  {
+   "code": "NETWORK_SYSTEM",
+   "unit": "Euro/KWH",
+   "amount": "0,25",
+   "status": "FOUND",
+   "rawUnit": "Euro/KWH",
+   "quantity": "92,00",
+   "rawValue": "0,25",
+   "periodRaw": "01/09/2026-30/09/2026",
+   "rawAmount": "0,25",
+   "rawPeriod": "01/09/2026-30/09/2026",
+   "unitPrice": "0,002760",
+   "description": "UC3 - Componente energia - Scaglione 1",
+   "rawQuantity": "92,00",
+   "rawUnitPrice": "0,002760",
+   "classification": "ARERA_NETWORK",
+   "rawDescription": "UC3 - Componente energia - Scaglione 1",
+   "calculationCheck": "MATCH",
+   "documentEvidence": "UC3 - Componente energia - Scaglione 1"
+  },
+  {
+   "code": "NETWORK_SYSTEM",
+   "unit": "Euro/KWH",
+   "amount": "0,01",
+   "status": "FOUND",
+   "rawUnit": "Euro/KWH",
+   "quantity": "92,00",
+   "rawValue": "0,01",
+   "periodRaw": "01/09/2026-30/09/2026",
+   "rawAmount": "0,01",
+   "rawPeriod": "01/09/2026-30/09/2026",
+   "unitPrice": "0,000070",
+   "description": "UC6 - Componente energia - Scaglione 1",
+   "rawQuantity": "92,00",
+   "rawUnitPrice": "0,000070",
+   "classification": "ARERA_NETWORK",
+   "rawDescription": "UC6 - Componente energia - Scaglione 1",
+   "calculationCheck": "MATCH",
+   "documentEvidence": "UC6 - Componente energia - Scaglione 1"
+  },
+  {
+   "code": "COMMERCIALIZATION_VARIABLE_FEE",
+   "unit": "Euro/KWH",
+   "amount": "3,15",
+   "status": "FOUND",
+   "rawUnit": "Euro/KWH",
+   "quantity": "92,42",
+   "rawValue": "3,15",
+   "periodRaw": "",
+   "rawAmount": "3,15",
+   "rawPeriod": "",
+   "unitPrice": "0,034085",
+   "description": "Quota variabile smart (CVS)",
+   "rawQuantity": "92,42",
+   "rawUnitPrice": "0,034085",
+   "classification": "COMMERCIALIZATION_VARIABLE_FEE",
+   "rawDescription": "Quota variabile smart (CVS)",
+   "calculationCheck": "MATCH",
+   "documentEvidence": "Quota variabile smart (CVS)"
+  },
+  {
+   "code": "COMMERCIALIZATION_VARIABLE_FEE",
+   "unit": "Euro/KWH",
+   "amount": "0,92",
+   "status": "FOUND",
+   "rawUnit": "Euro/KWH",
+   "quantity": "92,42",
+   "rawValue": "0,92",
+   "periodRaw": "",
+   "rawAmount": "0,92",
+   "rawPeriod": "",
+   "unitPrice": "0,010000",
+   "description": "Quota variabile voci di trasporto",
+   "rawQuantity": "92,42",
+   "rawUnitPrice": "0,010000",
+   "classification": "COMMERCIALIZATION_VARIABLE_FEE",
+   "rawDescription": "Quota variabile voci di trasporto",
+   "calculationCheck": "MATCH",
+   "documentEvidence": "Quota variabile voci di trasporto"
+  },
+  {
+   "code": "ASOS",
+   "unit": "Eurocent/mese",
+   "amount": "7,92",
+   "status": "FOUND",
+   "rawUnit": "Eurocent/mese",
+   "quantity": "1",
+   "rawValue": "7,92",
+   "periodRaw": "",
+   "rawAmount": "7,92",
+   "rawPeriod": "",
+   "unitPrice": "792,430000",
+   "description": "Asos - Quota fissa",
+   "rawQuantity": "1",
+   "rawUnitPrice": "792,430000",
+   "classification": "ARERA_SYSTEM_CHARGES",
+   "rawDescription": "Asos - Quota fissa",
+   "calculationCheck": "MISMATCH",
+   "documentEvidence": "Asos - Quota fissa"
+  },
+  {
+   "code": "ASOS",
+   "unit": "Euro/KWH",
+   "amount": "2,90",
+   "status": "FOUND",
+   "rawUnit": "Euro/KWH",
+   "quantity": "92,00",
+   "rawValue": "2,90",
+   "periodRaw": "",
+   "rawAmount": "2,90",
+   "rawPeriod": "",
+   "unitPrice": "0,031515",
+   "description": "Asos - Quota energia - Scaglione 1",
+   "rawQuantity": "92,00",
+   "rawUnitPrice": "0,031515",
+   "classification": "ARERA_SYSTEM_CHARGES",
+   "rawDescription": "Asos - Quota energia - Scaglione 1",
+   "calculationCheck": "MATCH",
+   "documentEvidence": "Asos - Quota energia - Scaglione 1"
+  },
+  {
+   "code": "ARIM",
+   "unit": "Euro/KWH",
+   "amount": "0,15",
+   "status": "FOUND",
+   "rawUnit": "Euro/KWH",
+   "quantity": "92,00",
+   "rawValue": "0,15",
+   "periodRaw": "",
+   "rawAmount": "0,15",
+   "rawPeriod": "",
+   "unitPrice": "0,001638",
+   "description": "Arim - Quota energia - Scaglione 1",
+   "rawQuantity": "92,00",
+   "rawUnitPrice": "0,001638",
+   "classification": "ARERA_SYSTEM_CHARGES",
+   "rawDescription": "Arim - Quota energia - Scaglione 1",
+   "calculationCheck": "MATCH",
+   "documentEvidence": "Arim - Quota energia - Scaglione 1"
+  },
+  {
+   "code": "EXCISE",
+   "unit": "Euro/KWH",
+   "amount": "2,09",
+   "status": "FOUND",
+   "rawUnit": "Euro/KWH",
+   "quantity": "92,00",
+   "rawValue": "2,09",
+   "periodRaw": "dal 01/09/2026 al 30/09/2026",
+   "rawAmount": "2,09",
+   "rawPeriod": "dal 01/09/2026 al 30/09/2026",
+   "unitPrice": "0,022700",
+   "description": "Accisa sull'energia elettrica",
+   "rawQuantity": "92,00",
+   "rawUnitPrice": "0,022700",
+   "classification": "ACCISE",
+   "rawDescription": "Accisa sull'energia elettrica",
+   "calculationCheck": "MATCH",
+   "documentEvidence": "Accisa sull'energia elettrica"
+  }
+ ],
+ "conversionCoefficient": {
+  "value": null,
+  "source": "DOCUMENT_AI",
+  "status": "NOT_FOUND",
+  "confidence": 0
+ },
+ "analystExtractionStatus": "EXTRACTED",
+ "customerId": {
+  "value": null,
+  "source": "DOCUMENT_AI",
+  "status": "NOT_FOUND",
+  "confidence": 0
+ },
+ "customerTaxIdentifier": {
+  "value": null,
+  "source": "DOCUMENT_AI",
+  "status": "NOT_FOUND",
+  "confidence": 0
+ },
+ "offerCode": {
+  "value": "OFFERTAPROVA01",
+  "source": "DOCUMENT_AI",
+  "status": "FOUND",
+  "confidence": 0.9
+ },
+ "offerName": {
+  "value": "OFFERTA DI PROVA",
+  "source": "DOCUMENT_AI",
+  "status": "FOUND",
+  "confidence": 0.9
+ },
+ "documentOfferName": "OFFERTA DI PROVA",
+ "consumptionHistory": [],
+ "readingSources": [],
+ "readingChecks": [],
+ "readingReread": false,
+ "documentPriceRows": []
+}

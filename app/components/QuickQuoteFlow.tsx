@@ -10,6 +10,7 @@ import { BillReadDetails, type CalculatedFact } from "./BillReadDetails";
 import { formatKwh } from "../lib/ui/format";
 import { billComponentLabel } from "../lib/foundation/bill-economic-analysis";
 import { billForReading, billReadSections, printedContractValues } from "../lib/ui/bill-read-details";
+import { withoutPrintedTotals } from "../lib/reading/bill-reader-checks";
 import { BillArchivePicker } from "./BillArchivePicker";
 import { requestBillDelete, approvedBillEntry, archiveLoadError, canDeleteBills, deleteConfirmText, deleteReportText, deleteSelectedBills, deleteSummaryText, pendingBillEntry, type ArchiveList, type BillArchiveEntry, type BillDeleteReport } from "../lib/ui/bill-archive";
 import { downloadExport, MAX_UPLOAD_BYTES, requestJson, requestUpload, toUiError, UiApiError } from "../lib/ui/client";
@@ -710,7 +711,7 @@ function billOfferName(bill: BillDocumentModel | null, context: Context): string
 }
 // The transport the bill prints apart (its printed components), if any: the ARERA check is made on it (Tony 19/11/2026).
 function printedTransport(bill: BillDocumentModel): number | null {
-  const items = (bill.structuredBill?.printedComponents ?? []).filter((item) => item.category === "NETWORK");
+  const items = withoutPrintedTotals((bill.structuredBill?.printedComponents ?? []).filter((item) => item.category === "NETWORK"), (item) => ({ amount: item.amount, label: item.label, section: item.section, page: item.page }));
   return items.length ? Math.round(items.reduce((total, item) => total + item.amount, 0) * 100) / 100 : null;
 }
 // Official check of the regulated charges, shown under each section and charge it covers.

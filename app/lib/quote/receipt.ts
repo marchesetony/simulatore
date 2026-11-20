@@ -436,6 +436,10 @@ function withDetails(input: QuoteReceiptInput, rows: readonly QuoteReceiptRow[],
     const merged = new Map<string, { label: string; current: number | null; offer: number | null }>();
     for (const [key, label, current, offer] of pairs) {
       const entry = merged.get(key) ?? { label, current: null, offer: null };
+      // Tony (20/11/2026, ELIOS): two seller charges of one kind ("Quota variabile smart (CVS)", "Quota variabile voci di
+      // trasporto") are both named beside their sum.
+      const name = label.includes(": ") ? label.slice(label.indexOf(": ") + 2) : "";
+      if (current !== null && name && entry.label !== label && !entry.label.includes(name)) entry.label = entry.label.includes(": ") ? `${entry.label}, ${name}` : label;
       if (current !== null) entry.current = (entry.current ?? 0) + current;
       if (offer !== null) entry.offer = (entry.offer ?? 0) + offer;
       merged.set(key, entry);

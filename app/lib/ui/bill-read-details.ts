@@ -1,7 +1,7 @@
 import type { BillDocumentModel } from "./models";
 import type { StructuredBillEconomicChargeLine, StructuredBillField, StructuredBillPrintedComponent, StructuredBillPrintedComponentCategory } from "../ingestion/structured-bill";
 import type { SupplyProfileField } from "../ingestion/bill-supply-profile";
-import { BANDS_SUM_TOLERANCE_KWH, printedComponentChecks } from "../reading/bill-reader-checks";
+import { BANDS_SUM_TOLERANCE_KWH, printedComponentChecks, withoutPrintedTotals } from "../reading/bill-reader-checks";
 import { formatKwh } from "./format";
 import { isReactiveEnergy } from "../foundation/bill-economic-analysis";
 import { summaryDetailComparison } from "../quote/receipt";
@@ -218,7 +218,8 @@ function contractSection(bill: Bill, calculated: readonly BillReadRow[]): BillRe
 // are shown as read, with their page. They are parts of the printed "rete e oneri" and "Accise e IVA": never added to them.
 const COMPONENT_FIELD: Readonly<Record<StructuredBillPrintedComponentCategory, string>> = { NETWORK: "TRASPORTO_RETE", SYSTEM_CHARGES: "ONERI_SISTEMA", EXCISE: "ACCISE", VAT: "IVA" };
 function printedComponentOf(bill: Bill, category: StructuredBillPrintedComponentCategory): { readonly amount: number; readonly note: string } | null {
-  const items: readonly StructuredBillPrintedComponent[] = (bill.structuredBill?.printedComponents ?? []).filter((item) => item.category === category);
+  // Tony (20/11/2026, ELIOS): a printed total of its own analytic rows is never added to them.
+  const items: readonly StructuredBillPrintedComponent[] = withoutPrintedTotals((bill.structuredBill?.printedComponents ?? []).filter((item) => item.category === category), (item) => ({ amount: item.amount, label: item.label, section: item.section, page: item.page }));
   if (!items.length) return null;
   const where = (item: StructuredBillPrintedComponent) => `${item.page > 0 ? `pagina ${item.page}` : "pagina non indicata"}${item.section ? `, ${item.section}` : ""}: "${item.label || "senza descrizione"}" ${item.rawAmount}`;
   const amount = round2(items.reduce((total, item) => total + item.amount, 0));
