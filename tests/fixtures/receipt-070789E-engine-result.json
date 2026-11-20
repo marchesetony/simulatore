@@ -1,0 +1,445 @@
+{
+ "_note": "Real engine output (losses correction dbd7d2a) for bill BPower 070789E, October 2026, CTE Be Smile FLEX 25: commercial lines from the corrected engine on the approved CTE, BTA6 network and charges from the stored comparison of 15/11/2026. Amounts and codes only, no customer data.",
+ "supplyPeriod": {
+  "periodStart": "2026-10-01",
+  "periodEnd": "2026-11-01"
+ },
+ "costScope": "COMMERCIAL_PLUS_REGULATED_PARTIAL",
+ "warnings": [
+  "SOURCE_BILL_REFERENCE_RECORDED",
+  "REGULATED_SUBSET_PARTIAL_BTA6_NETWORK_METERING_TRANSMISSION_UC3_UC6_ARIM_ASOS_ONLY"
+ ],
+ "totalCommercialCost": 120.89,
+ "totalCommercialPlusRegulatedSubsetCost": 158.07,
+ "components": [
+  {
+   "label": "Energia EE indicizzata F1 2026-10",
+   "category": "ENERGY",
+   "amount": 14.19,
+   "formulaId": "EE_PUN_MWH_TO_KWH_PLUS_SPREAD",
+   "formulaInputs": {
+    "month": "2026-10",
+    "band": "F1",
+    "quantityKwh": 56,
+    "punEurPerMwh": 233.39,
+    "mwhToKwh": 1000,
+    "spreadPerKwh": 0.02,
+    "taxTreatment": "EXCLUDED"
+   },
+   "sign": "CHARGE"
+  },
+  {
+   "label": "Energia EE indicizzata F2 2026-10",
+   "category": "ENERGY",
+   "amount": 23.4,
+   "formulaId": "EE_PUN_MWH_TO_KWH_PLUS_SPREAD",
+   "formulaInputs": {
+    "month": "2026-10",
+    "band": "F2",
+    "quantityKwh": 86,
+    "punEurPerMwh": 252.14,
+    "mwhToKwh": 1000,
+    "spreadPerKwh": 0.02,
+    "taxTreatment": "EXCLUDED"
+   },
+   "sign": "CHARGE"
+  },
+  {
+   "label": "Energia EE indicizzata F3 2026-10",
+   "category": "ENERGY",
+   "amount": 45.52,
+   "formulaId": "EE_PUN_MWH_TO_KWH_PLUS_SPREAD",
+   "formulaInputs": {
+    "month": "2026-10",
+    "band": "F3",
+    "quantityKwh": 193,
+    "punEurPerMwh": 215.88,
+    "mwhToKwh": 1000,
+    "spreadPerKwh": 0.02,
+    "taxTreatment": "EXCLUDED"
+   },
+   "sign": "CHARGE"
+  },
+  {
+   "label": "Quote fisse",
+   "category": "FIXED_FEE",
+   "amount": 15,
+   "formulaId": "FEE_RATE_TIMES_BASIS",
+   "formulaInputs": {
+    "feeId": "cte-ingestion-dc5c0335-dc8d-40df-963e-2f5c058d9b8b-fixed",
+    "feeUnit": "EUR_PER_MONTH",
+    "feeRate": 15,
+    "basisQuantity": 1,
+    "taxTreatment": "EXCLUDED"
+   },
+   "sign": "CHARGE"
+  },
+  {
+   "label": "Opzione Flex pari a 36 €/anno",
+   "category": "FIXED_FEE",
+   "amount": 3,
+   "formulaId": "FEE_RATE_TIMES_BASIS",
+   "formulaInputs": {
+    "feeId": "cte-ingestion-dc5c0335-dc8d-40df-963e-2f5c058d9b8b-fixed-extra-1",
+    "feeUnit": "EUR_PER_YEAR",
+    "feeRate": 36,
+    "basisQuantity": 0.083333,
+    "taxTreatment": "EXCLUDED"
+   },
+   "sign": "CHARGE"
+  },
+  {
+   "label": "Quote variabili",
+   "category": "VARIABLE_FEE",
+   "amount": 1.11,
+   "formulaId": "FEE_RATE_TIMES_BASIS",
+   "formulaInputs": {
+    "feeId": "cte-ingestion-dc5c0335-dc8d-40df-963e-2f5c058d9b8b-variable",
+    "feeUnit": "EUR_PER_KWH",
+    "feeRate": 0.003,
+    "basisQuantity": 335,
+    "taxTreatment": "EXCLUDED",
+    "lossFactor": 0.1,
+    "lossPercent": 10,
+    "lossSource": "TIS Tabella 4 colonna A, delibera 117/2022/R/eel (dal 1/1/2023), confermata per il 2026 dalla delibera 430/2025/R/eel",
+    "lossTreatment": "NET_OF_LOSSES"
+   },
+   "sign": "CHARGE"
+  },
+  {
+   "label": "Sbilanciamento",
+   "category": "IMBALANCE",
+   "amount": 2.95,
+   "formulaId": "IMBALANCE_RATE_TIMES_BASIS",
+   "formulaInputs": {
+    "feeId": "cte-ingestion-dc5c0335-dc8d-40df-963e-2f5c058d9b8b-imbalance",
+    "feeUnit": "EUR_PER_KWH",
+    "feeRate": 0.008,
+    "basisQuantity": 335,
+    "taxTreatment": "EXCLUDED",
+    "lossFactor": 0.1,
+    "lossPercent": 10,
+    "lossSource": "TIS Tabella 4 colonna A, delibera 117/2022/R/eel (dal 1/1/2023), confermata per il 2026 dalla delibera 430/2025/R/eel",
+    "lossTreatment": "NET_OF_LOSSES"
+   },
+   "sign": "CHARGE"
+  },
+  {
+   "label": "Perdite di rete F1 2026-10",
+   "category": "VARIABLE_FEE",
+   "amount": 1.42,
+   "formulaId": "CTE_PASS_THROUGH_LOSSES_ON_ENERGY",
+   "formulaInputs": {
+    "kind": "LOSSES",
+    "lossFactor": 0.1,
+    "lossPercent": 10,
+    "lossSource": "TIS Tabella 4 colonna A, delibera 117/2022/R/eel (dal 1/1/2023), confermata per il 2026 dalla delibera 430/2025/R/eel",
+    "band": "F1",
+    "month": "2026-10",
+    "punEurPerMwh": 233.39,
+    "spreadPerKwh": 0.02,
+    "indexIncluded": 1,
+    "spreadIncluded": 1,
+    "quantityKwh": 56,
+    "lossKwh": 5.6,
+    "unitPricePerKwh": 0.25339,
+    "base": 14.18984,
+    "lossTreatment": "NOT_STATED_PRICE_NET",
+    "source": "TIS Tabella 4 colonna A, delibera 117/2022/R/eel (dal 1/1/2023), confermata per il 2026 dalla delibera 430/2025/R/eel"
+   },
+   "sign": "CHARGE"
+  },
+  {
+   "label": "Perdite di rete F2 2026-10",
+   "category": "VARIABLE_FEE",
+   "amount": 2.34,
+   "formulaId": "CTE_PASS_THROUGH_LOSSES_ON_ENERGY",
+   "formulaInputs": {
+    "kind": "LOSSES",
+    "lossFactor": 0.1,
+    "lossPercent": 10,
+    "lossSource": "TIS Tabella 4 colonna A, delibera 117/2022/R/eel (dal 1/1/2023), confermata per il 2026 dalla delibera 430/2025/R/eel",
+    "band": "F2",
+    "month": "2026-10",
+    "punEurPerMwh": 252.14,
+    "spreadPerKwh": 0.02,
+    "indexIncluded": 1,
+    "spreadIncluded": 1,
+    "quantityKwh": 86,
+    "lossKwh": 8.6,
+    "unitPricePerKwh": 0.27214,
+    "base": 23.40404,
+    "lossTreatment": "NOT_STATED_PRICE_NET",
+    "source": "TIS Tabella 4 colonna A, delibera 117/2022/R/eel (dal 1/1/2023), confermata per il 2026 dalla delibera 430/2025/R/eel"
+   },
+   "sign": "CHARGE"
+  },
+  {
+   "label": "Perdite di rete F3 2026-10",
+   "category": "VARIABLE_FEE",
+   "amount": 4.55,
+   "formulaId": "CTE_PASS_THROUGH_LOSSES_ON_ENERGY",
+   "formulaInputs": {
+    "kind": "LOSSES",
+    "lossFactor": 0.1,
+    "lossPercent": 10,
+    "lossSource": "TIS Tabella 4 colonna A, delibera 117/2022/R/eel (dal 1/1/2023), confermata per il 2026 dalla delibera 430/2025/R/eel",
+    "band": "F3",
+    "month": "2026-10",
+    "punEurPerMwh": 215.88,
+    "spreadPerKwh": 0.02,
+    "indexIncluded": 1,
+    "spreadIncluded": 1,
+    "quantityKwh": 193,
+    "lossKwh": 19.3,
+    "unitPricePerKwh": 0.23588,
+    "base": 45.52484,
+    "lossTreatment": "NOT_STATED_PRICE_NET",
+    "source": "TIS Tabella 4 colonna A, delibera 117/2022/R/eel (dal 1/1/2023), confermata per il 2026 dalla delibera 430/2025/R/eel"
+   },
+   "sign": "CHARGE"
+  },
+  {
+   "label": "Dispacciamento",
+   "category": "VARIABLE_FEE",
+   "amount": 3.64,
+   "formulaId": "CTE_PASS_THROUGH_RATE_TIMES_KWH",
+   "formulaInputs": {
+    "kind": "DISPATCHING",
+    "feeUnit": "EUR_PER_KWH",
+    "feeRate": 0.010877,
+    "officialRate": 0.009888000000000001,
+    "lossFactor": 0.1,
+    "lossPercent": 10,
+    "lossSource": "TIS Tabella 4 colonna A, delibera 117/2022/R/eel (dal 1/1/2023), confermata per il 2026 dalla delibera 430/2025/R/eel",
+    "lossTreatment": "CTE_TABLE_4_FACTOR",
+    "basisQuantity": 335,
+    "source": "TERNA_TIDE_2026Q4"
+   },
+   "sign": "CHARGE"
+  },
+  {
+   "label": "Capacity market libero (da CTE)",
+   "category": "VARIABLE_FEE",
+   "amount": 2.51,
+   "formulaId": "CTE_PASS_THROUGH_RATE_TIMES_KWH",
+   "formulaInputs": {
+    "kind": "CAPACITY_MARKET",
+    "capacityNature": "CONTRACTUAL",
+    "feeUnit": "EUR_PER_KWH",
+    "feeRate": 0.0075,
+    "cteRate": 0.0075,
+    "lossFactor": 0,
+    "lossTreatment": "GROSS_OF_LOSSES",
+    "basisQuantity": 335,
+    "source": "CTE_STATED_VALUE"
+   },
+   "sign": "CHARGE"
+  },
+  {
+   "label": "Mercato della capacità",
+   "category": "VARIABLE_FEE",
+   "amount": 1.26,
+   "formulaId": "CTE_PASS_THROUGH_RATE_TIMES_KWH",
+   "formulaInputs": {
+    "kind": "CAPACITY_MARKET",
+    "capacityNature": "REGULATED",
+    "feeUnit": "EUR_PER_KWH",
+    "feeRate": 0.003765,
+    "officialRate": 0.0034229999999999994,
+    "lossFactor": 0.1,
+    "lossPercent": 10,
+    "lossSource": "TIS Tabella 4 colonna A, delibera 117/2022/R/eel (dal 1/1/2023), confermata per il 2026 dalla delibera 430/2025/R/eel",
+    "lossTreatment": "OFFICIAL_NET_OF_LOSSES",
+    "basisQuantity": 335,
+    "source": "ARERA 338/2026/R/eel art. 4.1"
+   },
+   "sign": "CHARGE"
+  },
+  {
+   "label": "BTA6 quota fissa distribuzione regolata",
+   "category": "REGULATED_FIXED",
+   "sign": "CHARGE",
+   "amount": 0.45,
+   "formulaId": "REGULATED_BTA6_NETWORK_FIXED_RATE_TIMES_TIME",
+   "formulaInputs": {
+    "componentCode": "NETWORK_FIXED",
+    "customerScope": "NON_DOMESTIC_BT_BTA6",
+    "segmentStart": "2026-10-01T00:00:00.000Z",
+    "segmentEnd": "2026-11-01T00:00:00.000Z"
+   }
+  },
+  {
+   "label": "BTA6 quota potenza regolata",
+   "category": "REGULATED_POWER",
+   "sign": "CHARGE",
+   "amount": 10.98,
+   "formulaId": "REGULATED_BTA6_NETWORK_POWER_RATE_TIMES_ENGAGED_KW_TIME",
+   "formulaInputs": {
+    "componentCode": "NETWORK_POWER",
+    "customerScope": "NON_DOMESTIC_BT_BTA6",
+    "segmentStart": "2026-10-01T00:00:00.000Z",
+    "segmentEnd": "2026-11-01T00:00:00.000Z"
+   }
+  },
+  {
+   "label": "BTA6 energia distribuzione regolata",
+   "category": "REGULATED_ENERGY",
+   "sign": "CHARGE",
+   "amount": 0.22,
+   "formulaId": "REGULATED_BTA6_NETWORK_ENERGY_RATE_TIMES_KWH",
+   "formulaInputs": {
+    "componentCode": "NETWORK_ENERGY",
+    "customerScope": "NON_DOMESTIC_BT_BTA6",
+    "segmentStart": "2026-10-01T00:00:00.000Z",
+    "segmentEnd": "2026-11-01T00:00:00.000Z"
+   }
+  },
+  {
+   "label": "BTA6 energia trasmissione regolata",
+   "category": "REGULATED_ENERGY",
+   "sign": "CHARGE",
+   "amount": 3.99,
+   "formulaId": "REGULATED_TRANSMISSION_RATE_TIMES_KWH",
+   "formulaInputs": {
+    "componentCode": "TRANSMISSION_ENERGY",
+    "customerScope": "NON_DOMESTIC_BT_BTA6",
+    "segmentStart": "2026-10-01T00:00:00.000Z",
+    "segmentEnd": "2026-11-01T00:00:00.000Z"
+   }
+  },
+  {
+   "label": "BTA6 quota misura regolata",
+   "category": "REGULATED_FIXED",
+   "sign": "CHARGE",
+   "amount": 1.82,
+   "formulaId": "REGULATED_BTA6_METERING_FIXED_RATE_TIMES_TIME",
+   "formulaInputs": {
+    "componentCode": "METERING_FIXED",
+    "customerScope": "NON_DOMESTIC_BT_BTA6",
+    "segmentStart": "2026-10-01T00:00:00.000Z",
+    "segmentEnd": "2026-11-01T00:00:00.000Z"
+   }
+  },
+  {
+   "label": "BTA6 UC3 energia regolata",
+   "category": "REGULATED_ENERGY",
+   "sign": "CHARGE",
+   "amount": 0.92,
+   "formulaId": "REGULATED_UC3_RATE_TIMES_KWH",
+   "formulaInputs": {
+    "componentCode": "UC3",
+    "customerScope": "NON_DOMESTIC_BT_BTA6",
+    "segmentStart": "2026-10-01T00:00:00.000Z",
+    "segmentEnd": "2026-11-01T00:00:00.000Z"
+   }
+  },
+  {
+   "label": "BTA6 UC6 energia regolata",
+   "category": "REGULATED_ENERGY",
+   "sign": "CHARGE",
+   "amount": 0.02,
+   "formulaId": "REGULATED_UC6_ENERGY_RATE_TIMES_KWH",
+   "formulaInputs": {
+    "componentCode": "UC6",
+    "customerScope": "NON_DOMESTIC_BT_BTA6",
+    "segmentStart": "2026-10-01T00:00:00.000Z",
+    "segmentEnd": "2026-11-01T00:00:00.000Z"
+   }
+  },
+  {
+   "label": "BTA6 UC6 quota fissa regolata",
+   "category": "REGULATED_FIXED",
+   "sign": "CHARGE",
+   "amount": 0.14,
+   "formulaId": "REGULATED_BTA6_UC6_FIXED_RATE_TIMES_TIME",
+   "formulaInputs": {
+    "componentCode": "UC6",
+    "customerScope": "NON_DOMESTIC_BT_BTA6",
+    "segmentStart": "2026-10-01T00:00:00.000Z",
+    "segmentEnd": "2026-11-01T00:00:00.000Z"
+   }
+  },
+  {
+   "label": "BTA6 ARIM quota fissa regolata",
+   "category": "REGULATED_FIXED",
+   "sign": "CHARGE",
+   "amount": 0.25,
+   "formulaId": "REGULATED_BTA6_ARIM_FIXED_RATE_TIMES_TIME",
+   "formulaInputs": {
+    "componentCode": "ARIM",
+    "customerScope": "NON_DOMESTIC_BT_BTA6",
+    "segmentStart": "2026-10-01T00:00:00.000Z",
+    "segmentEnd": "2026-11-01T00:00:00.000Z"
+   }
+  },
+  {
+   "label": "BTA6 ARIM quota potenza regolata",
+   "category": "REGULATED_POWER",
+   "sign": "CHARGE",
+   "amount": 1.15,
+   "formulaId": "REGULATED_BTA6_ARIM_POWER_RATE_TIMES_REGULATORY_KW_TIME",
+   "formulaInputs": {
+    "componentCode": "ARIM",
+    "customerScope": "NON_DOMESTIC_BT_BTA6",
+    "segmentStart": "2026-10-01T00:00:00.000Z",
+    "segmentEnd": "2026-11-01T00:00:00.000Z"
+   }
+  },
+  {
+   "label": "BTA6 ARIM quota energia regolata",
+   "category": "REGULATED_ENERGY",
+   "sign": "CHARGE",
+   "amount": 0.54,
+   "formulaId": "REGULATED_BTA6_ARIM_ENERGY_RATE_TIMES_KWH",
+   "formulaInputs": {
+    "componentCode": "ARIM",
+    "customerScope": "NON_DOMESTIC_BT_BTA6",
+    "segmentStart": "2026-10-01T00:00:00.000Z",
+    "segmentEnd": "2026-11-01T00:00:00.000Z"
+   }
+  },
+  {
+   "label": "BTA6 ASOS quota fissa regolata",
+   "category": "REGULATED_FIXED",
+   "sign": "CHARGE",
+   "amount": 1.08,
+   "formulaId": "REGULATED_BTA6_ASOS_FIXED_RATE_TIMES_TIME",
+   "formulaInputs": {
+    "componentCode": "ASOS",
+    "customerScope": "NON_DOMESTIC_BT_BTA6",
+    "segmentStart": "2026-10-01T00:00:00.000Z",
+    "segmentEnd": "2026-11-01T00:00:00.000Z",
+    "regulatoryVariant": "ASOS_CLASS_0"
+   }
+  },
+  {
+   "label": "BTA6 ASOS quota potenza regolata",
+   "category": "REGULATED_POWER",
+   "sign": "CHARGE",
+   "amount": 4.94,
+   "formulaId": "REGULATED_BTA6_ASOS_POWER_RATE_TIMES_REGULATORY_KW_TIME",
+   "formulaInputs": {
+    "componentCode": "ASOS",
+    "customerScope": "NON_DOMESTIC_BT_BTA6",
+    "segmentStart": "2026-10-01T00:00:00.000Z",
+    "segmentEnd": "2026-11-01T00:00:00.000Z",
+    "regulatoryVariant": "ASOS_CLASS_0"
+   }
+  },
+  {
+   "label": "BTA6 ASOS quota energia regolata",
+   "category": "REGULATED_ENERGY",
+   "sign": "CHARGE",
+   "amount": 10.68,
+   "formulaId": "REGULATED_BTA6_ASOS_ENERGY_RATE_TIMES_KWH",
+   "formulaInputs": {
+    "componentCode": "ASOS",
+    "customerScope": "NON_DOMESTIC_BT_BTA6",
+    "segmentStart": "2026-10-01T00:00:00.000Z",
+    "segmentEnd": "2026-11-01T00:00:00.000Z",
+    "regulatoryVariant": "ASOS_CLASS_0"
+   }
+  }
+ ]
+}

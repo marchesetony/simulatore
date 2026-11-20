@@ -19,6 +19,9 @@ import { exportPdf } from "../app/lib/export/pdf.ts";
 
 const tenant = "tenant_proposal-security";
 const otherTenant = "tenant_proposal-other";
+// Tony 17/11/2026: a proposal is generated only while its period is in the last five months, measured on the server date.
+// These January 2026 calculations are therefore checked as of 10 February 2026; the same calculations are refused on 17/11.
+const PROPOSAL_TODAY = "2026-02-10";
 const approval = { status: "APPROVED", reviewer: "security-smoke", reviewedAt: "2026-01-02T00:00:00.000Z", decisionId: "security-smoke-approval" };
 
 function gasRequest(requestTenant = tenant) {
@@ -104,15 +107,17 @@ try {
 
   const eeCalculation = await calculateApprovedOffer(cteRepository, repositories.marketArchiveRepository, eeRequest(), eeArchive.archiveId);
   await calculationResults.put({ tenantId: tenant, recordId: eeCalculation.calculationId, payload: { calculationId: eeCalculation.calculationId, fingerprint: eeCalculation.fingerprint, result: eeCalculation }, idempotencyKey: eeCalculation.fingerprint });
-  const eeInput = await resolveAuthoritativeProposalInput(repositories, eeProposalFields(eeCalculation), tenant, "CALCULATION");
+  const eeInput = await resolveAuthoritativeProposalInput(repositories, eeProposalFields(eeCalculation), tenant, "CALCULATION", undefined, PROPOSAL_TODAY);
   const eeProposal = generateProposal(eeInput, tenant, "CALCULATION");
   assert.equal(eeProposal.vector, "EE");
   assert.equal(eeProposal.calculationFingerprint, eeCalculation.fingerprint);
 
-  const validCalculationInput = await resolveAuthoritativeProposalInput(repositories, proposalFields(calculation), tenant, "CALCULATION");
+  const validCalculationInput = await resolveAuthoritativeProposalInput(repositories, proposalFields(calculation), tenant, "CALCULATION", undefined, PROPOSAL_TODAY);
+  // The same stored calculation can no longer become a proposal once its period has left the window (server-side, no client date).
+  await assert.rejects(() => resolveAuthoritativeProposalInput(repositories, proposalFields(calculation), tenant, "CALCULATION", undefined, "2026-11-17"), /SOURCE_BILL_TOO_OLD/);
   const validCalculationProposal = generateProposal(validCalculationInput, tenant, "CALCULATION");
   assert.equal(validCalculationProposal.calculationFingerprint, calculation.fingerprint);
-  const sourceBillAttempt = await resolveAuthoritativeProposalInput(repositories, { ...proposalFields(calculation), sourceBill: { billId: "forged-bill", version: "forged-version" }, sourceComparison: { comparisonId: "forged-comparison", fingerprint: "f".repeat(64) } }, tenant, "CALCULATION");
+  const sourceBillAttempt = await resolveAuthoritativeProposalInput(repositories, { ...proposalFields(calculation), sourceBill: { billId: "forged-bill", version: "forged-version" }, sourceComparison: { comparisonId: "forged-comparison", fingerprint: "f".repeat(64) } }, tenant, "CALCULATION", undefined, PROPOSAL_TODAY);
   assert.equal(Object.hasOwn(sourceBillAttempt, "sourceBill"), false);
   assert.equal(Object.hasOwn(sourceBillAttempt, "sourceComparison"), false);
 
@@ -125,20 +130,20 @@ try {
   ];
   for (const [, tamperedCalculation] of tamperedCalculationCases) {
     await assert.rejects(
-      () => resolveAuthoritativeProposalInput(repositories, { ...proposalFields(calculation), calculation: tamperedCalculation }, tenant, "CALCULATION"),
+      () => resolveAuthoritativeProposalInput(repositories, { ...proposalFields(calculation), calculation: tamperedCalculation }, tenant, "CALCULATION", undefined, PROPOSAL_TODAY),
       /PROPOSAL_CLIENT_RESULT_FORBIDDEN/,
     );
   }
   await assert.rejects(
-    async () => generateProposal(await resolveAuthoritativeProposalInput(repositories, { ...proposalFields(calculation), selectedOffer: { ...selectedOffer(calculation), supplier: "Forged Supplier" } }, tenant, "CALCULATION"), tenant, "CALCULATION"),
+    async () => generateProposal(await resolveAuthoritativeProposalInput(repositories, { ...proposalFields(calculation), selectedOffer: { ...selectedOffer(calculation), supplier: "Forged Supplier" } }, tenant, "CALCULATION", undefined, PROPOSAL_TODAY), tenant, "CALCULATION"),
     /PROPOSAL_OFFER_MISMATCH/,
   );
   await assert.rejects(
-    () => resolveAuthoritativeProposalInput(repositories, { ...proposalFields(calculation), calculationFingerprint: "f".repeat(64) }, tenant, "CALCULATION"),
+    () => resolveAuthoritativeProposalInput(repositories, { ...proposalFields(calculation), calculationFingerprint: "f".repeat(64) }, tenant, "CALCULATION", undefined, PROPOSAL_TODAY),
     /PROPOSAL_CALCULATION_RECORD_INVALID/,
   );
   await assert.rejects(
-    () => resolveAuthoritativeProposalInput(repositories, { ...proposalFields(calculation), tenantId: otherTenant }, otherTenant, "CALCULATION"),
+    () => resolveAuthoritativeProposalInput(repositories, { ...proposalFields(calculation), tenantId: otherTenant }, otherTenant, "CALCULATION", undefined, PROPOSAL_TODAY),
     /PROPOSAL_CALCULATION_RECORD_INVALID/,
   );
 
@@ -158,16 +163,16 @@ try {
   };
   delete comparisonInput.calculationId;
   delete comparisonInput.calculationFingerprint;
-  const validComparisonInput = await resolveAuthoritativeProposalInput(repositories, comparisonInput, tenant, "COMPARISON");
+  const validComparisonInput = await resolveAuthoritativeProposalInput(repositories, comparisonInput, tenant, "COMPARISON", undefined, PROPOSAL_TODAY);
   const validComparisonProposal = generateProposal(validComparisonInput, tenant, "COMPARISON");
   assert.equal(validComparisonProposal.sourceComparison.comparisonId, comparison.comparisonId);
   assert.equal(validComparisonProposal.calculationFingerprint, selected.fingerprint);
   await assert.rejects(
-    () => resolveAuthoritativeProposalInput(repositories, { ...comparisonInput, comparison: { ...comparison, ranking: [] } }, tenant, "COMPARISON"),
+    () => resolveAuthoritativeProposalInput(repositories, { ...comparisonInput, comparison: { ...comparison, ranking: [] } }, tenant, "COMPARISON", undefined, PROPOSAL_TODAY),
     /PROPOSAL_CLIENT_RESULT_FORBIDDEN/,
   );
   await assert.rejects(
-    () => resolveAuthoritativeProposalInput(repositories, { ...comparisonInput, comparisonFingerprint: "0".repeat(64) }, tenant, "COMPARISON"),
+    () => resolveAuthoritativeProposalInput(repositories, { ...comparisonInput, comparisonFingerprint: "0".repeat(64) }, tenant, "COMPARISON", undefined, PROPOSAL_TODAY),
     /PROPOSAL_COMPARISON_RECORD_INVALID/,
   );
 
@@ -176,7 +181,7 @@ try {
   const eeSelected = eeComparison.results[0];
   assert.ok(eeSelected);
   const eeComparisonInput = { ...eeProposalFields(eeSelected), sourceType: "COMPARISON", comparisonId: eeComparison.comparisonId, comparisonFingerprint: eeComparison.fingerprint, selectedCalculationId: eeSelected.calculationId, selectedOffer: selectedOffer(eeSelected) };
-  const eeComparisonTrusted = await resolveAuthoritativeProposalInput(repositories, eeComparisonInput, tenant, "COMPARISON");
+  const eeComparisonTrusted = await resolveAuthoritativeProposalInput(repositories, eeComparisonInput, tenant, "COMPARISON", undefined, PROPOSAL_TODAY);
   const eeComparisonProposal = generateProposal(eeComparisonTrusted, tenant, "COMPARISON");
   assert.equal(eeComparisonProposal.vector, "EE");
   assert.equal(eeComparisonProposal.sourceComparison.comparisonId, eeComparison.comparisonId);

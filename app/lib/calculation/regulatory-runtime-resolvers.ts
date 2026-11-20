@@ -55,14 +55,10 @@ function normalizedReferenceText(reference: CteOfficialReference): string {
   return [reference.document, reference.table, reference.column, reference.article].filter((item): item is string => typeof item === "string" && item.trim() !== "").join(" ").toLowerCase();
 }
 
-function officialReferenceMatches(reference: CteOfficialReference, record: RegulatoryValueRecord, domain: "DISPATCHING" | "CAPACITY_MARKET" | "LOSS_FACTOR"): boolean {
+function officialReferenceMatches(reference: CteOfficialReference, record: RegulatoryValueRecord, domain: "DISPATCHING" | "CAPACITY_MARKET"): boolean {
   if (!["OFFICIAL_ATTACHMENT", "OFFICIAL_WEB_PAGE", "OFFICIAL_PROVVEDIMENTO"].includes(record.sourceType)) return false;
   if (!authorityAllowed(reference, record)) return false;
-  if (domain !== "LOSS_FACTOR" && record.referenceDomain !== domain) return false;
-  if (domain === "LOSS_FACTOR") {
-    const text = `${record.officialIdentifier} ${record.officialName ?? ""} ${record.applicationBasis}`.toLowerCase();
-    return /loss|perdit|tabella\s*4/.test(text) && /tis/.test(text);
-  }
+  if (record.referenceDomain !== domain) return false;
   const requested = normalizedReferenceText(reference);
   const recordText = `${record.officialIdentifier} ${record.officialName ?? ""} ${record.applicationBasis} ${record.sourceReference}`.toLowerCase();
   const meaningfulTokens = requested.split(/[^a-z0-9]+/).filter((token) => token.length >= 3 && !["art", "del", "col", "comma"].includes(token));
@@ -90,12 +86,12 @@ async function uniqueMatch(
   input: RegulatoryRuntimeResolutionInput,
   reference: CteOfficialReference,
   kind: CteRuntimeReferenceKind,
-  domain: "DISPATCHING" | "CAPACITY_MARKET" | "LOSS_FACTOR",
+  domain: "DISPATCHING" | "CAPACITY_MARKET",
   componentCode?: RegulatoryValueRecord["componentCode"],
 ): Promise<ResolvedOfficialRuntimeValue | null> {
   const records = await bridge.list(input.tenantId, {
     ...(componentCode === undefined ? {} : { componentCode }),
-    ...(domain === "LOSS_FACTOR" ? {} : { customerScope: input.customerScope }),
+    customerScope: input.customerScope,
     normalizedUnit: "EUR/KWH",
     effectiveAt: input.effectiveAt,
   });
@@ -122,8 +118,13 @@ export class ProductionCteRegulatoryRuntimeResolver implements CteRegulatoryRunt
     return uniqueMatch(this.bridge, input, entry.officialReference, "CAPACITY_MARKET", "CAPACITY_MARKET", capacityComponentCode(entry));
   }
 
-  resolveLoss(input: RegulatoryRuntimeResolutionInput, reference: CteLossReference["reference"]): Promise<ResolvedOfficialRuntimeValue | null> {
-    return uniqueMatch(this.bridge, input, reference, "LOSS_FACTOR", "LOSS_FACTOR");
+  // Tony (15/11/2026, "Correzione perdite e Capacity Market"): the archive holds €/kWh charges, never a loss percentage, and
+  // matching a record by its wording ("al netto delle perdite TIS tabella 4") had taken the Capacity Market 0,003423 €/kWh
+  // of 338/2026 as a 0,34% loss factor. No archived record is a loss coefficient: the engine uses the typed TIS Tabella 4
+  // percentage of the billed period and voltage (network-losses.ts).
+  resolveLoss(_input: RegulatoryRuntimeResolutionInput, _reference: CteLossReference["reference"]): Promise<ResolvedOfficialRuntimeValue | null> {
+    void _input; void _reference;
+    return Promise.resolve(null);
   }
 }
 

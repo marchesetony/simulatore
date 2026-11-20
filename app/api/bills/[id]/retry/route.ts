@@ -1,5 +1,5 @@
 import { billOcrErrorCode, billOcrPublicError, billOcrUserMessage, billPublicError, retryEnergyBill } from "../../../../lib/ingestion";
-import { createAnthropicTwoStageBillSdkAdapter } from "../../../../lib/ingestion/anthropic-bill-sdk";
+import { createClaudeBillReader } from "../../../../lib/reading/bill-reader";
 // createAnthropicBillSdkAdapter remains the legacy compatibility adapter; retries use two-stage.
 import { requestPrincipal } from "../../../../lib/auth/request";
 import { runtimeRepositories } from "../../../../lib/persistence/adapter";
@@ -20,7 +20,7 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
     const access = await resolveBillFeaturePermissions(principal, repositories, scope);
     const document = await getBillInScope(principal, repositories, id);
     if (!document) return Response.json({ error: { code: "DOCUMENT_NOT_FOUND", message: "Bill document not found" } }, { status: 404, headers: HEADERS });
-    const result = await retryEnergyBill({ tenantId: principal.tenantId, document, storage: repositories.documentStorage, repository: repositories.billRepository, authenticated: true, structuredProviderFactory: () => createAnthropicTwoStageBillSdkAdapter(), audit: { async record(event) { await recordRuntimeAudit({ principal, action: `BILL_${event.type}`, resourceType: "BILL", resourceId: event.documentId, outcome: event.outcome === "ALLOWED" ? "ALLOWED" : "FAILED", correlationId: "foundation-bills" }); } } });
+    const result = await retryEnergyBill({ tenantId: principal.tenantId, document, storage: repositories.documentStorage, repository: repositories.billRepository, authenticated: true, structuredProviderFactory: () => createClaudeBillReader(), audit: { async record(event) { await recordRuntimeAudit({ principal, action: `BILL_${event.type}`, resourceType: "BILL", resourceId: event.documentId, outcome: event.outcome === "ALLOWED" ? "ALLOWED" : "FAILED", correlationId: "foundation-bills" }); } } });
     const currentVersion = result.document.versions.find((version) => version.versionId === result.document.currentVersionId);
     const errorCode = currentVersion?.errorCode ?? result.errorCode;
     if (result.status === "FAILED") {
@@ -40,3 +40,5 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
     return Response.json({ error: { code, message } }, { status, headers: HEADERS });
   }
 }
+
+export const maxDuration = 300;

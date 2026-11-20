@@ -89,7 +89,9 @@ const route = await readFile(new URL("../app/api/cte/ingestion/[id]/approve/rout
 assert.match(ui, /status === "APPROVED"/);
 assert.match(ui, /CTE approvata/);
 assert.match(ui, /Approvata/);
-assert.match(ui, /await load\(selectedId\)/);
+// After approval the review closes and the lists are reloaded from the server; the approved document cannot be approved again from this screen.
+assert.match(ui, /approvedRef\.current\.add\(selectedId\); setSelected\(null\);[^\n]*await load\(\)/);
+assert.match(ui, /approvedRef\.current\.has\(selected\.ingestionId\)/);
 assert.match(ui, /pendingRef\.current\.has\("cte:approve"\)/);
 assert.match(route, /alreadyApproved/);
 assert.match(route, /already-approved/);

@@ -5,7 +5,7 @@ import { assertPassThroughComponents, validateCteContract } from "./validation.t
 import type { DocumentStoragePort } from "../foundation/real-bill";
 import type { DeletableTenantRecordRepository, TenantRecord } from "../persistence/types";
 // @ts-expect-error Node's strip-only test runner requires the explicit extension.
-import { CTE_SOURCE_TEXT_MAX_LENGTH, createAnthropicCteOcrProvider, decodeCteProviderPayload } from "./anthropic.ts";
+import { CTE_EXTRACTION_PATHS, CTE_SOURCE_TEXT_MAX_LENGTH, createAnthropicCteOcrProvider, decodeCteProviderPayload } from "./anthropic.ts";
 // @ts-expect-error Node's strip-only test runner requires the explicit extension.
 import { writeRealDiag4Json, type CteDiagnosticCapture } from "../diagnostics/real-diag-4.ts";
 // @ts-expect-error Node's strip-only test runner requires the explicit extension.
@@ -19,7 +19,8 @@ import type { CteProviderPayloadCapture } from "./provider-diagnostics.ts";
 import { persistCteProviderPayload } from "./provider-diagnostics.ts";
 
 export const CTE_INGESTION_SCHEMA_VERSION = 1 as const;
-export const CTE_MAX_DOCUMENT_BYTES = 10_000_000;
+/** Tony (31/10): "IL LIMITE DI 10 MB BISOGNA ALZARLO". */
+export const CTE_MAX_DOCUMENT_BYTES = 20_000_000;
 export const CTE_ALLOWED_CONTENT_TYPES = ["application/pdf", "image/jpeg", "image/png"] as const;
 export type CteDocumentContentType = typeof CTE_ALLOWED_CONTENT_TYPES[number];
 export type CteIngestionStatus = "UPLOADED" | "OCR_PROCESSING" | "EXTRACTION_PROCESSING" | "REVIEW_REQUIRED" | "PROVIDER_NOT_CONFIGURED" | "FAILED" | "APPROVED";
@@ -45,6 +46,8 @@ export interface CteProviderDiagnostics {
   readonly contentBlockTypes: readonly string[];
   readonly toolName: string | null;
   readonly internalErrorCode: string | null;
+  /** The provider's own short error text (credentials stripped), when it rejected the request. */
+  readonly providerMessage?: string | null;
 }
 
 export interface CteIngestionAttempt {
@@ -114,18 +117,20 @@ const commonFieldPaths = [
   "validity.periodStart", "validity.periodEnd", "expiry.date", "eligibility.customerTypes",
   "pricing.mode", "currency", "taxTreatment", "commercialTerms.fixedFees", "commercialTerms.variableFees",
   "commercialTerms.oneOffFees", "commercialTerms.commercialDiscounts", "commercialTerms.imbalance", "commercialTerms.passThroughComponents",
-  "commercialTerms.economicDuration", "commercialTerms.lossSemantics", "commercialTerms.exitFee",
+  "commercialTerms.economicDuration", "commercialTerms.lossSemantics", "commercialTerms.exitFee", "commercialTerms.additionalServices",
 ] as const;
 const eeFieldPaths = ["eligibility.voltageLevels", "pricing.reference", "pricing.spread.amount", "pricing.fixedPrice.amount"] as const;
 const gasFieldPaths = ["pricing.reference", "pricing.spread.amount", "pricing.fixedPrice.amount"] as const;
-const legacyCommercialArrayPaths = new Set(["commercialTerms.fixedFees", "commercialTerms.variableFees", "commercialTerms.oneOffFees", "commercialTerms.commercialDiscounts", "commercialTerms.imbalance"]);
+const legacyCommercialArrayPaths = new Set(["commercialTerms.fixedFees", "commercialTerms.variableFees", "commercialTerms.oneOffFees", "commercialTerms.commercialDiscounts", "commercialTerms.imbalance", "commercialTerms.additionalServices"]);
 const correctionPaths = new Set([
   "supplier.name", "supplier.supplierId", "offer.name", "offer.code", "validity.periodStart", "validity.periodEnd",
   "expiry.date", "pricing.spread.amount", "pricing.fixedPrice.amount", "commercialTerms.fixedFees[0].amount",
   "commercialTerms.variableFees[0].amount", "commercialTerms.imbalance.component.amount",
+  "pricing.mode", "pricing.reference", "taxTreatment", "eligibility.customerTypes", "eligibility.voltageLevels",
 ]);
 
 function fail(code: string): never { throw new Error(code); }
+function failWithDetail(code: string, detail: string): never { throw Object.assign(new Error(code), { detail: detail.slice(0, 200) }); }
 function isRecord(value: unknown): value is Record<string, unknown> { return typeof value === "object" && value !== null && !Array.isArray(value); }
 function safeFileName(value: string): string { if (!value || value.length > 180 || /[\0\r\n\\/]/.test(value)) fail("CTE_FILE_NAME_INVALID"); return value; }
 function validContentType(value: string): value is CteDocumentContentType { return (CTE_ALLOWED_CONTENT_TYPES as readonly string[]).includes(value); }
@@ -208,13 +213,20 @@ export function normalizeProviderExtraction(value: unknown, tenantId: string): {
   const documentType = value.documentType === "CTE" || value.documentType === "UNKNOWN" ? value.documentType : fail("CTE_EXTRACTION_SCHEMA_INVALID");
   const vector = value.vector === "EE" || value.vector === "GAS" || value.vector === "UNKNOWN" ? value.vector : fail("CTE_EXTRACTION_SCHEMA_INVALID");
   if (!Array.isArray(value.fields)) fail("CTE_EXTRACTION_SCHEMA_INVALID");
-  const supplied = value.fields.map(extractionField);
-  const notes = extractionNotes(value.extractionNotes);
+  const supplied = value.fields.map((field, index) => {
+    try { return extractionField(field); } catch (error) { failWithDetail(errorCodeOf(error, "CTE_EXTRACTION_SCHEMA_INVALID"), `campo ${isRecord(field) && typeof field.path === "string" ? field.path : `#${index}`} non valido`); }
+  });
+  let notes: readonly string[];
+  try { notes = extractionNotes(value.extractionNotes); } catch { failWithDetail("CTE_EXTRACTION_SCHEMA_INVALID", "note di estrazione oltre i limiti"); }
   const allowed = new Set(expectedPaths(vector));
-  const fields = supplied.filter((field) => allowed.has(field.path));
-  if (fields.length !== supplied.length) fail("CTE_EXTRACTION_SCHEMA_INVALID");
+  // An empty field the tool enum offers for the other vector carries no evidence, so it is dropped rather than failing the document.
+  // Tony (31/10, B Relax Gas 003888GSVML03: "errore"): a gas CTE read with "Livelli tensione" filled (e.g. from the
+  // pressure or meter class) must not be thrown away: a field that does not belong to the vector is dropped with a
+  // note, and a field read twice keeps its first reading.
+  const foreign = supplied.filter((field) => !allowed.has(field.path) && field.value !== null);
   const seen = new Set<string>();
-  for (const field of fields) { if (seen.has(field.path)) fail("CTE_EXTRACTION_SCHEMA_INVALID"); seen.add(field.path); }
+  const fields = supplied.filter((field) => { if (!allowed.has(field.path) || seen.has(field.path)) return false; seen.add(field.path); return true; });
+  if (foreign.length) notes = [...notes, `Campi non previsti per ${vector} ignorati: ${foreign.map((field) => field.path).slice(0, 4).join(", ")}`].slice(0, 20);
   const candidate = bindCandidate(value.contractCandidate, tenantId, vector);
   ensureVectorSeparation(vector, fields, candidate);
   const byPath = new Map(fields.map((field) => [field.path, field]));
@@ -223,7 +235,7 @@ export function normalizeProviderExtraction(value: unknown, tenantId: string): {
 }
 
 export function getConfiguredCteOcrProvider(env: NodeJS.ProcessEnv = process.env, fetcher: typeof fetch = fetch): CteOcrProvider {
-  const provider = env.CTE_OCR_PROVIDER;
+  const provider = env.CTE_OCR_PROVIDER?.replace(/^\s*CTE_OCR_PROVIDER\s*=|["'\s]/gi, "").toLowerCase();
   if (provider === "anthropic") return createAnthropicCteOcrProvider(env, fetcher);
   const endpoint = env.CTE_OCR_ENDPOINT;
   const apiKey = env.CTE_OCR_API_KEY;
@@ -243,8 +255,10 @@ function newIngestionId(): string { return "cte-ingestion-" + randomUUID(); }
 function errorCodeOf(error: unknown, fallback = "CTE_OCR_PROVIDER_FAILED"): string {
   return error instanceof Error && /^[A-Z0-9_]+$/.test(error.message) ? error.message : fallback;
 }
-function diagnosticsOf(error: unknown): CteProviderDiagnostics | null {
-  return isRecord(error) && isRecord(error.diagnostics) ? error.diagnostics as unknown as CteProviderDiagnostics : null;
+function diagnosticsOf(error: unknown, previous: CteProviderDiagnostics | null = null): CteProviderDiagnostics | null {
+  if (isRecord(error) && isRecord(error.diagnostics)) return error.diagnostics as unknown as CteProviderDiagnostics;
+  const detail = isRecord(error) && typeof error.detail === "string" ? error.detail : errorCodeOf(error);
+  return previous ? { ...previous, internalErrorCode: errorCodeOf(error), providerMessage: `Controllo interno: ${detail}` } : null;
 }
 
 async function persistCteDiagnostics(ingestionId: string, provider: CteOcrProvider | undefined): Promise<void> {
@@ -268,7 +282,7 @@ function publicRecord(record: TenantRecord<CteIngestionRecord>): Record<string, 
   const reviewMap = new Map([...review.commercialFields, ...review.notFoundFields].map((field) => [field.fieldKey, field]));
   const offerName = typeof reviewMap.get("offer.name")?.normalizedValue === "string" ? reviewMap.get("offer.name")?.normalizedValue : authoritative?.offer.name ?? null;
   const supplierName = typeof reviewMap.get("supplier.name")?.normalizedValue === "string" ? reviewMap.get("supplier.name")?.normalizedValue : authoritative?.supplier.name ?? null;
-  return { ingestionId: payload.ingestionId, documentId: payload.documentId, fileName: typeof offerName === "string" ? offerName : payload.fileName, offerName, supplierName, contentType: payload.contentType, size: payload.size, createdAt: record.createdAt, updatedAt: record.updatedAt, status: payload.status, documentType: payload.documentType, vector: payload.vector, currency: review.currency, fields: payload.fields, reviewFields: review.commercialFields, notFoundFields: review.notFoundFields, sources: review.sources, approvalGate: cteApprovalGate(serverRecord), extractionNotes: payload.extractionNotes, candidatePreview: authoritative ? { readyForApproval: authoritative.approval.status === "NEEDS_REVIEW" } : null, corrections: payload.corrections, errorCode: payload.errorCode, approvedArchiveId: payload.approvedArchiveId };
+  return { ingestionId: payload.ingestionId, documentId: payload.documentId, fileName: typeof offerName === "string" ? offerName : payload.fileName, offerName, supplierName, contentType: payload.contentType, size: payload.size, createdAt: record.createdAt, updatedAt: record.updatedAt, status: payload.status, documentType: payload.documentType, vector: payload.vector, currency: review.currency, fields: payload.fields, reviewFields: review.commercialFields, notFoundFields: review.notFoundFields, sources: review.sources, approvalGate: cteApprovalGate(serverRecord), extractionNotes: payload.extractionNotes, candidatePreview: authoritative ? { readyForApproval: authoritative.approval.status === "NEEDS_REVIEW" } : null, corrections: payload.corrections, errorCode: payload.errorCode, providerDetail: payload.status === "FAILED" ? payload.providerDiagnostics?.providerMessage ?? null : null, approvedArchiveId: payload.approvedArchiveId };
 }
 
 export function toPublicCteIngestion(record: TenantRecord<CteIngestionRecord>): Record<string, unknown> { return publicRecord(record); }
@@ -311,13 +325,13 @@ export async function createCteIngestion(input: {
       const extracted = normalizeProviderExtraction(providerExtraction, input.tenantId);
       if (!extracted.candidate && extracted.fields.every((field) => field.value === null)) fail("CTE_OCR_NO_USABLE_EVIDENCE");
       const capture = input.provider.getProviderPayloadCapture?.();
-      if (capture) await persistCteProviderPayload({ tenantId: input.tenantId, documentId: ingestionId, attemptNumber: 1, capture });
+      if (capture) try { await persistCteProviderPayload({ tenantId: input.tenantId, documentId: ingestionId, attemptNumber: 1, capture }); } catch { console.error("[CTE_PROVIDER_DIAGNOSTICS] persistence failed"); }
       documentType = extracted.documentType; vector = extracted.vector; fields = extracted.fields; candidate = extracted.candidate; status = "REVIEW_REQUIRED";
       extractionNotesValue = extracted.extractionNotes;
     } catch (error) {
       const capture = input.provider.getProviderPayloadCapture?.();
       if (capture) try { await persistCteProviderPayload({ tenantId: input.tenantId, documentId: ingestionId, attemptNumber: 1, capture }); } catch { console.error("[CTE_PROVIDER_DIAGNOSTICS] persistence failed"); }
-      status = "FAILED"; errorCode = errorCodeOf(error); providerDiagnostics = diagnosticsOf(error);
+      status = "FAILED"; errorCode = errorCodeOf(error); providerDiagnostics = diagnosticsOf(error, providerDiagnostics);
     }
     attempts.push(attempt({ fromStatus: "OCR_PROCESSING", toStatus: status, outcome: status === "REVIEW_REQUIRED" ? "SUCCEEDED" : "FAILED", errorCode, startedAt, completedAt: nowIso(), providerDiagnostics }));
   }
@@ -345,6 +359,8 @@ export async function retryCteIngestion(input: {
   readonly storage: DocumentStoragePort;
   readonly provider?: CteOcrProvider;
   readonly providerErrorCode?: CteProviderConfigurationError;
+  /** Re-read a document already in review (e.g. after the extractor improved); its current reading is kept if this fails. */
+  readonly reread?: boolean;
 }): Promise<TenantRecord<CteIngestionRecord>> {
   const lockKey = `${input.tenantId}:${input.ingestionId}`;
   if (activeRetries.has(lockKey)) fail("CTE_OCR_RETRY_IN_PROGRESS");
@@ -353,7 +369,7 @@ export async function retryCteIngestion(input: {
     const current = await input.repository.get(input.tenantId, input.ingestionId);
     if (!current) fail("CTE_INGESTION_NOT_FOUND");
     const previous = current.payload;
-    if (previous.status !== "FAILED" && previous.status !== "PROVIDER_NOT_CONFIGURED") fail("CTE_RETRY_STATE_INVALID");
+    if (previous.status !== "FAILED" && previous.status !== "PROVIDER_NOT_CONFIGURED" && !(input.reread && previous.status === "REVIEW_REQUIRED")) fail("CTE_RETRY_STATE_INVALID");
     const startedAt = nowIso();
     const history = [...(previous.attempts ?? [])];
     if (history.length === 0 && previous.errorCode) history.push(attempt({ fromStatus: previous.status, toStatus: previous.status, outcome: previous.status === "PROVIDER_NOT_CONFIGURED" ? "PROVIDER_NOT_CONFIGURED" : "FAILED", errorCode: previous.errorCode, startedAt: current.updatedAt, completedAt: current.updatedAt, providerDiagnostics: previous.providerDiagnostics }));
@@ -384,14 +400,15 @@ export async function retryCteIngestion(input: {
         const extracted = normalizeProviderExtraction(providerExtraction, input.tenantId);
         if (!extracted.candidate && extracted.fields.every((field) => field.value === null)) fail("CTE_OCR_NO_USABLE_EVIDENCE");
         const capture = input.provider.getProviderPayloadCapture?.();
-        if (capture) await persistCteProviderPayload({ tenantId: input.tenantId, documentId: previous.documentId, attemptNumber: history.length + 1, capture });
+        if (capture) try { await persistCteProviderPayload({ tenantId: input.tenantId, documentId: previous.documentId, attemptNumber: history.length + 1, capture }); } catch { console.error("[CTE_PROVIDER_DIAGNOSTICS] persistence failed"); }
         status = "REVIEW_REQUIRED"; errorCode = null; outcome = "SUCCEEDED"; documentType = extracted.documentType; vector = extracted.vector; fields = extracted.fields; extractionNotesValue = extracted.extractionNotes; candidate = extracted.candidate;
       } catch (error) {
         const capture = input.provider.getProviderPayloadCapture?.();
         if (capture) try { await persistCteProviderPayload({ tenantId: input.tenantId, documentId: previous.documentId, attemptNumber: history.length + 1, capture }); } catch { console.error("[CTE_PROVIDER_DIAGNOSTICS] persistence failed"); }
-        errorCode = errorCodeOf(error); providerDiagnostics = diagnosticsOf(error);
+        errorCode = errorCodeOf(error); providerDiagnostics = diagnosticsOf(error, providerDiagnostics);
       }
     }
+    if (previous.status === "REVIEW_REQUIRED" && status !== "REVIEW_REQUIRED") { status = "REVIEW_REQUIRED"; documentType = previous.documentType; vector = previous.vector; fields = previous.fields; extractionNotesValue = previous.extractionNotes; candidate = previous.candidate; }
     await persistCteDiagnostics(input.ingestionId, input.provider);
     const completedAt = nowIso();
     const nextAttempt = attempt({ fromStatus: previous.status, toStatus: status, outcome, errorCode, startedAt, completedAt, providerDiagnostics });
@@ -402,14 +419,27 @@ export async function retryCteIngestion(input: {
 }
 
 function valueFromText(path: string, value: string): string | number {
-  if (/amount$/.test(path)) { const number = Number(value); if (!Number.isFinite(number) || number < 0) fail("CTE_CORRECTION_VALUE_INVALID"); return number; }
-  if (/periodStart|periodEnd|expiry\.date$/.test(path) && !/^\d{4}-\d{2}-\d{2}$/.test(value)) fail("CTE_CORRECTION_VALUE_INVALID");
+  // Italian input: "0,125", "0,125 €/kWh" and "0,125 Eur/kWh" are all 0.125.
+  if (/amount$/.test(path)) { const compact = value.replace(/\/.*$/, "").replace(/€|\beur(?:o)?\b|\s/gi, ""); const number = Number(compact.includes(",") ? compact.replace(/\./g, "").replace(",", ".") : compact); if (!Number.isFinite(number) || number < 0) fail("CTE_CORRECTION_VALUE_INVALID"); return number; }
+  if (/periodStart|periodEnd|expiry\.date$/.test(path)) {
+    // The review shows dates as dd/mm/yyyy, so accept what the operator sees as well as ISO.
+    const italian = /^(\d{1,2})[/.-](\d{1,2})[/.-](\d{4})$/.exec(value.trim());
+    const iso = italian ? `${italian[3]}-${italian[2].padStart(2, "0")}-${italian[1].padStart(2, "0")}` : value.trim();
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(iso) || new Date(`${iso}T00:00:00Z`).toISOString().slice(0, 10) !== iso) fail("CTE_CORRECTION_VALUE_INVALID");
+    return iso;
+  }
   if (!value.trim() || value.length > 500) fail("CTE_CORRECTION_VALUE_INVALID");
   return value.trim();
 }
 
 function setCorrection(candidate: CteContract, fieldPath: string, next: string | number): CteContract {
   const clone = structuredClone(candidate) as unknown as Record<string, unknown>;
+  // A corrected expiry is always a dated expiry, even when the reading found none.
+  if (fieldPath === "expiry.date") {
+    clone.expiry = { status: "EXPIRES_ON", date: next };
+    try { validateCteContract(clone); } catch { fail("CTE_CORRECTION_VALUE_INVALID"); }
+    return clone as unknown as CteContract;
+  }
   const parts = fieldPath.replace(/\[(\d+)\]/g, ".$1").split(".");
   let cursor: Record<string, unknown> | unknown[] = clone;
   for (let index = 0; index < parts.length - 1; index += 1) {
@@ -425,6 +455,13 @@ function setCorrection(candidate: CteContract, fieldPath: string, next: string |
   return clone as unknown as CteContract;
 }
 
+/** Applies a correction to its field, adding the field when the reading never returned it (for example a missing expiry). */
+function withCorrectedField(fields: CteIngestionRecord["fields"], path: string, value: string | number, manualSource: boolean): CteIngestionRecord["fields"] {
+  const corrected = (field: CteIngestionRecord["fields"][number]) => ({ ...field, value, confidence: 1, status: "CORRECTED" as const, ...(manualSource ? { sourcePage: null, sourceText: "Correzione manuale" } : {}) });
+  if (fields.some((field) => field.path === path)) return fields.map((field) => field.path === path ? corrected(field) : field);
+  return [...fields, { path, value, confidence: 1, status: "CORRECTED" as const, sourcePage: null, sourceText: "Correzione manuale" }];
+}
+
 export async function correctCteIngestion(input: { readonly tenantId: string; readonly ingestionId: string; readonly fieldPath: string; readonly value: string; readonly actor: string; readonly repository: CteIngestionRepository }): Promise<TenantRecord<CteIngestionRecord>> {
   if (!isCorrectionSupported(input.fieldPath)) fail("CTE_CORRECTION_FIELD_UNSUPPORTED");
   const current = await input.repository.get(input.tenantId, input.ingestionId);
@@ -433,19 +470,20 @@ export async function correctCteIngestion(input: { readonly tenantId: string; re
   if (payload.status === "APPROVED") fail("CTE_INGESTION_APPROVED_IMMUTABLE");
   const nextValue = valueFromText(input.fieldPath, input.value);
   if (!payload.candidate) {
-    const fields = payload.fields.map((field) => field.path === input.fieldPath ? { ...field, value: nextValue, confidence: 1, status: "CORRECTED" as const } : field);
+    const fields = withCorrectedField(payload.fields, input.fieldPath, nextValue, false);
     const correction: CteCorrection = { version: current.version + 1, fieldPath: input.fieldPath, previousValue: payload.fields.find((field) => field.path === input.fieldPath)?.value ?? null, nextValue, actor: input.actor, correctedAt: nowIso() };
     return input.repository.put({ tenantId: input.tenantId, recordId: current.recordId, expectedVersion: current.version, payload: { ...payload, status: "REVIEW_REQUIRED", fields, corrections: [...payload.corrections, correction], errorCode: null }, now: correction.correctedAt });
   }
   const nextCandidate = setCorrection(payload.reviewedCandidate ?? payload.candidate, input.fieldPath, nextValue);
   const previous = payload.fields.find((field) => field.path === input.fieldPath)?.value ?? null;
   const correction: CteCorrection = { version: current.version + 1, fieldPath: input.fieldPath, previousValue: previous, nextValue, actor: input.actor, correctedAt: nowIso() };
-  const fields = payload.fields.map((field) => field.path === input.fieldPath ? { ...field, value: nextValue, confidence: 1, status: "CORRECTED" as const, sourcePage: null, sourceText: "Correzione manuale" } : field);
+  const fields = withCorrectedField(payload.fields, input.fieldPath, nextValue, true);
   return input.repository.put({ tenantId: input.tenantId, recordId: current.recordId, expectedVersion: current.version, payload: { ...payload, status: "REVIEW_REQUIRED", fields, reviewedCandidate: nextCandidate, corrections: [...payload.corrections, correction], errorCode: null }, now: correction.correctedAt });
 }
 
 export async function confirmCteIngestion(input: { readonly tenantId: string; readonly ingestionId: string; readonly fieldPath: string; readonly actor: string; readonly repository: CteIngestionRepository }): Promise<TenantRecord<CteIngestionRecord>> {
-  if (!isCorrectionSupported(input.fieldPath)) fail("CTE_CORRECTION_FIELD_UNSUPPORTED");
+  // Confirming keeps the extracted value, so any extracted field can be confirmed by the reviewer.
+  if (!(CTE_EXTRACTION_PATHS as readonly string[]).includes(input.fieldPath)) fail("CTE_CORRECTION_FIELD_UNSUPPORTED");
   const current = await input.repository.get(input.tenantId, input.ingestionId);
   if (!current) fail("CTE_INGESTION_NOT_FOUND");
   const payload = current.payload;

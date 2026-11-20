@@ -15,6 +15,7 @@ export type EligibilityReasonCode =
   | "VOLTAGE_MISMATCH"
   | "CONSUMPTION_THRESHOLD_MISMATCH"
   | "POWER_THRESHOLD_MISMATCH"
+  | "CONDOMINIUM_ONLY"
   | "VALIDITY_MISMATCH"
   | "CALCULATION_NOT_READY"
   | "REVIEW_REQUIRED"
@@ -138,6 +139,7 @@ export function reasonLabel(code: EligibilityReasonCode): string {
     SUPPLY_USE_MISMATCH: "L'uso della fornitura non è ammesso dalla CTE.",
     IDENTIFIER_TYPE_MISMATCH: "Il tipo di identificativo richiesto dalla CTE non è presente.",
     VOLTAGE_MISMATCH: "Il livello di tensione non è ammesso dalla CTE.",
+    CONDOMINIUM_ONLY: "La CTE è riservata ai condomini.",
     CONSUMPTION_THRESHOLD_MISMATCH: "Il consumo non soddisfa la soglia documentata della CTE.",
     POWER_THRESHOLD_MISMATCH: "La potenza non soddisfa la soglia documentata della CTE.",
     VALIDITY_MISMATCH: "Il periodo richiesto non è coperto dalla validità della CTE.",

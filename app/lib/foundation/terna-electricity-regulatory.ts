@@ -3,6 +3,8 @@ import { inflateSync } from "node:zlib";
 import type { RegulatoryValueRecord } from "./regulatory-types";
 // @ts-expect-error Node's strip-only test runner requires the explicit extension.
 import { createRegulatoryValue, isAllowedOfficialRegulatoryUrl } from "./arera-electricity-regulatory.ts";
+// @ts-expect-error Node's strip-only test runner requires the explicit extension.
+import { pdfTextLayer } from "../regulatory-refresh/pdf-text.ts";
 
 export const TERNA_CORRISPETTIVI_PAGE = "https://dati.terna.it/corrispettivi";
 export const TERNA_DISPATCHING_DATASOURCE = "E09352AE-CE30-4190-8956-F534D3EC4370";
@@ -81,7 +83,20 @@ const pdfStreams = (body: Uint8Array): readonly string[] => {
   return streams;
 };
 
-const pdfText = (body: Uint8Array): string => pdfStreams(body).map((stream) => [...stream.matchAll(/\(([^()]*)\)/g)].map((match) => match[1]).join("")).join(" ");
+const literalText = (body: Uint8Array): string => pdfStreams(body).map((stream) => [...stream.matchAll(/\(([^()]*)\)/g)].map((match) => match[1]).join("")).join(" ");
+/** The text layer of a Terna PDF (fonts, object streams, encryption: 2026Q4 gave an empty text, Tony 30/10); the bare
+ *  literal strings when the layer has none. `reason` says why both are empty. */
+const pdfTextRead = (body: Uint8Array): { readonly text: string; readonly reason: string } => {
+  const layer = pdfTextLayer(body);
+  const text = layer.text.trim() ? layer.text : literalText(body);
+  return { text, reason: text.trim() ? "" : `${layer.status}:${layer.reason ?? "TEXT_LAYER_EMPTY"}` };
+};
+const pdfText = (body: Uint8Array): string => pdfTextRead(body).text;
+/** Runs a reader on a document's text; when the text is empty the error says why. */
+const readPdf = <T>(body: Uint8Array, read: (text: string) => T): T => {
+  const { text, reason } = pdfTextRead(body);
+  try { return read(text); } catch (error) { throw reason && error instanceof Error ? new Error(`${error.message}:${reason}`) : error; }
+};
 const publishedDecimal = (body: Uint8Array, value: string): number => {
   const text = pdfText(body);
   const candidates = [value, value.replace(".", ",")];
@@ -135,4 +150,123 @@ export async function importTernaQ3Official(input: { readonly tenantId?: string;
   const capacityValue = publishedDecimal(capacity.bytes, "3,197");
   const capacityRecords = [createRegulatoryValue({ ...base, authority: "TERNA", publishedBy: "TERNA", calculatedBy: "TERNA", sourceReference: capacityUrl, officialIdentifier: "TERNA_CAPACITY_MARKET_Q3_2026", publicationDate: capacityPublicationDate, componentCode: "CAPACITY_MARKET_OFF_PEAK", originalValue: capacityValue, originalUnit: "EUR/MWH", officialName: "Corrispettivo unitario ore diverse dalle ore di picco del sistema elettrico", applicationBasis: "Corrispettivo mercato della capacità — 3° trimestre 2026; documento ufficiale riferito alle ore diverse dalle ore di picco", sourceSha256: capacityHash, contractPassThroughRequired: true })];
   return { discovery, tideRecords, capacityRecords, tideDocument: { url: tideUrl, publicationDate: tidePublicationDate, sourceSha256: tideHash }, capacityDocument: { url: capacityUrl, publicationDate: capacityPublicationDate, sourceSha256: capacityHash }, tideValueExtraction: tideValuesAvailable ? "EXTRACTED" : "BLOCKED_NO_TEXT" };
+}
+
+export interface TernaQuarter {
+  readonly year: number;
+  readonly quarter: 1 | 2 | 3 | 4;
+  readonly effectiveFrom: string;
+  readonly effectiveTo: string;
+}
+
+/** The calendar quarter containing `date`, shifted by `offset` quarters. */
+export function ternaQuarterFor(date: string, offset = 0): TernaQuarter {
+  const parsed = new Date(`${date.slice(0, 10)}T00:00:00.000Z`);
+  if (!Number.isFinite(parsed.getTime())) throw new Error("TERNA_QUARTER_DATE_INVALID");
+  const index = parsed.getUTCFullYear() * 4 + Math.floor(parsed.getUTCMonth() / 3) + offset;
+  const year = Math.floor(index / 4);
+  const quarter = (index % 4) + 1 as TernaQuarter["quarter"];
+  const iso = (y: number, m: number) => new Date(Date.UTC(y, m, 1)).toISOString().slice(0, 10);
+  return { year, quarter, effectiveFrom: iso(year, (quarter - 1) * 3), effectiveTo: iso(year, quarter * 3) };
+}
+
+/** Terna titles name a quarter as "3Q2026", "3° trimestre 2026" or "III trimestre 2026". */
+export function ternaTitleMatchesQuarter(title: string, { year, quarter }: Pick<TernaQuarter, "year" | "quarter">): boolean {
+  const roman = ["I", "II", "III", "IV"][quarter - 1];
+  return new RegExp(`(?:\\b${quarter}\\s*Q\\s*${year}\\b|\\bQ${quarter}\\s*${year}\\b|\\b${quarter}\\s*[°º^]?\\s*trimestre\\s*(?:del\\s*|anno\\s*)?${year}\\b|\\b${roman}\\s+trimestre\\s*(?:del\\s*|anno\\s*)?${year}\\b)`, "i").test(title);
+}
+
+const decimalPattern = "(\\d{1,3}(?:[.,]\\d{1,7}))";
+
+/** Reads the capacity-market unit charges (EUR/MWh) from the text of Terna's quarterly document. */
+export function extractTernaCapacityValues(text: string): { readonly offPeak: number; readonly peak: number | null } {
+  const flat = text.replace(/\s+/g, " ");
+  const read = (pattern: RegExp): number | null => {
+    const match = pattern.exec(flat);
+    if (!match) return null;
+    const value = Number(match[1].replace(",", "."));
+    return Number.isFinite(value) && value > 0 && value < 100 ? value : Number.NaN;
+  };
+  const offPeak = read(new RegExp(`ore\\s+diverse\\s+dalle\\s+ore\\s+di\\s+picco[^0-9]{0,240}?${decimalPattern}`, "i"));
+  if (offPeak === null) throw new Error("TERNA_CAPACITY_VALUE_NOT_FOUND");
+  if (Number.isNaN(offPeak)) throw new Error("TERNA_CAPACITY_VALUE_IMPLAUSIBLE");
+  // The peak charge is optional: a document may publish only the off-peak one.
+  const peakRead = read(new RegExp(`(?<!dalle\\s)ore\\s+di\\s+picco[^0-9]{0,240}?${decimalPattern}`, "i"));
+  const peak = peakRead === null || Number.isNaN(peakRead) ? null : peakRead;
+  return { offPeak, peak: peak === offPeak ? null : peak };
+}
+
+export interface TernaCapacityQuarterImport {
+  readonly quarter: TernaQuarter;
+  readonly document: { readonly url: string; readonly title: string; readonly publicationDate: string; readonly sourceSha256: string };
+  readonly records: readonly RegulatoryValueRecord[];
+}
+
+export const TERNA_CAPACITY_SCOPES = ["DOMESTIC_RESIDENT_BT", "NON_DOMESTIC_BT_BTA6"] as const;
+
+/** Finds Terna's capacity-market document for one quarter and turns its unit charges into regulatory values. */
+export async function importTernaCapacityQuarter(input: { readonly tenantId: string; readonly retrievedAt: string; readonly quarter: TernaQuarter; readonly fetcher?: TernaFetcher; readonly discovery?: TernaEndpointDiscovery }): Promise<TernaCapacityQuarterImport> {
+  const fetcher = input.fetcher ?? (fetch as unknown as TernaFetcher);
+  const discovery = input.discovery ?? await discoverTernaCorrispettiviEndpoints(fetcher);
+  const url = new URL(discovery.capacityEndpoint);
+  url.search = new URLSearchParams({ datasource: discovery.capacityDatasource, year: String(input.quarter.year), month: "0", day: "", datePublishing: "", type: "", area: "", pageNumber: "0", pageSize: "100", orderBy: "0", orderDirection: "desc", language: "it-IT", searchTerm: "", upType: "", quarter: "" }).toString();
+  const listing = JSON.parse(new TextDecoder().decode((await fetchTerna(url.toString(), fetcher)).bytes)) as { readonly Results?: readonly Record<string, unknown>[] };
+  const item = (listing.Results ?? []).find((result) => ternaTitleMatchesQuarter(String(result.Title ?? ""), input.quarter));
+  if (!item || typeof item.Url !== "string" || typeof item.PublicationDate !== "string") throw new Error("TERNA_CAPACITY_DOCUMENT_NOT_PUBLISHED");
+  const document = await fetchTerna(absoluteTernaUrl(item.Url), fetcher);
+  const values = readPdf(document.bytes, extractTernaCapacityValues);
+  const sha = sourceHash(document.bytes);
+  const published = publicationDate(item.PublicationDate);
+  const label = `${input.quarter.quarter}° trimestre ${input.quarter.year}`;
+  const record = (componentCode: "CAPACITY_MARKET_OFF_PEAK" | "CAPACITY_MARKET_PEAK", value: number, customerScope: typeof TERNA_CAPACITY_SCOPES[number]) => createRegulatoryValue({
+    tenantId: input.tenantId, sourceType: "OFFICIAL_ATTACHMENT", sourceReference: document.url, officialIdentifier: `TERNA_CAPACITY_MARKET_${input.quarter.year}Q${input.quarter.quarter}`, publicationDate: published, retrievedAt: input.retrievedAt,
+    effectiveFrom: input.quarter.effectiveFrom, effectiveTo: input.quarter.effectiveTo, componentCode, customerScope, originalValue: value, originalUnit: "EUR/MWH",
+    authority: "TERNA", publishedBy: "TERNA", calculatedBy: "TERNA",
+    officialName: componentCode === "CAPACITY_MARKET_PEAK" ? "Corrispettivo unitario ore di picco del sistema elettrico" : "Corrispettivo unitario ore diverse dalle ore di picco del sistema elettrico",
+    applicationBasis: `Corrispettivo mercato della capacità — ${label}; documento ufficiale Terna "${String(item.Title)}"`, sourceSha256: sha, contractPassThroughRequired: true,
+  });
+  const records = TERNA_CAPACITY_SCOPES.flatMap((scope) => [record("CAPACITY_MARKET_OFF_PEAK", values.offPeak, scope), ...(values.peak === null ? [] : [record("CAPACITY_MARKET_PEAK", values.peak, scope)])]);
+  return { quarter: input.quarter, document: { url: document.url, title: String(item.Title), publicationDate: published, sourceSha256: sha }, records };
+}
+
+/** The total TIDE dispatching charge (c€/kWh) of Terna's quarterly document: it is the sum of the published elements
+ *  (uplift, unità essenziali, modulazione, ...), so it is the largest of the values printed with seven decimals. */
+export function extractTernaTideTotal(text: string): number {
+  const printed = (decimals: number) => [...text.matchAll(new RegExp(`(?<![\\d.,])(-?\\d{1,2}[.,]\\d{${decimals}})(?![\\d])`, "g"))].map((match) => Number(match[1].replace(",", "."))).filter((value) => Number.isFinite(value));
+  // Terna prints the elements with seven decimals; a quarter printed with six or eight is read the same way (2026Q4 was
+  // not found, Tony 28/10).
+  const values = [7, 6, 8].map(printed).find((found) => found.length >= 2) ?? [];
+  // The numbers the text layer gave, so a layout not read can be seen in the refresh errors (2026Q4, Tony 30/10).
+  if (values.length < 2) throw new Error(`TERNA_TIDE_VALUE_NOT_FOUND:len=${text.length}:${[...text.matchAll(/-?\d+[.,]\d+/g)].slice(0, 12).map((match) => match[0]).join(" ")}`);
+  const total = Math.max(...values);
+  if (!(total > 0 && total < 10)) throw new Error("TERNA_TIDE_VALUE_IMPLAUSIBLE");
+  return total;
+}
+
+export interface TernaTideQuarterImport {
+  readonly quarter: TernaQuarter;
+  readonly document: { readonly url: string; readonly title: string; readonly publicationDate: string; readonly sourceSha256: string };
+  readonly records: readonly RegulatoryValueRecord[];
+}
+
+/** Finds Terna's TIDE dispatching document for one quarter: one total for customers other than households. */
+export async function importTernaTideQuarter(input: { readonly tenantId: string; readonly retrievedAt: string; readonly quarter: TernaQuarter; readonly fetcher?: TernaFetcher; readonly discovery?: TernaEndpointDiscovery }): Promise<TernaTideQuarterImport> {
+  const fetcher = input.fetcher ?? (fetch as unknown as TernaFetcher);
+  const discovery = input.discovery ?? await discoverTernaCorrispettiviEndpoints(fetcher);
+  const url = new URL(discovery.dispatchingEndpoint);
+  url.search = new URLSearchParams({ datasource: discovery.dispatchingDatasource, year: String(input.quarter.year), month: "0", day: "", datePublishing: "", type: "", area: "", pageNumber: "0", pageSize: "100", orderBy: "0", orderDirection: "desc", language: "it-IT", searchTerm: "", upType: "", quarter: "" }).toString();
+  const listing = JSON.parse(new TextDecoder().decode((await fetchTerna(url.toString(), fetcher)).bytes)) as { readonly Results?: readonly Record<string, unknown>[] };
+  const item = (listing.Results ?? []).find((result) => ternaTitleMatchesQuarter(String(result.Title ?? ""), input.quarter));
+  if (!item || typeof item.Url !== "string" || typeof item.PublicationDate !== "string") throw new Error("TERNA_TIDE_DOCUMENT_NOT_PUBLISHED");
+  const document = await fetchTerna(absoluteTernaUrl(item.Url), fetcher);
+  const total = readPdf(document.bytes, extractTernaTideTotal);
+  const sha = sourceHash(document.bytes);
+  const published = publicationDate(item.PublicationDate);
+  const record = createRegulatoryValue({
+    tenantId: input.tenantId, sourceType: "OFFICIAL_ATTACHMENT", sourceReference: document.url, officialIdentifier: `TERNA_TIDE_${input.quarter.year}Q${input.quarter.quarter}`, publicationDate: published, retrievedAt: input.retrievedAt,
+    effectiveFrom: input.quarter.effectiveFrom, effectiveTo: input.quarter.effectiveTo, componentCode: "DISPATCHING_TOTAL", customerScope: "NON_DOMESTIC_BT", regulatoryVariant: "TIDE", originalValue: total, originalUnit: "CENT_EUR/KWH",
+    authority: "TERNA", publishedBy: "TERNA", calculatedBy: "TERNA", officialName: "Corrispettivo di dispacciamento (TIDE)",
+    applicationBasis: `Corrispettivi di dispacciamento ai sensi del TIDE — ${input.quarter.quarter}° trimestre ${input.quarter.year}; documento ufficiale Terna "${String(item.Title)}"; al netto delle perdite`, sourceSha256: sha, contractPassThroughRequired: true,
+  });
+  return { quarter: input.quarter, document: { url: document.url, title: String(item.Title), publicationDate: published, sourceSha256: sha }, records: [record] };
 }

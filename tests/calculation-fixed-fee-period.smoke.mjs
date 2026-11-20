@@ -117,3 +117,10 @@ await assert.rejects(
 );
 
 console.log("calculation fixed-fee period smoke: ok (EUR/POD year/month, monthly proration, derived equivalent not double-counted, missing period fail-closed)");
+
+// Tony (5/11/2026, BPower settembre: "Consumi fatturati in questo documento 0 kWh"): a month billed at 0 kWh is simulated on
+// the fixed charges alone instead of failing.
+const zeroMonth = await calculatePreparedOffer(request({ consumption: { basis: "PERIOD", unit: "KWH", f1: 0, f2: 0, f3: 0 } }), prepared(fee(156, "YEAR", { monthlyEquivalent: 13 })));
+assert.equal(zeroMonth.totalCommercialCost.amount, 39, "three months of fixed fee, no energy");
+assert.equal(zeroMonth.unitCost.amount, 0);
+console.log("ZERO_CONSUMPTION_MONTH=PASS");

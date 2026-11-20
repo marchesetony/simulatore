@@ -22,8 +22,20 @@ assert.equal(trusted().availablePowerKw, undefined);
 console.log("AVAILABLE_POWER_MISSING_NOT_DERIVED=PASS");
 assert.notEqual(trusted().availablePowerKw, 3.3);
 console.log("AVAILABLE_POWER_NO_10_PERCENT_RULE=PASS");
-assert.throws(() => trusted({ use: "Altri usi", residence: "Non applicabile", committed: "20 kW" }), /AVAILABLE_POWER_REQUIRED_FOR_BT_TARIFF_CLASS/);
-console.log("BTA6_MISSING_AVAILABLE_POWER_FAIL_CLOSED=YES");
+// Tony (30/10, "non è possibile vedere ancora mancati controlli"): missing available power no longer stops the checks;
+// the class comes from the committed power (+10% with limiter), while the shown available power stays empty.
+const noAvailable = trusted({ use: "Altri usi", residence: "Non applicabile", committed: "20 kW" });
+assert.equal(noAvailable.regulatoryCustomerScope, "NON_DOMESTIC_BT_BTA6");
+assert.equal(noAvailable.availablePowerKw, undefined);
+const small = trusted({ use: "Altri usi", residence: "Non applicabile", committed: "6 kW" });
+assert.equal(small.regulatoryCustomerScope, "NON_DOMESTIC_BT");
+// Tony (5/11, DARVEPOST 3 kW billed at BTA2): BTA1-BTA5 distribution follows the committed power, as the oneri do.
+assert.equal(small.regulatoryTariffClass, "BTA3");
+assert.equal(small.regulatoryOneriTariffClass, "BTA3");
+assert.equal(trusted({ use: "Altri usi", residence: "Non applicabile", committed: "15 kW" }).regulatoryTariffClass, "BTA5");
+const threeKw = trusted({ use: "Altri usi", residence: "Non applicabile", committed: "3 kW", available: "3.3 kW" });
+assert.equal(threeKw.regulatoryTariffClass, "BTA2", "3 kW committed, 3,3 kW available: BTA2 as on the bill");
+console.log("OTHER_USE_MISSING_AVAILABLE_POWER_CLASS_FROM_COMMITTED=PASS");
 assert.equal(deriveBillDrivenContextAlerts({ vector: "EE", domestic: true, contractedPowerKw: 20 }).length, 1);
 console.log("DOMESTIC_HIGH_POWER_ALERT_STILL_WORKS=PASS");
 assert.equal(trusted({ committed: "20 kW" }).regulatoryCustomerScope, "DOMESTIC_RESIDENT_BT");

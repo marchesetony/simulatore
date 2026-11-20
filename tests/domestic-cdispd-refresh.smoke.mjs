@@ -30,7 +30,11 @@ const third = await runRegulatoryRefresh({ tenantId: tenant, repositories: repos
 assert.equal(third.status, "SUCCESS");
 assert.equal(third.createdCount, 0);
 assert.equal(third.replacedCount, 0);
-assert.equal(third.unchangedCount, 39);
+// Tony (29/10): "ancora esiste dato non letto arera". The 10 domestic non-resident domains are registered too.
+// Tony (30/10, AZIENDA PROTETTA 3 kW): 36 domains added for BT other uses up to 16,5 kW, 49 + 36 = 85.
+// Tony (30/10, "ancora errori"): the oneri rows up to 16,5 kW are split by BTA class, so that scope now has 112 domains
+// instead of 36: 49 + 112 = 161.
+assert.equal(third.unchangedCount, 161);
 assert.equal(third.sourceChecks.find((check) => check.domain === regulatoryDomainKey(cdispdDomain))?.status, "PASS");
 console.log("CDISPD_BACKFILL=PASS");
 console.log("CDISPD_REFRESH_IDEMPOTENT=PASS");

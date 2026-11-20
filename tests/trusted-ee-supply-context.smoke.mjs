@@ -47,17 +47,20 @@ assert.equal(bta6.regulatoryPowerBasisKw, 17);
 const bta6MaxDrawn = buildTrustedElectricitySupplyContext(profile({ supplyUse: "altri usi", committed: "20 kW", available: "30 kW", maximumDrawn: "24 kW", billingBasis: "Massimo valore della potenza prelevata nel mese" }));
 assert.equal(bta6MaxDrawn.regulatoryPowerBasisKind, "MONTHLY_MAX_DRAWN");
 assert.equal(bta6MaxDrawn.regulatoryPowerBasisKw, 24);
-assertCode(() => buildTrustedElectricitySupplyContext(profile({ supplyUse: "altri usi", committed: "20 kW", available: "30 kW" })), "BTA6_POWER_BILLING_BASIS_REQUIRED");
+// Tony (27/10): the basis comes from TIT art. 1, not the bill: up to 30 kW the limiter makes it the committed power.
+assert.equal(buildTrustedElectricitySupplyContext(profile({ supplyUse: "altri usi", committed: "20 kW", available: "30 kW" })).regulatoryPowerBasisKind, "CONTRACTUAL_COMMITTED");
 assertCode(() => buildTrustedElectricitySupplyContext(profile({ supplyUse: "altri usi", committed: "20 kW", available: "30 kW", billingBasis: "Massimo valore della potenza prelevata nel mese" })), "BTA6_MAXIMUM_DRAWN_POWER_REQUIRED");
 assert.equal(buildTrustedElectricitySupplyContext(profile({ supplyUse: "altri usi", committed: "17 kW", available: "16,5 kW" })).regulatoryCustomerScope, "NON_DOMESTIC_BT");
-assertCode(() => buildTrustedElectricitySupplyContext(profile({ supplyUse: "altri usi", committed: "25 kW", available: null })), "AVAILABLE_POWER_REQUIRED_FOR_BT_TARIFF_CLASS");
+// Tony (30/10, "non è possibile vedere ancora mancati controlli"): no available power on the bill no longer fails.
+assert.equal(buildTrustedElectricitySupplyContext(profile({ supplyUse: "altri usi", committed: "25 kW", available: null })).regulatoryCustomerScope, "NON_DOMESTIC_BT_BTA6");
 assert.equal(buildTrustedElectricitySupplyContext(profile({ supplyUse: "pubblica illuminazione", committed: "17 kW", available: "18,7 kW" })).regulatoryCustomerScope, "NON_DOMESTIC_BT");
 assert.equal(buildTrustedElectricitySupplyContext(profile({ supplyUse: "ricarica veicoli elettrici", committed: "17 kW", available: "18,7 kW" })).regulatoryCustomerScope, "NON_DOMESTIC_BT");
 
 assertCode(() => buildTrustedElectricitySupplyContext(profile({ residence: "domestico" })), "DOMESTIC_RESIDENCE_INVALID");
 assertCode(() => buildTrustedElectricitySupplyContext(profile({ committed: null, available: "6 kW" })), "CONTRACTED_POWER_REQUIRED");
 assert.equal(buildTrustedElectricitySupplyContext(profile({ committed: "3 kW", available: "9 kW" })).contractedPowerKw, 3);
-assertCode(() => buildTrustedElectricitySupplyContext(profile({ supplyUse: "domestico", voltage: "MT" })), "REGULATORY_SCOPE_UNRESOLVED");
+// Tony (2/11, J Fuel 20.000 V): a media tensione supply is named as such, so the receipt says its rete e oneri come from the bill.
+assertCode(() => buildTrustedElectricitySupplyContext(profile({ supplyUse: "domestico", voltage: "MT" })), "REGULATORY_SCOPE_VOLTAGE_MV");
 
 const baseRequest = {
   schemaVersion: 1,

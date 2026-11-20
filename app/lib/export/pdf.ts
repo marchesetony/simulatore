@@ -18,9 +18,10 @@ const MUTED = "0.31 0.36 0.41";
 const ACCENT = "0.05 0.36 0.47";
 const RULE = "0.78 0.81 0.83";
 
-type PdfPage = { readonly commands: string[]; cursor: number };
+export type PdfPage = { readonly commands: string[]; cursor: number };
+export interface PdfImage { readonly name: string; readonly jpeg: Uint8Array; readonly width: number; readonly height: number; readonly components: number }
 
-function pdfText(value: unknown): string {
+export function pdfText(value: unknown): string {
   const replacements: Record<string, number> = {
     "€": 0x80, "à": 0xe0, "è": 0xe8, "é": 0xe9, "ì": 0xec, "ò": 0xf2, "ù": 0xf9,
     "À": 0xc0, "È": 0xc8, "É": 0xc9, "Ì": 0xcc, "Ò": 0xd2, "Ù": 0xd9,
@@ -210,13 +211,15 @@ function renderProposal(proposal: ProposalCanonicalSnapshot): PdfComposer {
   return pdf;
 }
 
-function pdfBytes(pages: readonly PdfPage[]): Uint8Array {
+export function pdfBytes(pages: readonly PdfPage[], images: readonly PdfImage[] = []): Uint8Array {
   const objects: Array<Buffer | null> = [null];
   const add = (body: Buffer | string | null): number => { objects.push(body === null ? null : Buffer.isBuffer(body) ? body : Buffer.from(body, "latin1")); return objects.length - 1; };
   const catalogId = add(null);
   const pagesId = add(null);
   const regularFontId = add("<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding >>");
   const boldFontId = add("<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Bold /Encoding /WinAnsiEncoding >>");
+  const imageIds = images.map((image) => add(Buffer.concat([Buffer.from(`<< /Type /XObject /Subtype /Image /Width ${image.width} /Height ${image.height} /ColorSpace ${image.components === 1 ? "/DeviceGray" : image.components === 4 ? "/DeviceCMYK" : "/DeviceRGB"} /BitsPerComponent 8 /Filter /DCTDecode${image.components === 4 ? " /Decode [1 0 1 0 1 0 1 0]" : ""} /Length ${image.jpeg.length} >>\nstream\n`, "latin1"), Buffer.from(image.jpeg), Buffer.from("\nendstream", "latin1")])));
+  const xObjects = images.length ? ` /XObject << ${images.map((image, index) => `/${image.name} ${imageIds[index]} 0 R`).join(" ")} >>` : "";
   const pageIds = pages.map(() => add(null));
   const contentIds = pages.map(() => add(null));
   objects[catalogId] = Buffer.from(`<< /Type /Catalog /Pages ${pagesId} 0 R >>`, "latin1");
@@ -224,7 +227,7 @@ function pdfBytes(pages: readonly PdfPage[]): Uint8Array {
   pages.forEach((page, index) => {
     const stream = Buffer.from(`${page.commands.join("\n")}\n`, "latin1");
     objects[contentIds[index]] = Buffer.concat([Buffer.from(`<< /Length ${stream.length} >>\nstream\n`, "latin1"), stream, Buffer.from("endstream", "latin1")]);
-    objects[pageIds[index]] = Buffer.from(`<< /Type /Page /Parent ${pagesId} 0 R /MediaBox [0 0 ${PAGE_WIDTH} ${PAGE_HEIGHT}] /Resources << /Font << /F1 ${regularFontId} 0 R /F2 ${boldFontId} 0 R >> >> /Contents ${contentIds[index]} 0 R >>`, "latin1");
+    objects[pageIds[index]] = Buffer.from(`<< /Type /Page /Parent ${pagesId} 0 R /MediaBox [0 0 ${PAGE_WIDTH} ${PAGE_HEIGHT}] /Resources << /Font << /F1 ${regularFontId} 0 R /F2 ${boldFontId} 0 R >>${xObjects} >> /Contents ${contentIds[index]} 0 R >>`, "latin1");
   });
   const chunks: Buffer[] = [Buffer.from("%PDF-1.4\n%\xff\xff\xff\xff\n", "latin1")];
   const offsets: number[] = [0];

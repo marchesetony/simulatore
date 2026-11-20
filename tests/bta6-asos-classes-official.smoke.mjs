@@ -45,10 +45,14 @@ assert.equal(maxResult.components.find((component) => component.formulaId === "R
 assert.equal(maxResult.components.find((component) => component.formulaId === "REGULATED_BTA6_ASOS_POWER_RATE_TIMES_REGULATORY_KW_TIME")?.amount.minorUnits, 2963);
 console.log("BTA6_ASOS_POWER_MAX_DRAWN_USED=PASS");
 
-const unknownResult = await calculateRegulatedEeSubset(request, { trustedElectricityContext: context("UNKNOWN"), regulatoryBridge: bridge(baseRecords) });
-assert.equal(unknownResult.components.some((component) => String(component.componentId).includes("asos")), false);
-assert.equal(unknownResult.partialWarning, "BTA6_ASOS_EXCLUDED_CLASS_UNKNOWN");
-assert.equal(unknownResult.includedComponents.includes("ASOS_FIXED"), false);
+// Tony (30/10, Duferco FLEX BUSINESS BTA6: "secondo me stiamo commettendo errori di applicazione delle tabelle"): oneri
+// 7,78 € against 46,55 € on the bill because ASOS was left out when the bill names no class. A bill silent on the class is a
+// customer without agevolazione: ASOS of classe 0, never no ASOS at all.
+const unknownResult = await calculateRegulatedEeSubset(request, { trustedElectricityContext: context("UNKNOWN"), regulatoryBridge: bridge(maxRecords) });
+assert.equal(unknownResult.components.filter((component) => String(component.componentId).includes("asos")).every((component) => component.formulaInputs.regulatoryVariant === "ASOS_CLASS_0"), true);
+assert.equal(unknownResult.components.filter((component) => String(component.componentId).includes("asos")).length, 3);
+assert.equal(unknownResult.includedComponents.includes("ASOS_FIXED"), true);
+await assert.rejects(calculateRegulatedEeSubset(request, { trustedElectricityContext: context("UNKNOWN"), regulatoryBridge: bridge(baseRecords) }), /REGULATORY_TIMELINE_GAP:ASOS/);
 console.log("UNKNOWN_ASOS_CLASS_OTHER_REGULATED_CONTINUE=PASS");
 console.log("BTA6_ASOS_POWER_USES_REGULATORY_POWER_BASIS=PASS");
 console.log("AVAILABLE_POWER_USED_FOR_ASOS_POWER=NO");

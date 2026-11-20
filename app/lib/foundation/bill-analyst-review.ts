@@ -109,6 +109,8 @@ export interface BillAnalystReviewDTO {
     readonly total: BillAnalystReviewField<number | string>;
     readonly chargeLines: readonly BillEconomicChargeLineDTO[];
     readonly economicAnalysis: BillEconomicAnalysis;
+    /** Set only when the economic detail is hidden: the bill's priced lines the comparison column needs (bill-feature-permissions.ts). */
+    readonly comparisonComponents?: readonly BillEconomicComponent[];
   };
   readonly payment: {
     readonly method: BillAnalystReviewField<string>;
@@ -286,7 +288,7 @@ export function buildBillAnalystReview(source: BillAnalystReviewSource): BillAna
   const sourceBillTotal = economicInputs.find((item) => classifyBillEconomicComponent(item.code, item.description ?? "") === "BILL_TOTAL")?.amount ?? null;
   const sourceAmountDue = economicInputs.find((item) => classifyBillEconomicComponent(item.code, item.description ?? "") === "AMOUNT_DUE")?.amount ?? null;
   const payment = { method: factField(firstFact(facts, "PAYMENT_METHOD")), regularity: factField(firstFact(facts, "PAYMENT_REGULARITY")), outstandingAmount: factField(firstFact(facts, "OUTSTANDING_AMOUNT")), previousUnpaidEvidence: factField(firstFact(facts, "PREVIOUS_UNPAID_EVIDENCE")) };
-  const economicAnalysis = buildCurrentBillEconomicAnalysis(economicInputs, extraction?.totalAmount?.value ?? null, { sourceBillTotal, sourceAmountDue, priorBalance: payment.outstandingAmount.value });
+  const economicAnalysis = buildCurrentBillEconomicAnalysis(economicInputs, extraction?.totalAmount?.value ?? null, { sourceBillTotal, sourceAmountDue, priorBalance: payment.outstandingAmount.value, billingPeriodStart: periodValue?.from ?? null });
   const receipt = buildReceipt(extraction, facts, sourceChargeLines);
   const allFields: readonly [string, BillAnalystReviewField<unknown>][] = [
     ["supply.address", supply.address], ["supply.nominalSupplyVoltage", supply.nominalSupplyVoltage], ["supply.powerCommitted", supply.powerCommitted], ["dates.billingPeriod", dates.billingPeriodStart], ["dates.billDueDate", dates.billDueDate], ["dates.contractExpiryDate", dates.contractExpiryDate], ["payment.method", payment.method], ["payment.regularity", payment.regularity], ["economics.punApplied", economics.punApplied], ["economics.spread", economics.spread], ["economics.total", economics.total],
