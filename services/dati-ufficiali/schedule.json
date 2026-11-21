@@ -1,0 +1,5 @@
+{
+  "gme": { "path": "/api/run?job=gme", "cron": "20 5 * * *" },
+  "regulatory": { "path": "/api/run?job=regulatory", "cron": "40 3 * * *" },
+  "audit-pun": { "path": "/api/run?job=audit-pun", "cron": "0 6 * * 1" }
+}

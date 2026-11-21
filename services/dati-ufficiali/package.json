@@ -1,0 +1,16 @@
+{
+  "name": "servizio-dati-ufficiali",
+  "private": true,
+  "type": "module",
+  "description": "Servizio indipendente: acquisizione, verifica, versionamento e pubblicazione dei dati ufficiali GME, ARERA e Terna",
+  "scripts": {
+    "build": "node build.mjs"
+  },
+  "dependencies": {
+    "fflate": "0.8.3"
+  },
+  "devDependencies": {
+    "typescript": "5.9.3"
+  },
+  "engines": { "node": "22.x" }
+}
