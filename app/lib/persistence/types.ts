@@ -135,7 +135,8 @@ export interface AuditEvent {
   readonly eventId: string;
   readonly tenantId?: string;
   readonly principalId?: string;
-  readonly role?: "ADMIN" | "ANALYST" | "VIEWER";
+  /** OFFICIAL_DATA_SERVICE: the technical identity of the official data service (Tony 21/11/2026), only on its approvals. */
+  readonly role?: "ADMIN" | "ANALYST" | "VIEWER" | "OFFICIAL_DATA_SERVICE";
   readonly action: string;
   readonly resourceType: string;
   readonly resourceId?: string;

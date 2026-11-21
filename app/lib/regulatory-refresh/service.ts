@@ -5,7 +5,7 @@ import { createRegulatoryValue, isAllowedAreraUrl, isAllowedOfficialRegulatoryUr
 // @ts-expect-error Node's strip-only test runner requires the explicit extension.
 import { validateChecksum } from "../foundation/regulatory-validation.ts";
 // @ts-expect-error Node's strip-only test runner requires the explicit extension.
-import { RegulatoryApprovalDomainService, regulatoryApprovalDomainId } from "../regulatory-approval-domain.ts";
+import { RegulatoryApprovalDomainService, regulatoryApprovalDomainId, type RegulatoryApprovalRole } from "../regulatory-approval-domain.ts";
 // @ts-expect-error Node's strip-only test runner requires the explicit extension.
 import { ProductionRegulatoryPersistenceBridge } from "../regulatory-bridge.ts";
 // @ts-expect-error Node's strip-only test runner requires the explicit extension.
@@ -76,6 +76,8 @@ export interface RegulatoryRefreshDependencies {
   readonly dryRun?: boolean;
   /** Optional exact domain allow-list for a scoped projection run. */
   readonly domainKeys?: readonly string[];
+  /** Who approves: the independent official data service passes its technical identity (Tony 21/11/2026); default unchanged. */
+  readonly principal?: { readonly principalId: string; readonly role: RegulatoryApprovalRole };
 }
 
 const actor = "user_regulatory-auto-refresh";
@@ -156,9 +158,11 @@ async function refreshDomain(domain: RegulatoryRefreshDomain, candidate: Regulat
   const approval = new RegulatoryApprovalDomainService({ regulatoryValues: dependencies.repositories.regulatoryValues, approvalDomains: dependencies.repositories.approvalDomains, auditEvents: dependencies.repositories.auditEvents });
   const evidenceReference = candidate.sourceReference;
   const correlationId = `regulatory-refresh:${runId}`;
+  const principalId = dependencies.principal?.principalId ?? actor;
+  const role: RegulatoryApprovalRole = dependencies.principal?.role ?? "ADMIN";
   const key = (action: string, target: string): string => `refresh:${runId}:${regulatoryDomainKey(domain)}:${action}:${target}`.slice(0, 160);
   if (same) {
-    await approval.approveRegulatoryValue({ tenantId, targetRecordId: same.payload.id, principalId: actor, role: "ADMIN", correlationId, idempotencyKey: key("approve", same.payload.id), evidenceReference });
+    await approval.approveRegulatoryValue({ tenantId, targetRecordId: same.payload.id, principalId, role, correlationId, idempotencyKey: key("approve", same.payload.id), evidenceReference });
     return { unchanged: 1, created: 0, approved: 0, replaced: 0 };
   }
   const samePeriod = values.find((stored) => stored.payload.componentCode === domain.componentCode && stored.payload.customerScope === domain.customerScope && stored.payload.normalizedUnit === domain.normalizedUnit && stored.payload.regulatoryVariant === domain.regulatoryVariant && stored.payload.effectiveFrom === candidate.effectiveFrom && stored.payload.effectiveTo === candidate.effectiveTo);
@@ -174,13 +178,13 @@ async function refreshDomain(domain: RegulatoryRefreshDomain, candidate: Regulat
     if (!openApproved) throw new Error("REGULATORY_OPEN_ENDED_ROLLOVER_NOT_APPROVED");
     const bounded = versionedRecord(openEnded.payload, `carry-forward-${candidate.effectiveFrom}`, { effectiveTo: candidate.effectiveFrom, carriedForwardFrom: openEnded.payload.id, confirmationSource: candidate.sourceReference });
     await saveIfMissing(dependencies.repositories.regulatoryValues, tenantId, bounded, now);
-    await approval.replaceRegulatoryValue({ tenantId, oldTargetRecordId: openEnded.payload.id, newTargetRecordId: bounded.id, principalId: actor, role: "ADMIN", correlationId, idempotencyKey: key("replace-open", bounded.id), evidenceReference });
+    await approval.replaceRegulatoryValue({ tenantId, oldTargetRecordId: openEnded.payload.id, newTargetRecordId: bounded.id, principalId, role, correlationId, idempotencyKey: key("replace-open", bounded.id), evidenceReference });
     replaced += 1;
   }
   await saveIfMissing(dependencies.repositories.regulatoryValues, tenantId, next, now);
   const result = approvedSamePeriod
-    ? await approval.replaceRegulatoryValue({ tenantId, oldTargetRecordId: samePeriod!.payload.id, newTargetRecordId: next.id, principalId: actor, role: "ADMIN", correlationId, idempotencyKey: key("replace-correction", next.id), evidenceReference })
-    : await approval.approveRegulatoryValue({ tenantId, targetRecordId: next.id, principalId: actor, role: "ADMIN", correlationId, idempotencyKey: key("approve", next.id), evidenceReference });
+    ? await approval.replaceRegulatoryValue({ tenantId, oldTargetRecordId: samePeriod!.payload.id, newTargetRecordId: next.id, principalId, role, correlationId, idempotencyKey: key("replace-correction", next.id), evidenceReference })
+    : await approval.approveRegulatoryValue({ tenantId, targetRecordId: next.id, principalId, role, correlationId, idempotencyKey: key("approve", next.id), evidenceReference });
   return { unchanged: 0, created: samePeriod && next.id === samePeriod.payload.id ? 0 : 1, approved: result.decision === "APPROVE" && !result.idempotent ? 1 : 0, replaced: replaced + (result.decision === "REPLACE" && !result.idempotent ? 1 : 0) };
 }
 

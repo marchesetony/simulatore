@@ -32,11 +32,20 @@ export interface RegulatoryApprovalRepositories {
   readonly auditEvents: AuditEventRepository;
 }
 
+/**
+ * Tony (21/11/2026, "Automazione dati ufficiali — servizio Vercel indipendente"): the automatic publication of official data
+ * runs with a dedicated technical identity, never with a fictitious ADMIN. The identity has one role that is accepted only here,
+ * for this one principal, and is written as such in the approval audit.
+ */
+export const OFFICIAL_DATA_SERVICE_PRINCIPAL = "user_svc-dati-ufficiali" as const;
+export const OFFICIAL_DATA_SERVICE_ROLE = "OFFICIAL_DATA_SERVICE" as const;
+export type RegulatoryApprovalRole = AuthRole | typeof OFFICIAL_DATA_SERVICE_ROLE;
+
 export interface RegulatoryApprovalRequest {
   readonly tenantId: string;
   readonly targetRecordId: string;
   readonly principalId: string;
-  readonly role: AuthRole;
+  readonly role: RegulatoryApprovalRole;
   readonly correlationId: string;
   readonly idempotencyKey: string;
   readonly evidenceReference: string;
@@ -76,7 +85,8 @@ function assertRequest(input: RegulatoryApprovalRequest | RegulatoryApprovalRepl
   assertIdentifier(primaryTargetId, "REGULATORY_APPROVAL_TARGET_INVALID");
   if ("oldTargetRecordId" in input) assertIdentifier(input.oldTargetRecordId, "REGULATORY_APPROVAL_TARGET_INVALID");
   if (!principalPattern.test(input.principalId)) fail("REGULATORY_APPROVAL_PRINCIPAL_INVALID");
-  if (input.role !== "ADMIN") fail("REGULATORY_APPROVAL_ADMIN_REQUIRED");
+  const service = input.principalId === OFFICIAL_DATA_SERVICE_PRINCIPAL;
+  if (service ? input.role !== OFFICIAL_DATA_SERVICE_ROLE : input.role !== "ADMIN") fail("REGULATORY_APPROVAL_ADMIN_REQUIRED");
   assertIdentifier(input.correlationId, "REGULATORY_APPROVAL_CORRELATION_INVALID");
   if (typeof input.idempotencyKey !== "string" || input.idempotencyKey.length === 0 || input.idempotencyKey.length > 160) fail("REGULATORY_APPROVAL_IDEMPOTENCY_INVALID");
   if (typeof input.evidenceReference !== "string" || input.evidenceReference.trim() === "" || input.evidenceReference.length > 256) fail("REGULATORY_APPROVAL_EVIDENCE_INVALID");
@@ -183,6 +193,8 @@ interface DecisionEventInput {
   readonly targetRecordChecksum: string;
   readonly decision: RegulatoryApprovalDecision;
   readonly principalId: string;
+  /** Written in the audit; not part of the event id, so the ids of existing decisions do not change. */
+  readonly role: RegulatoryApprovalRole;
   readonly idempotencyKey: string;
   readonly correlationId: string;
   readonly evidenceReference: string;
@@ -255,7 +267,7 @@ function buildAuditEvent(input: DecisionEventInput): AuditEvent {
     eventId,
     tenantId: input.tenantId,
     principalId: input.principalId,
-    role: "ADMIN",
+    role: input.role,
     action: input.action,
     resourceType: "REGULATORY_VALUE",
     resourceId: input.targetRecordId,
@@ -298,7 +310,7 @@ export class RegulatoryApprovalDomainService {
     if (existingEntry) return result("APPROVE", true, true, domainKey, domainStateId, value, existingEntry.decisionEventId);
     if (current?.payload.effectiveApprovals.some((entry) => intervalOverlaps(entry, value))) fail("REGULATORY_APPROVAL_BLOCKED");
 
-    const eventInput: DecisionEventInput = { tenantId: input.tenantId, domainStateId, targetRecordId: value.id, targetRecordChecksum: value.checksum, decision: "APPROVE", principalId: input.principalId, idempotencyKey: input.idempotencyKey, correlationId: input.correlationId, evidenceReference: input.evidenceReference, action: "REGULATORY_VALUE_APPROVAL" };
+    const eventInput: DecisionEventInput = { tenantId: input.tenantId, domainStateId, targetRecordId: value.id, targetRecordChecksum: value.checksum, decision: "APPROVE", principalId: input.principalId, role: input.role, idempotencyKey: input.idempotencyKey, correlationId: input.correlationId, evidenceReference: input.evidenceReference, action: "REGULATORY_VALUE_APPROVAL" };
     const event = await appendOrReuseAudit(this.repositories.auditEvents, buildAuditEvent(eventInput));
 
     for (let attempt = 1; attempt <= MAX_CAS_ATTEMPTS; attempt += 1) {
@@ -326,7 +338,7 @@ export class RegulatoryApprovalDomainService {
     const domainKey = collisionDomainKey(value);
     const domainStateId = regulatoryApprovalDomainId(input.tenantId, domainKey);
     let current = await state(this.repositories.approvalDomains, input.tenantId, domainStateId, domainKey);
-    const eventInput: DecisionEventInput = { tenantId: input.tenantId, domainStateId, targetRecordId: value.id, targetRecordChecksum: value.checksum, decision: "REVOKE", principalId: input.principalId, idempotencyKey: input.idempotencyKey, correlationId: input.correlationId, evidenceReference: input.evidenceReference, action: "REGULATORY_VALUE_REVOCATION" };
+    const eventInput: DecisionEventInput = { tenantId: input.tenantId, domainStateId, targetRecordId: value.id, targetRecordChecksum: value.checksum, decision: "REVOKE", principalId: input.principalId, role: input.role, idempotencyKey: input.idempotencyKey, correlationId: input.correlationId, evidenceReference: input.evidenceReference, action: "REGULATORY_VALUE_REVOCATION" };
     const event = await appendOrReuseAudit(this.repositories.auditEvents, buildAuditEvent(eventInput));
 
     for (let attempt = 1; attempt <= MAX_CAS_ATTEMPTS; attempt += 1) {
@@ -356,7 +368,7 @@ export class RegulatoryApprovalDomainService {
     const domainKey = oldDomainKey;
     const domainStateId = regulatoryApprovalDomainId(input.tenantId, domainKey);
     let current = await state(this.repositories.approvalDomains, input.tenantId, domainStateId, domainKey);
-    const eventInput: DecisionEventInput = { tenantId: input.tenantId, domainStateId, targetRecordId: newValue.id, targetRecordChecksum: newValue.checksum, decision: "APPROVE", principalId: input.principalId, idempotencyKey: input.idempotencyKey, correlationId: input.correlationId, evidenceReference: input.evidenceReference, action: "REGULATORY_VALUE_REPLACEMENT", replacesRecordId: oldValue.id, replacesChecksum: oldValue.checksum };
+    const eventInput: DecisionEventInput = { tenantId: input.tenantId, domainStateId, targetRecordId: newValue.id, targetRecordChecksum: newValue.checksum, decision: "APPROVE", principalId: input.principalId, role: input.role, idempotencyKey: input.idempotencyKey, correlationId: input.correlationId, evidenceReference: input.evidenceReference, action: "REGULATORY_VALUE_REPLACEMENT", replacesRecordId: oldValue.id, replacesChecksum: oldValue.checksum };
     const eventId = deterministicApprovalEventId(eventInput);
     const existingNew = current?.payload.effectiveApprovals.find((entry) => sameTarget(entry, newValue));
     if (!current || !current.payload.effectiveApprovals.some((entry) => sameTarget(entry, oldValue))) {
