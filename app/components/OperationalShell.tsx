@@ -12,6 +12,7 @@ import AccessPanel from "./AccessPanel";
 import QuickQuoteFlow from "./QuickQuoteFlow";
 import BillArchivePanel from "./BillArchivePanel";
 import OfficialArchivesPanel from "./OfficialArchivesPanel";
+import OfficialDataPanel from "./OfficialDataPanel";
 import { downloadExport, MAX_UPLOAD_BYTES, requestForm, requestJson, requestUpload, shareProposalPdf, toUiError } from "../lib/ui/client";
 import { formatEuro, formatNumber, statusLabel } from "../lib/ui/format";
 import type { BillDocumentModel, CalculationModel, ComparisonModel, CteArchiveModel, MarketArchiveModel, ProposalModel, ReadinessModel, SimulationDraft, UiRole, UiVector, VerifiedContextModel } from "../lib/ui/models";
@@ -527,7 +528,7 @@ function OfficialArchive() {
   </Card>;
 }
 
-function SystemPanel({ context, readiness, onReload }: { readonly context: VerifiedContextModel | null; readonly readiness: ReadinessModel | null; readonly onReload: () => void }) { return <div className="content-stack"><SectionHeader eyebrow="OPERATIONS" title="Stato sistema" detail="Readiness e contesto verificato, senza segreti o internals." action={<button className="button secondary" type="button" onClick={onReload}>Aggiorna stato</button>} /><Card><div className="data-list"><DataLine label="Autenticazione" value={context?.authenticated ? "Autenticata" : "Non autenticata"} /><DataLine label="Ruolo" value={context?.role ?? "Non disponibile"} /><DataLine label="Tenant" value={context?.tenantId ?? "Non disponibile"} /><DataLine label="Runtime" value={readiness?.runtimeMode ?? "Non disponibile"} /><DataLine label="Readiness" value={readiness?.readiness ? "Pronta" : "Bloccata"} /></div></Card>{context?.role === "ADMIN" && context.tenantId === "tenant_piattaforma" ? <><OfficialArchivesPanel /><RequiredOfficialTables canUpload /><OfficialSourcesCheck /><OfficialRefresh platform /><OfficialArchive /></> : null}</div>; }
+function SystemPanel({ context, readiness, onReload }: { readonly context: VerifiedContextModel | null; readonly readiness: ReadinessModel | null; readonly onReload: () => void }) { return <div className="content-stack"><SectionHeader eyebrow="OPERATIONS" title="Stato sistema" detail="Readiness e contesto verificato, senza segreti o internals." action={<button className="button secondary" type="button" onClick={onReload}>Aggiorna stato</button>} /><Card><div className="data-list"><DataLine label="Autenticazione" value={context?.authenticated ? "Autenticata" : "Non autenticata"} /><DataLine label="Ruolo" value={context?.role ?? "Non disponibile"} /><DataLine label="Tenant" value={context?.tenantId ?? "Non disponibile"} /><DataLine label="Runtime" value={readiness?.runtimeMode ?? "Non disponibile"} /><DataLine label="Readiness" value={readiness?.readiness ? "Pronta" : "Bloccata"} /></div></Card>{context?.role === "ADMIN" && context.tenantId === "tenant_piattaforma" ? <><OfficialDataPanel /><OfficialArchivesPanel /><RequiredOfficialTables canUpload /><OfficialSourcesCheck /><OfficialRefresh platform /><OfficialArchive /></> : null}</div>; }
 
 void CtePanel;
 
