@@ -52,9 +52,26 @@ export interface GmeMonthView {
   readonly reference: { readonly at: string; readonly values: Partial<Record<PunField, number>>; readonly newsletter: string | null; readonly sources: readonly string[]; readonly errors: readonly ServiceError[] } | null;
   readonly used: readonly UsedPun[];
   readonly comparison: readonly PunComparison[];
+  /** Parametro art. 5.2 delib. ARERA 300/05 (Tony 22/11/2026): its own series, shown apart, never used in place of the PUN. */
+  readonly punop: PunopView | null;
   readonly level: "PUBLISHED_IN_USE" | "VALIDATED_NOT_PUBLISHED" | "ACQUIRED_NOT_VALIDATED" | "MISSING";
   readonly levelLabel: string;
 }
+export interface PunopView {
+  readonly seriesId: string;
+  readonly meaning: string;
+  readonly value: number | null;
+  readonly unit: "€/MWh";
+  readonly label: string | null;
+  readonly url: string | null;
+  readonly sha256: string | null;
+  readonly validated: boolean;
+  readonly conserved: boolean;
+  readonly note: string;
+  readonly errors: readonly ServiceError[];
+  readonly usage: string;
+}
+export interface SourcePageView { readonly id: string; readonly url: string; readonly meaning: string; readonly reachable: boolean; readonly detail: string }
 export interface UsedPun {
   readonly tenantId: string;
   readonly label: string;
@@ -78,6 +95,8 @@ export interface OfficialDataOverview {
   readonly sources: readonly SourceStatus[];
   readonly gme: readonly GmeMonthView[];
   readonly regulatoryInUse: readonly RegulatoryInUse[];
+  /** The GME publication pages the service reads (Tony 22/11/2026), each with its meaning; null before the first report of them. */
+  readonly gmePages: readonly SourcePageView[] | null;
   readonly anomalies: readonly Anomaly[];
   readonly history: readonly { readonly runId: string; readonly job: ServiceJob; readonly jobLabel: string; readonly startedAt: string; readonly durationMs: number; readonly modeLabel: string; readonly outcomeLabel: string; readonly errors: readonly ServiceError[] }[];
 }
@@ -101,6 +120,8 @@ const SCHEDULE: Readonly<Record<ServiceJob, { readonly label: string; readonly m
 };
 const FIELDS: readonly PunField[] = ["f1", "f2", "f3", "monthly"];
 export const PLATFORM_TENANT = "tenant_piattaforma";
+/** The engine reads only PUN records (CTE index "PUN"): the 300/05 parameter is archived and shown, never used in its place. */
+export const PUNOP_USAGE = "Non usato dal motore di simulazione: le CTE indicizzate del simulatore fanno riferimento al PUN, mai a questo parametro";
 
 const isObject = (value: unknown): value is Record<string, unknown> => typeof value === "object" && value !== null && !Array.isArray(value);
 const finite = (value: unknown): value is number => typeof value === "number" && Number.isFinite(value);
@@ -182,7 +203,7 @@ export async function punUsedByEngine(repository: MarketArchiveRepository, tenan
   return records.find((record) => record.index === "PUN" && record.month === month) ?? null;
 }
 
-interface MonthSummary { readonly month: string; readonly state: string; readonly bands: { f1: number; f2: number; f3: number; hours: number[]; sha256: string; url: string } | null; readonly monthly: { value: number; sha256: string; url: string; newsletter: string | null } | null; readonly errors: readonly string[] }
+interface MonthSummary { readonly month: string; readonly state: string; readonly bands: { f1: number; f2: number; f3: number; hours: number[]; sha256: string; url: string } | null; readonly monthly: { value: number; sha256: string; url: string; newsletter: string | null } | null; readonly errors: readonly string[]; readonly punop?: { readonly seriesId: string; readonly meaning: string; readonly value: number | null; readonly label: string | null; readonly url: string | null; readonly sha256: string | null; readonly conserved: unknown; readonly errors: readonly string[] } }
 const monthSummaries = (run: ServiceRunRecord | null): readonly MonthSummary[] => Array.isArray(run?.summary.months) ? (run!.summary.months as unknown[]).filter(isObject).map((item) => item as unknown as MonthSummary).filter((item) => typeof item.month === "string") : [];
 interface AuditSummary { readonly month: string; readonly at: string; readonly official: { monthly: number | null; newsletter: string | null; newsletterUrl: string | null; f1: number | null; f2: number | null; f3: number | null; bandsUrl: string | null }; readonly errors: readonly string[] }
 const auditSummaries = (run: ServiceRunRecord | null): readonly AuditSummary[] => Array.isArray(run?.summary.audits) ? (run!.summary.audits as unknown[]).filter(isObject).map((item) => item as unknown as AuditSummary).filter((item) => typeof item.month === "string" && isObject(item.official)) : [];
@@ -251,7 +272,17 @@ export async function officialDataOverview(input: OverviewInput): Promise<Offici
     const level: GmeMonthView["level"] = inUse ? "PUBLISHED_IN_USE" : validated ? "VALIDATED_NOT_PUBLISHED" : acquired ? "ACQUIRED_NOT_VALIDATED" : "MISSING";
     const partial = level === "VALIDATED_NOT_PUBLISHED" && acquired && acquired.bands.validated !== acquired.monthly.validated
       ? `${acquired.bands.validated ? "Fasce F1, F2, F3 validate" : "PUN mensile validato"}, ${acquired.bands.validated ? "PUN mensile non validato" : "fasce non validate"}: non pubblicato${acquired.mode === "DRY_RUN" ? " (modalità prova)" : ""}` : null;
-    gme.push({ month, label: monthLabel(month), acquired, reference, used, comparison, level, levelLabel: partial ?? LEVEL_LABEL[level] });
+    const p = summary?.punop;
+    const punopErrors = (p?.errors ?? []).map(describeServiceError);
+    const punop: PunopView | null = p && isObject(p) ? {
+      seriesId: String(p.seriesId), meaning: String(p.meaning), value: finite(p.value) ? p.value : null, unit: "€/MWh", label: p.label ?? null, url: p.url ?? null, sha256: p.sha256 ?? null,
+      validated: finite(p.value), conserved: Boolean(p.conserved),
+      note: finite(p.value) ? `Tutti i controlli del PDF superati${p.label ? ` (${p.label})` : ""}` : punopErrors[0]?.message ?? "Non letto",
+      errors: punopErrors,
+      usage: PUNOP_USAGE,
+    } : null;
+    gme.push({ month, label: monthLabel(month), acquired, reference, used, comparison, punop, level, levelLabel: partial ?? LEVEL_LABEL[level] });
+    for (const error of punopErrors.filter((entry) => !entry.informative)) addAnomaly({ id: `punop-${month}-${error.code}`, severity: "WARNING", source: "GME", period: monthLabel(month), origin: "Parametro art. 5.2 delib. 300/05", message: error.message, at: gmeRun?.startedAt ?? null });
 
     const name = monthLabel(month);
     for (const item of used.filter((entry) => entry.status === "MISSING")) addAnomaly({ id: `missing-${month}-${item.tenantId}`, severity: "BLOCKING", source: "GME", period: name, origin: "Dati usati dal simulatore", message: `${item.label}: nessun PUN approvato per ${name}. Le simulazioni con bollette di questo mese non possono essere calcolate.`, at: null });
@@ -269,7 +300,7 @@ export async function officialDataOverview(input: OverviewInput): Promise<Offici
   const areraDetails = regulatoryTenants.map((item) => `${label(String(item.tenantId))}: tariffe ${stepLabel(item.arera)}, capacità ${stepLabel(item.capacity)}`);
   const ternaDetails = regulatoryTenants.map((item) => `${label(String(item.tenantId))}: capacità ${stepLabel(item.terna)}, dispacciamento ${stepLabel(item.tide)}`);
   const sources: SourceStatus[] = [
-    sourceStatus("GME", "GME, PUN mensile e fasce F1, F2, F3", "gme", gmeRun, input.now, gmeErrors, gmeDetails),
+    sourceStatus("GME", "GME: PUN Index mensile, fasce F1, F2, F3, parametro 300/05", "gme", gmeRun, input.now, gmeErrors, gmeDetails),
     sourceStatus("ARERA", "ARERA, tariffe e oneri regolati", "regulatory", regulatoryRun, input.now, regulatoryErrors.filter((error) => /^ARERA/.test(error.message)), areraDetails),
     sourceStatus("TERNA", "Terna, dispacciamento e capacità", "regulatory", regulatoryRun, input.now, regulatoryErrors.filter((error) => /^Terna/.test(error.message)), ternaDetails),
   ];
@@ -288,6 +319,7 @@ export async function officialDataOverview(input: OverviewInput): Promise<Offici
     generatedAt: input.now, window,
     service: { mode: runs[0]?.mode ?? "UNKNOWN", modeLabel: runs[0] ? MODE_LABEL[runs[0].mode] : "Nessuna esecuzione registrata", lastRunAt: runs[0]?.startedAt ?? null, runs: runs.length, publicationActive: runs[0]?.mode === "PUBLISH" },
     sources, gme, regulatoryInUse,
+    gmePages: Array.isArray(gmeRun?.summary.sources) ? (gmeRun!.summary.sources as unknown[]).filter(isObject).map((page) => ({ id: String(page.id), url: String(page.url), meaning: String(page.meaning), reachable: page.reachable === true, detail: String(page.detail ?? "") })) : null,
     anomalies: anomalies.sort((a, b) => order[a.severity] - order[b.severity]),
     history: runs.slice(0, 20).map((run) => ({ runId: run.runId, job: run.job, jobLabel: JOB_LABEL[run.job], startedAt: run.startedAt, durationMs: duration(run), modeLabel: run.mode === "DRY_RUN" ? "Prova" : "Pubblicazione", outcomeLabel: OUTCOME_LABEL[run.outcome], errors: run.errors.map(describeServiceError) })),
   };

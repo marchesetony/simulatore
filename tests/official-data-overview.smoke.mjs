@@ -89,4 +89,20 @@ assert.equal(describeServiceError("SERVICE_DB_ERROR_28P01").message, "Connession
 assert.equal(parseServiceRun({ ...gmeRun, startedAt: "ieri" }), null);
 assert.equal((await punUsedByEngine(marketOf(base).repository, "tenant_cliente-prova", "2026-04", "2026-11-22")), null, "months outside the window are never used");
 
+// 5. Parametro art. 5.2 delib. ARERA 300/05 (Tony 22/11/2026): shown as its own series, never in the PUN comparison or as used.
+{
+  const punop = { seriesId: "ARERA_300_05_ART_5_2", meaning: "Parametro art. 5.2 della deliberazione ARERA 300/05 (PUNop), pubblicato dal GME", value: 122.83, unit: "EUR_PER_MWH", label: "PUNopMag2026", url: "https://gme.mercatoelettrico.org/Portals/0/Documents/it-IT/20260601Indice%205.2%20delibera%20ARERA%20300.05%20-%20Maggio%202026.pdf", sha256: "b".repeat(64), conserved: null, errors: [] };
+  const sources = [{ id: "GME_PUN_BANDS", url: "https://gme.mercatoelettrico.org/a", meaning: "fasce", reachable: true, sha256: null, detail: "pagina ufficiale raggiungibile" }, { id: "ARERA_300_05_ART_5_2", url: "https://gme.mercatoelettrico.org/b", meaning: "300/05", reachable: true, sha256: null, detail: "ok" }, { id: "GME_PUN_INDEX_GME", url: "https://gme.mercatoelettrico.org/c", meaning: "PUN Index", reachable: false, sha256: null, detail: "pagina non raggiungibile: OFFICIAL_HTTP_503" }];
+  const months = gmeRun.summary.months.map((item) => item.month === "2026-05" ? { ...item, punop } : item.month === "2026-06" ? { ...item, punop: { ...punop, value: null, label: null, url: null, sha256: null, errors: ["GME_PUNOP_CHECKS:LABEL etichetta PUNopApr2026 (attesa PUNopGiu2026)"] } } : item);
+  const overview = await officialDataOverview({ now: NOW, runs: [{ ...gmeRun, summary: { ...gmeRun.summary, months, sources } }], alerts: [], market: marketOf(base).repository, tenants: TENANTS, coverage: null });
+  const may = overview.gme.find((item) => item.month === "2026-05");
+  assert.equal(may.punop.value, 122.83); assert.equal(may.punop.validated, true); assert.equal(may.punop.conserved, false);
+  assert.match(may.punop.usage, /Non usato dal motore/);
+  assert.ok(may.comparison.every((item) => item.service !== 122.83), "never compared as if it were the PUN");
+  assert.ok(may.used.every((item) => item.status === "MISSING"), "May stays without PUN: the 300/05 parameter does not unlock it");
+  assert.equal(may.level, "VALIDATED_NOT_PUBLISHED");
+  assert.ok(overview.anomalies.some((item) => item.origin === "Parametro art. 5.2 delib. 300/05" && /giugno 2026/.test(item.period)));
+  assert.deepEqual(overview.gmePages.map((page) => page.reachable), [true, true, false]);
+}
+
 console.log("official-data-overview smoke: OK");

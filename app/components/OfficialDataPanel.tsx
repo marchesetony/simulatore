@@ -20,6 +20,12 @@ const seconds = (ms: number) => `${(ms / 1000).toLocaleString("it-IT", { maximum
 const FIELD_LABEL: Readonly<Record<PunField, string>> = { f1: "F1", f2: "F2", f3: "F3", monthly: "Mensile" };
 const sourceTone = (status: SourceStatus["status"]) => status === "OK" ? "positive" : status === "NEVER_RUN" ? "" : "negative";
 const levelTone = (level: GmeMonthView["level"]) => level === "PUBLISHED_IN_USE" ? "positive" : level === "VALIDATED_NOT_PUBLISHED" ? "" : "negative";
+/** The three GME pages (Tony 22/11/2026), shown before the service has reported on them. */
+const GME_PAGES_DEFAULT = [
+  { id: "GME_PUN_BANDS", url: "https://www.mercatoelettrico.org/it-it/Home/Pubblicazioni/PrezzoMedioFasce", meaning: "Prezzo medio per fasce F1, F2, F3 (PDF mensile)", reachable: false, detail: "" },
+  { id: "ARERA_300_05_ART_5_2", url: "https://www.mercatoelettrico.org/it-it/Home/Pubblicazioni/PrezzoMedioDel300", meaning: "Parametro art. 5.2 della deliberazione ARERA 300/05 (PUNop), pubblicato dal GME", reachable: false, detail: "" },
+  { id: "GME_PUN_INDEX_GME", url: "https://www.mercatoelettrico.org/it-it/Home/Pubblicazioni/Indici-GME/PUNIndexGme", meaning: "PUN Index GME: definizione dell'indice; il valore mensile si legge dalla Newsletter GME, Tabella 1", reachable: false, detail: "" },
+] as const;
 const shortSha = (sha: string | null) => sha ? `${sha.slice(0, 12)}…` : "—";
 const fileName = (url: string | null) => { if (!url) return "—"; try { return decodeURIComponent(new URL(url).pathname.split("/").pop() ?? url); } catch { return url; } };
 
@@ -50,6 +56,13 @@ function MonthCard({ month }: { readonly month: GmeMonthView }) {
       <p>{(["f1", "f2", "f3", "monthly"] as const).map((field) => `${FIELD_LABEL[field]} ${euro(month.reference!.values[field])}`).join(" · ")} €/MWh{month.reference.newsletter ? ` · Newsletter GME n. ${month.reference.newsletter}` : ""}</p>
       <ErrorList errors={month.reference.errors} />
     </> : null}
+
+    <h5>Parametro art. 5.2 della deliberazione ARERA 300/05 (serie distinta dal PUN)</h5>
+    {month.punop ? <>
+      <p>{month.punop.value !== null ? <strong>{euro(month.punop.value)} {month.punop.unit}</strong> : "—"} · <span className={`status-badge ${month.punop.validated ? "positive" : month.punop.errors.some((error) => !error.informative) ? "negative" : ""}`}>{month.punop.validated ? (month.punop.conserved ? "Validato e archiviato" : "Validato, non archiviato (modalità prova)") : "Non validato"}</span>{month.punop.label ? ` · ${month.punop.label}` : ""}</p>
+      <p>{month.punop.url ? <a href={month.punop.url} target="_blank" rel="noreferrer">{fileName(month.punop.url)}</a> : null}{month.punop.sha256 ? <small className="muted"> · SHA-256 {shortSha(month.punop.sha256)}</small> : null}{month.punop.url ? <br /> : null}<small className="muted">{month.punop.note}</small></p>
+      <p className="muted">{month.punop.usage}.</p>
+    </> : <p className="muted">Non ancora letto dal servizio per questo mese.</p>}
 
     <h5>2. Usato nelle simulazioni</h5>
     <div className="responsive-table"><table><caption>Versione approvata letta dal motore di simulazione (€/MWh)</caption><thead><tr><th>Archivio</th><th>Versione</th><th>F1</th><th>F2</th><th>F3</th><th>Mensile</th><th>Fonte</th></tr></thead><tbody>
@@ -98,6 +111,11 @@ export default function OfficialDataPanel() {
           {source.details.length ? <small className="muted">{source.details.join(" · ")}</small> : null}
           <ErrorList errors={source.errors} />
         </div>)}</div>
+
+        <h4 className="official-archives-subtitle">Fonti GME</h4>
+        <div className="responsive-table"><table><caption>Pagine ufficiali GME lette dal servizio, ciascuna con il proprio significato</caption><thead><tr><th>Serie</th><th>Significato</th><th>Pagina</th><th>Ultima verifica</th></tr></thead><tbody>
+          {(overview.gmePages ?? GME_PAGES_DEFAULT).map((page) => <tr key={page.id}><td><code>{page.id}</code></td><td>{page.meaning}</td><td><a href={page.url} target="_blank" rel="noreferrer">{page.url.replace(/^https:\/\//, "")}</a></td><td>{overview.gmePages ? <span className={`status-badge ${page.reachable ? "positive" : "negative"}`}>{page.reachable ? "Raggiungibile" : page.detail}</span> : "Non ancora verificata dal servizio"}</td></tr>)}
+        </tbody></table></div>
 
         <h4 className="official-archives-subtitle">Anomalie {overview.anomalies.length ? `(${overview.anomalies.length}${blocking ? `, ${blocking} bloccanti` : ""})` : ""}</h4>
         {overview.anomalies.length === 0 ? <p className="notice-card"><span>Nessuna anomalia: dati presenti, validati e coerenti con quelli usati dal simulatore.</span></p>
