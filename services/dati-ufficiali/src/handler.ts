@@ -1,7 +1,8 @@
 import { createHash, randomUUID, timingSafeEqual } from "node:crypto";
 import { officialDataTenants } from "../../../app/lib/automation/official-data-tenants";
 import type { Company } from "../../../app/lib/access/types";
-import { createServiceStore, supabaseRestBackend, type ServiceStore } from "./store";
+import { createServiceStore, type ServiceStore } from "./store";
+import { postgresBackend, serviceDatabaseConfig, type ServiceDatabaseBackend, type ServiceDatabaseEnvironment } from "./database";
 import { createOfficialFetch } from "./official-fetch";
 import { runGmeJob } from "./gme/job";
 import { runPunAudit } from "./gme/audit";
@@ -26,10 +27,8 @@ export const SCHEDULE = {
 export type JobName = keyof typeof SCHEDULE;
 export const AUDIT_MONTHS = ["2026-06", "2026-07", "2026-08", "2026-09", "2026-10"] as const;
 
-export interface ServiceEnvironment {
+export interface ServiceEnvironment extends ServiceDatabaseEnvironment {
   readonly CRON_SECRET?: string;
-  readonly SUPABASE_URL?: string;
-  readonly SUPABASE_SECRET_KEY?: string;
   readonly OFFICIAL_DATA_SERVICE_MODE?: string;
   readonly OFFICIAL_DATA_TENANT_IDS?: string;
 }
@@ -57,9 +56,18 @@ export async function handle(request: Request, env: ServiceEnvironment, dependen
   if (!job || !(job in SCHEDULE)) return json(400, { error: "JOB_UNKNOWN" });
   const mode: ServiceMode = env.OFFICIAL_DATA_SERVICE_MODE === "publish" ? "PUBLISH" : "DRY_RUN";
   const now = (dependencies.now ?? (() => new Date().toISOString()))();
+  // Fase B (Tony 21/11/2026): only the database role svc_dati_ufficiali, never a Supabase key.
   let store: ServiceStore;
-  try { store = dependencies.store ?? createServiceStore(supabaseRestBackend({ url: env.SUPABASE_URL ?? "", key: env.SUPABASE_SECRET_KEY ?? "" })); }
-  catch (error) { return json(500, { error: error instanceof Error ? error.message : "SERVICE_CONFIGURATION_INVALID" }); }
+  let database: ServiceDatabaseBackend | null = null;
+  try {
+    if (dependencies.store) store = dependencies.store;
+    else { database = postgresBackend(serviceDatabaseConfig(env)); store = createServiceStore(database); }
+  } catch (error) { return json(500, { error: error instanceof Error ? error.message : "SERVICE_CONFIGURATION_INVALID" }); }
+  try { return await runJob(job, mode, env, store, dependencies, now); }
+  finally { await database?.close().catch(() => undefined); }
+}
+
+async function runJob(job: JobName, mode: ServiceMode, env: ServiceEnvironment, store: ServiceStore, dependencies: HandlerDependencies, now: string): Promise<Response> {
   const runId = `svc_${job}_${randomUUID()}`;
   const nextCheckAt = nextDailyRun(now, SCHEDULE[job].hour, SCHEDULE[job].minute);
   const official = createOfficialFetch({ fetchImpl: dependencies.fetchImpl, now: () => (dependencies.now ?? (() => new Date().toISOString()))(), sleep: dependencies.sleep });

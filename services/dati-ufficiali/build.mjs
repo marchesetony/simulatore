@@ -65,13 +65,19 @@ export function build({ outDir = path.join(here, ".vercel", "output") } = {}) {
     fs.mkdirSync(path.dirname(target), { recursive: true });
     fs.writeFileSync(target, code);
   }
-  // fflate: the only external package (PDF streams), pure JavaScript without dependencies.
+  // fflate (PDF streams) and postgres (database client): the only external packages, pure JavaScript without dependencies.
   let fflate;
   try { fflate = path.dirname(require.resolve("fflate/package.json")); } catch { fflate = path.dirname(createRequire(path.join(repo, "package.json")).resolve("fflate/package.json")); }
   fs.cpSync(fflate, path.join(func, "node_modules", "fflate"), { recursive: true });
+  // postgres (porsager): database client of the service role svc_dati_ufficiali (Fase B), pure JavaScript without dependencies.
+  const postgresDir = path.join(here, "node_modules", "postgres");
+  if (!fs.existsSync(path.join(postgresDir, "package.json"))) throw new Error("postgres non installato: eseguire npm install in services/dati-ufficiali");
+  const postgresPackage = JSON.parse(fs.readFileSync(path.join(postgresDir, "package.json"), "utf8"));
+  if (postgresPackage.version !== "3.4.9" || Object.keys(postgresPackage.dependencies ?? {}).length) throw new Error(`postgres inatteso: ${postgresPackage.version}`);
+  fs.cpSync(postgresDir, path.join(func, "node_modules", "postgres"), { recursive: true });
   fs.writeFileSync(path.join(func, "package.json"), JSON.stringify({ type: "module" }, null, 2));
   fs.writeFileSync(path.join(func, "index.mjs"), `export { default } from "./services/dati-ufficiali/src/vercel-entry.js";\n`);
-  fs.writeFileSync(path.join(func, ".vc-config.json"), JSON.stringify({ runtime: "nodejs22.x", handler: "index.mjs", launcherType: "Nodejs", shouldAddHelpers: false, maxDuration: 300, memory: 1024 }, null, 2));
+  fs.writeFileSync(path.join(func, ".vc-config.json"), JSON.stringify({ runtime: "nodejs22.x", handler: "index.mjs", launcherType: "Nodejs", shouldAddHelpers: false, maxDuration: 300, memory: 1024, regions: ["fra1"] }, null, 2));
   const { SCHEDULE } = { SCHEDULE: JSON.parse(fs.readFileSync(path.join(here, "schedule.json"), "utf8")) };
   fs.writeFileSync(path.join(outDir, "config.json"), JSON.stringify({ version: 3, crons: Object.values(SCHEDULE).map((job) => ({ path: job.path, schedule: job.cron })), routes: [{ src: "^/api/run$", dest: "/api/run" }, { src: "/(.*)", status: 404 }] }, null, 2));
   fs.writeFileSync(path.join(outDir, "manifest.json"), JSON.stringify({ files }, null, 2));

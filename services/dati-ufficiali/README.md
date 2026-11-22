@@ -32,18 +32,19 @@ Servizio tecnico indipendente dal Simulatore EE commerciale (decisione di Tony d
 
 ## Database
 
-Il servizio usa la stessa tabella `runtime_records` e la stessa RPC `runtime_put_record` del simulatore, quindi non servono migrazioni. Le nuove collezioni sono solo nuove righe:
-- `official-service-documents`
-- `official-service-runs`
-- `official-service-audits`
-- `official-service-locks`
+Fase B (Tony 21/11/2026): il servizio si collega a Postgres **solo come ruolo `svc_dati_ufficiali`** (nessuna chiave Supabase) e può soltanto eseguire le funzioni dello schema `servizio_dati` (migrazione `20261121130000_servizio_dati_ufficiali_privilegi.sql`):
+- `leggi`, `elenca`, `scrivi` su `runtime_records`, con i controlli di collezione, azienda, sola aggiunta, versione e regole PUN;
+- `aziende_clienti()` per l'elenco delle aziende (solo identificativi).
+
+Le policy RLS riservate al ruolo proprietario delle funzioni sono la seconda barriera. Ogni scrittura finisce in `servizio_dati.registro`. Codice: `src/database.ts`.
 
 ## Variabili d'ambiente (progetto Vercel del servizio)
 
 | Nome | Valore |
 |---|---|
-| `SUPABASE_URL` | URL del progetto Supabase |
-| `SUPABASE_SECRET_KEY` | chiave server |
+| `SERVIZIO_DATI_DB_URL` | `postgresql://svc_dati_ufficiali.<ref>@<host pooler>:6543/postgres`, senza password (rifiutato se la contiene) |
+| `SERVIZIO_DATI_DB_PASSWORD` | password del ruolo, solo come variabile protetta (sensitive) |
+| `SERVIZIO_DATI_DB_CA` | certificato Supabase (PEM): TLS sempre verificato |
 | `CRON_SECRET` | nuovo, casuale (≥ 32 caratteri), diverso da quello dell'app |
 | `OFFICIAL_DATA_TENANT_IDS` | aziende in aggiunta a quelle create dal produttore (facoltativo) |
 | `OFFICIAL_DATA_SERVICE_MODE` | assente = prova; `publish` = pubblica (solo dopo l'autorizzazione) |
@@ -55,7 +56,7 @@ Il servizio usa la stessa tabella `runtime_records` e la stessa RPC `runtime_put
 - i tre cron;
 - `manifest.json` con l'elenco dei moduli inclusi.
 
-Il pacchetto esterno è uno solo, `fflate`.
+I pacchetti esterni sono due, senza dipendenze: `fflate` e `postgres` 3.4.9.
 
 ## Rilascio
 

@@ -3,8 +3,8 @@ import type { MarketArchiveRecord, MarketArchiveRepository } from "../../../app/
 import { validateStoredMarketArchive } from "../../../app/lib/market/validation";
 
 /**
- * Tony (21/11/2026, punti 8 e 9): the service reuses the existing Supabase archive (table runtime_records, RPC
- * runtime_put_record) with no migration, and can touch only the official data collections below. Bills, CTE, customers,
+ * Tony (21/11/2026, punti 8 e 9; Fase B): the service reuses the existing archive (table runtime_records) through the functions of
+ * schema servizio_dati (database.ts), and can touch only the official data collections below. Bills, CTE, customers,
  * offers, proposals, users and companies cannot even be opened for writing, and no repository of the service can delete.
  */
 export const WRITABLE_COLLECTIONS = [
@@ -30,7 +30,7 @@ export type WritableCollection = (typeof WRITABLE_COLLECTIONS)[number];
 export type ReadOnlyCollection = (typeof READ_ONLY_COLLECTIONS)[number];
 export type ReadOnlyRepository<T> = Pick<TenantRecordRepository<T>, "get" | "list">;
 
-/** Raw access to runtime_records for one collection (Supabase REST or memory in the tests). */
+/** Raw access to runtime_records for one collection (servizio_dati functions in database.ts, or memory in the tests). */
 export interface RecordBackend {
   get(collection: string, tenantId: string, recordId: string): Promise<TenantRecord<unknown> | null>;
   list(collection: string, tenantId: string): Promise<readonly TenantRecord<unknown>[]>;
@@ -89,51 +89,6 @@ export function createServiceStore(backend: RecordBackend): ServiceStore {
           await records.put({ tenantId: valid.tenantId, recordId: valid.archiveId, payload: valid, expectedVersion: previous?.version });
         },
       };
-    },
-  };
-}
-
-type Row = { readonly collection: string; readonly tenant_id: string; readonly record_id: string; readonly schema_version: number; readonly version: number; readonly created_at: string; readonly updated_at: string; readonly payload: unknown; readonly idempotency_key?: string | null };
-const toRecord = (row: Row): TenantRecord<unknown> => {
-  if (row.schema_version !== 1 || !Number.isSafeInteger(row.version) || row.version < 1 || row.payload === undefined) fail("SERVICE_DATA_INVALID");
-  return { schemaVersion: 1, recordId: row.record_id, tenantId: row.tenant_id, version: row.version, createdAt: new Date(row.created_at).toISOString(), updatedAt: new Date(row.updated_at).toISOString(), payload: structuredClone(row.payload), ...(row.idempotency_key ? { idempotencyKey: row.idempotency_key } : {}) } as TenantRecord<unknown>;
-};
-const COLUMNS = "collection,tenant_id,record_id,schema_version,version,created_at,updated_at,payload,idempotency_key";
-
-/**
- * Supabase through its REST interface only (no SDK): the same table and RPC the simulator uses, so no migration. The key is read
- * from the environment by the caller and never logged or returned.
- */
-export function supabaseRestBackend(input: { readonly url: string; readonly key: string; readonly fetchImpl?: typeof fetch }): RecordBackend {
-  if (!/^https:\/\/[-a-z0-9]+\.supabase\.co$/i.test(input.url)) fail("SERVICE_SUPABASE_URL_INVALID");
-  if (!input.key) fail("SERVICE_SUPABASE_KEY_MISSING");
-  const doFetch = input.fetchImpl ?? fetch;
-  const headers = { apikey: input.key, Authorization: `Bearer ${input.key}`, "Content-Type": "application/json", "x-application-name": "servizio-dati-ufficiali" };
-  const call = async (path: string, init: RequestInit = {}): Promise<unknown> => {
-    const response = await doFetch(`${input.url}/rest/v1/${path}`, { ...init, headers: { ...headers, ...(init.headers as Record<string, string> | undefined) }, signal: AbortSignal.timeout(30_000) });
-    const text = await response.text();
-    if (!response.ok) {
-      let code = `SUPABASE_HTTP_${response.status}`;
-      try { const body = JSON.parse(text) as { code?: string; message?: string }; const message = (body.message ?? "").trim(); if (/^[A-Z0-9_]{3,80}$/.test(message)) code = message; else if (body.code) code = `SUPABASE_${body.code}`; } catch { /* body is not JSON */ }
-      fail(code);
-    }
-    return text ? JSON.parse(text) : null;
-  };
-  const q = (value: string) => encodeURIComponent(value);
-  return {
-    async get(collection, tenantId, recordId) {
-      const rows = await call(`runtime_records?select=${COLUMNS}&collection=eq.${q(collection)}&tenant_id=eq.${q(tenantId)}&record_id=eq.${q(recordId)}&limit=1`) as Row[];
-      return rows[0] ? toRecord(rows[0]) : null;
-    },
-    async list(collection, tenantId) {
-      const rows = await call(`runtime_records?select=${COLUMNS}&collection=eq.${q(collection)}&tenant_id=eq.${q(tenantId)}&order=record_id.asc`) as Row[];
-      return rows.map(toRecord);
-    },
-    async write(collection, record, appendOnly) {
-      const result = await call("rpc/runtime_put_record", { method: "POST", body: JSON.stringify({ p_collection: collection, p_tenant_id: record.tenantId, p_record_id: record.recordId, p_payload: record.payload, p_expected_version: record.expectedVersion ?? null, p_idempotency_key: record.idempotencyKey ?? null, p_now: record.now ?? null, p_append_only: appendOnly }) }) as Row | Row[];
-      const row = Array.isArray(result) ? result[0] : result;
-      if (!row) fail("SERVICE_PERSISTENCE_EMPTY_RESULT");
-      return toRecord(row);
     },
   };
 }
