@@ -4,7 +4,7 @@ import type { Company } from "../../../app/lib/access/types";
 import { createServiceStore, type ServiceStore } from "./store";
 import { postgresBackend, serviceDatabaseConfig, type ServiceDatabaseBackend, type ServiceDatabaseEnvironment } from "./database";
 import { createOfficialFetch } from "./official-fetch";
-import { runGmeJob } from "./gme/job";
+import { gmeSourcePages, runGmeJob } from "./gme/job";
 import { runPunAudit } from "./gme/audit";
 import { runRegulatoryJob } from "./regulatory/job";
 import { nextDailyRun, recordRun, withJobLease, type ServiceMode } from "./status";
@@ -77,7 +77,8 @@ async function runJob(job: JobName, mode: ServiceMode, env: ServiceEnvironment, 
     const lease = await withJobLease(store, job, runId, now, async () => {
       if (job === "gme") {
         const months = await runGmeJob({ store, fetcher: official.fetch, recorded: official.recorded, tenants: [PLATFORM_TENANT, ...clientTenants], now, mode, nextCheckAt });
-        return { months, errors: months.flatMap((month) => month.errors.filter((error) => !/NOT_PUBLISHED_YET/.test(error)).map((error) => `${month.month}:${error}`)) };
+        const sources = await gmeSourcePages(official.fetch, official.recorded);
+        return { months, sources, errors: [...months.flatMap((month) => [...month.errors, ...(month.punop?.errors ?? [])].filter((error) => !/NOT_PUBLISHED_YET/.test(error)).map((error) => `${month.month}:${error}`)), ...sources.filter((page) => !page.reachable).map((page) => `GME_SOURCE_PAGE_UNREACHABLE:${page.id}`)] };
       }
       if (job === "regulatory") {
         const result = await runRegulatoryJob({ store, fetcher: official.fetch, recorded: official.recorded, tenants: clientTenants, now, mode, nextCheckAt, runId });

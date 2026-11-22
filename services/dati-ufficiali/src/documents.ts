@@ -10,7 +10,7 @@ import { SERVICE_ACTOR } from "./identity";
  */
 export const PLATFORM_TENANT = "tenant_piattaforma";
 export const MAX_CONSERVED_BYTES = 6 * 1024 * 1024;
-export type DocumentKind = "GME_PUN_BANDS_PDF" | "GME_NEWSLETTER_PDF" | "ARERA_SOURCE" | "TERNA_SOURCE";
+export type DocumentKind = "GME_PUN_BANDS_PDF" | "GME_NEWSLETTER_PDF" | "GME_ARERA_300_05_PDF" | "ARERA_SOURCE" | "TERNA_SOURCE";
 export interface DocumentCheck { readonly code: string; readonly ok: boolean; readonly detail: string }
 
 export interface ConservedDocument {

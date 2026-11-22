@@ -13,6 +13,7 @@ import { fetchDocument, type FetchedDocument, type OfficialFetch } from "../offi
 import { GME_NEWSLETTER_SOURCE_ID, newsletterCandidates, readNewsletterPdf } from "./newsletter";
 import { raiseAnomaly, recordCheck, resolveAnomaly, type ServiceMode } from "../status";
 import { SERVICE_ACTOR } from "../identity";
+import { GME_PUNOP_300_MEANING, GME_PUNOP_300_PAGE, GME_PUNOP_300_SERIES_ID, findPunopPdf, readPunopPdf } from "./punop";
 
 /**
  * GME, automatic (Tony 21/11/2026, decisioni 2 e 3): for each month of the operational window
@@ -39,6 +40,40 @@ export interface MonthResult {
   readonly monthly: { readonly value: number; readonly sha256: string; readonly url: string; readonly newsletter: string | null } | null;
   readonly tenants: readonly { readonly tenantId: string; readonly outcome: string; readonly archiveId?: string; readonly version?: string }[];
   readonly errors: readonly string[];
+  /** Parametro art. 5.2 delib. ARERA 300/05: its own series, never written into the PUN archive and never a PUN substitute. */
+  readonly punop?: PunopResult;
+}
+export interface PunopResult {
+  readonly seriesId: typeof GME_PUNOP_300_SERIES_ID;
+  readonly meaning: string;
+  readonly value: number | null;
+  readonly unit: "EUR_PER_MWH";
+  readonly label: string | null;
+  readonly url: string | null;
+  readonly sha256: string | null;
+  readonly conserved: { readonly documentId: string; readonly version: number } | null;
+  readonly errors: readonly string[];
+}
+
+/** One month of the 300/05 parameter: the PDF linked on the GME page, read and checked; conserved only when publishing. */
+export async function acquirePunop(input: { readonly store: ServiceStore; readonly fetcher: OfficialFetch; readonly recorded: readonly FetchedDocument[]; readonly month: string; readonly mode: ServiceMode; readonly pageHtml: () => Promise<string | null> }): Promise<PunopResult> {
+  const base = { seriesId: GME_PUNOP_300_SERIES_ID, meaning: GME_PUNOP_300_MEANING, unit: "EUR_PER_MWH" as const };
+  const html = await input.pageHtml();
+  if (html === null) return { ...base, value: null, label: null, url: null, sha256: null, conserved: null, errors: ["GME_PUNOP_PAGE_UNREACHABLE"] };
+  const url = findPunopPdf(html, input.month);
+  if (!url) return { ...base, value: null, label: null, url: null, sha256: null, conserved: null, errors: ["GME_PUNOP_NOT_PUBLISHED_YET"] };
+  let document: FetchedDocument;
+  try { document = await fetchDocument(input.fetcher, url, input.recorded); }
+  catch (error) { return { ...base, value: null, label: null, url, sha256: null, conserved: null, errors: [`GME_PUNOP_DOWNLOAD:${error instanceof Error ? error.message : "errore"}`] }; }
+  const reading = readPunopPdf(document.bytes, input.month);
+  const failed = reading.checks.filter((check) => !check.ok);
+  if (failed.length || reading.value === null) return { ...base, value: null, label: reading.label, url, sha256: document.sha256, conserved: null, errors: [`GME_PUNOP_CHECKS:${failed.map((check) => `${check.code} ${check.detail}`).join("; ").slice(0, 300)}`] };
+  let conserved: PunopResult["conserved"] = null;
+  if (input.mode === "PUBLISH") {
+    const { document: saved } = await conserveDocument(input.store, { document, kind: "GME_ARERA_300_05_PDF", source: "GME", period: input.month, checks: reading.checks, values: { seriesId: GME_PUNOP_300_SERIES_ID, meaning: GME_PUNOP_300_MEANING, value: reading.value, label: reading.label, unit: "EUR_PER_MWH" } });
+    conserved = { documentId: saved.documentId, version: saved.version };
+  }
+  return { ...base, value: reading.value, label: reading.label, url, sha256: document.sha256, conserved, errors: [] };
 }
 
 const rate = (value: number) => ({ value, currency: "EUR" as const, unit: "EUR_PER_MWH" as const });
@@ -123,8 +158,13 @@ export async function runGmeJob(input: { readonly store: ServiceStore; readonly 
   const months = input.months ?? operationalMarketMonths(romeToday(new Date(input.now)));
   const window = operationalMarketMonths(romeToday(new Date(input.now)));
   const results: MonthResult[] = [];
+  let punopPage: Promise<string | null> | null = null;
+  const pageHtml = () => (punopPage ??= fetchDocument(input.fetcher, GME_PUNOP_300_PAGE, input.recorded).then((page) => new TextDecoder().decode(page.bytes)).catch(() => null));
   for (const month of months) {
     const errors: string[] = [];
+    const before = results.length;
+    // The 300/05 parameter is acquired for every month of the window, separately: its outcome never blocks or changes the PUN.
+    const punop = window.includes(month) ? await acquirePunop({ store: input.store, fetcher: input.fetcher, recorded: input.recorded, month, mode: input.mode, pageHtml }).catch((error): PunopResult => ({ seriesId: GME_PUNOP_300_SERIES_ID, meaning: GME_PUNOP_300_MEANING, value: null, unit: "EUR_PER_MWH", label: null, url: null, sha256: null, conserved: null, errors: [`GME_PUNOP_FAILED:${error instanceof Error ? error.message : "errore"}`] })) : undefined;
     try {
       if (!window.includes(month)) { results.push({ month, state: "FAILED", bands: null, monthly: null, tenants: [], errors: ["OFFICIAL_PUBLISH_OUTSIDE_WINDOW"] }); continue; }
       const currents = await Promise.all(input.tenants.map(async (tenantId) => ({ tenantId, current: currentApproved(await market.list(tenantId), month) })));
@@ -216,7 +256,34 @@ export async function runGmeJob(input: { readonly store: ServiceStore; readonly 
       results.push({ month, state: blocking.length ? "FAILED" : published ? "PUBLISHED" : missing ? "INCOMPLETE" : "UNCHANGED", bands, monthly, tenants, errors });
     } catch (error) {
       results.push({ month, state: "FAILED", bands: null, monthly: null, tenants: [], errors: [...errors, error instanceof Error ? error.message : "GME_JOB_FAILED"] });
+    } finally {
+      if (punop && results.length > before) results[results.length - 1] = { ...results[results.length - 1], punop };
     }
   }
   return results;
+}
+
+/**
+ * The three GME publication pages named by Tony (22/11/2026), each with its own meaning. The PUN Index GME page defines the
+ * index and prints no value: the monthly PUN Index GME is read from the newsletter (Tabella 1), never derived.
+ */
+export const GME_SOURCE_PAGES = [
+  { id: "GME_PUN_BANDS", url: GME_PUN_BANDS_PUBLICATIONS_PAGE, meaning: "Prezzo medio per fasce F1, F2, F3 (PDF mensile)", marker: /prezzo\s+medio\s+per\s+fasce/i },
+  { id: GME_PUNOP_300_SERIES_ID, url: GME_PUNOP_300_PAGE, meaning: GME_PUNOP_300_MEANING, marker: /300\s*\/\s*05/i },
+  { id: "GME_PUN_INDEX_GME", url: "https://gme.mercatoelettrico.org/it-it/Home/Pubblicazioni/Indici-GME/PUNIndexGme", meaning: "PUN Index GME: definizione dell'indice; il valore mensile si legge dalla Newsletter GME, Tabella 1", marker: /PUN\s+Index\s+GME/i },
+] as const;
+export interface SourcePageResult { readonly id: string; readonly url: string; readonly meaning: string; readonly reachable: boolean; readonly sha256: string | null; readonly detail: string }
+
+export async function gmeSourcePages(fetcher: OfficialFetch, recorded: readonly FetchedDocument[]): Promise<readonly SourcePageResult[]> {
+  const out: SourcePageResult[] = [];
+  for (const page of GME_SOURCE_PAGES) {
+    try {
+      const document = await fetchDocument(fetcher, page.url, recorded);
+      const found = page.marker.test(new TextDecoder().decode(document.bytes));
+      out.push({ id: page.id, url: page.url, meaning: page.meaning, reachable: found, sha256: document.sha256, detail: found ? "pagina ufficiale raggiungibile" : "pagina raggiunta ma senza il titolo atteso" });
+    } catch (error) {
+      out.push({ id: page.id, url: page.url, meaning: page.meaning, reachable: false, sha256: null, detail: `pagina non raggiungibile: ${error instanceof Error ? error.message : "errore"}` });
+    }
+  }
+  return out;
 }
