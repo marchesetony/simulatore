@@ -369,6 +369,7 @@ export class SupabaseProductionStorageAdapter implements ProductionStorageAdapte
   readonly officialDocuments: TenantRecordRepository<unknown>;
   readonly officialPublications: TenantRecordRepository<unknown>;
   readonly officialServiceRuns: TenantRecordRepository<unknown>;
+  readonly officialServiceLocks: TenantRecordRepository<unknown>;
   readonly cteForcingRecords: TenantRecordRepository<CteForcingRecord>;
 
   constructor(client: ProviderClient, storageBucket: string, authClient?: () => ProviderClient) {
@@ -403,6 +404,7 @@ export class SupabaseProductionStorageAdapter implements ProductionStorageAdapte
     this.officialDocuments = new SupabaseRecordRepository(client, "official-documents");
     this.officialPublications = new SupabaseRecordRepository(client, "official-publications");
     this.officialServiceRuns = new SupabaseRecordRepository(client, "official-service-runs");
+    this.officialServiceLocks = new SupabaseRecordRepository(client, "official-service-locks");
     this.cteForcingRecords = new SupabaseRecordRepository<CteForcingRecord>(client, "cte-forcing-records");
     this.orgChain = new SupabaseRecordRepository<OrgNode>(client, "org-chain") as SupabaseRecordRepository<OrgNode> & OrgChainRepository;
     this.cteAssignments = new SupabaseRecordRepository<CteAssignment>(client, "cte-assignments");

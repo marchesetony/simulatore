@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { ErrorState } from "./UiStates";
 import { requestJson, toUiError } from "../lib/ui/client";
-import type { GmeMonthView, OfficialDataOverview, PunField, ServiceError, SourceStatus } from "../lib/official-monitor/service-overview";
+import type { AcquiredValueView, GmeMonthView, OfficialDataOverview, PunField, ServiceError, SourceStatus } from "../lib/official-monitor/service-overview";
 
 /**
  * Control Room Produttore → Dati ufficiali (Tony 22/11/2026): GME, ARERA and Terna verified from the application, without Vercel
@@ -12,7 +12,18 @@ import type { GmeMonthView, OfficialDataOverview, PunField, ServiceError, Source
  * actually uses for each company, the comparison between them, and every anomaly. Three levels are never mixed: acquired in
  * test mode, validated, published and used in simulations.
  */
-type Model = { readonly overview: OfficialDataOverview; readonly coverageAvailable: boolean };
+type ActiveJob = { readonly job: string; readonly since: string | null; readonly until: string } | null;
+type Model = { readonly overview: OfficialDataOverview; readonly coverageAvailable: boolean; readonly manual?: { readonly connected: boolean; readonly active: { readonly gme: ActiveJob; readonly regulatory: ActiveJob } } };
+/** Manual commands (Tony 23/11/2026): each source card has its button; ARERA and Terna share the service job "regulatory". */
+type Command = "gme" | "arera" | "terna";
+const COMMANDS: Readonly<Record<SourceStatus["source"], { readonly command: Command; readonly label: string; readonly job: "gme" | "regulatory" }>> = {
+  GME: { command: "gme", label: "Aggiorna GME", job: "gme" }, ARERA: { command: "arera", label: "Aggiorna ARERA", job: "regulatory" }, TERNA: { command: "terna", label: "Aggiorna Terna", job: "regulatory" },
+};
+type Phase = "WAITING" | "RUNNING" | "COMPLETED" | "ERROR";
+type CommandState = { readonly phase: Phase; readonly message: string; readonly at: string; readonly errors: readonly ServiceError[] };
+type TriggerResponse = { readonly status: "COMPLETED" | "ALREADY_RUNNING" | "RUNNING" | "FAILED"; readonly outcome: string | null; readonly message: string; readonly errors: readonly ServiceError[] };
+const PHASE_LABEL: Readonly<Record<Phase, string>> = { WAITING: "In attesa", RUNNING: "In esecuzione", COMPLETED: "Completato", ERROR: "Errore" };
+const phaseTone = (phase: Phase) => phase === "COMPLETED" ? "positive" : phase === "ERROR" ? "negative" : "";
 
 const when = (value: string | null | undefined) => value ? new Date(value).toLocaleString("it-IT", { timeZone: "Europe/Rome", dateStyle: "short", timeStyle: "short" }) : "—";
 const euro = (value: number | null | undefined) => typeof value === "number" && Number.isFinite(value) ? value.toLocaleString("it-IT", { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : "—";
@@ -32,6 +43,26 @@ const fileName = (url: string | null) => { if (!url) return "—"; try { return 
 function ErrorList({ errors }: { readonly errors: readonly ServiceError[] }) {
   if (!errors.length) return null;
   return <ul className="plain-list">{errors.map((error, index) => <li key={`${error.code}-${index}`}>{error.scope ? <strong>{error.scope}: </strong> : null}{error.message} <small className="muted">(codice {error.code})</small></li>)}</ul>;
+}
+
+function CommandControl({ source, state, connected, active, busy, onStart }: { readonly source: SourceStatus["source"]; readonly state: CommandState | undefined; readonly connected: boolean; readonly active: ActiveJob; readonly busy: boolean; readonly onStart: (command: Command) => void }) {
+  const spec = COMMANDS[source];
+  const phase: Phase | null = state?.phase ?? (active ? "RUNNING" : null);
+  const disabled = !connected || busy || Boolean(active);
+  const why = !connected ? "Comando non collegato al servizio in questo ambiente" : active ? "Aggiornamento già in esecuzione sul servizio" : busy ? "Aggiornamento già in corso" : undefined;
+  return <div className="official-command">
+    <button className="button secondary" type="button" disabled={disabled} title={why} onClick={() => onStart(spec.command)}>{spec.label}</button>
+    {phase ? <small><span className={`status-badge ${phaseTone(phase)}`}>{PHASE_LABEL[phase]}</span> {state ? `${state.message} · ${when(state.at)}` : active?.since ? `avviato ${when(active.since)}` : ""}</small> : null}
+    {state?.errors.length ? <ErrorList errors={state.errors} /> : null}
+  </div>;
+}
+
+function ValuesTable({ values }: { readonly values: readonly AcquiredValueView[] }) {
+  if (!values.length) return null;
+  return <details className="official-archive-technical"><summary>Valori acquisiti nell&apos;ultima esecuzione ({values.length})</summary>
+    <div className="responsive-table"><table><thead><tr><th>Azienda</th><th>Componente</th><th>Clienti</th><th>Periodo</th><th>Valore</th><th>Documento</th></tr></thead><tbody>
+      {values.map((item, index) => <tr key={`${item.identifier}-${item.component}-${item.customerScope}-${item.tenantLabel}-${index}`}><td>{item.tenantLabel}</td><td>{item.component}<br /><small className="muted">{item.identifier}</small></td><td>{item.customerScope}</td><td>{item.period}</td><td>{item.value.toLocaleString("it-IT", { maximumFractionDigits: 7 })} {item.unit}</td><td>{item.source ? <a href={item.source} target="_blank" rel="noreferrer">{fileName(item.source)}</a> : "—"}<br /><small className="muted">SHA {shortSha(item.sha256)}</small></td></tr>)}
+    </tbody></table></div></details>;
 }
 
 function MonthCard({ month }: { readonly month: GmeMonthView }) {
@@ -80,24 +111,62 @@ function MonthCard({ month }: { readonly month: GmeMonthView }) {
   </article>;
 }
 
+const RUNNING_ON_SERVICE = "Il servizio sta eseguendo l'aggiornamento: il risultato comparirà qui al termine.";
+
 export default function OfficialDataPanel() {
   const [model, setModel] = useState<Model | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
-  const load = useCallback(async () => {
-    setLoading(true); setError(null);
+  const [commands, setCommands] = useState<Partial<Record<Command, CommandState>>>({});
+  const load = useCallback(async (quiet = false) => {
+    if (!quiet) { setLoading(true); setError(null); }
     try { setModel(await requestJson<Model>("/api/system/official-data")); }
-    catch (cause) { const safe = toUiError(cause); setError(`${safe.message} (codice ${safe.code})`); }
-    finally { setLoading(false); }
+    catch (cause) { if (!quiet) { const safe = toUiError(cause); setError(`${safe.message} (codice ${safe.code})`); } }
+    finally { if (!quiet) setLoading(false); }
   }, []);
   useEffect(() => { void load(); }, [load]);
+  const manual = model?.manual ?? null;
+  const pending = Object.values(commands).some((state) => state?.phase === "WAITING" || state?.phase === "RUNNING");
+  const serviceBusy = Boolean(manual?.active.gme || manual?.active.regulatory);
+  // While a command runs (here or on the service), the reports are re-read every few seconds.
+  useEffect(() => {
+    if (!pending && !serviceBusy) return;
+    const timer = window.setInterval(() => { void load(true); }, 4000);
+    return () => window.clearInterval(timer);
+  }, [pending, serviceBusy, load]);
+  // A command left running on the service ends when its lease is released: the new report is then on screen.
+  useEffect(() => {
+    if (!manual) return;
+    setCommands((current) => {
+      let changed = false; const next = { ...current };
+      for (const [command, state] of Object.entries(current) as [Command, CommandState][]) {
+        const job = command === "gme" ? "gme" : "regulatory";
+        if (state.phase === "WAITING" && manual.active[job]) { next[command] = { ...state, phase: "RUNNING" }; changed = true; }
+        if (state.phase === "RUNNING" && state.message === RUNNING_ON_SERVICE && !manual.active[job]) { next[command] = { phase: "COMPLETED", message: "Esecuzione terminata: il risultato è nella scheda della fonte.", at: new Date().toISOString(), errors: [] }; changed = true; }
+      }
+      return changed ? next : current;
+    });
+  }, [manual]);
+  const start = useCallback(async (command: Command) => {
+    setCommands((current) => ({ ...current, [command]: { phase: "WAITING", message: "Comando inviato al servizio.", at: new Date().toISOString(), errors: [] } }));
+    void load(true);
+    try {
+      const result = await requestJson<TriggerResponse>("/api/system/official-data/run", { method: "POST", body: JSON.stringify({ command }) });
+      const phase: Phase = result.status === "COMPLETED" ? "COMPLETED" : result.status === "FAILED" ? "ERROR" : "RUNNING";
+      setCommands((current) => ({ ...current, [command]: { phase, message: result.status === "RUNNING" || result.status === "ALREADY_RUNNING" ? RUNNING_ON_SERVICE : result.message, at: new Date().toISOString(), errors: result.errors } }));
+    } catch (cause) {
+      const safe = toUiError(cause);
+      setCommands((current) => ({ ...current, [command]: { phase: "ERROR", message: `${safe.message} (codice ${safe.code})`, at: new Date().toISOString(), errors: [] } }));
+    }
+    await load(true);
+  }, [load]);
   const overview = model?.overview ?? null;
   const blocking = overview?.anomalies.filter((item) => item.severity === "BLOCKING").length ?? 0;
 
   return <section id="dati-ufficiali" className="content-stack official-archives" aria-labelledby="official-data-title">
     <div className="ui-card">
-      <div className="card-heading"><div><p className="eyebrow">Control Room Produttore</p><h3 id="official-data-title">Dati ufficiali</h3><p>Stato degli aggiornamenti automatici GME, ARERA e Terna, valori acquisiti e valori usati dal Simulatore EE. Solo lettura: da qui non si pubblica e non si modifica nulla.</p></div>
-        <button className="button secondary" type="button" disabled={loading} onClick={() => void load()}>{loading ? "Aggiornamento…" : "Aggiorna"}</button></div>
+      <div className="card-heading"><div><p className="eyebrow">Control Room Produttore</p><h3 id="official-data-title">Dati ufficiali</h3><p>Stato degli aggiornamenti automatici GME, ARERA e Terna, valori acquisiti e valori usati dal Simulatore EE. I comandi «Aggiorna» avviano il servizio in modalità prova: scarica e verifica, non pubblica e non modifica gli archivi.</p></div>
+        <button className="button secondary" type="button" disabled={loading} onClick={() => void load()}>{loading ? "Lettura…" : "Rileggi i rapporti"}</button></div>
       {error ? <ErrorState message={error} onRetry={() => void load()} /> : null}
       {!overview && !error ? <p className="muted">Lettura dei rapporti del servizio…</p> : null}
       {overview ? <>
@@ -110,7 +179,10 @@ export default function OfficialDataPanel() {
           {source.lastRun ? <small>Ultima esecuzione {when(source.lastRun.startedAt)} · {source.lastRun.outcomeLabel} · {seconds(source.lastRun.durationMs)}<br />{source.lastRun.mode === "DRY_RUN" ? "Modalità prova" : "Pubblicazione"} · prossima {when(source.lastRun.nextCheckAt)}</small> : <small>Pianificato {source.schedule}</small>}
           {source.details.length ? <small className="muted">{source.details.join(" · ")}</small> : null}
           <ErrorList errors={source.errors} />
+          <ValuesTable values={source.values ?? []} />
+          <CommandControl source={source.source} state={commands[COMMANDS[source.source].command]} connected={manual?.connected ?? false} active={manual ? manual.active[COMMANDS[source.source].job] : null} busy={Object.entries(commands).some(([command, state]) => (state?.phase === "WAITING" || state?.phase === "RUNNING") && COMMANDS[source.source].job === (command === "gme" ? "gme" : "regulatory"))} onStart={(command) => void start(command)} />
         </div>)}</div>
+        {manual && !manual.connected ? <p className="muted">Comandi di aggiornamento non attivi in questo ambiente: manca il collegamento tra Simulatore e servizio dati ufficiali. Gli aggiornamenti automatici pianificati continuano.</p> : null}
 
         <h4 className="official-archives-subtitle">Fonti GME</h4>
         <div className="responsive-table"><table><caption>Pagine ufficiali GME lette dal servizio, ciascuna con il proprio significato</caption><thead><tr><th>Serie</th><th>Significato</th><th>Pagina</th><th>Ultima verifica</th></tr></thead><tbody>

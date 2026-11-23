@@ -7,12 +7,13 @@ import { computeCoverage, type CoverageCopy, type CoverageReport } from "../../.
 import { allPublications, type OfficialPublicationRecord } from "../../../lib/official-monitor/documents";
 import type { OfficialAlert, OfficialCheck } from "../../../lib/official-monitor/monitor";
 import { officialDataOverview, PLATFORM_TENANT } from "../../../lib/official-monitor/service-overview";
+import { activeServiceJob, serviceTriggerConfig } from "../../../lib/official-monitor/service-trigger";
 
 export const runtime = "nodejs";
 export const maxDuration = 60;
 
 /**
- * Control Room Produttore → Dati ufficiali (Tony 22/11/2026). GET only, read-only: reports of the independent official data
+ * Control Room Produttore → Dati ufficiali (Tony 22/11/2026). GET, read-only: reports of the independent official data
  * service, alerts, and the PUN versions the engine uses for each company. Only the producer (ADMIN of tenant_piattaforma,
  * checked here from the session); every other role gets 403. Nothing is written, nothing is recalculated.
  */
@@ -51,7 +52,10 @@ export async function GET(request: Request): Promise<Response> {
       coverage = computeCoverage({ now, copies, publications, checks, alerts });
     } catch { coverage = null; }
     const overview = await officialDataOverview({ now, runs, alerts, market: repositories.marketArchiveRepository, tenants, coverage });
-    return Response.json({ overview, coverageAvailable: coverage !== null }, { headers });
+    // Manual commands (Tony 23/11/2026): whether they are connected here and which service jobs are running now. No secret leaves.
+    const [gmeActive, regulatoryActive] = await Promise.all(["gme", "regulatory"].map((job) => activeServiceJob(repositories.officialServiceLocks, job, now).catch(() => null)));
+    const manual = { connected: serviceTriggerConfig() !== null, active: { gme: gmeActive, regulatory: regulatoryActive } };
+    return Response.json({ overview, coverageAvailable: coverage !== null, manual }, { headers });
   } catch {
     return Response.json({ error: { code: "OFFICIAL_DATA_UNAVAILABLE", message: "Rapporti del servizio non leggibili in questo momento: riprova più tardi." } }, { status: 503, headers });
   }

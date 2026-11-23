@@ -676,3 +676,5 @@ button:focus-visible,a:focus-visible,input:focus-visible,select:focus-visible,te
 .official-archive-preview code { overflow-wrap:anywhere; font-size:11px; }
 .official-archive-publish { margin-top:12px; padding:14px; border:1px solid var(--line); border-radius:12px; background:#fbfcfe; }
 @media (max-width:760px) { .official-archive-alert .card-heading { display:block; } .official-archive-alert a.button { margin-top:10px; } }
+.official-command { display: grid; gap: .35rem; margin-top: .6rem; justify-items: start; }
+.official-command small { line-height: 1.4; }

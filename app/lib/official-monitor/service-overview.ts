@@ -43,7 +43,10 @@ export interface SourceStatus {
   readonly lastRun: { readonly startedAt: string; readonly finishedAt: string; readonly durationMs: number; readonly mode: ServiceMode; readonly modeLabel: string; readonly outcome: ServiceRunRecord["outcome"]; readonly outcomeLabel: string; readonly nextCheckAt: string } | null;
   readonly errors: readonly ServiceError[];
   readonly details: readonly string[];
+  /** ARERA and Terna values read in the last run (Tony 23/11/2026): test mode means read and checked, not published. */
+  readonly values: readonly AcquiredValueView[];
 }
+export interface AcquiredValueView { readonly tenantLabel: string; readonly identifier: string; readonly component: string; readonly customerScope: string; readonly period: string; readonly value: number; readonly unit: string; readonly source: string; readonly sha256: string | null }
 export interface AcquiredSeries { readonly validated: boolean; readonly values: Partial<Record<PunField, number>>; readonly hours: readonly number[] | null; readonly url: string | null; readonly sha256: string | null; readonly newsletter: string | null; readonly note: string }
 export interface GmeMonthView {
   readonly month: string;
@@ -182,16 +185,16 @@ export function describeServiceError(raw: string): ServiceError {
 }
 
 const sortedRuns = (runs: readonly ServiceRunRecord[]) => [...runs].sort((a, b) => b.startedAt.localeCompare(a.startedAt));
-const latest = (runs: readonly ServiceRunRecord[], job: ServiceJob) => sortedRuns(runs).find((run) => run.job === job && run.outcome !== "ALREADY_RUNNING") ?? null;
+const latest = (runs: readonly ServiceRunRecord[], job: ServiceJob, scope?: "arera" | "terna") => sortedRuns(runs).find((run) => run.job === job && run.outcome !== "ALREADY_RUNNING" && (scope === undefined || run.summary.scope === undefined || run.summary.scope === null || run.summary.scope === scope)) ?? null;
 
-function sourceStatus(source: SourceStatus["source"], label: string, job: ServiceJob, run: ServiceRunRecord | null, now: string, errors: readonly ServiceError[], details: readonly string[]): SourceStatus {
+function sourceStatus(source: SourceStatus["source"], label: string, job: ServiceJob, run: ServiceRunRecord | null, now: string, errors: readonly ServiceError[], details: readonly string[], values: readonly AcquiredValueView[]): SourceStatus {
   const schedule = SCHEDULE[job];
-  if (!run) return { source, label, job, schedule: schedule.label, status: "NEVER_RUN", statusLabel: "Mai eseguito dal servizio", lastRun: null, errors: [], details };
+  if (!run) return { source, label, job, schedule: schedule.label, status: "NEVER_RUN", statusLabel: "Mai eseguito dal servizio", lastRun: null, errors: [], details, values };
   const late = Date.parse(now) - Date.parse(run.startedAt) > schedule.maxAgeHours * 3_600_000;
   const blocking = errors.filter((error) => !error.informative);
   const status: SourceStatus["status"] = run.outcome === "FAILED" ? "FAILED" : late ? "LATE" : blocking.length ? "WARNING" : "OK";
   const statusLabel = status === "FAILED" ? "Non riuscito" : status === "LATE" ? `In ritardo: nessuna esecuzione da oltre ${schedule.maxAgeHours} ore` : status === "WARNING" ? "Eseguito con anomalie" : "Eseguito senza anomalie";
-  return { source, label, job, schedule: schedule.label, status, statusLabel, lastRun: { startedAt: run.startedAt, finishedAt: run.finishedAt, durationMs: duration(run), mode: run.mode, modeLabel: MODE_LABEL[run.mode], outcome: run.outcome, outcomeLabel: OUTCOME_LABEL[run.outcome], nextCheckAt: run.nextCheckAt }, errors, details };
+  return { source, label, job, schedule: schedule.label, status, statusLabel, lastRun: { startedAt: run.startedAt, finishedAt: run.finishedAt, durationMs: duration(run), mode: run.mode, modeLabel: MODE_LABEL[run.mode], outcome: run.outcome, outcomeLabel: OUTCOME_LABEL[run.outcome], nextCheckAt: run.nextCheckAt }, errors, details, values };
 }
 
 const fieldsOf = (record: MarketArchiveRecord): Partial<Record<PunField, number>> => {
@@ -230,7 +233,9 @@ export async function officialDataOverview(input: OverviewInput): Promise<Offici
   const runs = sortedRuns(input.runs.map(parseServiceRun).filter((run): run is ServiceRunRecord => run !== null));
   const today = romeToday(new Date(input.now));
   const window = operationalMarketMonths(today);
-  const gmeRun = latest(runs, "gme"); const regulatoryRun = latest(runs, "regulatory"); const auditRun = latest(runs, "audit-pun");
+  const gmeRun = latest(runs, "gme"); const auditRun = latest(runs, "audit-pun");
+  // ARERA and Terna can also run on their own (manual commands): each card shows the last run that covered its source.
+  const areraRun = latest(runs, "regulatory", "arera"); const ternaRun = latest(runs, "regulatory", "terna");
   const label = (tenantId: string) => input.tenants.find((tenant) => tenant.tenantId === tenantId)?.label ?? tenantId;
   const anomalies: Anomaly[] = [];
   const addAnomaly = (anomaly: Omit<Anomaly, "severityLabel">) => anomalies.push({ ...anomaly, severityLabel: anomaly.severity === "BLOCKING" ? "Bloccante" : anomaly.severity === "WARNING" ? "Da verificare" : "Informativa" });
@@ -303,15 +308,18 @@ export async function officialDataOverview(input: OverviewInput): Promise<Offici
   // Sources.
   const gmeErrors = (gmeRun?.errors ?? []).map(describeServiceError);
   const gmeDetails = gmeRun ? [`Documenti scaricati: ${Array.isArray(gmeRun.summary.downloads) ? gmeRun.summary.downloads.length : 0}`, `Mesi verificati: ${summaries.length}`] : [];
-  const regulatoryTenants = Array.isArray(regulatoryRun?.summary.tenants) ? (regulatoryRun!.summary.tenants as unknown[]).filter(isObject) : [];
-  const regulatoryErrors = (regulatoryRun?.errors ?? []).map(describeServiceError);
-  const stepLabel = (value: unknown) => value === "SUCCESS" ? "riuscito" : value === "PARTIAL_FAILURE" ? "con anomalie" : value === "FAILED" ? "non riuscito" : typeof value === "string" ? value.toLowerCase().replace(/_/g, " ") : "non eseguito";
-  const areraDetails = regulatoryTenants.map((item) => `${label(String(item.tenantId))}: tariffe ${stepLabel(item.arera)}, capacità ${stepLabel(item.capacity)}`);
-  const ternaDetails = regulatoryTenants.map((item) => `${label(String(item.tenantId))}: capacità ${stepLabel(item.terna)}, dispacciamento ${stepLabel(item.tide)}`);
+  const tenantsOf = (run: ServiceRunRecord | null) => Array.isArray(run?.summary.tenants) ? (run!.summary.tenants as unknown[]).filter(isObject) : [];
+  const stepLabel = (value: unknown) => value === "SUCCESS" ? "riuscito" : value === "PARTIAL_FAILURE" ? "con anomalie" : value === "FAILED" ? "non riuscito" : value === "SKIPPED" ? "non eseguito in questo comando" : typeof value === "string" ? value.toLowerCase().replace(/_/g, " ") : "non eseguito";
+  const areraDetails = tenantsOf(areraRun).map((item) => `${label(String(item.tenantId))}: tariffe ${stepLabel(item.arera)}, capacità ${stepLabel(item.capacity)}`);
+  const ternaDetails = tenantsOf(ternaRun).map((item) => `${label(String(item.tenantId))}: capacità ${stepLabel(item.terna)}, dispacciamento ${stepLabel(item.tide)}`);
+  const valuesOf = (run: ServiceRunRecord | null, authority: "ARERA" | "TERNA"): AcquiredValueView[] => (Array.isArray(run?.summary.acquired) ? (run!.summary.acquired as unknown[]).filter(isObject) : [])
+    .filter((item) => item.authority === authority && typeof item.value === "number" && Number.isFinite(item.value))
+    .map((item) => ({ tenantLabel: label(String(item.tenantId)), identifier: String(item.identifier ?? ""), component: String(item.component ?? ""), customerScope: String(item.customerScope ?? ""), period: `dal ${String(item.effectiveFrom ?? "—")}${item.effectiveTo ? ` al ${String(item.effectiveTo)}` : ""}`, value: item.value as number, unit: String(item.unit ?? ""), source: String(item.source ?? ""), sha256: typeof item.sha256 === "string" ? item.sha256 : null }))
+    .slice(0, 120);
   const sources: SourceStatus[] = [
-    sourceStatus("GME", "GME: PUN Index mensile, fasce F1, F2, F3, parametro 300/05", "gme", gmeRun, input.now, gmeErrors, gmeDetails),
-    sourceStatus("ARERA", "ARERA, tariffe e oneri regolati", "regulatory", regulatoryRun, input.now, regulatoryErrors.filter((error) => /^ARERA/.test(error.message)), areraDetails),
-    sourceStatus("TERNA", "Terna, dispacciamento e capacità", "regulatory", regulatoryRun, input.now, regulatoryErrors.filter((error) => /^Terna/.test(error.message)), ternaDetails),
+    sourceStatus("GME", "GME: PUN Index mensile, fasce F1, F2, F3, parametro 300/05", "gme", gmeRun, input.now, gmeErrors, gmeDetails, []),
+    sourceStatus("ARERA", "ARERA, tariffe e oneri regolati", "regulatory", areraRun, input.now, (areraRun?.errors ?? []).map(describeServiceError).filter((error) => /^ARERA/.test(error.message)), areraDetails, valuesOf(areraRun, "ARERA")),
+    sourceStatus("TERNA", "Terna, dispacciamento e capacità", "regulatory", ternaRun, input.now, (ternaRun?.errors ?? []).map(describeServiceError).filter((error) => /^Terna/.test(error.message)), ternaDetails, valuesOf(ternaRun, "TERNA")),
   ];
   for (const source of sources) {
     if (source.status === "NEVER_RUN") addAnomaly({ id: `never-${source.source}`, severity: "WARNING", source: source.source, period: null, origin: "Stato del servizio", message: `${source.label}: il servizio non ha ancora registrato nessuna esecuzione (prevista ${source.schedule}).`, at: null });
