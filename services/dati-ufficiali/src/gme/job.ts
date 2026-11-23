@@ -22,8 +22,10 @@ import { GME_PUNOP_300_MEANING, GME_PUNOP_300_PAGE, GME_PUNOP_300_SERIES_ID, fin
  * two distinct series, each from its own conserved document with its SHA-256. A document that gives only the bands publishes only
  * the bands; the monthly value is never derived. Publication is automatic only when every check passes, as a new version of the
  * month for every company, linked to the previous one (approved or rejected, which stays as it is with its audit).
- * Months whose approved version was not written by this service (June–October 2026, earlier automation) are not touched:
- * they go to the separate audit (audit.ts).
+ * Months whose approved version was not written by this service (earlier automation, or the manual refresh of the commercial
+ * application) are never touched: their documents are still acquired and checked, never conserved or published, so the
+ * Control Room can compare the archived values with what the documents print (Tony 23/11/2026, riconciliazione); the separate
+ * audit (audit.ts) keeps its own months.
  */
 export const SERVICE_COMPONENTS_FIELD = "officialComponents" as const;
 /** Monthly vs hours-weighted bands: only a sanity check between two GME documents, never a source. */
@@ -38,11 +40,19 @@ export interface MonthResult {
   readonly state: "PUBLISHED" | "UNCHANGED" | "READY_DRY_RUN" | "LEGACY_AUDIT" | "INCOMPLETE" | "FAILED";
   readonly bands: { readonly f1: number; readonly f2: number; readonly f3: number; readonly hours: readonly number[]; readonly sha256: string; readonly url: string } | null;
   readonly monthly: { readonly value: number; readonly sha256: string; readonly url: string; readonly newsletter: string | null } | null;
-  readonly tenants: readonly { readonly tenantId: string; readonly outcome: string; readonly archiveId?: string; readonly version?: string }[];
+  readonly tenants: readonly { readonly tenantId: string; readonly outcome: string; readonly archiveId?: string; readonly version?: string; readonly archived?: ArchivedValues }[];
   readonly errors: readonly string[];
   /** Parametro art. 5.2 delib. ARERA 300/05: its own series, never written into the PUN archive and never a PUN substitute. */
   readonly punop?: PunopResult;
 }
+/** What an approved version not written by the service holds, for comparison only: values and the source it declares. */
+export interface ArchivedValues { readonly f1: number | null; readonly f2: number | null; readonly f3: number | null; readonly monthly: number | null; readonly sourceId: string | null; readonly sourceUrl: string | null }
+const archivedValues = (record: MarketArchiveRecord): ArchivedValues => {
+  const value = record.record as unknown as Readonly<Record<string, { readonly value?: unknown } | undefined>> & { readonly source?: { readonly sourceId?: string; readonly url?: string } };
+  const read = (field: string) => typeof value[field]?.value === "number" && Number.isFinite(value[field]!.value) ? value[field]!.value as number : null;
+  return { f1: read("f1"), f2: read("f2"), f3: read("f3"), monthly: read("monthly"), sourceId: value.source?.sourceId ?? null, sourceUrl: value.source?.url ?? null };
+};
+
 export interface PunopResult {
   readonly seriesId: typeof GME_PUNOP_300_SERIES_ID;
   readonly meaning: string;
@@ -153,7 +163,7 @@ async function publishTenant(repository: MarketArchiveRepository, tenantId: stri
   return { outcome: "PUBLISHED", archiveId: created.archiveId, version: String(version) };
 }
 
-export async function runGmeJob(input: { readonly store: ServiceStore; readonly fetcher: OfficialFetch; readonly recorded: readonly FetchedDocument[]; readonly tenants: readonly string[]; readonly now: string; readonly mode: ServiceMode; readonly nextCheckAt: string; readonly months?: readonly string[] }): Promise<readonly MonthResult[]> {
+export async function runGmeJob(input: { readonly store: ServiceStore; readonly fetcher: OfficialFetch; readonly recorded: readonly FetchedDocument[]; readonly tenants: readonly string[]; readonly now: string; readonly mode: ServiceMode; readonly nextCheckAt: string; readonly months?: readonly string[]; readonly auditedMonths?: readonly string[] }): Promise<readonly MonthResult[]> {
   const market = input.store.market();
   const months = input.months ?? operationalMarketMonths(romeToday(new Date(input.now)));
   const window = operationalMarketMonths(romeToday(new Date(input.now)));
@@ -171,7 +181,12 @@ export async function runGmeJob(input: { readonly store: ServiceStore; readonly 
       const serviceTargets = currents.filter((item) => !item.current || writtenByService(item.current));
       // A month with a version approved by the earlier automation in any company is left to the audit as a whole, so the
       // companies never end up with different sources for the same month (Tony 21/11/2026, decisione 4).
-      if (currents.some((item) => item.current && !writtenByService(item.current))) { results.push({ month, state: "LEGACY_AUDIT", bands: null, monthly: null, tenants: currents.map((item) => ({ tenantId: item.tenantId, outcome: "LEGACY_AUDIT", archiveId: item.current?.archiveId })), errors: [] }); continue; }
+      const legacy = currents.some((item) => item.current && !writtenByService(item.current));
+      const legacyTenants = () => currents.map((item) => ({ tenantId: item.tenantId, outcome: "LEGACY_AUDIT", archiveId: item.current?.archiveId, version: item.current?.record.version, ...(item.current ? { archived: archivedValues(item.current) } : {}) }));
+      // Months of the weekly audit are compared there (same documents): not read twice.
+      if (legacy && input.auditedMonths?.includes(month)) { results.push({ month, state: "LEGACY_AUDIT", bands: null, monthly: null, tenants: legacyTenants(), errors: [] }); continue; }
+      // Documents of a legacy month are read and checked for comparison only: never conserved, never published.
+      const conserve = input.mode === "PUBLISH" && !legacy;
       const existing = serviceTargets.map((item) => (item.current?.record as ServicePunRecord | undefined)?.officialComponents).find(Boolean);
       const conserved = await listConserved(input.store, undefined, month);
       const reuse = (kind: ConservedDocument["kind"], sha?: string) => sha ? conserved.find((doc) => doc.kind === kind && doc.sha256 === sha) : undefined;
@@ -189,7 +204,7 @@ export async function runGmeJob(input: { readonly store: ServiceStore; readonly 
           else {
             const v = acquired.reading.values;
             bands = { f1: v.f1, f2: v.f2, f3: v.f3, hours: v.hours, sha256: acquired.document.sha256, url: acquired.document.url };
-            if (input.mode === "PUBLISH") {
+            if (conserve) {
               const { document } = await conserveDocument(input.store, { document: acquired.document, kind: "GME_PUN_BANDS_PDF", source: "GME", period: month, checks: acquired.reading.checks, values: { f1: v.f1, f2: v.f2, f3: v.f3, hours: [...v.hours], unit: "EUR_PER_MWH" } });
               bandsComponent = { sourceId: GME_MONTHLY_BANDS_SOURCE_ID, documentId: document.documentId, url: document.url, sha256: document.sha256, retrievedAt: document.retrievedAt };
             }
@@ -219,7 +234,7 @@ export async function runGmeJob(input: { readonly store: ServiceStore; readonly 
             if (checks.some((check) => !check.ok)) errors.push(`GME_MONTHLY_INCONSISTENT:${checks.filter((check) => !check.ok).map((check) => check.detail).join("; ")}`);
             else {
               monthly = { value: acquired.reading.monthly, sha256: acquired.document.sha256, url: acquired.document.url, newsletter: acquired.reading.number };
-              if (input.mode === "PUBLISH") {
+              if (conserve) {
                 const { document } = await conserveDocument(input.store, { document: acquired.document, kind: "GME_NEWSLETTER_PDF", source: "GME", period: month, checks, values: { monthly: acquired.reading.monthly, newsletter: acquired.reading.number, table: "Tabella 1 MGP, dati di sintesi — PUN INDEX GME, Baseload", unit: "EUR_PER_MWH" } });
                 monthlyComponent = { sourceId: GME_NEWSLETTER_SOURCE_ID, documentId: document.documentId, url: document.url, sha256: document.sha256, retrievedAt: document.retrievedAt, newsletter: acquired.reading.number };
               }
@@ -231,6 +246,7 @@ export async function runGmeJob(input: { readonly store: ServiceStore; readonly 
       // Not yet published is normal early in the month; anything else (download refused, checks failed, inconsistent
       // documents) stops the month: nothing is published until the anomaly is looked at.
       const blocking = errors.filter((error) => !/NOT_PUBLISHED_YET|GME_BANDS_PDF_NOT_FOUND/.test(error));
+      if (legacy) { results.push({ month, state: "LEGACY_AUDIT", bands, monthly, tenants: legacyTenants(), errors }); continue; }
       if ((!bands && !monthly) || blocking.length) {
         const pending = !blocking.length;
         const alertId = input.mode === "PUBLISH" && !pending ? await raiseAnomaly(input.store, "GME_PUN_MONTH", month, `servizio automatico: ${blocking.join("; ")}`, input.now) : null;

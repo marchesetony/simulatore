@@ -80,7 +80,7 @@ async function runJob(job: JobName, mode: ServiceMode, env: ServiceEnvironment, 
     const clientTenants = await officialDataTenants(() => configuredTenants(env), companies);
     const lease = await withJobLease(store, job, runId, now, async () => {
       if (job === "gme") {
-        const months = await runGmeJob({ store, fetcher: official.fetch, recorded: official.recorded, tenants: [PLATFORM_TENANT, ...clientTenants], now, mode, nextCheckAt });
+        const months = await runGmeJob({ store, fetcher: official.fetch, recorded: official.recorded, tenants: [PLATFORM_TENANT, ...clientTenants], now, mode, nextCheckAt, auditedMonths: AUDIT_MONTHS });
         const sources = await gmeSourcePages(official.fetch, official.recorded);
         return { months, sources, errors: [...months.flatMap((month) => [...month.errors, ...(month.punop?.errors ?? [])].filter((error) => !/NOT_PUBLISHED_YET/.test(error)).map((error) => `${month.month}:${error}`)), ...sources.filter((page) => !page.reachable).map((page) => `GME_SOURCE_PAGE_UNREACHABLE:${page.id}`)] };
       }

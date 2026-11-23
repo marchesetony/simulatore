@@ -313,4 +313,28 @@ const legacyBefore = Object.fromEntries(["2026-06", "2026-07", "2026-08", "2026-
   fs.rmSync(out, { recursive: true, force: true });
 }
 
+
+// 20. Tony (23/11/2026, riconciliazione): May 2026 approved in the producer's archive by the manual refresh of the commercial
+// application, with a monthly value computed from the bands (119,348…). The service does not publish over it (legacy month) but
+// reads and checks both documents, so the Control Room compares the archive with the newsletter; nothing is conserved or written.
+{
+  const derivedMay = archive("tenant_piattaforma", "gme-pun-2026-05", "2026-05", 1, "APPROVED", { monthly: rate((107.17 * 220 + 131.44 * 180 + 120.81 * 344) / 744), f1: rate(107.17), f2: rate(131.44), f3: rate(120.81) }, { sourceId: "GME_PREZZO_MEDIO_FASCE", name: "GME Prezzo medio per fasce (mensile)", url: BANDS_URL(BAND_FILES["2026-05"]), authority: "GME", sourceType: "OFFICIAL", sourceSha256: "8".repeat(64) });
+  for (const mode of [undefined, "publish"]) {
+    const backend = memoryBackend([...seed(), derivedMay]); const site = gmeSite();
+    const before = structuredClone([...backend.rows.entries()].filter(([key]) => !key.startsWith("official-service-")));
+    const { status, body } = await run("gme", backend, site, { ...ENV, OFFICIAL_DATA_SERVICE_MODE: mode });
+    assert.equal(status, 200);
+    const may = body.months.find((month) => month.month === "2026-05");
+    assert.equal(may.state, "LEGACY_AUDIT", mode ?? "dry");
+    assert.deepEqual([may.bands.f1, may.bands.f2, may.bands.f3], [107.17, 131.44, 120.81]);
+    assert.equal(may.monthly.value, 119.35); assert.equal(may.monthly.newsletter, "204"); assert.equal(may.monthly.url, NL("20260615"));
+    const platform = may.tenants.find((item) => item.tenantId === "tenant_piattaforma");
+    assert.equal(platform.archived.sourceId, "GME_PREZZO_MEDIO_FASCE"); assert.ok(Math.abs(platform.archived.monthly - 119.34844086021506) < 1e-9);
+    for (const month of AUDIT_MONTHS) { const item = body.months.find((entry) => entry.month === month); assert.equal(item.state, "LEGACY_AUDIT"); assert.equal(item.monthly, null, `${month} stays with the weekly audit`); }
+    for (const [key, row] of before) assert.deepEqual(backend.rows.get(key), row, `${key} untouched`);
+    assert.ok(!backend.writes.some((write) => write.collection === "market-archives" || write.collection === "official-service-documents"), "nothing published or conserved for a legacy month");
+  }
+  console.log("LEGACY_MONTH_READ_AND_COMPARED_NOT_PUBLISHED=PASS");
+}
+
 console.log("official-data-service smoke: OK");
