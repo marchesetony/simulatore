@@ -151,7 +151,11 @@ export function describeServiceError(raw: string): ServiceError {
   const tenant = /^(tenant_[a-z0-9-]+)\s+(.*)$/.exec(rest); if (tenant) { scope = tenant[1]; rest = tenant[2]; }
   const month = /^(\d{4}-\d{2}):(.*)$/.exec(rest); if (month) { scope = monthLabel(month[1]); rest = month[2]; }
   const source = /^(ARERA_CAPACITY|ARERA|TERNA_CAPACITY|TERNA_TIDE):(.*)$/.exec(rest);
-  const prefix = source ? `${PREFIX_LABEL[source[1]]}: ` : ""; if (source) rest = source[2];
+  if (source) rest = source[2];
+  // Terna errors name the quarter ("2026Q4:TERNA_CAPACITY_VALUE_NOT_FOUND"): shown as "4° trimestre 2026", not as a code.
+  const quarter = /^(\d{4})Q([1-4]):(.*)$/.exec(rest); if (quarter) rest = quarter[3];
+  const where = [source ? PREFIX_LABEL[source[1]] : null, quarter ? `${quarter[2]}° trimestre ${quarter[1]}` : null].filter(Boolean).join(", ");
+  const prefix = where ? `${where}: ` : "";
   const [code, ...details] = rest.split(":"); const detail = details.join(":").trim();
   const known: Readonly<Record<string, string>> = {
     GME_NEWSLETTER_CHECKS: "Newsletter GME (PUN mensile): controlli non superati",
@@ -167,6 +171,11 @@ export function describeServiceError(raw: string): ServiceError {
     BANDS_CHECKS: "Audit: PDF fasce con controlli non superati",
     BANDS_PDF_UNREACHABLE: "Audit: PDF fasce non raggiungibile",
     SERVICE_JOB_FAILED: "Esecuzione interrotta",
+    TERNA_CAPACITY_VALUE_NOT_FOUND: "corrispettivo non trovato nel documento ufficiale Terna",
+    TERNA_CAPACITY_VALUE_IMPLAUSIBLE: "corrispettivo letto fuori dal campo ammesso",
+    TERNA_CAPACITY_DOCUMENT_NOT_PUBLISHED: "documento Terna del trimestre non ancora pubblicato",
+    TERNA_TIDE_VALUE_NOT_FOUND: "corrispettivo non trovato nel documento ufficiale Terna",
+    TERNA_TIDE_DOCUMENT_NOT_PUBLISHED: "documento Terna del trimestre non ancora pubblicato",
   };
   const message = known[code] ?? (/^SERVICE_DB_/.test(code) ? "Connessione al database del servizio non riuscita" : /^SERVICE_/.test(code) ? "Configurazione del servizio non valida" : code.replace(/_/g, " ").toLowerCase());
   return { code, message: `${prefix}${message}${detail ? `: ${detail}` : ""}`, scope, informative: /NOT_PUBLISHED_YET|GME_BANDS_PDF_NOT_FOUND/.test(code) };

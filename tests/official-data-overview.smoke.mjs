@@ -86,6 +86,7 @@ const base = [
 // 4. Error descriptions and the engine read path.
 assert.deepEqual(describeServiceError("2026-05:GME_NEWSLETTER_NOT_PUBLISHED_YET"), { code: "GME_NEWSLETTER_NOT_PUBLISHED_YET", message: "Newsletter GME del mese non ancora pubblicata", scope: "maggio 2026", informative: true });
 assert.equal(describeServiceError("SERVICE_DB_ERROR_28P01").message, "Connessione al database del servizio non riuscita");
+assert.deepEqual(describeServiceError("tenant_energia-priva TERNA_CAPACITY:2026Q4:TERNA_CAPACITY_VALUE_NOT_FOUND"), { code: "TERNA_CAPACITY_VALUE_NOT_FOUND", message: "Terna, capacità, 4° trimestre 2026: corrispettivo non trovato nel documento ufficiale Terna", scope: "tenant_energia-priva", informative: false }); // Tony 23/11: the quarter reads as words, not as a code
 assert.equal(parseServiceRun({ ...gmeRun, startedAt: "ieri" }), null);
 assert.equal((await punUsedByEngine(marketOf(base).repository, "tenant_cliente-prova", "2026-04", "2026-11-22")), null, "months outside the window are never used");
 
