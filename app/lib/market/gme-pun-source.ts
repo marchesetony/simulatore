@@ -183,6 +183,25 @@ function decodePdfStream(dictionary: string, value: Uint8Array): Uint8Array | nu
   }
 }
 
+/**
+ * End of a stream's data. "/Length 1234" is a direct length; "/Length 12 0 R" points to object 12 holding the length, and reading
+ * it as 12 bytes would truncate the stream (the newsletter text then comes out empty). A length is trusted only when "endstream"
+ * follows it; otherwise the data runs to the "endstream" keyword.
+ */
+function streamDataEnd(text: string, dictionary: string, dataStart: number, sourceLength: number): number {
+  const keyword = Math.max(dataStart, text.indexOf("endstream", dataStart) < 0 ? sourceLength : text.indexOf("endstream", dataStart));
+  const indirect = /\/Length\s+(\d+)\s+(\d+)\s+R\b/.exec(dictionary);
+  const direct = indirect ? null : /\/Length\s+(\d+)\b/.exec(dictionary);
+  let length: number | null = direct ? Number(direct[1]) : null;
+  if (indirect) {
+    const target = new RegExp(`(?:^|[\\r\\n\\s])${indirect[1]}\\s+${indirect[2]}\\s+obj\\s+(\\d+)\\s+endobj`).exec(text);
+    length = target ? Number(target[1]) : null;
+  }
+  if (length === null) return keyword;
+  const end = Math.min(sourceLength, dataStart + length);
+  return /^\s*endstream/.test(text.slice(end, end + 32)) ? end : keyword;
+}
+
 function pdfObjects(body: Uint8Array): Map<number, PdfObject> {
   const source = Buffer.from(body);
   const text = source.toString("latin1");
@@ -204,10 +223,7 @@ function pdfObjects(body: Uint8Array): Map<number, PdfObject> {
     let dataStart = streamMarker + "stream".length;
     if (source[dataStart] === 13 && source[dataStart + 1] === 10) dataStart += 2;
     else if (source[dataStart] === 10 || source[dataStart] === 13) dataStart += 1;
-    const declaredLength = /\/Length\s+(\d+)\b/.exec(dictionary)?.[1];
-    const dataEnd = declaredLength
-      ? Math.min(source.length, dataStart + Number(declaredLength))
-      : Math.max(dataStart, text.indexOf("endstream", dataStart));
+    const dataEnd = streamDataEnd(text, dictionary, dataStart, source.length);
     const stream = decodePdfStream(dictionary, source.subarray(dataStart, dataEnd));
     objects.set(objectId, { dictionary, stream });
   }
