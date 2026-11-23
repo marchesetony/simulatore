@@ -61,3 +61,7 @@ I pacchetti esterni sono due, senza dipendenze: `fflate` e `postgres` 3.4.9.
 ## Rilascio
 
 Vedi `/mnt/project-files/audit/archivi-ufficiali/automazione/servizio-indipendente.md`, sezione "Procedura di rilascio".
+
+## Deployment
+
+Automatico da GitHub (Tony, 23/11/2026): ogni push sul branch `servizio/dati-ufficiali` aggiorna la produzione del progetto Vercel `servizio-dati-ufficiali` (Root Directory `services/dati-ufficiali`, solo il branch di produzione viene costruito). Variabili, CRON_SECRET, cron e modalità prova restano quelli del progetto. Annullamento: Vercel > Deployments > deployment precedente > Instant Rollback.
