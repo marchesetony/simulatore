@@ -6,7 +6,7 @@ import { postgresBackend, serviceDatabaseConfig, type ServiceDatabaseBackend, ty
 import { createOfficialFetch } from "./official-fetch";
 import { gmeSourcePages, runGmeJob } from "./gme/job";
 import { runPunAudit } from "./gme/audit";
-import { runRegulatoryJob } from "./regulatory/job";
+import { runRegulatoryJob, type RegulatoryScope } from "./regulatory/job";
 import { nextDailyRun, recordRun, withJobLease, type ServiceMode } from "./status";
 import { SERVICE_IDENTITY } from "./identity";
 import { PLATFORM_TENANT } from "./documents";
@@ -54,6 +54,10 @@ export async function handle(request: Request, env: ServiceEnvironment, dependen
   if (!authorized(request, env.CRON_SECRET)) return json(401, { error: "CRON_UNAUTHORIZED" });
   const job = new URL(request.url).searchParams.get("job") as JobName | null;
   if (!job || !(job in SCHEDULE)) return json(400, { error: "JOB_UNKNOWN" });
+  // Manual commands of the Control Room (Tony 23/11/2026) may run only ARERA or only Terna; the cron runs both.
+  const scopeParam = new URL(request.url).searchParams.get("scope");
+  if (scopeParam !== null && !(job === "regulatory" && (scopeParam === "arera" || scopeParam === "terna"))) return json(400, { error: "SCOPE_UNKNOWN" });
+  const scope = scopeParam as RegulatoryScope;
   const mode: ServiceMode = env.OFFICIAL_DATA_SERVICE_MODE === "publish" ? "PUBLISH" : "DRY_RUN";
   const now = (dependencies.now ?? (() => new Date().toISOString()))();
   // Fase B (Tony 21/11/2026): only the database role svc_dati_ufficiali, never a Supabase key.
@@ -63,11 +67,11 @@ export async function handle(request: Request, env: ServiceEnvironment, dependen
     if (dependencies.store) store = dependencies.store;
     else { database = postgresBackend(serviceDatabaseConfig(env)); store = createServiceStore(database); }
   } catch (error) { return json(500, { error: error instanceof Error ? error.message : "SERVICE_CONFIGURATION_INVALID" }); }
-  try { return await runJob(job, mode, env, store, dependencies, now); }
+  try { return await runJob(job, mode, env, store, dependencies, now, scope); }
   finally { await database?.close().catch(() => undefined); }
 }
 
-async function runJob(job: JobName, mode: ServiceMode, env: ServiceEnvironment, store: ServiceStore, dependencies: HandlerDependencies, now: string): Promise<Response> {
+async function runJob(job: JobName, mode: ServiceMode, env: ServiceEnvironment, store: ServiceStore, dependencies: HandlerDependencies, now: string, scope: RegulatoryScope = null): Promise<Response> {
   const runId = `svc_${job}_${randomUUID()}`;
   const nextCheckAt = nextDailyRun(now, SCHEDULE[job].hour, SCHEDULE[job].minute);
   const official = createOfficialFetch({ fetchImpl: dependencies.fetchImpl, now: () => (dependencies.now ?? (() => new Date().toISOString()))(), sleep: dependencies.sleep });
@@ -81,7 +85,7 @@ async function runJob(job: JobName, mode: ServiceMode, env: ServiceEnvironment, 
         return { months, sources, errors: [...months.flatMap((month) => [...month.errors, ...(month.punop?.errors ?? [])].filter((error) => !/NOT_PUBLISHED_YET/.test(error)).map((error) => `${month.month}:${error}`)), ...sources.filter((page) => !page.reachable).map((page) => `GME_SOURCE_PAGE_UNREACHABLE:${page.id}`)] };
       }
       if (job === "regulatory") {
-        const result = await runRegulatoryJob({ store, fetcher: official.fetch, recorded: official.recorded, tenants: clientTenants, now, mode, nextCheckAt, runId });
+        const result = await runRegulatoryJob({ store, fetcher: official.fetch, recorded: official.recorded, tenants: clientTenants, now, mode, nextCheckAt, runId, only: scope });
         return { ...result, errors: result.errors };
       }
       const audits = await runPunAudit({ store, fetcher: official.fetch, recorded: official.recorded, tenants: [PLATFORM_TENANT, ...clientTenants], months: AUDIT_MONTHS, now, mode });

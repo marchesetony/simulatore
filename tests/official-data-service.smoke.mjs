@@ -284,6 +284,21 @@ const legacyBefore = Object.fromEntries(["2026-06", "2026-07", "2026-08", "2026-
   assert.deepEqual(new Set(regulatory.writes.map((write) => write.collection)), new Set(["official-service-locks", "official-service-runs"]));
 }
 
+// 13b. Manual commands of the Control Room (Tony 23/11/2026): only Terna or only ARERA, still a dry run; scope only for regulatory.
+{
+  const terna = memoryBackend(seed());
+  const { status, body } = await run("regulatory&scope=terna", terna, gmeSite(), { ...ENV, OFFICIAL_DATA_SERVICE_MODE: undefined });
+  assert.equal(status, 200); assert.equal(body.mode, "DRY_RUN"); assert.equal(body.scope, "terna");
+  assert.ok(body.tenants.length > 0 && body.tenants.every((tenant) => tenant.arera === "SKIPPED" && tenant.capacity === "SKIPPED" && tenant.terna !== "SKIPPED"));
+  assert.ok(body.errors.every((error) => /TERNA_/.test(error)), "only Terna errors");
+  assert.ok(Array.isArray(body.acquired));
+  assert.deepEqual(new Set(terna.writes.map((write) => write.collection)), new Set(["official-service-locks", "official-service-runs"]));
+  const arera = await run("regulatory&scope=arera", memoryBackend(seed()), gmeSite(), { ...ENV, OFFICIAL_DATA_SERVICE_MODE: undefined });
+  assert.ok(arera.body.tenants.every((tenant) => tenant.terna === "SKIPPED" && tenant.tide === "SKIPPED" && tenant.arera !== "SKIPPED"));
+  assert.equal((await run("gme&scope=terna", memoryBackend(seed()), gmeSite())).status, 400);
+  assert.equal((await run("regulatory&scope=tutto", memoryBackend(seed()), gmeSite())).status, 400);
+}
+
 // 14. Build: one function, only the official data modules, the three scheduled jobs.
 {
   const { build, FORBIDDEN } = await import("../services/dati-ufficiali/build.mjs");
