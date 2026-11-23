@@ -93,9 +93,16 @@ const pdfTextRead = (body: Uint8Array): { readonly text: string; readonly reason
 };
 const pdfText = (body: Uint8Array): string => pdfTextRead(body).text;
 /** Runs a reader on a document's text; when the text is empty the error says why. */
+/** Runs a reader on a document's text; when the text is empty the error says why. The text layer is tried first; when the
+ *  reader finds nothing there, the bare literal strings are tried too: Terna capacity 2026Q4 (same document, SHA cfc83bb7…)
+ *  was read from the literal strings on 28/10 (3,423 €/MWh) and is not found in the text layer (Tony 23/11). */
 const readPdf = <T>(body: Uint8Array, read: (text: string) => T): T => {
   const { text, reason } = pdfTextRead(body);
-  try { return read(text); } catch (error) { throw reason && error instanceof Error ? new Error(`${error.message}:${reason}`) : error; }
+  try { return read(text); } catch (error) {
+    const literal = literalText(body);
+    if (literal.trim() && literal !== text) { try { return read(literal); } catch { /* the first error is the one reported */ } }
+    throw reason && error instanceof Error ? new Error(`${error.message}:${reason}`) : error;
+  }
 };
 const publishedDecimal = (body: Uint8Array, value: string): number => {
   const text = pdfText(body);
