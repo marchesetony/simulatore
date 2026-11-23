@@ -12,8 +12,8 @@ assert.throws(() => findGmeMonthlyBandsPdf(html, "2026-08"), /GME_MONTHLY_BANDS_
 const text = "Prezzo medio di acquisto per fasce orarie Settembre 2026 €/MWh F1 (242 ore) 206,35 F2 (174 ore) 227,58 F3 (304 ore) 197,02 F1: ore di punta (peak) F2: ore intermedie (mid-level) F3: ore fuori punta (off-peak) *come definite dalla delibera dell'ARERA n°181 del 2006";
 const values = parseGmeMonthlyBandsText(text, "2026-09");
 assert.deepEqual([values.f1, values.f2, values.f3], [206.35, 227.58, 197.02]);
-// Monorario = hours-weighted mean of the bands: 207,54, as GME's monthly average.
-assert.equal(Math.round(values.monthly * 100) / 100, 207.54);
+// Tony (23/11/2026): the document prints no monthly value and none is derived from the bands.
+assert.equal("monthly" in values, false);
 assert.throws(() => parseGmeMonthlyBandsText(text, "2026-10"), /MONTH_MISMATCH/);
 // The hours must add up to the month (October 2026: 745 with the clock change).
 assert.throws(() => parseGmeMonthlyBandsText(text.replace("(242 ore)", "(24 ore)"), "2026-09"), /HOURS_INVALID/);

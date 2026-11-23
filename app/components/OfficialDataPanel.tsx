@@ -90,7 +90,7 @@ function MonthCard({ month }: { readonly month: GmeMonthView }) {
 
     <h5>Parametro art. 5.2 della deliberazione ARERA 300/05 (serie distinta dal PUN)</h5>
     {month.punop ? <>
-      <p>{month.punop.value !== null ? <strong>{euro(month.punop.value)} {month.punop.unit}</strong> : "—"} · <span className={`status-badge ${month.punop.validated ? "positive" : month.punop.errors.some((error) => !error.informative) ? "negative" : ""}`}>{month.punop.validated ? (month.punop.conserved ? "Validato e archiviato" : "Validato, non archiviato (modalità prova)") : "Non validato"}</span>{month.punop.label ? ` · ${month.punop.label}` : ""}</p>
+      <p>{month.punop.value !== null ? <strong>{euro(month.punop.value)} {month.punop.unit}</strong> : "—"} · <span className={`status-badge ${month.punop.validated ? "positive" : month.punop.errors.some((error) => !error.informative) ? "negative" : ""}`}>{month.punop.validated ? (month.punop.conserved ? "Validato, documento conservato" : "Validato in modalità prova: documento non ancora conservato") : "Non validato"}</span>{month.punop.label ? ` · ${month.punop.label}` : ""}</p>
       <p>{month.punop.url ? <a href={month.punop.url} target="_blank" rel="noreferrer">{fileName(month.punop.url)}</a> : null}{month.punop.sha256 ? <small className="muted"> · SHA-256 {shortSha(month.punop.sha256)}</small> : null}{month.punop.url ? <br /> : null}<small className="muted">{month.punop.note}</small></p>
       <p className="muted">{month.punop.usage}.</p>
     </> : <p className="muted">Non ancora letto dal servizio per questo mese.</p>}
@@ -99,7 +99,7 @@ function MonthCard({ month }: { readonly month: GmeMonthView }) {
     <div className="responsive-table"><table><caption>Versione approvata letta dal motore di simulazione (€/MWh)</caption><thead><tr><th>Archivio</th><th>Versione</th><th>F1</th><th>F2</th><th>F3</th><th>Mensile</th><th>Fonte</th></tr></thead><tbody>
       {month.used.map((item) => <tr key={item.tenantId}><td>{item.label}</td>{item.status === "MISSING" ? <td colSpan={6}><span className="status-badge negative">Nessun PUN approvato: simulazioni del mese bloccate</span></td> : <>
         <td>v{item.version}<br /><small className="muted">{item.archiveId} · approvata il {when(item.approvedAt)}{item.writtenByService ? " · dal servizio" : ""}</small></td>
-        <td>{euro(item.values.f1)}</td><td>{euro(item.values.f2)}</td><td>{euro(item.values.f3)}</td><td>{euro(item.values.monthly)}</td>
+        <td>{euro(item.values.f1)}</td><td>{euro(item.values.f2)}</td><td>{euro(item.values.f3)}</td><td>{euro(item.values.monthly)}{item.monthlyOrigin === "DERIVED" ? <><br /><span className="status-badge negative">Calcolato, nessun documento lo stampa</span></> : null}</td>
         <td>{item.sourceUrl ? <a href={item.sourceUrl} target="_blank" rel="noreferrer">{item.sourceName ?? "fonte"}</a> : item.sourceName ?? "—"}{item.officialSource ? null : <><br /><span className="status-badge negative">Fonte non ufficiale</span></>}</td>
       </>}</tr>)}
     </tbody></table></div>

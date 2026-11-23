@@ -156,3 +156,28 @@ console.log("market refresh smoke: ok");
   assert.ok(retired.length > 0 && retired.every((record) => record.status === "REJECTED" && record.history.at(-1).reason === "PUN_RETENTION_6_MONTHS" && record.record.approval.reason === "PUN_RETENTION_6_MONTHS" && record.approvals.at(-1).decisionId.startsWith("retired-") && record.history.length >= 3 && record.record.monthly !== undefined && record.record.f3 !== undefined));
   console.log("PUN_RETENTION_RECOVERABLE=PASS");
 }
+
+// Tony (23/11/2026, riconciliazione maggio 2026): the "Prezzo medio per fasce" PDF prints F1, F2, F3 only. The refresh never
+// writes a monthly value derived from the bands, never approves anything from that PDF, and leaves an approved month with the
+// same bands as it is.
+{
+  const bandsUrl = "https://gme.mercatoelettrico.org/Portals/0/Documents/it-IT/20260601PrezzomedioperfasceMaggio2026.pdf";
+  const bandsOnlyFor = (month) => { const full = recordFor({ month }); const { monthly: _monthly, ...rest } = full; return { ...rest, source: { ...full.source, sourceId: "GME_PREZZO_MEDIO_FASCE", url: bandsUrl } }; };
+  const reader = { async load({ referenceMonth }) { return { gme: { record: bandsOnlyFor(referenceMonth) } }; } };
+  const empty = makeRepositories();
+  const blocked = await runPunMarketRefresh({ tenantId: tenant, repositories: empty, sourceReader: reader, now, runId: "pun-bands-only", trigger: "TEST" });
+  assert.equal(blocked.monthsCreated, 0);
+  assert.ok(blocked.errors.length === 6 && blocked.errors.every((error) => /PUN_MONTHLY_NOT_DOCUMENTED/.test(error)));
+  assert.equal((await empty.marketArchiveRepository.list(tenant)).length, 0);
+  console.log("PUN_BANDS_ONLY_NEVER_WRITES_MONTHLY=PASS");
+  const published = makeRepositories();
+  await runPunMarketRefresh({ tenantId: tenant, repositories: published, sourceReader: sourceReader(), now, runId: "pun-before-bands", trigger: "TEST" });
+  const before = structuredClone(await published.marketArchiveRepository.list(tenant));
+  const same = await runPunMarketRefresh({ tenantId: tenant, repositories: published, sourceReader: reader, now: "2026-09-04T01:00:00.000Z", runId: "pun-bands-same", trigger: "TEST" });
+  assert.equal(same.monthsUnchanged, 6);
+  assert.equal(same.monthsCreated, 0);
+  const differs = await runPunMarketRefresh({ tenantId: tenant, repositories: published, sourceReader: { async load({ referenceMonth }) { const record = bandsOnlyFor(referenceMonth); return { gme: { record: referenceMonth === "2026-08" ? { ...record, f1: { ...record.f1, value: record.f1.value + 1 } } : record } }; } }, now: "2026-09-04T02:00:00.000Z", runId: "pun-bands-differ", trigger: "TEST" });
+  assert.deepEqual(differs.errors, ["2026-08:PUN_PUBLISHED_BANDS_DIFFER"]);
+  assert.deepEqual(await published.marketArchiveRepository.list(tenant), before);
+  console.log("PUN_BANDS_ONLY_APPROVED_UNTOUCHED=PASS");
+}

@@ -16,6 +16,10 @@ import { withBoundedRetry } from "../automation/retry.ts";
 import { CALCULATED_PUN_DOMAINS, MINIMUM_PUN_HISTORY_MONTHS, PUN_REFRESH_STALE_DAYS, assertPunRefreshCoverage } from "./registry.ts";
 // @ts-expect-error Node's strip-only test runner requires the explicit extension.
 import { operationalMarketMonths, romeToday, PUN_RETENTION_REASON } from "../market/operational-window.ts";
+// @ts-expect-error Node's strip-only test runner requires the explicit extension.
+import { GME_MONTHLY_BANDS_SOURCE_ID } from "../market/gme-monthly-bands.ts";
+// @ts-expect-error Node's strip-only test runner requires the explicit extension.
+import { GME_HISTORICAL_SOURCE_ID } from "../market/gme-historical-archive.ts";
 
 export type PunRefreshRunStatus = "SUCCESS" | "PARTIAL_FAILURE" | "FAILED" | "ALREADY_RUNNING";
 export type PunRefreshSourceStatus = "FRESH" | "STALE" | "FAILED_REVIEW_REQUIRED" | "NEVER_SUCCESSFUL" | "RUNNING";
@@ -120,6 +124,26 @@ function candidateComplete(candidate: PunSourceCandidate | undefined): candidate
   if (!officialHost(candidate.record.source.authority)(host)) throw new Error("PUN_SOURCE_DOMAIN_BLOCKED");
   return true;
 }
+/**
+ * Tony (23/11/2026, riconciliazione): the PUN Index GME monthly value is written only when a document prints it. The
+ * "Prezzo medio per fasce" PDF prints F1, F2, F3 only and the yearly 15-minute archive gives no published monthly value: from
+ * those sources the refresh writes nothing and approves nothing; a month without an approved version is reported
+ * (PUN_MONTHLY_NOT_DOCUMENTED) for the Control Room, where the producer publishes it with its documents.
+ */
+const UNDOCUMENTED_MONTHLY_SOURCES: ReadonlySet<string> = new Set([GME_MONTHLY_BANDS_SOURCE_ID, GME_HISTORICAL_SOURCE_ID]);
+function bandsComplete(record: ElectricityMonthlyPunRecord): boolean {
+  return record.vector === "EE" && record.index === "PUN" && [record.f1, record.f2, record.f3].every((rate) => rate !== undefined && rate.currency === "EUR" && rate.unit === "EUR_PER_MWH" && Number.isFinite(rate.value)) && record.effectiveFrom === `${record.month}-01` && record.effectiveTo !== null;
+}
+function bandsEqual(left: ElectricityMonthlyPunRecord, right: ElectricityMonthlyPunRecord): boolean {
+  return left.month === right.month && [left.f1, right.f1, left.f2, right.f2, left.f3, right.f3].every((rate) => rate !== undefined) && canonicalMilli(left.f1!.value) === canonicalMilli(right.f1!.value) && canonicalMilli(left.f2!.value) === canonicalMilli(right.f2!.value) && canonicalMilli(left.f3!.value) === canonicalMilli(right.f3!.value);
+}
+function undocumentedMonthly(bundle: PunSourceBundle, referenceMonth: string): ElectricityMonthlyPunRecord | null {
+  const record = bundle.gme?.record;
+  if (!record || record.month !== referenceMonth || !UNDOCUMENTED_MONTHLY_SOURCES.has(record.source.sourceId) || !bandsComplete(record)) return null;
+  assertMarketRecord(record, record.tenantId);
+  if (record.source.authority !== "GME" || new URL(record.source.url).hostname.toLowerCase() !== "gme.mercatoelettrico.org") throw new Error("PUN_SOURCE_DOMAIN_BLOCKED");
+  return record;
+}
 function canonicalCandidate(bundle: PunSourceBundle, referenceMonth: string): PunSourceCandidate {
   const gme = candidateComplete(bundle.gme) && bundle.gme.record.month === referenceMonth ? bundle.gme : undefined;
   const arera = candidateComplete(bundle.arera) && bundle.arera.record.month === referenceMonth ? bundle.arera : undefined;
@@ -178,6 +202,14 @@ export async function runPunMarketRefresh(input: { readonly tenantId: string } &
     for (const referenceMonth of targetMonths) {
       try {
         const bundle = (await withBoundedRetry(() => reader.load({ tenantId: input.tenantId, referenceMonth, retrievedAt: now }), { maxAttempts: 3, baseDelayMs: 50, maxDelayMs: 250, jitterRatio: 0, sleep: async () => undefined })).value;
+        const bandsOnly = undocumentedMonthly(bundle, referenceMonth);
+        if (bandsOnly) {
+          if (bandsOnly.tenantId !== input.tenantId) throw new Error("TENANT_ACCESS_DENIED");
+          const approved = (await input.repositories.marketArchiveRepository.list(input.tenantId)).filter((record) => record.vector === "EE" && record.index === "PUN" && record.month === referenceMonth && record.status === "APPROVED").sort(compareMarketVersions)[0];
+          // Same F1, F2, F3 as the approved version: nothing to do. Anything else is only reported, never written or approved.
+          if (approved && bandsEqual(approved.record as ElectricityMonthlyPunRecord, bandsOnly)) { monthsComplete += 1; monthsUnchanged += 1; continue; }
+          throw new Error(approved ? "PUN_PUBLISHED_BANDS_DIFFER" : "PUN_MONTHLY_NOT_DOCUMENTED");
+        }
         const candidate = canonicalCandidate(bundle, referenceMonth);
         if (candidate.record.tenantId !== input.tenantId) throw new Error("TENANT_ACCESS_DENIED");
         const existing = await input.repositories.marketArchiveRepository.list(input.tenantId);

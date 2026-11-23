@@ -106,4 +106,21 @@ assert.equal((await punUsedByEngine(marketOf(base).repository, "tenant_cliente-p
   assert.deepEqual(overview.gmePages.map((page) => page.reachable), [true, true, false]);
 }
 
+
+// 6. Tony (23/11/2026, riconciliazione): the May 2026 version of the producer's archive written by the manual refresh carries a
+// monthly value computed from the bands of "Prezzo medio per fasce" (119,348… = hours-weighted mean). It rounds to the newsletter's
+// 119,35, so the two-decimal comparison matches: its origin is shown and signalled apart, nothing is written.
+{
+  const derived = record("tenant_piattaforma", "2026-05", 1, { f1: 107.17, f2: 131.44, f3: 120.81, monthly: (107.17 * 220 + 131.44 * 180 + 120.81 * 344) / 744 }, "APPROVED", "https://gme.mercatoelettrico.org/Portals/0/Documents/it-IT/20260601PrezzomedioperfasceMaggio2026.pdf");
+  derived.record.source.sourceId = "GME_PREZZO_MEDIO_FASCE";
+  const market = marketOf([...base, derived]);
+  const overview = await officialDataOverview({ now: NOW, runs: [gmeRun], alerts: [], market: market.repository, tenants: TENANTS, coverage: null });
+  const may = overview.gme.find((item) => item.month === "2026-05");
+  assert.equal(may.used.find((item) => item.tenantId === "tenant_piattaforma").monthlyOrigin, "DERIVED");
+  assert.equal(overview.gme.find((item) => item.month === "2026-10").used[0].monthlyOrigin, "DOCUMENT");
+  assert.ok(overview.anomalies.some((item) => item.id === "derived-monthly-2026-05-tenant_piattaforma" && /119,35|119\.35/.test(item.message) && /nessun documento lo stampa/.test(item.message)));
+  assert.equal(market.writes(), 0);
+  console.log("DERIVED_MONTHLY_SIGNALLED=PASS");
+}
+
 console.log("official-data-overview smoke: OK");

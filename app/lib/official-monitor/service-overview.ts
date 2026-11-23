@@ -87,6 +87,12 @@ export interface UsedPun {
   readonly officialSource: boolean;
   readonly approvedAt: string | null;
   readonly writtenByService: boolean;
+  /**
+   * Tony (23/11/2026): where the monthly value in use comes from. DOCUMENT = printed by the document of the version (newsletter
+   * GME, or a complete GME publication); DERIVED = computed from the bands of "Prezzo medio per fasce" or from the 15-minute
+   * archive, which print no monthly value; NONE = no monthly value in the version.
+   */
+  readonly monthlyOrigin: "DOCUMENT" | "DERIVED" | "NONE";
 }
 export interface PunComparison { readonly tenantId: string; readonly label: string; readonly field: PunField; readonly service: number | null; readonly serviceOrigin: "ACQUISIZIONE" | "AUDIT" | null; readonly engine: number | null; readonly outcome: "MATCH" | "DIVERGENT" | "ENGINE_MISSING" | "SERVICE_MISSING"; readonly outcomeLabel: string }
 export interface Anomaly { readonly id: string; readonly severity: "BLOCKING" | "WARNING" | "INFO"; readonly severityLabel: string; readonly source: string; readonly period: string | null; readonly origin: string; readonly message: string; readonly at: string | null }
@@ -229,6 +235,14 @@ export interface OverviewInput {
   readonly coverage: CoverageReport | null;
 }
 
+const DERIVED_MONTHLY_SOURCES: ReadonlySet<string> = new Set(["GME_PREZZO_MEDIO_FASCE", "GME_MGP_ANNUAL_ARCHIVE"]);
+function monthlyOriginOf(record: MarketArchiveRecord): UsedPun["monthlyOrigin"] {
+  const value = record.record as unknown as { readonly monthly?: { readonly value?: unknown }; readonly source?: { readonly sourceId?: string }; readonly officialComponents?: { readonly monthly?: unknown } };
+  if (!finite(value.monthly?.value)) return "NONE";
+  if (value.officialComponents?.monthly) return "DOCUMENT";
+  return DERIVED_MONTHLY_SOURCES.has(value.source?.sourceId ?? "") ? "DERIVED" : "DOCUMENT";
+}
+
 export async function officialDataOverview(input: OverviewInput): Promise<OfficialDataOverview> {
   const runs = sortedRuns(input.runs.map(parseServiceRun).filter((run): run is ServiceRunRecord => run !== null));
   const today = romeToday(new Date(input.now));
@@ -273,7 +287,8 @@ export async function officialDataOverview(input: OverviewInput): Promise<Offici
         tenantId: tenant.tenantId, label: tenant.label, status: "IN_USE", archiveId: record.archiveId, version: record.record.version, values,
         sourceName: (record.record.source as { name?: string }).name ?? null, sourceUrl: (record.record.source as { url?: string }).url ?? null, officialSource: officialSource(record),
         approvedAt: (record.approvals ?? []).filter((item) => item.decision === "APPROVED").at(-1)?.decidedAt ?? record.updatedAt, writtenByService: Boolean((record.record as unknown as { officialComponents?: unknown }).officialComponents),
-      } : { tenantId: tenant.tenantId, label: tenant.label, status: "MISSING", archiveId: null, version: null, values: {}, sourceName: null, sourceUrl: null, officialSource: false, approvedAt: null, writtenByService: false });
+        monthlyOrigin: monthlyOriginOf(record),
+      } : { tenantId: tenant.tenantId, label: tenant.label, status: "MISSING", archiveId: null, version: null, values: {}, sourceName: null, sourceUrl: null, officialSource: false, approvedAt: null, writtenByService: false, monthlyOrigin: "NONE" });
       for (const field of FIELDS) {
         const service = serviceValue(field); const engine = values[field] ?? null;
         if (!service && engine === null) continue;
@@ -301,6 +316,7 @@ export async function officialDataOverview(input: OverviewInput): Promise<Offici
     const name = monthLabel(month);
     for (const item of used.filter((entry) => entry.status === "MISSING")) addAnomaly({ id: `missing-${month}-${item.tenantId}`, severity: "BLOCKING", source: "GME", period: name, origin: "Dati usati dal simulatore", message: `${item.label}: nessun PUN approvato per ${name}. Le simulazioni con bollette di questo mese non possono essere calcolate.`, at: null });
     for (const item of used.filter((entry) => entry.status === "IN_USE" && !entry.officialSource)) addAnomaly({ id: `unofficial-${month}-${item.tenantId}`, severity: "WARNING", source: "GME", period: name, origin: "Dati usati dal simulatore", message: `${item.label}: la versione in uso (${item.archiveId}, v${item.version}) non indica un documento GME ufficiale come fonte.`, at: null });
+    for (const item of used.filter((entry) => entry.status === "IN_USE" && entry.monthlyOrigin === "DERIVED")) addAnomaly({ id: `derived-monthly-${month}-${item.tenantId}`, severity: "WARNING", source: "GME", period: name, origin: "Dati usati dal simulatore", message: `${item.label}: il PUN mensile in uso (${round2(item.values.monthly!)} €/MWh, ${item.archiveId} v${item.version}) è ricavato dalle fasce o dalla media dei 15 minuti: nessun documento lo stampa. Va sostituito con la versione documentata (newsletter GME, Tabella 1).`, at: null });
     for (const item of comparison.filter((entry) => entry.outcome === "DIVERGENT")) addAnomaly({ id: `divergent-${month}-${item.tenantId}-${item.field}`, severity: "WARNING", source: "GME", period: name, origin: item.serviceOrigin === "AUDIT" ? "Confronto con l'audit settimanale" : "Confronto servizio / motore", message: `${item.label}, ${item.field === "monthly" ? "PUN mensile" : item.field.toUpperCase()}: GME ${item.service} €/MWh, motore ${round2(item.engine!)} €/MWh.`, at: null });
     for (const error of errors.filter((entry) => !entry.informative)) addAnomaly({ id: `gme-${month}-${error.code}`, severity: inUse ? "WARNING" : "BLOCKING", source: "GME", period: name, origin: "Ultima esecuzione del servizio", message: error.message, at: gmeRun?.startedAt ?? null });
   }

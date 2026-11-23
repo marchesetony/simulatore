@@ -3,8 +3,9 @@ import type { ElectricityMonthlyPunRecord } from "../energy/market-data.ts";
 import { GME_PUN_BANDS_PUBLICATIONS_PAGE, assertAllowedGmeUrl, fetchGmePublicationText, type GmeFetcher } from "./gme-pun-source.ts";
 
 // Tony (6/11): "il pun deve essere a fasce o monorario e va prelevato il dato mensile non il giornaliero". The PUN of a month is
-// read from GME's monthly publication "Prezzo medio per fasce" (one PDF a month: F1, F2, F3 in €/MWh with their hours). The
-// monorario is the same month's average over all hours: the hours-weighted mean of the three bands (GME's own definition).
+// read from GME's monthly publication "Prezzo medio per fasce" (one PDF a month: F1, F2, F3 in €/MWh with their hours).
+// Tony (20/11 and 23/11/2026): the document prints no monthly value, so none is derived from it ("mai mensile ricavato dalle
+// fasce"): the PUN Index GME monthly value comes only from a document that prints it (newsletter GME, Tabella 1).
 export const GME_MONTHLY_BANDS_SOURCE_ID = "GME_PREZZO_MEDIO_FASCE";
 const MONTHS = ["gennaio", "febbraio", "marzo", "aprile", "maggio", "giugno", "luglio", "agosto", "settembre", "ottobre", "novembre", "dicembre"];
 
@@ -28,7 +29,7 @@ export function findGmeMonthlyBandsPdf(html: string, referenceMonth: string, bas
 }
 
 /** F1, F2, F3 with their hours from the publication text; the hours must add up to the month. */
-export function parseGmeMonthlyBandsText(text: string, referenceMonth: string): { readonly f1: number; readonly f2: number; readonly f3: number; readonly monthly: number; readonly hours: readonly [number, number, number] } {
+export function parseGmeMonthlyBandsText(text: string, referenceMonth: string): { readonly f1: number; readonly f2: number; readonly f3: number; readonly hours: readonly [number, number, number] } {
   const flat = text.replace(/\s+/g, " ");
   if (!new RegExp(monthLabel(referenceMonth), "i").test(flat)) fail("GME_MONTHLY_BANDS_MONTH_MISMATCH");
   if (!/€\s*\/\s*MWh|EUR\s*\/\s*MWh/i.test(flat)) fail("GME_MONTHLY_BANDS_UNIT_MISSING");
@@ -42,8 +43,7 @@ export function parseGmeMonthlyBandsText(text: string, referenceMonth: string): 
   // Daylight saving adds or removes one hour in March and October.
   if (Math.abs(totalHours - days * 24) > 1) fail(`GME_MONTHLY_BANDS_HOURS_INVALID:${totalHours}`);
   if (rows.some((row) => !Number.isFinite(row.price) || row.price <= 0 || row.price >= 5000)) fail("GME_MONTHLY_BANDS_PRICE_INVALID");
-  const monthly = rows.reduce((sum, row) => sum + row.hours * row.price, 0) / totalHours;
-  return { f1: rows[0].price, f2: rows[1].price, f3: rows[2].price, monthly, hours: [rows[0].hours, rows[1].hours, rows[2].hours] };
+  return { f1: rows[0].price, f2: rows[1].price, f3: rows[2].price, hours: [rows[0].hours, rows[1].hours, rows[2].hours] };
 }
 
 export async function loadGmeMonthlyBandsRecord(input: { readonly tenantId: string; readonly referenceMonth: string; readonly retrievedAt: string; readonly fetcher?: GmeFetcher; readonly pageHtml?: string }): Promise<ElectricityMonthlyPunRecord> {
@@ -55,8 +55,8 @@ export async function loadGmeMonthlyBandsRecord(input: { readonly tenantId: stri
   return {
     schemaVersion: 1, recordId: `gme-pun-${input.referenceMonth}`, version: "1", parentVersionId: null, tenantId: input.tenantId,
     recordType: "MONTHLY_MARKET_DATA", vector: "EE", index: "PUN", month: input.referenceMonth,
-    monthly: rate(values.monthly), f1: rate(values.f1), f2: rate(values.f2), f3: rate(values.f3),
-    source: { sourceId: GME_MONTHLY_BANDS_SOURCE_ID, name: "GME Prezzo medio per fasce (mensile)", url: pdfUrl, authority: "GME", sourceType: "OFFICIAL", sourceSha256: publication.sourceSha256, relatedUrls: [GME_PUN_BANDS_PUBLICATIONS_PAGE, pdfUrl] },
+    f1: rate(values.f1), f2: rate(values.f2), f3: rate(values.f3),
+    source: { sourceId: GME_MONTHLY_BANDS_SOURCE_ID, name: "GME Prezzo medio per fasce (solo F1, F2, F3)", url: pdfUrl, authority: "GME", sourceType: "OFFICIAL", sourceSha256: publication.sourceSha256, relatedUrls: [GME_PUN_BANDS_PUBLICATIONS_PAGE, pdfUrl] },
     approval: { status: "NEEDS_REVIEW", reason: "OFFICIAL_SOURCE_RECONCILED" }, publicationDate: null, effectiveFrom: `${input.referenceMonth}-01`, effectiveTo: nextMonth(input.referenceMonth),
   } as ElectricityMonthlyPunRecord;
 }
