@@ -167,6 +167,43 @@ function factValue(bill: BillDocumentModel, ...codes: readonly string[]): string
 }
 // Monthly PCV: the seller's fixed fee (PCV, quota fissa di vendita, commercializzazione) per month, never network or power charges.
 // Over 12 months the energy part scales with the annual consumption, while fixed fees (PCV, annual options such as Flex) count once per month.
+/**
+ * Tony (24/11/2026, "correzione confronto economico"): "se il risparmio non è determinabile in modo completo, non presentarlo
+ * come risultato certo". An offer is declared cheaper only when both totals are complete: the bill's vendita was read and the
+ * CTE makes every charge determinable (Atlante 3/11: dispacciamento and capacity "non determinabili" are left out of the offer
+ * while the bill still pays them). Otherwise no saving, no monthly or annual projection, no proposal (decision 6/11).
+ */
+export function savingDetermined(receipt: Pick<QuoteReceipt, "status" | "savings" | "undetermined" | "rows">): boolean {
+  return receipt.status === "COMPLETE" && receipt.savings !== null && missingComponents(receipt).length === 0;
+}
+/**
+ * Tony (24/11/2026, decisione B): the mandatory charges the offer total leaves out, each with its reason: the ones the CTE
+ * leaves undetermined and the ones whose official value is missing (e.g. the month's CDISPD not yet in the archive).
+ */
+export function missingComponents(receipt: Pick<QuoteReceipt, "undetermined" | "rows">): readonly string[] {
+  const details = receipt.rows.flatMap((row) => row.details ?? []).filter((item) => item.offer === null && item.missingReason);
+  const labels = details.map((item) => `${item.label.toLowerCase()} (${item.missingReason})`);
+  for (const label of receipt.undetermined ?? []) if (!labels.some((text) => text.startsWith(label.toLowerCase()))) labels.push(`${label.toLowerCase()} (non determinabile dalla CTE)`);
+  return labels;
+}
+/** What the bill pays for the charges missing from the offer: they are in the bill total, not in the offer's. */
+export function billUndeterminedAmount(receipt: QuoteReceipt): number | null {
+  const items = receipt.rows.flatMap((row) => row.details ?? []).filter((item) => item.offer === null && item.current !== null && item.missingReason);
+  return items.length ? Math.round(items.reduce((sum, item) => sum + (item.current ?? 0), 0) * 100) / 100 : null;
+}
+/**
+ * Tony (24/11/2026): the base of the comparison is the bill total less what does not depend on the supply (altre partite such
+ * as "spese per insoluto SDD"), said with each excluded amount so the gap with the printed total is traceable.
+ */
+export function comparisonBase(receipt: QuoteReceipt, bill: Pick<BillDocumentModel, "analystReview">): string | null {
+  if (receipt.status !== "COMPLETE" || receipt.currentTotal === null) return null;
+  const analysis = comparisonAnalysis(bill.analystReview.economics);
+  const total = analysis?.totals.billTotal ?? null;
+  if (total === null || Math.abs(total - receipt.currentTotal) < 0.005) return null;
+  const items = billOutsideComparison(analysis, receipt.currentTotal);
+  const outside = items.length ? items.map((item) => `${item.label} ${euro(item.amount)}`).join(", ") : `altre partite non legate alla fornitura ${euro(Math.round((total - receipt.currentTotal) * 100) / 100)}`;
+  return `Base del confronto ${euro(receipt.currentTotal)}: totale bolletta ${euro(total)} meno ${outside}, che non dipendono dal fornitore e restano nella bolletta originale.`;
+}
 /** Months of the billed period (inclusive end), at least one. */
 export function billedMonthsOf(context: Context): number {
   const days = (Date.parse(`${context.billingPeriod.periodEnd}T00:00:00Z`) - Date.parse(`${context.billingPeriod.periodStart}T00:00:00Z`)) / 86_400_000 + 1;
@@ -180,7 +217,7 @@ export function billedMonthsOf(context: Context): number {
 export function annualProjection(offer: Offer, context: Context): AnnualProjection | null {
   const basis = annualBasis(context);
   const receipt = offer.receipt;
-  if (!basis || receipt.status !== "COMPLETE" || receipt.savings === null) return null;
+  if (!basis || !savingDetermined(receipt) || receipt.savings === null) return null;
   const months = billedMonthsOf(context);
   const monthly = (side: "current" | "offer") => {
     const values = receipt.quotas.filter((quota) => quota.key === "FIXED" || quota.key === "POWER").map((quota) => quota[side]);
@@ -885,18 +922,20 @@ function billOutsideComparison(analysis: BillDocumentModel["analystReview"]["eco
 // Tony (1/11, "devi allineare le righe per leggere meglio il paragone"): one table, the bill's voce and the offer's on the same row.
 function ScontrinoPairTable({ billTitle, offerTitle, rows }: { readonly billTitle: string; readonly offerTitle: string; readonly rows: readonly ScontrinoPairRow[] }) {
   const money = (kind: ScontrinoPairRow["kind"], amount: number | null | undefined) => amount === null || amount === undefined ? "" : kind === "total" ? `= ${euro(amount)}` : `${amount < 0 ? "−" : "+"} ${euro(Math.abs(amount))}`;
-  return <div className="offer-scontrino scontrino-compare"><div className="scontrino-scroll"><table>
-    <colgroup><col className="scontrino-col-label" /><col /><col /><col /><col /></colgroup>
-    <thead>
-      <tr><th scope="col" rowSpan={2}>Voce</th><th scope="colgroup" colSpan={2}>{billTitle}</th><th scope="colgroup" colSpan={2} className="scontrino-offer-head">{offerTitle}</th></tr>
-      <tr><th scope="col">Prezzo medio</th><th scope="col">Importi</th><th scope="col" className="scontrino-offer-head">Prezzo medio</th><th scope="col" className="scontrino-offer-head">Importi</th></tr>
-    </thead>
+  // Tony (24/11/2026, "la tabella dello scontrino presenta sovrapposizioni"): three columns, the importo with its prezzo medio
+  // under it, so the long prices (0,123456 €/kWh, 2,1167 €/kW/mese) never run into the next cell at any width.
+  const cell = (kind: ScontrinoPairRow["kind"], side: ScontrinoPairRow["bill"]) => side && (side.amount !== null || side.price) ? <><span className="scontrino-amount">{money(kind, side.amount)}</span>{side.price ? <small className="scontrino-price">{side.price}</small> : null}</> : null;
+  return <div className="offer-scontrino scontrino-compare"><table>
+    <colgroup><col className="scontrino-col-label" /><col /><col /></colgroup>
+    <thead><tr><th scope="col">Voce<small>importo e prezzo medio</small></th><th scope="col">{billTitle}</th><th scope="col" className="scontrino-offer-head">{offerTitle}</th></tr></thead>
     <tbody>{rows.map((row, index) => row.kind === "section"
-      ? <tr key={index} className="scontrino-section"><th colSpan={5} scope="rowgroup">{row.label}</th></tr>
+      ? <tr key={index} className="scontrino-section"><th colSpan={3} scope="rowgroup">{row.label}</th></tr>
+      : row.kind === "sub" && !cell(row.kind, row.bill) && !cell(row.kind, row.offer)
+      // A note with no amount (fonte di rete e oneri, partite fuori confronto) reads across the whole table.
+      ? <tr key={index} className="scontrino-note"><td colSpan={3}>{row.label}</td></tr>
       : <tr key={index} className={`scontrino-${row.kind}`}><th scope="row">{row.kind === "main" ? `${row.label}${row.label ? " x" : ""}` : row.label}</th>
-        <td>{row.bill?.price ?? ""}</td><td>{money(row.kind, row.bill?.amount)}</td>
-        <td className="scontrino-offer">{row.offer?.price ?? ""}</td><td className="scontrino-offer">{money(row.kind, row.offer?.amount)}</td></tr>)}</tbody>
-  </table></div></div>;
+        <td>{cell(row.kind, row.bill)}</td><td className="scontrino-offer">{cell(row.kind, row.offer)}</td></tr>)}</tbody>
+  </table></div>;
 }
 function ScontrinoTable({ title, lines, empty }: { readonly title: string; readonly lines: readonly ScontrinoLine[]; readonly empty?: string }) {
   return <div className="offer-scontrino">
@@ -966,17 +1005,24 @@ function Receipt({ offer: quoted, today, business, context, bill, onPresentation
   const billScontrino = receipt.status === "COMPLETE" ? offerScontrino({ quotas: receipt.quotas, offerTotal: receipt.currentTotal, taxesIncluded: receipt.taxesIncluded, vector: context.vector, quantity: periodQuantity, months: billedMonths(context.billingPeriod.periodStart, context.billingPeriod.periodEnd), powerKw: powerQuotaKw(context), side: "current", excluded: billOutsideComparison(comparisonAnalysis(bill.analystReview.economics), receipt.currentTotal) }) : [];
   // Tony (16/11/2026, "costi una tantum e risparmio annuo"): period, one-off, recurring monthly and annual, one source for
   // the screen and the proposal.
-  const costs = receipt.status === "COMPLETE" && !same ? quoteCostSummary(receipt, billedMonthsOf(context), projection) : null;
+  const determined = savingDetermined(receipt);
+  const costs = determined && !same ? quoteCostSummary(receipt, billedMonthsOf(context), projection) : null;
+  const base = comparisonBase(receipt, bill);
+  const billUndetermined = billUndeterminedAmount(receipt);
   const presentation = { ...presentationOf(offer, receipt, bill, context, same ? null : annualSaving, annualCurrent, basisLabel, same), scontrino: offerLines, billScontrino, ...(costs ? { costs } : {}) };
   const presentationKey = JSON.stringify(presentation);
   useEffect(() => { onPresentation?.(JSON.parse(presentationKey) as ProposalPresentation); }, [presentationKey, onPresentation]);
   return <section className="ui-card quote-receipt" aria-label="Scontrino dell'energia">
     <p className="eyebrow">SCONTRINO DELL&apos;ENERGIA</p>
     <h3>{offer.supplier} · {offer.offerName}</h3>
-    {receipt.status === "COMPLETE" ? <div className={saving >= 0 ? "quote-saving" : "quote-saving negative"}>
+    {receipt.status === "COMPLETE" && (determined || same) ? <div className={saving >= 0 ? "quote-saving" : "quote-saving negative"}>
       <span>{headline}</span>
       <strong>{euro(Math.abs(saving))}{receipt.savingsPercent !== null ? ` (${PERCENT.format(Math.abs(receipt.savingsPercent))}%)` : ""}</strong>
     </div> : null}
+    {receipt.status === "COMPLETE" && !determined && !same ? <div className="quote-saving undetermined" role="status" data-testid="saving-undetermined">
+      <span>Risparmio non determinabile<small>Mancano: {missingComponents(receipt).join("; ")}. Il totale dell&apos;offerta le esclude, la bolletta le comprende{billUndetermined !== null ? ` (${euro(billUndetermined)})` : ""}: la differenza parziale di {euro(Math.abs(saving))} {saving >= 0 ? "a favore dell'offerta" : "a sfavore dell'offerta"} non è un risparmio e non va proposta al cliente.</small></span>
+    </div> : null}
+    {base ? <p className="muted quote-base" data-testid="comparison-base">{base}</p> : null}
     {annualSaving !== null && basis && !same ? <div className={annualSaving >= 0 ? "quote-saving annual" : "quote-saving annual negative"}>
       <span>{annualSaving >= 0 ? "Risparmio annuo previsto" : "Costo in più annuo previsto"}<small>{basisLabel}</small>
         {/* Annual saving in euro and in percent with both annual costs, as the scheda sintetica's spesa annua (Codice art. 19; Tony, 29/10). */}
@@ -1005,7 +1051,7 @@ function Receipt({ offer: quoted, today, business, context, bill, onPresentation
         <th scope="row">{item.label}{row.key === "ENERGY" && item.current !== null ? <VerificationNote bill={bill} rowKey={item.key} /> : null}</th>
         <td>{item.current === null ? (item.currentNote ? <><small className="muted">{item.currentNote}</small>{item.unitBasis ? perUnit("ENERGY", item.unitBasis.current) : null}</> : receipt.status === "COMPLETE" ? "non in bolletta" : "—") : <>{euro(item.current)}{perUnit(item.key, item.current)}{item.currentDerived ? <small className="muted">{item.currentDerived}</small> : null}</>}</td><td>{item.offer !== null ? <>{euro(item.offer)}{perUnit(item.key, item.offer)}</> : item.missingReason ? <small className="quote-check open">Non calcolato: {item.missingReason}</small> : item.offerNote ? <><small className="muted">{item.offerNote}</small>{item.unitBasis ? perUnit("ENERGY", item.unitBasis.offer) : null}</> : "non nella CTE"}</td><td className={difference(item.difference)}>{signedEuro(item.difference)}</td>
       </tr>)])}</tbody>
-      {receipt.status === "COMPLETE" ? <tfoot><tr><th scope="row">{receipt.taxesIncluded ? "Totale" : "Totale imposte escluse"}</th><td>{euro(receipt.currentTotal)}</td><td>{euro(receipt.offerTotal)}</td><td className={difference(receipt.savings === null ? null : -receipt.savings)}>{signedEuro(receipt.savings === null ? null : -receipt.savings)}</td></tr></tfoot> : null}
+      {receipt.status === "COMPLETE" ? <tfoot><tr><th scope="row">{receipt.taxesIncluded ? "Totale" : "Totale imposte escluse"}{determined ? "" : " (provvisorio)"}</th><td>{euro(receipt.currentTotal)}</td><td>{euro(receipt.offerTotal)}</td><td className={difference(receipt.savings === null ? null : -receipt.savings)}>{signedEuro(receipt.savings === null ? null : -receipt.savings)}</td></tr></tfoot> : null}
     </table></div>
     {receipt.undetermined?.length ? <p className="quote-check open" role="alert"><strong>Totale dell'offerta provvisorio.</strong> La CTE non permette di determinare: {receipt.undetermined.join(", ").toLowerCase()}. Queste voci non sono state aggiunte e il totale le esclude.</p> : null}
     {/* Tony (1/11): "questi dati non facciamoli vedere a tutti se vuole solo amministratore. creano confusione": only the company administrator sees them. */}
@@ -1389,7 +1435,7 @@ export default function QuickQuoteFlow({ readonly, showExcluded = false }: { rea
       <BillSummary context={quote.context} bill={quote.bill} />
       <section className="ui-card"><h3>Offerte utilizzabili per {quote.context.vector === "EE" ? "questa fornitura di luce" : "questa fornitura di gas"}</h3>
         {visibleOffers.length ? <div className="quote-offers">{visibleOffers.map((offer, index) => <button key={offer.calculation.calculationId} type="button" className={`quote-offer${offer.calculation.calculationId === selectedId ? " selected" : ""}${index === 0 ? " best" : ""}`} onClick={() => { setSelectedId(offer.calculation.calculationId); setProposal(null); }} aria-pressed={offer.calculation.calculationId === selectedId}>
-          {index === 0 ? <span className="status-badge positive">La più conveniente</span> : null}
+          {index === 0 && savingDetermined(offer.receipt) ? <span className="status-badge positive">La più conveniente</span> : null}
           {/* Tony (20/11/2026): a forced offer states the conditions actually applied, never who authorized it. */}
           {offer.candidate.finalStatus === "ELIGIBLE_BY_OVERRIDE" ? <><span className="status-badge">{SPECIAL_CONDITIONS_TITLE}</span><small className="quote-offer-scope">{specialConditionsSentence(offer.candidate.reasonCodes)}</small></> : null}
           {chosen[offer.calculation.calculationId] ? <small className="quote-offer-scope">Scelta con motivazione: {chosen[offer.calculation.calculationId]}</small> : null}
@@ -1403,7 +1449,8 @@ export default function QuickQuoteFlow({ readonly, showExcluded = false }: { rea
           {offer.receipt.undetermined?.length ? <small className="quote-offer-scope negative">Totale provvisorio: non determinabili {offer.receipt.undetermined.join(", ").toLowerCase()}</small> : null}
           {/* Tony (1/11): two quotes at the same discounted price still say which one costs more before the discount. */}
           {(() => { const off = discountOf(offer); if (off === null || offer.receipt.offerTotal === null) return null; const gross = offer.receipt.offerTotal + off * (offer.receipt.taxesIncluded ? 1 + (offer.receipt.vatRate ?? 0) : 1); return <small className="quote-offer-scope">Prezzo pieno {euro(Math.round(gross * 100) / 100)}, con sconto commerciale aziendale</small>; })()}
-          {offer.receipt.savingsPercent !== null ? <small className={offer.receipt.savingsPercent >= 0 ? "positive" : "negative"}>{offer.receipt.savingsPercent >= 0 ? "Risparmio" : "Più cara"} {PERCENT.format(Math.abs(offer.receipt.savingsPercent))}%</small> : null}
+          {offer.receipt.savingsPercent !== null && savingDetermined(offer.receipt) ? <small className={offer.receipt.savingsPercent >= 0 ? "positive" : "negative"}>{offer.receipt.savingsPercent >= 0 ? "Risparmio" : "Più cara"} {PERCENT.format(Math.abs(offer.receipt.savingsPercent))}%</small> : null}
+          {offer.receipt.status === "COMPLETE" && !savingDetermined(offer.receipt) ? <small className="negative">Risparmio non determinabile</small> : null}
           {(() => { if (isSameOffer({ billSupplier: quote.context.currentSupplier, billOffer: billOfferName(quote.bill, quote.context), offerSupplier: offer.supplier, offerCode: offer.calculation.sourceCte.offerCode, offerName: offer.offerName })) return <small>Stessa CTE della bolletta: verifica di fatturazione</small>; const projection = annualProjection(offer, quote.context); return projection ? <small className={projection.saving >= 0 ? "positive" : "negative"}>{projection.saving >= 0 ? "Risparmio annuo previsto" : "Costo in più annuo"} {euro(Math.abs(projection.saving))}</small> : null; })()}
           <small>Valida fino al {date(offer.receipt.validUntil)}</small>
         </button>)}</div> : null}
@@ -1418,7 +1465,7 @@ export default function QuickQuoteFlow({ readonly, showExcluded = false }: { rea
         {quote.offers.length || quote.failure ? null : <><EmptyState title="Nessuna offerta utilizzabile" detail="Nessuna CTE a te assegnata è adatta a questa bolletta. Chiedi all'amministratore di assegnartene una." /><NoOfferReasons quote={quote} onAuthorize={readonly ? undefined : authorizeCte} onTechnical={readonly ? undefined : (archiveId) => void runTechnical(archiveId)} /></>}
       </section>
       {pending === "technical" ? <LoadingState label="Simulazione tecnica in corso" /> : technical ? <TechnicalSimulation result={technical} context={quote.context} bill={quote.bill} /> : null}
-      {selected ? <><Receipt offer={selected} today={today} business={quote.context.customerType === "NON_RESIDENTIAL"} context={quote.context} bill={quote.bill} onPresentation={keepPresentation} showExcluded={showExcluded} /><div className="button-row"><button className="button primary" type="button" onClick={() => void saveProposal()} disabled={readonly || Boolean(pending)}>{pending === "proposal" ? "Preparazione" : "Scarica la proposta in PDF"}</button>{proposal ? <span className="muted" role="status">Proposta salvata in Proposte.</span> : null}</div></> : null}
+      {selected ? <><Receipt offer={selected} today={today} business={quote.context.customerType === "NON_RESIDENTIAL"} context={quote.context} bill={quote.bill} onPresentation={keepPresentation} showExcluded={showExcluded} /><div className="button-row"><button className="button primary" type="button" onClick={() => void saveProposal()} disabled={readonly || Boolean(pending) || (selected.receipt.status === "COMPLETE" && !savingDetermined(selected.receipt))}>{pending === "proposal" ? "Preparazione" : "Scarica la proposta in PDF"}</button>{selected.receipt.status === "COMPLETE" && !savingDetermined(selected.receipt) ? <span className="muted" role="status">Proposta non disponibile: il risparmio non è determinabile (mancano: {missingComponents(selected.receipt).join("; ")}).</span> : null}{proposal ? <span className="muted" role="status">Proposta salvata in Proposte.</span> : null}</div></> : null}
     </> : null : null}
     {error ? <ErrorState message={error} /> : null}
   </div>;
