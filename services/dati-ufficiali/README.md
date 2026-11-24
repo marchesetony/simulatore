@@ -64,4 +64,4 @@ Vedi `/mnt/project-files/audit/archivi-ufficiali/automazione/servizio-indipenden
 
 ## Deployment
 
-Automatico da GitHub (Tony, 23/11/2026): ogni push sul branch `servizio/dati-ufficiali` aggiorna la produzione del progetto Vercel `servizio-dati-ufficiali` (Root Directory `services/dati-ufficiali`, solo il branch di produzione viene costruito). Variabili, CRON_SECRET, cron e modalità prova restano quelli del progetto. Annullamento: Vercel > Deployments > deployment precedente > Instant Rollback.
+Automatico da GitHub (Tony, 23/11/2026): ogni push sul branch `servizio/dati-ufficiali` aggiorna la produzione del progetto Vercel `servizio-dati-ufficiali` (Root Directory `services/dati-ufficiali`, solo il branch di produzione viene costruito). Variabili, CRON_SECRET, cron e modalità prova restano quelli del progetto. Annullamento: Vercel > Deployments > deployment precedente > Instant Rollback. Esito di ogni deployment: stato del commit su GitHub.
