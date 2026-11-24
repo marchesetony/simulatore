@@ -575,6 +575,20 @@ function technicalSourcesText(result: TechnicalResult, offerName: string): strin
   return `Vendita della simulazione dai prezzi della CTE ${offerName}, con PUN GME, Terna e ARERA dove la CTE li richiama; ${network}; sugli stessi consumi e sullo stesso periodo della fattura. ${fiscal} Nessun importo della fattura entra nella simulazione.`;
 }
 
+/** The four things an agent checks first on a bill, exactly as read (or "non letto"). */
+function ReadSummary({ values, vector }: { readonly values: Readonly<Record<string, string>>; readonly vector: string }): ReactNode {
+  const unit = vector === "GAS" ? "Smc" : "kWh";
+  const shown = (value: string | undefined, suffix = "") => value?.trim() ? `${value.trim()}${suffix}` : null;
+  const items: readonly (readonly [string, string | null, string | null])[] = [
+    ["Intestatario", shown(values.customerName), shown(values.pod)],
+    ["Fornitore attuale", shown(values.supplier), null],
+    ["Periodo fatturato", shown(values.billingPeriod), null],
+    ["Consumo del periodo", shown(values.billedConsumption, ` ${unit}`), null],
+    ["Totale bolletta", shown(values.totalAmount, " €"), null],
+  ];
+  return <dl className="quote-read-summary">{items.map(([label, value, sub]) => <div key={label} className={label === "Totale bolletta" ? "accent" : undefined}><dt>{label}</dt><dd>{value ?? <span className="muted">Non letto</span>}{sub ? <small>{sub}</small> : null}</dd></div>)}</dl>;
+}
+
 function Steps({ step }: { readonly step: Step }): ReactNode {
   const items: readonly { readonly id: Step; readonly label: string }[] = [{ id: "bill", label: "Carica la bolletta" }, { id: "review", label: "Dati letti" }, { id: "offers", label: "Scegli l'offerta" }];
   const current = items.findIndex((item) => item.id === step);
@@ -1171,6 +1185,8 @@ export default function QuickQuoteFlow({ readonly, showExcluded = false }: { rea
   const [discarding, setDiscarding] = useState<"confirm" | "running" | null>(null);
   const analysisBusy = useCallback((busy: boolean) => setPending((value) => busy ? "upload" : value === "upload" ? undefined : value), []);
   const analysisRead = useCallback((document: BillDocumentModel, analysisId: string) => {
+    // The upload is over: the reading opens ready to be confirmed (the analysis card closes with it).
+    setPending((value) => value === "upload" ? undefined : value);
     setError(undefined);
     setDraft(document);
     startReview(document);
@@ -1344,22 +1360,29 @@ export default function QuickQuoteFlow({ readonly, showExcluded = false }: { rea
           </details> : null}</details>
       </>}
     </section> : null}
-    {step === "review" && draft ? <section className="ui-card">
-      <h3>Dati letti dalla bolletta</h3><p className="muted">Usati per trovare le CTE adatte.</p>
-      {analystRetry(draft) ?? billReread(draft)}
-      {billDetailLink(draft)}
+    {step === "review" && draft ? <section className="ui-card quote-review">
+      <div className="quote-review-head"><div><h3>Dati letti dalla bolletta</h3><p className="muted">Usati per trovare le CTE adatte. Controllali e prosegui.</p></div></div>
+      {/* Tony (24/11/2026, "DIREZIONE GRAFICA DEFINITIVA"): the essentials at a glance, as read; the full reading stays below. */}
+      <ReadSummary values={values} vector={draft.resolvedVector} />
+      {analystRetry(draft)}
       {/* Tony (5/11/2026): what does not add up after the reading, or is not printed, is said here instead of a wrong number. */}
       {readBill?.structuredBill?.readingChecks?.length ? <div className="warning-text" role="status"><strong>Da controllare sulla bolletta</strong><ul>{readBill.structuredBill.readingChecks.map((check) => <li key={check}>{check}</li>)}</ul></div> : null}
       {readBill ? <BillReadDetails sections={billReadSections(readBill)} calculated={calculatedFacts(readBill)} /> : null}
       {/* Tony (10/11/2026, "semplificazione"): the values above are the ones confirmed; the editable fields stay (they are what
-          "Cerca le CTE utilizzabili" confirms or corrects) but are folded, and open on their own when one must be filled in. */}
-      <details className="bill-read-correct" open={correctionOpen} onToggle={(event) => setCorrectionOpen(event.currentTarget.open)}>
+          "Cerca le CTE utilizzabili" confirms or corrects) but are folded, and open on their own when one must be filled in.
+          Rereading and the detail invoice are secondary: folded next to the correction. */}
+      <div className="quote-review-more">
+        <details className="bill-read-correct" open={correctionOpen} onToggle={(event) => setCorrectionOpen(event.currentTarget.open)}>
         <summary>{missingValues ? "Completa i dati mancanti" : "Correggi i dati letti"}</summary>
         <p className="muted">Sono i valori letti sopra, usati per la ricerca delle CTE: modificali solo se vedi un errore.</p>
         <div className="form-grid">{FIELDS.map((field) => <label className="form-field" key={field.name}><span className="form-label">{field.label}{unitOf(field.name, draft.resolvedVector)}{field.name === "annualConsumption" ? " · solo se dichiarato in bolletta" : ""}</span><input value={values[field.name] ?? ""} onChange={(event) => setValues((current) => ({ ...current, [field.name]: event.target.value }))} disabled={Boolean(pending)} /></label>)}</div>
         {readBill && !draft.fields.annualConsumption?.value ? <p className="muted bill-annual-estimate">{annualConsumptionLine(billAnnualConsumption(readBill), draft.resolvedVector === "GAS" ? "Smc" : "kWh")}</p> : null}
       </details>
-      <div className="button-row"><button className="button primary" type="button" onClick={() => void confirm()} disabled={readonly || Boolean(pending)}>{pending === "confirm" ? "Ricerca in corso" : "Cerca le CTE utilizzabili"}</button></div>
+        {analystRetry(draft) ? null : billReread(draft)}
+        {billDetailLink(draft)}
+      </div>
+      {/* The one action of this step stays in view at the bottom of the screen while the agent reads. */}
+      <div className="quote-review-actions"><button className="button primary" type="button" onClick={() => void confirm()} disabled={readonly || Boolean(pending)}>{pending === "confirm" ? "Ricerca in corso" : "Cerca le CTE utilizzabili"}</button></div>
     </section> : null}
     {step === "offers" ? pending === "offers" ? <LoadingState label="Calcolo delle offerte per questa bolletta" /> : quote ? <>
       {analystRetry(quote.bill, quote.offers.length > 0 && quote.offers.every((item) => item.receipt.status !== "COMPLETE"))}

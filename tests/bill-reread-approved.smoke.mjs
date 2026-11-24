@@ -93,7 +93,9 @@ assert.doesNotMatch(block, /comparison|proposal|approve/i, "no comparison, propo
 assert.match(route, /export async function PATCH[\s\S]*?const principal = await requestPrincipal\(request, "OPERATE"\);/);
 const flow = await readFile("app/components/QuickQuoteFlow.tsx", "utf8");
 assert.match(flow, /const billReread = \(bill: BillDocumentModel\) => readonly \? null : <>/);
-assert.match(flow, /\{analystRetry\(draft\) \?\? billReread\(draft\)\}/, "available in review when the scontrino was read; the warning keeps its own button otherwise");
+// Tony (24/11/2026, "DIREZIONE GRAFICA DEFINITIVA"): the warning stays at the top, the folded reread sits with the other folded
+// actions; the rule is the same: one or the other, never both.
+assert.match(flow, /\{analystRetry\(draft\)\}[\s\S]*\{analystRetry\(draft\) \? null : billReread\(draft\)\}/, "available in review when the scontrino was read; the warning keeps its own button otherwise");
 assert.match(flow, /onClick=\{\(\) => void rereadAnalyst\(bill\.id\)\} disabled=\{Boolean\(pending\)\}/, "same operation, blocked while a reading is running");
 assert.match(flow, /body: JSON\.stringify\(\{ operation: "reread-analyst", versionId: current\.currentVersionId \}\)/);
 assert.match(flow, /Le correzioni manuali fatte in precedenza non vengono riportate: ricontrolla tutti i dati prima di confermare\./);

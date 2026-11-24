@@ -27,6 +27,8 @@ export function BillAnalysisControl({ readonly, disabled, onBusy, onRead }: { re
   const controller = useRef<AbortController | null>(null);
   const running = run.kind === "running";
   useEffect(() => { onBusy(running); }, [running, onBusy]);
+  // The screen moves to the reading as soon as it arrives: closing this card must not leave the flow marked busy.
+  useEffect(() => () => onBusy(false), [onBusy]);
 
   // Real phases: read from the server while the upload request is open.
   const runningId = run.kind === "running" ? run.id : null;
@@ -103,19 +105,25 @@ export function BillAnalysisControl({ readonly, disabled, onBusy, onRead }: { re
     current.current = null; setRun({ kind: "idle" });
   }, [run, interrupt]);
 
+  // Tony (24/11/2026, "DIREZIONE GRAFICA DEFINITIVA"): one clear card. The file chosen, the server's real phases as a row of
+  // steps (no percentage), and the commands that stop or restart the analysis always in view next to them.
   const file = run.kind === "idle" ? null : run.file;
+  const chip = file ? <div className="bill-file-chip"><span className="bill-file-icon" aria-hidden="true">PDF</span><span className="bill-file-name"><small className="bill-file-label">File selezionato</small><strong>{file.name}</strong><small>{sizeText(file.size)}</small></span></div> : null;
   return <div className="bill-analysis" aria-live="polite">
-    {run.kind === "idle" ? <label className="button primary quote-upload-button">Carica bolletta (PDF)<input className="visually-hidden" type="file" accept="application/pdf" onChange={choose} disabled={readonly || disabled} /></label> : null}
-    {file ? <p><strong>File selezionato:</strong> {file.name} <span className="muted">· {sizeText(file.size)}</span></p> : null}
-    {run.kind === "selected" ? <div className="button-row"><button className="button primary" type="button" onClick={() => void start(run.file)} disabled={readonly || disabled}>Avvia analisi</button><button className="button secondary" type="button" onClick={() => setRun({ kind: "idle" })}>Annulla</button></div> : null}
+    {run.kind === "idle" ? <div className="bill-drop">
+      <span className="bill-drop-icon" aria-hidden="true"><svg viewBox="0 0 24 24" width="28" height="28" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z" /><path d="M14 3v5h5" /><path d="M12 17v-6" /><path d="m9 13 3-3 3 3" /></svg></span>
+      <div className="bill-drop-text"><strong>Carica la bolletta del cliente</strong><small>File PDF fino a 20 MB</small></div>
+      <label className="button primary quote-upload-button">Carica bolletta (PDF)<input className="visually-hidden" type="file" accept="application/pdf" onChange={choose} disabled={readonly || disabled} /></label>
+    </div> : null}
+    {run.kind === "selected" ? <div className="bill-analysis-bar">{chip}<div className="button-row"><button className="button primary" type="button" onClick={() => void start(run.file)} disabled={readonly || disabled}>Avvia analisi</button><button className="button secondary" type="button" onClick={() => setRun({ kind: "idle" })}>Annulla</button></div></div> : null}
     {run.kind === "running" ? <>
-      <ol className="bill-analysis-steps">{ANALYSIS_STEPS.map((step) => { const status = stepStatus(run.server, step.state); return <li key={step.state} className={`bill-analysis-step ${status}`}><span aria-hidden="true">{status === "done" ? "✓" : status === "current" ? "…" : "○"}</span> {step.label}{status === "current" ? <span className="muted"> · in corso</span> : null}</li>; })}</ol>
-      <p className="muted">La lettura può richiedere fino a qualche minuto. Le fasi sono quelle registrate dal server.</p>
-      <div className="button-row"><button className="button danger" type="button" onClick={() => void interrupt()} disabled={run.stopping}>{run.stopping ? "Interruzione in corso…" : "Interrompi analisi"}</button><button className="button secondary" type="button" onClick={() => void restart()} disabled={run.stopping}>Ricomincia</button></div>
+      <div className="bill-analysis-bar">{chip}<div className="button-row"><button className="button danger" type="button" onClick={() => void interrupt()} disabled={run.stopping}>{run.stopping ? "Interruzione in corso…" : "Interrompi analisi"}</button><button className="button secondary" type="button" onClick={() => void restart()} disabled={run.stopping}>Ricomincia</button></div></div>
+      <ol className="bill-analysis-steps">{ANALYSIS_STEPS.map((step) => { const status = stepStatus(run.server, step.state); return <li key={step.state} className={`bill-analysis-step ${status}`} aria-current={status === "current" ? "step" : undefined}><span className="bill-analysis-dot" aria-hidden="true">{status === "done" ? "✓" : ""}</span><span className="bill-analysis-label">{step.label}{status === "current" ? <small> in corso</small> : null}</span></li>; })}</ol>
+      <p className="muted bill-analysis-note">La lettura può richiedere fino a qualche minuto. Le fasi sono quelle registrate dal server.</p>
     </> : null}
     {run.kind === "stopped" || run.kind === "failed" ? <>
-      <p className={run.kind === "stopped" ? "muted" : "warning-text"} role={run.kind === "failed" ? "alert" : "status"}>{run.text}</p>
-      <div className="button-row">{run.kind === "stopped" || run.file.size <= MAX_UPLOAD_BYTES ? <button className="button primary" type="button" onClick={() => void start(run.file)} disabled={readonly || disabled}>Avvia di nuovo</button> : null}<button className="button secondary" type="button" onClick={() => void restart()}>Ricomincia</button></div>
+      <div className="bill-analysis-bar">{chip}<div className="button-row">{run.kind === "stopped" || run.file.size <= MAX_UPLOAD_BYTES ? <button className="button primary" type="button" onClick={() => void start(run.file)} disabled={readonly || disabled}>Avvia di nuovo</button> : null}<button className="button secondary" type="button" onClick={() => void restart()}>Ricomincia</button></div></div>
+      <p className={run.kind === "stopped" ? "bill-analysis-message" : "bill-analysis-message warning-text"} role={run.kind === "failed" ? "alert" : "status"}>{run.text}</p>
     </> : null}
   </div>;
 }

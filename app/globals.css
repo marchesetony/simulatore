@@ -678,3 +678,77 @@ button:focus-visible,a:focus-visible,input:focus-visible,select:focus-visible,te
 @media (max-width:760px) { .official-archive-alert .card-heading { display:block; } .official-archive-alert a.button { margin-top:10px; } }
 .official-command { display: grid; gap: .35rem; margin-top: .6rem; justify-items: start; }
 .official-command small { line-height: 1.4; }
+
+/* Tony (24/11/2026, "DIREZIONE GRAFICA DEFINITIVA", primo intervento): «Nuova simulazione» only, until approved.
+   Brand tokens: every company colour of this screen comes from here, so another client's palette is one set of values. */
+:root { --brand:var(--navy); --brand-accent:var(--teal); --brand-accent-soft:var(--teal-soft); --brand-ink:#14233b; --surface-soft:#f6f8fb; --radius:14px; --ui-font:"Inter","Segoe UI",system-ui,-apple-system,Roboto,"Helvetica Neue",Arial,sans-serif; }
+.quote-flow { gap:16px; font-family:var(--ui-font); color:var(--brand-ink); -webkit-font-smoothing:antialiased; }
+.quote-flow .button { font-family:inherit; font-size:13px; border-radius:10px; }
+.quote-flow .button.primary { background:var(--brand); box-shadow:0 1px 2px rgba(20,35,59,.18); }
+.quote-flow .section-header h2 { font-size:clamp(1.5rem,2.4vw,1.9rem); font-weight:700; letter-spacing:-.02em; }
+.quote-flow .section-detail { margin-top:4px; font-size:14px; }
+.quote-flow .section-header .button-row { margin-top:0; }
+.quote-flow .ui-card { padding:20px 22px; border-radius:var(--radius); box-shadow:0 1px 2px rgba(20,35,59,.05),0 8px 24px rgba(20,35,59,.05); }
+.quote-flow .ui-card h3 { font-size:17px; font-weight:700; margin:0; }
+.quote-flow .muted { font-size:13px; }
+/* Steps: one quiet line, the current one stands out. */
+.quote-flow .quote-steps { gap:0; padding:4px; border:1px solid var(--line); border-radius:999px; background:#fff; width:max-content; max-width:100%; }
+.quote-flow .quote-steps li { padding:7px 14px 7px 8px; border:0; background:transparent; font-size:13px; font-weight:600; }
+.quote-flow .quote-steps li span { width:22px; height:22px; font-size:11px; font-weight:700; }
+.quote-flow .quote-steps li.active { color:#fff; background:var(--brand); }
+.quote-flow .quote-steps li.active span { color:var(--brand); background:#fff; }
+.quote-flow .quote-steps li.done span { color:#fff; background:var(--brand-accent); }
+/* Upload */
+.quote-flow .quote-upload { gap:14px; justify-items:stretch; }
+.bill-drop { display:grid; grid-template-columns:auto 1fr auto; align-items:center; gap:16px; padding:22px; border:1.5px dashed #b9c8d8; border-radius:12px; background:var(--surface-soft); }
+.bill-drop-icon { display:grid; place-items:center; width:52px; height:52px; border-radius:12px; color:var(--brand-accent); background:var(--brand-accent-soft); }
+.bill-drop-text { display:grid; gap:3px; }.bill-drop-text strong { font-size:16px; }.bill-drop-text small { color:var(--muted); font-size:13px; }
+.quote-flow .quote-upload-button { min-height:48px; padding:0 22px; font-size:14px; }
+.bill-analysis { display:grid; gap:14px; }
+.bill-analysis-bar { display:flex; align-items:center; justify-content:space-between; gap:12px 16px; flex-wrap:wrap; }
+.bill-analysis-bar .button-row { margin-top:0; }
+.bill-file-chip { display:flex; align-items:center; gap:12px; min-width:0; }
+.bill-file-icon { display:grid; place-items:center; flex:none; width:40px; height:46px; border-radius:8px; color:#fff; background:#c2413b; font-size:11px; font-weight:800; letter-spacing:.04em; }
+.bill-file-name { display:grid; gap:1px; min-width:0; }.bill-file-name strong { font-size:15px; overflow-wrap:anywhere; }.bill-file-name small { color:var(--muted); font-size:12px; }
+.bill-file-label { text-transform:uppercase; letter-spacing:.06em; font-size:10.5px !important; font-weight:700; }
+.bill-analysis-steps { display:grid; grid-template-columns:repeat(5,minmax(0,1fr)); gap:8px; margin:0; padding:14px; list-style:none; border-radius:12px; background:var(--surface-soft); counter-reset:step; }
+.bill-analysis-step { position:relative; display:grid; justify-items:center; gap:8px; text-align:center; color:var(--muted); font-size:12.5px; line-height:1.3; }
+.bill-analysis-step::before { content:""; position:absolute; top:13px; left:calc(-50% + 18px); right:calc(50% + 18px); height:2px; background:#d5dee8; }
+.bill-analysis-step:first-child::before { display:none; }
+.bill-analysis-step.done::before,.bill-analysis-step.current::before { background:var(--brand-accent); }
+.bill-analysis-dot { position:relative; z-index:1; display:grid; place-items:center; width:28px; height:28px; border:2px solid #cbd6e2; border-radius:50%; background:#fff; color:#fff; font-size:13px; font-weight:800; }
+.bill-analysis-step.done { color:var(--brand-ink); }.bill-analysis-step.done .bill-analysis-dot { border-color:var(--brand-accent); background:var(--brand-accent); }
+.bill-analysis-step.current { color:var(--brand-ink); font-weight:700; }.bill-analysis-step.current .bill-analysis-dot { border-color:var(--brand-accent); box-shadow:0 0 0 5px var(--brand-accent-soft); }
+.bill-analysis-step.current .bill-analysis-dot::after { content:""; width:10px; height:10px; border-radius:50%; background:var(--brand-accent); animation:bill-pulse 1.2s ease-in-out infinite; }
+.bill-analysis-label small { display:block; color:var(--brand-accent); font-size:11px; font-weight:700; }
+@keyframes bill-pulse { 50% { opacity:.35; transform:scale(.75); } }
+@media (prefers-reduced-motion:reduce) { .bill-analysis-step.current .bill-analysis-dot::after { animation:none; } }
+.bill-analysis-note { margin:0; }
+.bill-analysis-message { margin:0; padding:12px 14px; border-radius:10px; background:var(--surface-soft); color:var(--brand-ink); font-size:13px; }
+.quote-flow .bill-archive-panel { margin:0; padding-top:12px; border-top:1px solid var(--line); }
+.quote-flow .bill-archive-panel > summary { cursor:pointer; color:var(--brand); font-size:14px; font-weight:600; }
+/* Reading: the essentials first, then the details. */
+.quote-review { display:grid; gap:14px; }
+.quote-review-head { display:flex; align-items:flex-end; justify-content:space-between; gap:16px; }.quote-review-head p { margin:2px 0 0; }
+.quote-read-summary { display:grid; grid-template-columns:1.4fr 1.2fr 1.2fr 1fr 1fr; margin:0; border:1px solid var(--line); border-radius:12px; overflow:hidden; }
+.quote-read-summary > div { min-width:0; padding:12px 14px; border-left:1px solid var(--line); }.quote-read-summary > div:first-child { border-left:0; }
+.quote-read-summary dt { color:var(--muted); font-size:11.5px; font-weight:600; }
+.quote-read-summary dd { display:grid; margin:4px 0 0; font-size:16px; font-weight:700; line-height:1.25; overflow-wrap:anywhere; }
+.quote-read-summary dd small { margin-top:2px; color:var(--muted); font-size:12px; font-weight:500; }
+.quote-read-summary .accent { background:var(--brand-accent-soft); }.quote-read-summary .accent dd { color:var(--brand-accent); font-size:19px; }
+.quote-flow .bill-read-legend { margin:0; font-size:12px; }
+.quote-flow .bill-read-details { gap:12px; margin:0; }
+.quote-flow .bill-read-section { padding:14px 16px; border:1px solid var(--line); border-radius:12px; background:#fff; }
+.quote-flow .bill-read-section h4 { margin:0 0 10px; color:var(--brand); font-size:12px; font-weight:700; text-transform:uppercase; letter-spacing:.06em; }
+.quote-flow .bill-read-grid { grid-template-columns:repeat(auto-fill,minmax(150px,1fr)); gap:10px 16px; }
+.quote-flow .bill-read-grid dt { font-size:11.5px; }
+.quote-flow .bill-read-grid dd { margin-top:2px; font-size:14px; font-weight:600; }
+.quote-flow .bill-read-section details > summary { cursor:pointer; margin-top:10px; color:var(--brand); font-size:12.5px; font-weight:600; }
+.quote-review-more { display:grid; gap:0; border:1px solid var(--line); border-radius:12px; overflow:hidden; }
+.quote-review-more > * { margin:0; padding:12px 16px; border-top:1px solid var(--line); }.quote-review-more > *:first-child { border-top:0; }
+.quote-review-more > details > summary { cursor:pointer; color:var(--brand); font-size:14px; font-weight:600; }
+.quote-review-more > details[open] { background:var(--surface-soft); }
+.quote-review-actions { position:sticky; bottom:0; z-index:2; display:flex; justify-content:flex-end; margin:0 -22px -20px; padding:12px 22px; border-top:1px solid var(--line); border-radius:0 0 var(--radius) var(--radius); background:rgba(255,255,255,.96); backdrop-filter:blur(6px); }
+.quote-review-actions .button { min-width:240px; min-height:48px; font-size:14px; }
+@media (max-width:900px) { .quote-read-summary { grid-template-columns:repeat(2,minmax(0,1fr)); }.quote-read-summary > div { border-left:0; border-top:1px solid var(--line); }.quote-read-summary > div:nth-child(-n+2) { border-top:0; }.quote-read-summary > div:nth-child(even) { border-left:1px solid var(--line); }.quote-read-summary .accent { grid-column:1 / -1; border-left:0 !important; } }
+@media (max-width:640px) { .bill-drop { grid-template-columns:auto 1fr; }.bill-drop .quote-upload-button { grid-column:1 / -1; justify-content:center; }.bill-analysis-steps { grid-template-columns:1fr; justify-items:start; }.bill-analysis-step { grid-template-columns:auto 1fr; justify-items:start; align-items:center; text-align:left; gap:10px; }.bill-analysis-step::before { display:none; }.bill-analysis-bar .button-row { width:100%; }.bill-analysis-bar .button-row .button { flex:1 1 0; }.quote-review-actions { margin:0 -17px -17px; padding:10px 17px; }.quote-review-actions .button { width:100%; min-width:0; }.quote-flow .bill-read-grid { grid-template-columns:repeat(2,minmax(0,1fr)); }.quote-flow .quote-steps { width:100%; }.quote-flow .quote-steps li { flex:1 1 0; justify-content:center; padding:7px 6px; font-size:12px; } }

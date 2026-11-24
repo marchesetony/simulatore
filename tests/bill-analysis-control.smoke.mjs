@@ -145,6 +145,10 @@ assert.doesNotMatch(control, /\d\s*%|\$\{[^}]*\}\s*%|<progress|aria-valuenow/i, 
 for (const label of ["File selezionato", "Avvia analisi", "Interrompi analisi", "Annulla", "Ricomincia"]) assert.match(control, new RegExp(label), label);
 assert.match(control, /if \(current\.current !== id\) return;/, "answers of an older analysis are ignored");
 assert.match(control, /\/cancel`, \{ method: "POST"[\s\S]*controller\.current\?\.abort\(\)/, "the server is told before the request is closed");
+// The reading opens ready to confirm: the analysis card closes with the screen change, so neither side may leave the flow
+// marked busy (before 24/11 «Annulla», «Ricomincia» and «Cerca le CTE utilizzabili» stayed disabled after a reading).
+assert.match(control, /useEffect\(\(\) => \(\) => onBusy\(false\), \[onBusy\]\);/);
+assert.match(await readFile("app/components/QuickQuoteFlow.tsx", "utf8"), /const analysisRead = useCallback\(\(document: BillDocumentModel, analysisId: string\) => \{[\s\S]{0,200}setPending\(\(value\) => value === "upload" \? undefined : value\);/);
 console.log("SCREEN=PASS");
 
 // 6. Routes: same company and owner only; a bill saved at the moment of the stop is removed; "Annulla" removes only the
