@@ -84,7 +84,7 @@ function MonthCard({ month }: { readonly month: GmeMonthView }) {
 
     {month.replacement ? <>
       <h5>Sostituzione del PUN mensile calcolato con la versione documentata</h5>
-      <p><span className={`status-badge ${month.replacement.state === "REPLACED" ? "positive" : month.replacement.state === "REPLACEMENT_BLOCKED" ? "negative" : ""}`}>{month.replacement.stateLabel}</span>{month.replacement.enabled ? "" : " · sostituzione automatica non attiva"}</p>
+      <p><span className={`status-badge ${month.replacement.state === "REPLACED" ? "positive" : month.replacement.state === "REPLACEMENT_BLOCKED" || month.replacement.state === "REPLACEMENT_PARTIAL" ? "negative" : ""}`}>{month.replacement.stateLabel}</span>{month.replacement.enabled ? "" : " · sostituzione automatica non attiva"}</p>
       <div className="responsive-table"><table><caption>Versioni per archivio, {month.label}</caption><thead><tr><th>Archivio</th><th>Versione sostituita (conservata)</th><th>Versione pubblicata</th><th>Esito</th></tr></thead><tbody>
         {month.replacement.rows.map((row) => <tr key={row.tenantId}><td>{row.label}</td>
           <td>{row.replaced ? <>v{row.replaced.version} · mensile {euro(row.replaced.monthly)}<br /><small className="muted">{row.replaced.archiveId}{row.replaced.sourceId ? ` · ${row.replaced.sourceId}` : ""}</small></> : "—"}</td>

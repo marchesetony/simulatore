@@ -134,11 +134,13 @@ const STATE_LABEL: Readonly<Record<string, string>> = {
   READY_DRY_RUN: "Validato in prova, non pubblicato", PUBLISHED: "Pubblicato dal servizio", UNCHANGED: "Già pubblicato, invariato",
   LEGACY_AUDIT: "Versione precedente al servizio: verificata dall'audit settimanale", INCOMPLETE: "Documenti GME non ancora pubblicati", FAILED: "Non validato",
   REPLACEMENT_READY: "PUN mensile calcolato: sostituzione documentata pronta, non eseguita", REPLACED: "PUN mensile calcolato sostituito dalla versione documentata",
-  REPLACEMENT_BLOCKED: "Sostituzione bloccata: documento mancante, illeggibile o incoerente",
+  REPLACEMENT_BLOCKED: "Sostituzione bloccata: documento mancante, illeggibile o incoerente, nessuna versione approvata",
+  REPLACEMENT_PARTIAL: "Sostituzione incompleta: ripresa alla prossima esecuzione",
 };
 const REPLACEMENT_OUTCOME_LABEL: Readonly<Record<string, string>> = {
   WOULD_REPLACE: "Pronta: verrebbe creata una nuova versione", REPLACED: "Nuova versione pubblicata, precedente conservata", PUBLISHED: "Nuova versione pubblicata",
   UNCHANGED: "Già sostituita, invariata", REPLACEMENT_BLOCKED: "Bloccata, nessuna scrittura",
+  PREPARED_NOT_APPROVED: "Preparata, non ancora approvata: il simulatore usa ancora la versione precedente",
 };
 const LEVEL_LABEL: Readonly<Record<GmeMonthView["level"], string>> = {
   PUBLISHED_IN_USE: "Pubblicato e usato nelle simulazioni", VALIDATED_NOT_PUBLISHED: "Validato, non pubblicato",
@@ -333,7 +335,7 @@ export async function officialDataOverview(input: OverviewInput): Promise<Offici
       usage: PUNOP_USAGE,
     } : null;
     const replacement: ReplacementView | null = summary && /^REPLACE/.test(summary.state) ? {
-      state: summary.state, stateLabel: STATE_LABEL[summary.state] ?? summary.state, enabled: gmeRun?.summary.replacement === "ENABLED",
+      state: summary.state, stateLabel: STATE_LABEL[summary.state] ?? summary.state, enabled: typeof gmeRun?.summary.replacement === "string" && /^ENABLED/.test(gmeRun.summary.replacement),
       rows: (Array.isArray(summary.tenants) ? summary.tenants : []).filter(isObject).map((item) => item as unknown as TenantSummary).filter((item) => typeof item.tenantId === "string" && typeof item.outcome === "string").map((item) => {
         const written = item.outcome === "REPLACED" || item.outcome === "PUBLISHED" || item.outcome === "UNCHANGED";
         const replaced = item.replaces ?? (item.archiveId && item.version && !written ? { archiveId: item.archiveId, version: item.version, monthly: item.archived?.monthly ?? null, sourceId: item.archived?.sourceId ?? null } : null);
@@ -341,6 +343,7 @@ export async function officialDataOverview(input: OverviewInput): Promise<Offici
       }),
     } : null;
     gme.push({ month, label: monthLabel(month), acquired, reference, used, comparison, punop, replacement, level, levelLabel: partial ?? LEVEL_LABEL[level] });
+    if (replacement?.state === "REPLACEMENT_PARTIAL") addAnomaly({ id: `replacement-partial-${month}`, severity: "BLOCKING", source: "GME", period: monthLabel(month), origin: "Sostituzione PUN mensile calcolato", message: `Sostituzione incompleta: ${replacement.rows.filter((row) => row.outcome === "PREPARED_NOT_APPROVED").map((row) => row.label).join(", ")} ancora sulla versione precedente, ${replacement.rows.filter((row) => row.published).map((row) => row.label).join(", ")} sulla versione documentata. Ripresa automatica alla prossima esecuzione.`, at: gmeRun?.startedAt ?? null });
     if (replacement?.state === "REPLACEMENT_BLOCKED") addAnomaly({ id: `replacement-blocked-${month}`, severity: "WARNING", source: "GME", period: monthLabel(month), origin: "Sostituzione PUN mensile calcolato", message: `Sostituzione non possibile: ${(summary?.errors ?? []).map((error) => describeServiceError(error).message).join("; ") || "documenti non validati"}. Nessuna versione scritta.`, at: gmeRun?.startedAt ?? null });
     for (const error of punopErrors.filter((entry) => !entry.informative)) addAnomaly({ id: `punop-${month}-${error.code}`, severity: "WARNING", source: "GME", period: monthLabel(month), origin: "Parametro art. 5.2 delib. 300/05", message: error.message, at: gmeRun?.startedAt ?? null });
 
@@ -354,7 +357,7 @@ export async function officialDataOverview(input: OverviewInput): Promise<Offici
 
   // Sources.
   const gmeErrors = (gmeRun?.errors ?? []).map(describeServiceError);
-  const gmeDetails = gmeRun ? [`Documenti scaricati: ${Array.isArray(gmeRun.summary.downloads) ? gmeRun.summary.downloads.length : 0}`, `Mesi verificati: ${summaries.length}`, `Sostituzione dei PUN mensili calcolati: ${gmeRun.summary.replacement === "ENABLED" ? "attiva" : "non attiva (solo verifica)"}`] : [];
+  const gmeDetails = gmeRun ? [`Documenti scaricati: ${Array.isArray(gmeRun.summary.downloads) ? gmeRun.summary.downloads.length : 0}`, `Mesi verificati: ${summaries.length}`, `Sostituzione dei PUN mensili calcolati: ${gmeRun.summary.replacement === "ENABLED" ? "attiva con la pubblicazione" : typeof gmeRun.summary.replacement === "string" && gmeRun.summary.replacement.startsWith("ENABLED_REPLACEMENT_ONLY") ? `autorizzata da sola${gmeRun.summary.replacement.includes(":") ? ` per ${gmeRun.summary.replacement.split(":")[1].split(",").map(monthLabel).join(", ")}` : " per tutti i mesi"}` : gmeRun.summary.replacement === "INVALID_CONFIGURATION" ? "configurazione non valida, nessuna sostituzione" : "non attiva (solo verifica)"}`] : [];
   const tenantsOf = (run: ServiceRunRecord | null) => Array.isArray(run?.summary.tenants) ? (run!.summary.tenants as unknown[]).filter(isObject) : [];
   const stepLabel = (value: unknown) => value === "SUCCESS" ? "riuscito" : value === "PARTIAL_FAILURE" ? "con anomalie" : value === "FAILED" ? "non riuscito" : value === "SKIPPED" ? "non eseguito in questo comando" : typeof value === "string" ? value.toLowerCase().replace(/_/g, " ") : "non eseguito";
   const areraDetails = tenantsOf(areraRun).map((item) => `${label(String(item.tenantId))}: tariffe ${stepLabel(item.arera)}, capacità ${stepLabel(item.capacity)}`);

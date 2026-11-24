@@ -147,6 +147,14 @@ assert.equal((await punUsedByEngine(marketOf(base).repository, "tenant_cliente-p
   assert.ok(overview.anomalies.some((item) => item.id === "replacement-blocked-2026-08"));
   assert.ok(overview.sources.find((item) => item.source === "GME").details.some((line) => /non attiva \(solo verifica\)/.test(line)));
   assert.equal(market.writes(), 0);
+  // Replacement authorised on its own, and a partial replacement: blocking anomaly naming who is on which version.
+  const partial = { month: "2026-05", state: "REPLACEMENT_PARTIAL", bands, monthly: ready.monthly, errors: ["tenant_cliente-prova:DB_DOWN"],
+    tenants: [{ tenantId: "tenant_piattaforma", outcome: "REPLACED", archiveId: "gme-pun-2026-05-v2", version: "2", replaces: { archiveId: "gme-pun-2026-05", version: "1", monthly: 119.3484, sourceId: "GME_PREZZO_MEDIO_FASCE" } }, { tenantId: "tenant_cliente-prova", outcome: "PREPARED_NOT_APPROVED", archiveId: "gme-pun-2026-05", version: "1" }] };
+  const second = await officialDataOverview({ now: NOW, runs: [{ ...gmeRun, summary: { ...gmeRun.summary, months: gmeRun.summary.months.map((item) => item.month === "2026-05" ? partial : item), replacement: "ENABLED_REPLACEMENT_ONLY:2026-05" } }], alerts: [], market: market.repository, tenants: TENANTS, coverage: null });
+  const may2 = second.gme.find((item) => item.month === "2026-05");
+  assert.equal(may2.replacement.enabled, true);
+  assert.ok(second.anomalies.some((item) => item.id === "replacement-partial-2026-05" && item.severity === "BLOCKING" && /Azienda di prova ancora sulla versione precedente/.test(item.message)));
+  assert.ok(second.sources.find((item) => item.source === "GME").details.some((line) => /autorizzata da sola per maggio 2026/.test(line)));
   console.log("REPLACEMENT_SHOWN_PER_ARCHIVE=PASS");
 }
 
