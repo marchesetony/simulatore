@@ -6,7 +6,7 @@ import type { FetchedDocument, OfficialFetch } from "../official-fetch";
 import { PLATFORM_TENANT, conserveDocument } from "../documents";
 import { raiseAnomaly, type ServiceMode } from "../status";
 import { SERVICE_ACTOR } from "../identity";
-import { GME_NEWSLETTER_SOURCE_ID, newsletterCandidates, readNewsletterPdf } from "./newsletter";
+import { GME_NEWSLETTER_CHART_SOURCE_ID, GME_NEWSLETTER_SOURCE_ID, resolveMonthNewsletter } from "./newsletter";
 import { readGmeBandsPdf } from "../../../../app/lib/official-monitor/gme-pun-bands";
 import { GME_PUN_BANDS_PUBLICATIONS_PAGE } from "../../../../app/lib/market/gme-pun-source";
 import { findGmeMonthlyBandsPdf } from "../../../../app/lib/market/gme-monthly-bands";
@@ -33,7 +33,7 @@ export interface PunAuditRecord {
   readonly at: string;
   readonly by: string;
   readonly outcome: "MATCH" | "DIVERGENT" | "INCOMPLETE";
-  readonly official: { readonly monthly: number | null; readonly newsletter: string | null; readonly newsletterUrl: string | null; readonly newsletterSha256: string | null; readonly f1: number | null; readonly f2: number | null; readonly f3: number | null; readonly bandsUrl: string | null; readonly bandsSha256: string | null };
+  readonly official: { readonly monthly: number | null; readonly newsletter: string | null; readonly newsletterUrl: string | null; readonly newsletterSha256: string | null; readonly monthlySource?: string | null; readonly page?: number | null; readonly f1: number | null; readonly f2: number | null; readonly f3: number | null; readonly bandsUrl: string | null; readonly bandsSha256: string | null };
   readonly findings: readonly AuditFinding[];
   /** The verified version to propose when something differs: official values only, never written to the archive here. */
   readonly preparedVersion: { readonly month: string; readonly monthly: number | null; readonly f1: number | null; readonly f2: number | null; readonly f3: number | null; readonly sources: readonly string[] } | null;
@@ -56,21 +56,22 @@ export async function runPunAudit(input: { readonly store: ServiceStore; readonl
   let pageHtml: string | null = null;
   for (const month of input.months) {
     const errors: string[] = [];
-    // Official monthly value: the newsletter that reports on the month.
-    let monthly: number | null = null; let newsletter: string | null = null; let newsletterDoc: FetchedDocument | null = null;
-    for (const url of newsletterCandidates(month)) {
+    // Official monthly value: the same criterion as the daily acquisition (resolveMonthNewsletter): the newsletter that reports
+    // on the month, or for a month GME gave no newsletter (August 2026) the Grafico 1 label of the declared following issue.
+    let monthly: number | null = null; let newsletter: string | null = null; let newsletterDoc: FetchedDocument | null = null; let monthlySource: string | null = null; let page: number | null = null;
+    const resolved = await resolveMonthNewsletter({ month, known: null, fetchPdf: async (url) => {
       const head = await input.fetcher(url, { method: "HEAD" }).catch(() => null);
-      if (!head?.ok || !/pdf/i.test(head.headers.get("content-type") ?? "")) continue;
-      const document = await acquire(input.fetcher, input.recorded, url);
-      if (!document) continue;
-      const reading = await readNewsletterPdf(document.bytes, month);
-      if (reading.checks.find((check) => check.code === "REPORT_MONTH")?.ok === false) continue;
-      if (reading.monthly === null) { errors.push(`NEWSLETTER_CHECKS:${reading.checks.filter((check) => !check.ok).map((check) => check.code).join(",")}`); break; }
-      monthly = reading.monthly; newsletter = reading.number; newsletterDoc = document;
-      if (input.mode === "PUBLISH") await conserveDocument(input.store, { document, kind: "GME_NEWSLETTER_PDF", source: "GME", period: month, checks: reading.checks, values: { monthly, newsletter: reading.number, unit: "EUR_PER_MWH" } });
-      break;
+      if (!head?.ok || !/pdf/i.test(head.headers.get("content-type") ?? "")) return null;
+      return acquire(input.fetcher, input.recorded, url);
+    } });
+    if ("error" in resolved) errors.push(/NOT_PUBLISHED_YET/.test(resolved.error) ? "NEWSLETTER_NOT_FOUND" : resolved.error);
+    else if (resolved.reading.monthly === null) errors.push(`NEWSLETTER_CHECKS:${resolved.reading.checks.filter((check) => !check.ok).map((check) => check.code).join(",")}`);
+    else {
+      const chart = "chart" in resolved;
+      monthly = resolved.reading.monthly; newsletter = resolved.reading.number; newsletterDoc = resolved.document;
+      monthlySource = chart ? GME_NEWSLETTER_CHART_SOURCE_ID : GME_NEWSLETTER_SOURCE_ID; page = chart ? resolved.reading.page ?? null : null;
+      if (input.mode === "PUBLISH") await conserveDocument(input.store, { document: resolved.document, kind: "GME_NEWSLETTER_PDF", source: "GME", period: month, checks: resolved.reading.checks, values: { monthly, newsletter, month, ...(chart ? { sourceId: GME_NEWSLETTER_CHART_SOURCE_ID, page } : {}), unit: "EUR_PER_MWH" } });
     }
-    if (monthly === null && !errors.length) errors.push("NEWSLETTER_NOT_FOUND");
     // Official bands: the PDF of the month.
     let bands: { f1: number; f2: number; f3: number } | null = null; let bandsDoc: FetchedDocument | null = null;
     try {
@@ -107,9 +108,9 @@ export async function runPunAudit(input: { readonly store: ServiceStore; readonl
     const auditId = `svcaudit_pun_${month}_${createHash("sha256").update(`${month}|${input.now}`).digest("hex").slice(0, 16)}`;
     const record: PunAuditRecord = {
       auditId, month, at: input.now, by: SERVICE_ACTOR, outcome,
-      official: { monthly, newsletter, newsletterUrl: newsletterDoc?.url ?? null, newsletterSha256: newsletterDoc?.sha256 ?? null, f1: bands?.f1 ?? null, f2: bands?.f2 ?? null, f3: bands?.f3 ?? null, bandsUrl: bandsDoc?.url ?? null, bandsSha256: bandsDoc?.sha256 ?? null },
+      official: { monthly, newsletter, newsletterUrl: newsletterDoc?.url ?? null, newsletterSha256: newsletterDoc?.sha256 ?? null, monthlySource, page, f1: bands?.f1 ?? null, f2: bands?.f2 ?? null, f3: bands?.f3 ?? null, bandsUrl: bandsDoc?.url ?? null, bandsSha256: bandsDoc?.sha256 ?? null },
       findings,
-      preparedVersion: divergent ? { month, monthly, f1: bands?.f1 ?? null, f2: bands?.f2 ?? null, f3: bands?.f3 ?? null, sources: [newsletterDoc ? `${GME_NEWSLETTER_SOURCE_ID} ${newsletterDoc.url} sha256 ${newsletterDoc.sha256}` : "", bandsDoc ? `GME_PREZZO_MEDIO_FASCE ${bandsDoc.url} sha256 ${bandsDoc.sha256}` : ""].filter(Boolean) } : null,
+      preparedVersion: divergent ? { month, monthly, f1: bands?.f1 ?? null, f2: bands?.f2 ?? null, f3: bands?.f3 ?? null, sources: [newsletterDoc ? `${monthlySource} n.${newsletter}${page ? ` pagina ${page}` : ""} ${newsletterDoc.url} sha256 ${newsletterDoc.sha256}` : "", bandsDoc ? `GME_PREZZO_MEDIO_FASCE ${bandsDoc.url} sha256 ${bandsDoc.sha256}` : ""].filter(Boolean) } : null,
       errors,
     };
     if (input.mode === "PUBLISH") {

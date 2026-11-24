@@ -16,6 +16,11 @@ const pdfjs = () => (loaded ??= import("pdfjs-dist/legacy/build/pdf.mjs"));
 const cMapDirectory = () => fileURLToPath(new URL("./cmaps/", import.meta.resolve("pdfjs-dist/package.json")));
 
 export async function officialPdfText(bytes: Uint8Array, maxPages = PDF_TEXT_MAX_PAGES): Promise<string> {
+  return (await officialPdfPages(bytes, maxPages)).join("\n");
+}
+
+/** The same text, one entry per page (page 1 first), so a reading can say on which page it found a value. */
+export async function officialPdfPages(bytes: Uint8Array, maxPages = PDF_TEXT_MAX_PAGES): Promise<readonly string[]> {
   const lib = await pdfjs();
   const task = lib.getDocument({
     data: bytes.slice(), cMapUrl: cMapDirectory(), cMapPacked: true, useSystemFonts: false, disableFontFace: true,
@@ -30,7 +35,7 @@ export async function officialPdfText(bytes: Uint8Array, maxPages = PDF_TEXT_MAX
       pages.push(content.items.map((item) => ("str" in item ? `${item.str}${item.hasEOL ? "\n" : " "}` : "")).join(""));
       page.cleanup();
     }
-    return pages.join("\n");
+    return pages;
   } finally {
     await task.destroy();
   }

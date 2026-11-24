@@ -1,5 +1,6 @@
 import { publishedPdfText } from "../../../../app/lib/market/gme-pun-source";
-import { officialPdfText } from "../pdf-text";
+import { officialPdfPages, officialPdfText } from "../pdf-text";
+import type { FetchedDocument } from "../official-fetch";
 
 /**
  * PUN Index GME monthly value (Tony 21/11/2026, decisione 2): read only where GME prints it with its month, the monthly
@@ -17,6 +18,8 @@ export interface NewsletterReading {
   readonly checks: readonly NewsletterCheck[];
   readonly monthly: number | null;
   readonly number: string | null;
+  /** Page of the PDF where the value was read, when the text extractor gives pages (chart readings only). */
+  readonly page?: number | null;
 }
 
 const isPdf = (bytes: Uint8Array) => bytes.byteLength > 4 && new TextDecoder().decode(bytes.subarray(0, 5)) === "%PDF-";
@@ -94,4 +97,114 @@ export async function readNewsletterPdf(bytes: Uint8Array, month: string): Promi
     best ??= result;
   }
   return best ?? { checks: [{ code: "FORMAT", ok: true, detail: "file PDF" }, { code: "TEXT", ok: false, detail: `testo del PDF non leggibile (${failures.join("; ")})` }], monthly: null, number: null };
+}
+
+/**
+ * Tony (24/11/2026, "DECISIONE GME AGOSTO"): when GME publishes no newsletter on a month (August 2026: n. 206 reports July,
+ * n. 207 reports September), the month's PUN Index GME is the value GME prints for it in "Grafico 1: MGP, Pun Index GME" of
+ * the following newsletter (n. 207: 180,00 €/MWh for August), validated on the original PDF. The value is the printed chart
+ * label, never computed: the following month's Tabella 1 value and the commentary's change ("+27,54 €/MWh su agosto") only
+ * identify which printed label belongs to the month, and the month is refused when they do not point to exactly one label.
+ */
+export const GME_NEWSLETTER_CHART_SOURCE_ID = "GME_NEWSLETTER_PUN_INDEX_CHART";
+const MONTH_ABBREVIATIONS = ["gen", "feb", "mar", "apr", "mag", "giu", "lug", "ago", "set", "ott", "nov", "dic"];
+
+export function followingMonth(month: string): string {
+  const [year, monthNumber] = month.split("-").map(Number);
+  const next = new Date(Date.UTC(year, monthNumber, 1));
+  return `${next.getUTCFullYear()}-${String(next.getUTCMonth() + 1).padStart(2, "0")}`;
+}
+
+const cents = (value: number) => Math.round(value * 100);
+
+/** Reads, in the newsletter reporting on the following month, the Grafico 1 label of `month`. */
+export function readNewsletterChartText(text: string, month: string, pages: readonly string[] | null = null): NewsletterReading {
+  const following = followingMonth(month);
+  const flat = text.replace(/\s+/g, " ");
+  const base = readNewsletterText(text, following);
+  const checks: NewsletterCheck[] = base.checks.filter((check) => check.code === "REPORT_MONTH" || check.code === "NEWSLETTER" || check.code === "UNIT")
+    .map((check) => check.code === "REPORT_MONTH" ? { ...check, detail: `${check.detail}: newsletter successiva, nessuna newsletter riporta il mese` } : check);
+  const reference = base.monthly;
+  checks.push({ code: "FOLLOWING_MONTH_TABLE", ok: reference !== null, detail: reference !== null ? `Tabella 1 del mese successivo valida: ${reference.toFixed(2).replace(".", ",")} €/MWh` : "Tabella 1 del mese successivo non valida: etichetta del grafico non identificabile" });
+  const name = MONTHS[Number(month.slice(5, 7)) - 1];
+  const change = new RegExp(`([+\\-−–]\\s?\\d{1,4}(?:\\.\\d{3})*,\\d{2})\\s*(?:€|EUR)\\s*\\/\\s*MWh\\s*su\\s*${name}\\b`, "i").exec(flat);
+  const delta = change ? number(change[1].replace(/[−–]/, "-").replace(/\s/g, "")) : null;
+  checks.push({ code: "CHANGE_ON_MONTH", ok: delta !== null && Number.isFinite(delta), detail: change ? `commento: ${change[1]} €/MWh su ${name}` : `variazione "su ${name}" non trovata nel commento` });
+  const caption = /Grafico\s*1\s*:?\s*MGP\s*,?\s*Pun\s*Index\s*GME/i.exec(flat);
+  const chart = caption ? flat.slice(caption.index, caption.index + 2500) : "";
+  // The page is the first page whose text carries the caption; without pages (minimal reader) it cannot be stated.
+  const captionPattern = /Grafico\s*1\s*:?\s*MGP\s*,?\s*Pun\s*Index\s*GME/i;
+  const pageIndex = pages ? pages.findIndex((page) => captionPattern.test(page.replace(/\s+/g, " "))) : -1;
+  const page = pageIndex >= 0 ? pageIndex + 1 : null;
+  checks.push({ code: "CHART", ok: Boolean(caption) && page !== null, detail: caption ? page !== null ? `Grafico 1 "MGP, Pun Index GME" trovato a pagina ${page}` : "Grafico 1 trovato ma pagina non determinabile" : "Grafico 1 \"MGP, Pun Index GME\" non trovato" });
+  const axis = new RegExp(`\\b${MONTH_ABBREVIATIONS[Number(month.slice(5, 7)) - 1]}\\b`, "i").test(chart);
+  checks.push({ code: "CHART_MONTH", ok: axis, detail: axis ? `mese "${MONTH_ABBREVIATIONS[Number(month.slice(5, 7)) - 1]}" presente sull'asse del grafico` : "mese non presente sull'asse del grafico" });
+  let monthly: number | null = null;
+  if (caption && reference !== null && delta !== null) {
+    const expected = cents(reference) - cents(delta);
+    const labels = [...chart.matchAll(/(?<![\d.,])(\d{1,4}[.,]\d{2})(?![\d.,])/g)].map((match) => match[1]);
+    // The same number printed twice (or with a dot and with a comma) is one label; two different labels would be refused.
+    const matching = [...new Set(labels.filter((label) => cents(Number(label.replace(",", "."))) === expected).map((label) => label.replace(",", ".")))];
+    if (matching.length === 1) monthly = Number(matching[0]);
+    checks.push({ code: "CHART_LABEL", ok: matching.length === 1, detail: matching.length === 1 ? `etichetta del grafico per ${name} ${month.slice(0, 4)}: ${matching[0]} €/MWh` : matching.length ? `più etichette compatibili: ${matching.join(", ")}` : `nessuna etichetta stampata nel grafico corrisponde a ${name}: valore non acquisito` });
+  } else checks.push({ code: "CHART_LABEL", ok: false, detail: "etichetta non cercata: mancano grafico, tabella o commento" });
+  const plausible = monthly !== null && monthly > 0 && monthly < 5000;
+  checks.push({ code: "RANGE", ok: plausible, detail: plausible ? "valore nel campo ammesso (0–5000 €/MWh)" : "valore assente o fuori dal campo ammesso" });
+  return { checks, monthly: checks.every((check) => check.ok) ? monthly : null, number: base.number, page };
+}
+
+/** The same extractors as readNewsletterPdf, for the chart label of a month without its own newsletter. */
+export async function readNewsletterChartPdf(bytes: Uint8Array, month: string): Promise<NewsletterReading> {
+  if (!isPdf(bytes)) return { checks: [{ code: "FORMAT", ok: false, detail: "atteso un file PDF (intestazione %PDF-)" }], monthly: null, number: null };
+  let best: NewsletterReading | null = null;
+  const failures: string[] = [];
+  for (const [name, read] of [["pdf.js", () => officialPdfPages(bytes)], ["lettore interno", async () => null as readonly string[] | null]] as const) {
+    let pages: readonly string[] | null = null; let text = "";
+    try { pages = await read(); text = pages ? pages.join("\n") : publishedPdfText(bytes); } catch (error) { failures.push(`${name}: ${error instanceof Error ? error.message.slice(0, 120) : "errore"}`); continue; }
+    if (!text.trim()) { failures.push(`${name}: nessun testo`); continue; }
+    const reading = readNewsletterChartText(text, month, pages);
+    const result = { ...reading, checks: [{ code: "FORMAT", ok: true, detail: "file PDF" }, { code: "TEXT", ok: true, detail: `testo del PDF leggibile (${name})` }, ...reading.checks] };
+    if (result.monthly !== null) return result;
+    best ??= result;
+  }
+  return best ?? { checks: [{ code: "FORMAT", ok: true, detail: "file PDF" }, { code: "TEXT", ok: false, detail: `testo del PDF non leggibile (${failures.join("; ")})` }], monthly: null, number: null };
+}
+
+/**
+ * Months on which GME published no newsletter, with the issue that carries their value in Grafico 1 (Tony 24/11/2026, "PUN
+ * AGOSTO 2026"): n. 206 reports July 2026 and n. 207 reports September 2026, so no issue reports August. Only these months are
+ * read from the chart; for every other month the criterion is unchanged (its own newsletter, Tabella 1), and their own dated
+ * files are not searched at all, since none exists.
+ */
+export const MONTHS_WITHOUT_OWN_NEWSLETTER: Readonly<Record<string, string>> = { "2026-08": "207" };
+
+export type NewsletterResolution = { readonly document: FetchedDocument; readonly reading: NewsletterReading; readonly chart?: true } | { readonly error: string };
+
+/**
+ * One criterion for the daily acquisition and the weekly audit. `fetchPdf` returns the document at the URL, null when there is
+ * none (404, not a PDF); it may throw on a download error.
+ */
+export async function resolveMonthNewsletter(input: { readonly month: string; readonly known: string | null; readonly fetchPdf: (url: string) => Promise<FetchedDocument | null> }): Promise<NewsletterResolution> {
+  const issue = MONTHS_WITHOUT_OWN_NEWSLETTER[input.month];
+  const reporting = issue ? followingMonth(input.month) : input.month;
+  const candidates = input.known ? [input.known, ...newsletterCandidates(reporting).filter((url) => url !== input.known)] : newsletterCandidates(reporting);
+  try {
+    for (const url of candidates) {
+      const document = await input.fetchPdf(url);
+      if (!document) continue;
+      if (!issue) {
+        const reading = await readNewsletterPdf(document.bytes, input.month);
+        if (reading.checks.find((check) => check.code === "REPORT_MONTH")?.ok === false) continue;
+        return { document, reading };
+      }
+      const reading = await readNewsletterChartPdf(document.bytes, input.month);
+      if (reading.checks.find((check) => check.code === "REPORT_MONTH")?.ok === false) continue;
+      const checks = [...reading.checks, { code: "ISSUE", ok: reading.number === issue, detail: reading.number === issue ? `newsletter n. ${issue}, indicata per ${input.month}` : `attesa la newsletter n. ${issue}, trovata n. ${reading.number ?? "non letta"}` }];
+      const failed = checks.filter((check) => !check.ok);
+      // No single label for the month, or not the expected issue: the monthly value stays missing and is reported.
+      if (failed.length || reading.monthly === null) return { error: `GME_NEWSLETTER_MONTH_NOT_PUBLISHED:${failed.map((check) => `${check.code} ${check.detail}`).join("; ").slice(0, 300)}` };
+      return { document, reading: { ...reading, checks }, chart: true };
+    }
+  } catch (error) { return { error: `GME_NEWSLETTER_DOWNLOAD:${error instanceof Error ? error.message : "errore"}` }; }
+  return { error: issue ? "GME_NEWSLETTER_MONTH_NOT_PUBLISHED:newsletter successiva non ancora trovata" : "GME_NEWSLETTER_NOT_PUBLISHED_YET" };
 }

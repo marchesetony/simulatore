@@ -10,7 +10,7 @@ import { catalogEntry, officialLinkFor } from "../../../../app/lib/official-moni
 import type { ServiceStore } from "../store";
 import { conserveDocument, listConserved, type ConservedDocument } from "../documents";
 import { fetchDocument, type FetchedDocument, type OfficialFetch } from "../official-fetch";
-import { GME_NEWSLETTER_SOURCE_ID, newsletterCandidates, readNewsletterPdf } from "./newsletter";
+import { GME_NEWSLETTER_CHART_SOURCE_ID, GME_NEWSLETTER_SOURCE_ID, resolveMonthNewsletter } from "./newsletter";
 import { raiseAnomaly, recordCheck, resolveAnomaly, type ServiceMode } from "../status";
 import { SERVICE_ACTOR } from "../identity";
 import { GME_PUNOP_300_MEANING, GME_PUNOP_300_PAGE, GME_PUNOP_300_SERIES_ID, findPunopPdf, readPunopPdf } from "./punop";
@@ -32,7 +32,7 @@ export const SERVICE_COMPONENTS_FIELD = "officialComponents" as const;
 export const MONTHLY_BANDS_TOLERANCE = 0.03;
 
 export interface Component { readonly sourceId: string; readonly documentId: string; readonly url: string; readonly sha256: string; readonly retrievedAt: string }
-export interface ServiceComponents { readonly bands?: Component; readonly monthly?: Component & { readonly newsletter: string | null } }
+export interface ServiceComponents { readonly bands?: Component; readonly monthly?: Component & { readonly newsletter: string | null; readonly month?: string; readonly page?: number | null } }
 type ServicePunRecord = ElectricityMonthlyPunRecord & { readonly officialComponents?: ServiceComponents };
 
 /**
@@ -55,7 +55,7 @@ export interface MonthResult {
    */
   readonly state: "PUBLISHED" | "UNCHANGED" | "READY_DRY_RUN" | "LEGACY_AUDIT" | "INCOMPLETE" | "FAILED" | "REPLACEMENT_READY" | "REPLACED" | "REPLACEMENT_BLOCKED" | "REPLACEMENT_PARTIAL";
   readonly bands: { readonly f1: number; readonly f2: number; readonly f3: number; readonly hours: readonly number[]; readonly sha256: string; readonly url: string } | null;
-  readonly monthly: { readonly value: number; readonly sha256: string; readonly url: string; readonly newsletter: string | null } | null;
+  readonly monthly: { readonly value: number; readonly sha256: string; readonly url: string; readonly newsletter: string | null; readonly sourceId?: string; readonly page?: number | null } | null;
   readonly tenants: readonly { readonly tenantId: string; readonly outcome: string; readonly archiveId?: string; readonly version?: string; readonly archived?: ArchivedValues; readonly replaces?: ReplacedVersion | null; readonly differences?: readonly string[] }[];
   readonly errors: readonly string[];
   /** Parametro art. 5.2 delib. ARERA 300/05: its own series, never written into the PUN archive and never a PUN substitute. */
@@ -141,21 +141,14 @@ async function acquireBands(fetcher: OfficialFetch, recorded: readonly FetchedDo
   } catch (error) { return { error: `GME_BANDS_DOWNLOAD:${error instanceof Error ? error.message : "errore"}` }; }
 }
 
-/** Finds the newsletter that reports on the month by its dated file name, on the GME hosts only. */
-async function acquireNewsletter(fetcher: OfficialFetch, recorded: readonly FetchedDocument[], month: string, known: string | null): Promise<{ document: FetchedDocument; reading: Awaited<ReturnType<typeof readNewsletterPdf>> } | { error: string }> {
-  const candidates = known ? [known, ...newsletterCandidates(month).filter((url) => url !== known)] : newsletterCandidates(month);
-  for (const url of candidates) {
+/** The month's newsletter by the shared criterion (resolveMonthNewsletter), on the GME hosts only. */
+async function acquireNewsletter(fetcher: OfficialFetch, recorded: readonly FetchedDocument[], month: string, known: string | null) {
+  return resolveMonthNewsletter({ month, known, fetchPdf: async (url) => {
     let response: Response;
-    try { response = await fetcher(url, { method: "HEAD" }); } catch { continue; }
-    if (!response.ok || !/pdf/i.test(response.headers.get("content-type") ?? "")) continue;
-    try {
-      const document = await fetchDocument(fetcher, url, recorded);
-      const reading = await readNewsletterPdf(document.bytes, month);
-      if (reading.checks.find((check) => check.code === "REPORT_MONTH")?.ok === false) continue;
-      return { document, reading };
-    } catch (error) { return { error: `GME_NEWSLETTER_DOWNLOAD:${error instanceof Error ? error.message : "errore"}` }; }
-  }
-  return { error: "GME_NEWSLETTER_NOT_PUBLISHED_YET" };
+    try { response = await fetcher(url, { method: "HEAD" }); } catch { return null; }
+    if (!response.ok || !/pdf/i.test(response.headers.get("content-type") ?? "")) return null;
+    return fetchDocument(fetcher, url, recorded);
+  } });
 }
 
 /** One new version of the month for one company, linked to the latest one; reused when the same documents are already there. */
@@ -292,10 +285,10 @@ export async function runGmeJob(input: { readonly store: ServiceStore; readonly 
             }
             if (checks.some((check) => !check.ok)) errors.push(`GME_MONTHLY_INCONSISTENT:${checks.filter((check) => !check.ok).map((check) => check.detail).join("; ")}`);
             else {
-              monthly = { value: acquired.reading.monthly, sha256: acquired.document.sha256, url: acquired.document.url, newsletter: acquired.reading.number };
+              monthly = { value: acquired.reading.monthly, sha256: acquired.document.sha256, url: acquired.document.url, newsletter: acquired.reading.number, ...("chart" in acquired ? { sourceId: GME_NEWSLETTER_CHART_SOURCE_ID, page: acquired.reading.page ?? null } : {}) };
               if (conserve) {
-                const { document } = await conserveDocument(input.store, { document: acquired.document, kind: "GME_NEWSLETTER_PDF", source: "GME", period: month, checks, values: { monthly: acquired.reading.monthly, newsletter: acquired.reading.number, table: "Tabella 1 MGP, dati di sintesi — PUN INDEX GME, Baseload", unit: "EUR_PER_MWH" } });
-                monthlyComponent = { sourceId: GME_NEWSLETTER_SOURCE_ID, documentId: document.documentId, url: document.url, sha256: document.sha256, retrievedAt: document.retrievedAt, newsletter: acquired.reading.number };
+                const { document } = await conserveDocument(input.store, { document: acquired.document, kind: "GME_NEWSLETTER_PDF", source: "GME", period: month, checks, values: { monthly: acquired.reading.monthly, newsletter: acquired.reading.number, month, ...("chart" in acquired ? { sourceId: GME_NEWSLETTER_CHART_SOURCE_ID, page: acquired.reading.page ?? null, table: `Grafico 1 MGP, Pun Index GME — etichetta di ${month}, pagina ${acquired.reading.page}` } : { table: "Tabella 1 MGP, dati di sintesi — PUN INDEX GME, Baseload" }), unit: "EUR_PER_MWH" } });
+                monthlyComponent = { sourceId: "chart" in acquired ? GME_NEWSLETTER_CHART_SOURCE_ID : GME_NEWSLETTER_SOURCE_ID, documentId: document.documentId, url: document.url, sha256: document.sha256, retrievedAt: document.retrievedAt, newsletter: acquired.reading.number, ...("chart" in acquired ? { month, page: acquired.reading.page ?? null } : {}) };
               }
             }
           }
@@ -304,7 +297,7 @@ export async function runGmeJob(input: { readonly store: ServiceStore; readonly 
 
       // Not yet published is normal early in the month; anything else (download refused, checks failed, inconsistent
       // documents) stops the month: nothing is published until the anomaly is looked at.
-      const blocking = errors.filter((error) => !/NOT_PUBLISHED_YET|GME_BANDS_PDF_NOT_FOUND/.test(error));
+      const blocking = errors.filter((error) => !/NOT_PUBLISHED_YET|GME_BANDS_PDF_NOT_FOUND|GME_NEWSLETTER_MONTH_NOT_PUBLISHED/.test(error));
       if (legacy && !replaceable) { results.push({ month, state: "LEGACY_AUDIT", bands, monthly, tenants: legacyTenants(), errors }); continue; }
       if (replaceable) { results.push(await replaceMonth({ input, market, month, currents, bands, monthly, bandsComponent, monthlyComponent, errors, blocking, replace })); continue; }
       if ((!bands && !monthly) || blocking.length) {

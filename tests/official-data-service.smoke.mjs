@@ -3,7 +3,7 @@ import { createHash } from "node:crypto";
 import fs from "node:fs";
 import { createServiceStore, memoryBackend, WRITABLE_COLLECTIONS } from "../services/dati-ufficiali/src/store.ts";
 import { handle, SCHEDULE, AUDIT_MONTHS } from "../services/dati-ufficiali/src/handler.ts";
-import { readNewsletterPdf, newsletterCandidates } from "../services/dati-ufficiali/src/gme/newsletter.ts";
+import { readNewsletterPdf, newsletterCandidates, readNewsletterChartText } from "../services/dati-ufficiali/src/gme/newsletter.ts";
 import { assertOfficialUrl, createOfficialFetch } from "../services/dati-ufficiali/src/official-fetch.ts";
 import { conservedBytes } from "../services/dati-ufficiali/src/documents.ts";
 import { RegulatoryApprovalDomainService, OFFICIAL_DATA_SERVICE_PRINCIPAL } from "../app/lib/regulatory-approval-domain.ts";
@@ -45,8 +45,12 @@ function gmeSite(overrides = {}) {
     const [f1, f2, f3] = BANDS[month];
     files.set(BANDS_URL(file), { body: syntheticGmeBandsPdf({ month: MONTHS_IT[month], f1, f2, f3, hours: HOURS[month] }), type: "application/pdf" });
   }
+  // As GME published them: n. 204 May … n. 206 July, no issue on August, n. 207 September (with August in Grafico 1), n. 208 October.
   for (const [month, date] of Object.entries(NEWSLETTER_DATES)) {
-    files.set(NL(date), { body: syntheticGmeNewsletterPdf({ number: String(203 + Object.keys(NEWSLETTER_DATES).indexOf(month) + 1), reportMonth: MONTHS_IT[month], baseload: MONTHLY[month], prose: MONTHLY[month] }), type: "application/pdf" });
+    if (month === "2026-08") continue;
+    const number = { "2026-05": "204", "2026-06": "205", "2026-07": "206", "2026-09": "207", "2026-10": "208" }[month];
+    const september = month === "2026-09" ? { prose: MONTHLY[month], chartLines: ["(+27,54 EUR/MWh su agosto)", "set ott nov dic gen feb mar apr mag giu lug ago set", `${MONTHLY["2026-07"]} 180,00 ${MONTHLY[month]}`] } : { prose: MONTHLY[month] };
+    files.set(NL(date), { body: syntheticGmeNewsletterPdf({ number, reportMonth: MONTHS_IT[month], baseload: MONTHLY[month], ...september }), type: "application/pdf" });
   }
   for (const [url, value] of Object.entries(overrides.files ?? {})) { if (value === null) files.delete(url); else files.set(url, value); }
   const fetchImpl = async (url, init = {}) => {
@@ -396,7 +400,8 @@ const legacyBefore = Object.fromEntries(["2026-06", "2026-07", "2026-08", "2026-
 {
   const REPLACE = { ...ENV, OFFICIAL_DATA_REPLACE_DERIVED_PUN: "enabled" };
   const noNewsletter = memoryBackend(seed());
-  const { body } = await run("gme", noNewsletter, gmeSite({ files: { [NL(NEWSLETTER_DATES["2026-08"])]: null } }), REPLACE);
+  // August has no issue of its own: its document is n. 207 (September report); without it August is not replaced.
+  const { body } = await run("gme", noNewsletter, gmeSite({ files: { [NL(NEWSLETTER_DATES["2026-09"])]: null } }), REPLACE);
   const august = body.months.find((m) => m.month === "2026-08");
   assert.equal(august.state, "REPLACEMENT_BLOCKED"); assert.equal(august.monthly, null);
   assert.deepEqual(pun(noNewsletter, "tenant_energia-priva", "2026-08").map((item) => item.record.version), ["2"], "August not replaced without its newsletter");
@@ -473,6 +478,52 @@ const legacyBefore = Object.fromEntries(["2026-06", "2026-07", "2026-08", "2026-
     assert.equal(pun(backend, "tenant_energia-priva", "2026-05").length, 2); assert.equal(pun(backend, "tenant_piattaforma", "2026-05").length, 2);
   }
   console.log("REPLACEMENT_PARTIAL_FAILURE_RESUMED_WITHOUT_DUPLICATES=PASS");
+}
+
+// 25. Tony (24/11/2026, "PUN AGOSTO 2026"): GME published no newsletter on August 2026 (n. 206 July, n. 207 September). August's
+// PUN Index GME is the label printed in Grafico 1 of n. 207, read from the PDF and identified by Tabella 1 (207,54) and the
+// commentary (+27,54 su agosto), never computed; source, issue, month, page, URL and SHA-256 recorded; ambiguous → refused.
+// The daily job and the weekly audit share the criterion and neither looks for a September issue that does not exist.
+{
+  const CHART = ["set ott nov dic gen feb mar apr mag giu lug ago set", "2025 2026", "109.08 157.04 132.50 119.35 180,00 207.54 98.47"];
+  const n207 = (chart = CHART) => syntheticGmeNewsletterPdf({ number: "207", issueMonth: "OTTOBRE 2026", reportMonth: "Settembre 2026", baseload: "207,54", prose: "207,54", chartLines: ["(+27,54 EUR/MWh su agosto, il massimo da gennaio 2023)", ...chart] });
+  const text = (chart = CHART) => ["n.207 OTTOBRE 2026", "NEWSLETTER DEL GME | 2026 | NUMERO 207", "REPORT | Settembre 2026", "Il Pun Index GME mostra ancora una crescita, portandosi a 207,54 €/MWh (+27,54 €/MWh su agosto, il massimo da gennaio 2023)", "Tabella 1: MGP, dati di sintesi Fonte: GME", "PUN INDEX GME", "Baseload 207,54 109,08 +98,47", "Grafico 1: MGP, Pun Index GME Fonte: GME", ...chart].join(" ");
+  const pages = (chart) => ["n.207 OTTOBRE 2026 NEWSLETTER DEL GME | 2026 | NUMERO 207", text(chart)];
+  const ok = readNewsletterChartText(text(), "2026-08", pages());
+  assert.equal(ok.monthly, 180); assert.equal(ok.number, "207"); assert.equal(ok.page, 2); assert.ok(ok.checks.every((check) => check.ok), JSON.stringify(ok.checks));
+  assert.equal(readNewsletterChartText(text(), "2026-08", null).monthly, null, "page not determinable: refused");
+  const missing = ["set ott nov dic gen feb mar apr mag giu lug ago set", "109.08 157.04 207.54"];
+  assert.equal(readNewsletterChartText(text(missing), "2026-08", pages(missing)).monthly, null, "label not printed: nothing computed");
+  const twice = [...CHART, "Grafico 2: 180,00 180.01"];
+  assert.equal(readNewsletterChartText(text(twice), "2026-08", pages(twice)).monthly, 180, "the same label printed twice is one label");
+  assert.equal(readNewsletterChartText(text().replace("su agosto", "su luglio"), "2026-08", pages()).monthly, null, "no change on August in the commentary");
+  assert.equal(readNewsletterChartText(text(), "2026-07", pages()).monthly, null, "the September issue never gives July");
+  const realSite = (chart) => gmeSite({ files: { [NL(NEWSLETTER_DATES["2026-08"])]: null, [NL(NEWSLETTER_DATES["2026-09"])]: { body: n207(chart), type: "application/pdf" } } });
+  const septemberDated = (calls) => calls.filter((call) => /\/Newsletter\/202609\d\dNewsletter\.pdf$/.test(call.url));
+  // Daily job, test mode: August ready with 180,00 from the chart, archive unchanged, no September-dated file looked for.
+  const site = realSite(CHART); const backend = memoryBackend(seed());
+  const { body } = await run("gme", backend, site);
+  const august = body.months.find((m) => m.month === "2026-08");
+  assert.equal(august.state, "REPLACEMENT_READY", JSON.stringify(august.errors)); assert.equal(august.monthly.value, 180);
+  assert.deepEqual([august.monthly.sourceId, august.monthly.newsletter, august.monthly.page, august.monthly.url], ["GME_NEWSLETTER_PUN_INDEX_CHART", "207", 1, NL("20261014")]);
+  assert.equal(august.monthly.sha256, sha(site.files.get(NL("20261014")).body));
+  assert.equal(body.months.find((m) => m.month === "2026-09").monthly.value, 207.54, "September still from its own Tabella 1");
+  assert.equal(body.months.find((m) => m.month === "2026-09").monthly.sourceId, undefined, "other months: criterion unchanged");
+  assert.deepEqual(pun(backend, "tenant_energia-priva", "2026-08").map((item) => item.record.version), ["2"], "test mode: archive unchanged");
+  assert.deepEqual(septemberDated(site.calls), [], "no September issue looked for");
+  // Weekly audit: same criterion and record of source, issue, page, URL and SHA-256.
+  const auditSite = realSite(CHART);
+  const audited = await run("audit-pun", memoryBackend(seed()), auditSite);
+  const augustAudit = audited.body.audits.find((audit) => audit.month === "2026-08");
+  assert.deepEqual([augustAudit.official.monthly, augustAudit.official.monthlySource, augustAudit.official.newsletter, augustAudit.official.page, augustAudit.official.newsletterUrl], [180, "GME_NEWSLETTER_PUN_INDEX_CHART", "207", 1, NL("20261014")]);
+  assert.equal(augustAudit.official.newsletterSha256, sha(auditSite.files.get(NL("20261014")).body));
+  assert.ok(!augustAudit.errors.includes("NEWSLETTER_NOT_FOUND")); assert.deepEqual(septemberDated(auditSite.calls), [], "the audit does not look for a September issue");
+  assert.equal(audited.body.audits.find((audit) => audit.month === "2026-09").official.monthlySource, "GME_NEWSLETTER_PUN_INDEX", "September audited on its own Tabella 1");
+  // Ambiguous chart (no label for August): nothing acquired, reported, archive unchanged.
+  const ambiguous = await run("gme", memoryBackend(seed()), realSite(missing));
+  const augustBlocked = ambiguous.body.months.find((m) => m.month === "2026-08");
+  assert.equal(augustBlocked.monthly, null); assert.ok(augustBlocked.errors.some((error) => /GME_NEWSLETTER_MONTH_NOT_PUBLISHED/.test(error) && /CHART_LABEL/.test(error)));
+  console.log("AUGUST_FROM_N207_CHART_JOB_AND_AUDIT=PASS");
 }
 
 console.log("official-data-service smoke: OK");
