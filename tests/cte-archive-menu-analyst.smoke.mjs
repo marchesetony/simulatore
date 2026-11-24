@@ -17,11 +17,14 @@ assert.match(shell, /const companyAdmin = context\?\.role === "ADMIN";/);
 const menu = (role, tenantId = "tenant_x") => tenantId === "tenant_piattaforma" ? PLATFORM : role === "ADMIN" ? ADMIN : role === "ANALYST" ? MANAGER : SALES;
 
 // Tony (20/11/2026, Fase 2): "Archivio bollette" added for every company role (declared change of the expected menus).
-// Tony (24/11/2026, "COMPLETAMENTO APPLICAZIONE"): "Clienti e POD" added for every company role (declared change).
-// Tony (24/11/2026, "UNIFICAZIONE MODULI"): the two entries become one, «Clienti e Forniture» (declared change).
-assert.deepEqual(menu("ADMIN"), ["quote", "customers", "proposals", "cte", "market", "chain", "access"], "Amministratore: Clienti e Forniture");
-assert.deepEqual(menu("ANALYST"), ["quote", "customers", "proposals", "cte"], "Direttore/Area Manager: Archivio CTE e Clienti e Forniture");
-assert.deepEqual(menu("VIEWER"), ["quote", "customers", "proposals"], "Agente: Clienti e Forniture (solo i suoi)");
+// Tony (24/11/2026, "SEMPLIFICAZIONE ARCHIVIO BOLLETTE", decisione definitiva): one menu entry, «Archivio bollette»; the
+// «Clienti e Forniture» / «Clienti e POD» screens are removed, the customer records stay internal.
+for (const role of ["ADMIN", "ANALYST", "VIEWER"]) assert.ok(!menu(role).includes("customers"), `${role}: nessuna voce clienti`);
+assert.doesNotMatch(shell, /Clienti e Forniture|Clienti e POD|CustomerRegistryPanel/);
+assert.deepEqual(shell.match(/label: "Archivio bollette"/g), ['label: "Archivio bollette"'], "una sola voce Archivio bollette");
+assert.deepEqual(menu("ADMIN"), ["quote", "archive", "proposals", "cte", "market", "chain", "access"], "Amministratore: Archivio bollette in più");
+assert.deepEqual(menu("ANALYST"), ["quote", "archive", "proposals", "cte"], "Direttore/Area Manager: Archivio CTE e Archivio bollette");
+assert.deepEqual(menu("VIEWER"), ["quote", "archive", "proposals"], "Agente: Archivio bollette (solo le sue)");
 assert.deepEqual(menu("ADMIN", "tenant_piattaforma"), ["dashboard", "access", "system"], "Piattaforma: invariata");
 for (const role of ["ADMIN", "ANALYST", "VIEWER"]) for (const id of ["quote", "proposals"]) assert.ok(menu(role).includes(id), `${role} conserva ${id}`);
 for (const id of ["market", "chain", "access"]) assert.ok(!menu("ANALYST").includes(id), `ANALYST non vede ${id}`);

@@ -1330,7 +1330,7 @@ export default function QuickQuoteFlow({ readonly, showExcluded = false }: { rea
           </div> : null}
           {deleteReports.length ? <div className="bill-archive-report" role="status"><p><strong>{deleteSummaryText(deleteReports)}</strong></p><ul>{deleteReports.map((report) => <li key={report.id} className={report.result === "DELETED" ? "inline-success" : "warning-text"}>{report.label}: {deleteReportText(report)}</li>)}</ul></div> : null}
           {canDelete && !readonly && archive.length ? <details className="quote-bill-manage"><summary>Cancella bollette caricate</summary>
-            <p className="muted">Qui compaiono le bollette degli ultimi 4 mesi; le altre restano nell&apos;archivio di «Clienti e Forniture».</p>
+            <p className="muted">Qui compaiono le bollette degli ultimi 4 mesi; le altre restano nell&apos;Archivio bollette.</p>
             <ul>{billChoices(archive, billQuery).map((bill) => <li key={bill.id}><span>{billLabel(bill)}</span>{deleteId === bill.id
               ? <span className="button-row"><button className="button compact danger" type="button" onClick={() => void deleteBill(bill.id)} disabled={readonly || deleting}>{deleting ? "Cancellazione…" : "Conferma"}</button><button className="button compact secondary" type="button" onClick={() => setDeleteId(null)} disabled={deleting}>Annulla</button></span>
               : <button className="button compact danger" type="button" onClick={() => setDeleteId(bill.id)} disabled={readonly || deleting}>Cancella</button>}</li>)}</ul>

@@ -678,7 +678,3 @@ button:focus-visible,a:focus-visible,input:focus-visible,select:focus-visible,te
 @media (max-width:760px) { .official-archive-alert .card-heading { display:block; } .official-archive-alert a.button { margin-top:10px; } }
 .official-command { display: grid; gap: .35rem; margin-top: .6rem; justify-items: start; }
 .official-command small { line-height: 1.4; }
-
-/* Tony (24/11/2026, "UNIFICAZIONE MODULI"): customer cards of «Clienti e Forniture», closed by default. */
-.customer-card > summary { cursor: pointer; display: flex; flex-wrap: wrap; gap: 0.25rem 0.75rem; align-items: baseline; }
-.customer-card h4 { margin: 1rem 0 0.35rem; }

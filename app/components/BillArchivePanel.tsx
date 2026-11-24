@@ -41,14 +41,9 @@ function Row({ row, monthFilter, canDelete, selected, busy, onToggle, onDeleteOn
   </li>;
 }
 
-// Tony (24/11/2026, "UNIFICAZIONE MODULI"): the archive also lives inside «Clienti e Forniture»; there the search typed at
-// the top of the module (searchQuery) is used and the archive's own search field is not shown twice.
-// alsoMatching: bills the module found by codice fiscale / partita IVA (see billIdsForTaxSearch); the archive rows do not
-// carry those identifiers, so they are shown when the typed text matches them or the row's own name, POD or invoice.
-export default function BillArchivePanel({ readonly, searchQuery, embedded = false, alsoMatching }: { readonly readonly: boolean; readonly searchQuery?: string; readonly embedded?: boolean; readonly alsoMatching?: ReadonlySet<string> }): ReactNode {
+export default function BillArchivePanel({ readonly }: { readonly readonly: boolean }): ReactNode {
   const [load, setLoad] = useState<Load>({ status: "loading" });
-  const [ownQuery, setQuery] = useState("");
-  const query = searchQuery ?? ownQuery;
+  const [query, setQuery] = useState("");
   const [month, setMonth] = useState("");
   const [periodFrom, setPeriodFrom] = useState("");
   const [periodTo, setPeriodTo] = useState("");
@@ -68,13 +63,7 @@ export default function BillArchivePanel({ readonly, searchQuery, embedded = fal
 
   const rows = useMemo(() => load.status === "ready" ? load.rows : [], [load]);
   const canDelete = load.status === "ready" && load.canDelete && !readonly;
-  const shown = useMemo(() => {
-    const filters = { month: month || null, periodFrom: periodFrom || null, periodTo: periodTo || null, documents };
-    const byText = filterArchiveRows(rows, { ...filters, query });
-    if (!query.trim() || !alsoMatching?.size) return byText;
-    const found = new Set([...byText, ...filterArchiveRows(rows.filter((row) => alsoMatching.has(row.id)), { ...filters, query: "" })].map((row) => row.id));
-    return rows.filter((row) => found.has(row.id));
-  }, [rows, query, month, periodFrom, periodTo, documents, alsoMatching]);
+  const shown = useMemo(() => filterArchiveRows(rows, { query, month: month || null, periodFrom: periodFrom || null, periodTo: periodTo || null, documents }), [rows, query, month, periodFrom, periodTo, documents]);
   const groups = useMemo(() => groupArchiveRows(shown, month || null), [shown, month]);
   const months = useMemo(() => archiveMonths(rows), [rows]);
   // A selection only ever holds bills of the list just loaded.
@@ -101,10 +90,9 @@ export default function BillArchivePanel({ readonly, searchQuery, embedded = fal
   };
 
   return <div className="content-stack bill-month-archive">
-    {embedded ? <div className="card-heading"><p className="muted">Le bollette dell&apos;azienda per mese di fine del periodo dei consumi. Una bolletta su più mesi è archiviata una sola volta e si ritrova anche negli altri mesi che copre.</p><button className="button compact secondary" type="button" onClick={() => void reload()} disabled={deleting}>Aggiorna</button></div>
-      : <div className="section-header"><div><p className="eyebrow">ARCHIVIO</p><h2>Archivio bollette</h2><p className="section-detail">Le bollette dell&apos;azienda per mese di fine del periodo dei consumi. Una bolletta su più mesi è archiviata una sola volta e si ritrova anche negli altri mesi che copre.</p></div><button className="button secondary" type="button" onClick={() => void reload()} disabled={deleting}>Aggiorna</button></div>}
+    <div className="section-header"><div><p className="eyebrow">ARCHIVIO</p><h2>Archivio bollette</h2><p className="section-detail">Le bollette dell&apos;azienda per mese di fine del periodo dei consumi. Una bolletta su più mesi è archiviata una sola volta e si ritrova anche negli altri mesi che copre.</p></div><button className="button secondary" type="button" onClick={() => void reload()} disabled={deleting}>Aggiorna</button></div>
     <section className="ui-card bill-month-filters" aria-label="Ricerca e filtri">
-      {searchQuery === undefined ? <label className="form-field"><span className="form-label">Cerca</span><input type="search" value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Cliente, POD o numero fattura" aria-label="Cerca per cliente, POD o numero fattura" /></label> : null}
+      <label className="form-field"><span className="form-label">Cerca</span><input type="search" value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Cliente, POD o numero fattura" aria-label="Cerca per cliente, POD o numero fattura" /></label>
       <label className="form-field"><span className="form-label">Mese</span><select value={month} onChange={(event) => { setConfirming(false); setMonth(event.target.value); }}><option value="">Tutti i mesi</option>{months.map((item) => <option key={item} value={item}>{monthLabel(item)}</option>)}</select></label>
       <label className="form-field"><span className="form-label">Periodo dal</span><input type="date" value={periodFrom} onChange={(event) => setPeriodFrom(event.target.value)} /></label>
       <label className="form-field"><span className="form-label">al</span><input type="date" value={periodTo} onChange={(event) => setPeriodTo(event.target.value)} /></label>
