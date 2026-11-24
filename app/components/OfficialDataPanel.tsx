@@ -82,6 +82,17 @@ function MonthCard({ month }: { readonly month: GmeMonthView }) {
       <ErrorList errors={acquired.errors} />
     </> : <p className="muted">Nessuna lettura del servizio per questo mese.</p>}
 
+    {month.replacement ? <>
+      <h5>Sostituzione del PUN mensile calcolato con la versione documentata</h5>
+      <p><span className={`status-badge ${month.replacement.state === "REPLACED" ? "positive" : month.replacement.state === "REPLACEMENT_BLOCKED" ? "negative" : ""}`}>{month.replacement.stateLabel}</span>{month.replacement.enabled ? "" : " · sostituzione automatica non attiva"}</p>
+      <div className="responsive-table"><table><caption>Versioni per archivio, {month.label}</caption><thead><tr><th>Archivio</th><th>Versione sostituita (conservata)</th><th>Versione pubblicata</th><th>Esito</th></tr></thead><tbody>
+        {month.replacement.rows.map((row) => <tr key={row.tenantId}><td>{row.label}</td>
+          <td>{row.replaced ? <>v{row.replaced.version} · mensile {euro(row.replaced.monthly)}<br /><small className="muted">{row.replaced.archiveId}{row.replaced.sourceId ? ` · ${row.replaced.sourceId}` : ""}</small></> : "—"}</td>
+          <td>{row.published ? <>v{row.published.version}<br /><small className="muted">{row.published.archiveId}</small></> : "—"}</td>
+          <td>{row.outcomeLabel}{row.differences.map((difference) => <span key={difference}><br /><small className="muted">{difference}</small></span>)}</td></tr>)}
+      </tbody></table></div>
+    </> : null}
+
     {month.reference ? <>
       <h5>Valori ufficiali di riferimento (audit settimanale del {when(month.reference.at)})</h5>
       <p>{(["f1", "f2", "f3", "monthly"] as const).map((field) => `${FIELD_LABEL[field]} ${euro(month.reference!.values[field])}`).join(" · ")} €/MWh{month.reference.newsletter ? ` · Newsletter GME n. ${month.reference.newsletter}` : ""}</p>

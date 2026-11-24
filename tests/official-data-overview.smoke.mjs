@@ -123,4 +123,31 @@ assert.equal((await punUsedByEngine(marketOf(base).repository, "tenant_cliente-p
   console.log("DERIVED_MONTHLY_SIGNALLED=PASS");
 }
 
+// 7. Tony (24/11/2026, automazione PUN ufficiale): the replacement of a computed monthly value is shown per archive with the version
+// replaced (kept), the version published, outcome and differences; a blocked replacement is an anomaly; nothing is written.
+{
+  const NL = "https://www.mercatoelettrico.org/Portals/0/Documents/Newsletter/20260615Newsletter.pdf";
+  const bands = gmeRun.summary.months.find((item) => item.month === "2026-05").bands;
+  const ready = { month: "2026-05", state: "REPLACEMENT_READY", bands, monthly: { value: 119.35, sha256: "c".repeat(64), url: NL, newsletter: "204" }, errors: [],
+    tenants: [{ tenantId: "tenant_piattaforma", outcome: "WOULD_REPLACE", archiveId: "gme-pun-2026-05", version: "1", archived: { f1: 107.17, f2: 131.44, f3: 120.81, monthly: 119.3484, sourceId: "GME_PREZZO_MEDIO_FASCE", sourceUrl: null }, differences: [] }] };
+  const blocked = { month: "2026-08", state: "REPLACEMENT_BLOCKED", bands: null, monthly: null, errors: ["GME_NEWSLETTER_NOT_PUBLISHED_YET", "GME_MONTHLY_MISSING"],
+    tenants: [{ tenantId: "tenant_cliente-prova", outcome: "REPLACEMENT_BLOCKED", archiveId: "gme-pun-2026-08-v2", version: "2", archived: { monthly: 180.0012, sourceId: "GME_PREZZO_MEDIO_FASCE" }, differences: [] }] };
+  const replaced = { month: "2026-10", state: "REPLACED", bands: null, monthly: null, errors: [],
+    tenants: [{ tenantId: "tenant_cliente-prova", outcome: "REPLACED", archiveId: "gme-pun-2026-10-v2", version: "2", replaces: { archiveId: "gme-pun-2026-10", version: "1", monthly: 230.815, sourceId: "GME_PREZZO_MEDIO_FASCE" }, differences: [] }] };
+  const months = gmeRun.summary.months.map((item) => item.month === "2026-05" ? ready : item.month === "2026-08" ? blocked : item.month === "2026-10" ? replaced : item);
+  const market = marketOf(base);
+  const overview = await officialDataOverview({ now: NOW, runs: [{ ...gmeRun, summary: { ...gmeRun.summary, months, replacement: "NOT_ENABLED" } }], alerts: [], market: market.repository, tenants: TENANTS, coverage: null });
+  const may = overview.gme.find((item) => item.month === "2026-05");
+  assert.equal(may.replacement.state, "REPLACEMENT_READY"); assert.equal(may.replacement.enabled, false);
+  assert.deepEqual(may.replacement.rows[0].replaced, { archiveId: "gme-pun-2026-05", version: "1", monthly: 119.3484, sourceId: "GME_PREZZO_MEDIO_FASCE" });
+  assert.equal(may.replacement.rows[0].published, null); assert.equal(may.replacement.rows[0].label, "Archivio produttore");
+  assert.equal(may.acquired.monthly.validated, true); assert.equal(may.acquired.monthly.sha256, "c".repeat(64));
+  const october = overview.gme.find((item) => item.month === "2026-10").replacement.rows[0];
+  assert.deepEqual([october.replaced.version, october.published.version, october.outcomeLabel], ["1", "2", "Nuova versione pubblicata, precedente conservata"]);
+  assert.ok(overview.anomalies.some((item) => item.id === "replacement-blocked-2026-08"));
+  assert.ok(overview.sources.find((item) => item.source === "GME").details.some((line) => /non attiva \(solo verifica\)/.test(line)));
+  assert.equal(market.writes(), 0);
+  console.log("REPLACEMENT_SHOWN_PER_ARCHIVE=PASS");
+}
+
 console.log("official-data-overview smoke: OK");

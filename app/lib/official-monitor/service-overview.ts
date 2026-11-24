@@ -57,9 +57,24 @@ export interface GmeMonthView {
   readonly comparison: readonly PunComparison[];
   /** Parametro art. 5.2 delib. ARERA 300/05 (Tony 22/11/2026): its own series, shown apart, never used in place of the PUN. */
   readonly punop: PunopView | null;
+  /**
+   * Tony (24/11/2026, automazione PUN ufficiale): replacement of a computed monthly value by the version documented by the GME
+   * PDFs, company by company: version replaced (kept), version published, outcome and differences found. Null when not relevant.
+   */
+  readonly replacement: ReplacementView | null;
   readonly level: "PUBLISHED_IN_USE" | "VALIDATED_NOT_PUBLISHED" | "ACQUIRED_NOT_VALIDATED" | "MISSING";
   readonly levelLabel: string;
 }
+export interface ReplacementRow {
+  readonly tenantId: string;
+  readonly label: string;
+  readonly replaced: { readonly archiveId: string; readonly version: string; readonly monthly: number | null; readonly sourceId: string | null } | null;
+  readonly published: { readonly archiveId: string; readonly version: string } | null;
+  readonly outcome: string;
+  readonly outcomeLabel: string;
+  readonly differences: readonly string[];
+}
+export interface ReplacementView { readonly state: string; readonly stateLabel: string; readonly enabled: boolean; readonly rows: readonly ReplacementRow[] }
 export interface PunopView {
   readonly seriesId: string;
   readonly meaning: string;
@@ -118,6 +133,12 @@ const JOB_LABEL: Readonly<Record<ServiceJob, string>> = { gme: "GME, PUN mensile
 const STATE_LABEL: Readonly<Record<string, string>> = {
   READY_DRY_RUN: "Validato in prova, non pubblicato", PUBLISHED: "Pubblicato dal servizio", UNCHANGED: "Già pubblicato, invariato",
   LEGACY_AUDIT: "Versione precedente al servizio: verificata dall'audit settimanale", INCOMPLETE: "Documenti GME non ancora pubblicati", FAILED: "Non validato",
+  REPLACEMENT_READY: "PUN mensile calcolato: sostituzione documentata pronta, non eseguita", REPLACED: "PUN mensile calcolato sostituito dalla versione documentata",
+  REPLACEMENT_BLOCKED: "Sostituzione bloccata: documento mancante, illeggibile o incoerente",
+};
+const REPLACEMENT_OUTCOME_LABEL: Readonly<Record<string, string>> = {
+  WOULD_REPLACE: "Pronta: verrebbe creata una nuova versione", REPLACED: "Nuova versione pubblicata, precedente conservata", PUBLISHED: "Nuova versione pubblicata",
+  UNCHANGED: "Già sostituita, invariata", REPLACEMENT_BLOCKED: "Bloccata, nessuna scrittura",
 };
 const LEVEL_LABEL: Readonly<Record<GmeMonthView["level"], string>> = {
   PUBLISHED_IN_USE: "Pubblicato e usato nelle simulazioni", VALIDATED_NOT_PUBLISHED: "Validato, non pubblicato",
@@ -221,7 +242,8 @@ export async function punUsedByEngine(repository: MarketArchiveRepository, tenan
   return records.find((record) => record.index === "PUN" && record.month === month) ?? null;
 }
 
-interface MonthSummary { readonly month: string; readonly state: string; readonly bands: { f1: number; f2: number; f3: number; hours: number[]; sha256: string; url: string } | null; readonly monthly: { value: number; sha256: string; url: string; newsletter: string | null } | null; readonly errors: readonly string[]; readonly punop?: { readonly seriesId: string; readonly meaning: string; readonly value: number | null; readonly label: string | null; readonly url: string | null; readonly sha256: string | null; readonly conserved: unknown; readonly errors: readonly string[] } }
+interface TenantSummary { readonly tenantId: string; readonly outcome: string; readonly archiveId?: string; readonly version?: string; readonly archived?: { readonly monthly: number | null; readonly sourceId: string | null }; readonly replaces?: { readonly archiveId: string; readonly version: string; readonly monthly: number | null; readonly sourceId: string | null } | null; readonly differences?: readonly string[] }
+interface MonthSummary { readonly month: string; readonly state: string; readonly tenants?: readonly TenantSummary[]; readonly bands: { f1: number; f2: number; f3: number; hours: number[]; sha256: string; url: string } | null; readonly monthly: { value: number; sha256: string; url: string; newsletter: string | null } | null; readonly errors: readonly string[]; readonly punop?: { readonly seriesId: string; readonly meaning: string; readonly value: number | null; readonly label: string | null; readonly url: string | null; readonly sha256: string | null; readonly conserved: unknown; readonly errors: readonly string[] } }
 const monthSummaries = (run: ServiceRunRecord | null): readonly MonthSummary[] => Array.isArray(run?.summary.months) ? (run!.summary.months as unknown[]).filter(isObject).map((item) => item as unknown as MonthSummary).filter((item) => typeof item.month === "string") : [];
 interface AuditSummary { readonly month: string; readonly at: string; readonly official: { monthly: number | null; newsletter: string | null; newsletterUrl: string | null; f1: number | null; f2: number | null; f3: number | null; bandsUrl: string | null }; readonly errors: readonly string[] }
 const auditSummaries = (run: ServiceRunRecord | null): readonly AuditSummary[] => Array.isArray(run?.summary.audits) ? (run!.summary.audits as unknown[]).filter(isObject).map((item) => item as unknown as AuditSummary).filter((item) => typeof item.month === "string" && isObject(item.official)) : [];
@@ -310,7 +332,16 @@ export async function officialDataOverview(input: OverviewInput): Promise<Offici
       errors: punopErrors,
       usage: PUNOP_USAGE,
     } : null;
-    gme.push({ month, label: monthLabel(month), acquired, reference, used, comparison, punop, level, levelLabel: partial ?? LEVEL_LABEL[level] });
+    const replacement: ReplacementView | null = summary && /^REPLACE/.test(summary.state) ? {
+      state: summary.state, stateLabel: STATE_LABEL[summary.state] ?? summary.state, enabled: gmeRun?.summary.replacement === "ENABLED",
+      rows: (Array.isArray(summary.tenants) ? summary.tenants : []).filter(isObject).map((item) => item as unknown as TenantSummary).filter((item) => typeof item.tenantId === "string" && typeof item.outcome === "string").map((item) => {
+        const written = item.outcome === "REPLACED" || item.outcome === "PUBLISHED" || item.outcome === "UNCHANGED";
+        const replaced = item.replaces ?? (item.archiveId && item.version && !written ? { archiveId: item.archiveId, version: item.version, monthly: item.archived?.monthly ?? null, sourceId: item.archived?.sourceId ?? null } : null);
+        return { tenantId: item.tenantId, label: label(item.tenantId), replaced, published: written && item.archiveId && item.version ? { archiveId: item.archiveId, version: item.version } : null, outcome: item.outcome, outcomeLabel: REPLACEMENT_OUTCOME_LABEL[item.outcome] ?? item.outcome, differences: Array.isArray(item.differences) ? item.differences : [] };
+      }),
+    } : null;
+    gme.push({ month, label: monthLabel(month), acquired, reference, used, comparison, punop, replacement, level, levelLabel: partial ?? LEVEL_LABEL[level] });
+    if (replacement?.state === "REPLACEMENT_BLOCKED") addAnomaly({ id: `replacement-blocked-${month}`, severity: "WARNING", source: "GME", period: monthLabel(month), origin: "Sostituzione PUN mensile calcolato", message: `Sostituzione non possibile: ${(summary?.errors ?? []).map((error) => describeServiceError(error).message).join("; ") || "documenti non validati"}. Nessuna versione scritta.`, at: gmeRun?.startedAt ?? null });
     for (const error of punopErrors.filter((entry) => !entry.informative)) addAnomaly({ id: `punop-${month}-${error.code}`, severity: "WARNING", source: "GME", period: monthLabel(month), origin: "Parametro art. 5.2 delib. 300/05", message: error.message, at: gmeRun?.startedAt ?? null });
 
     const name = monthLabel(month);
@@ -323,7 +354,7 @@ export async function officialDataOverview(input: OverviewInput): Promise<Offici
 
   // Sources.
   const gmeErrors = (gmeRun?.errors ?? []).map(describeServiceError);
-  const gmeDetails = gmeRun ? [`Documenti scaricati: ${Array.isArray(gmeRun.summary.downloads) ? gmeRun.summary.downloads.length : 0}`, `Mesi verificati: ${summaries.length}`] : [];
+  const gmeDetails = gmeRun ? [`Documenti scaricati: ${Array.isArray(gmeRun.summary.downloads) ? gmeRun.summary.downloads.length : 0}`, `Mesi verificati: ${summaries.length}`, `Sostituzione dei PUN mensili calcolati: ${gmeRun.summary.replacement === "ENABLED" ? "attiva" : "non attiva (solo verifica)"}`] : [];
   const tenantsOf = (run: ServiceRunRecord | null) => Array.isArray(run?.summary.tenants) ? (run!.summary.tenants as unknown[]).filter(isObject) : [];
   const stepLabel = (value: unknown) => value === "SUCCESS" ? "riuscito" : value === "PARTIAL_FAILURE" ? "con anomalie" : value === "FAILED" ? "non riuscito" : value === "SKIPPED" ? "non eseguito in questo comando" : typeof value === "string" ? value.toLowerCase().replace(/_/g, " ") : "non eseguito";
   const areraDetails = tenantsOf(areraRun).map((item) => `${label(String(item.tenantId))}: tariffe ${stepLabel(item.arera)}, capacità ${stepLabel(item.capacity)}`);
