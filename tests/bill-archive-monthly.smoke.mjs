@@ -184,7 +184,9 @@ assert.match(panel, /requestJson<\{ readonly results: readonly BillBulkResult\[\
 assert.match(panel, /if \(!canDelete \|\| deleting \|\| !confirming/, "nothing is sent before the confirmation");
 assert.match(panel, /Seleziona le bollette di/);
 const shell = await readFile("app/components/OperationalShell.tsx", "utf8");
-assert.match(shell, /section === "archive" \? <BillArchivePanel readonly=\{operateReadonly\} \/>/);
+// Tony (24/11/2026, "UNIFICAZIONE MODULI"): the archive is shown inside «Clienti e Forniture», with the same readonly rule.
+assert.match(shell, /section === "customers" \|\| section === "archive" \? <CustomerRegistryPanel key=\{section\} readonly=\{operateReadonly\}/);
+assert.match(await readFile("app/components/CustomerRegistryPanel.tsx", "utf8"), /<BillArchivePanel readonly=\{readonly\} searchQuery=\{query\} embedded alsoMatching=\{taxMatches\} \/>/);
 console.log("ARCHIVE_ROUTES_SCREEN=PASS");
 
 // 9. Chiusura Fase 2 (Tony 20/11/2026), punto 1: the archive keeps every bill whatever its age; nothing is deleted only

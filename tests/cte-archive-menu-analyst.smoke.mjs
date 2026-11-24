@@ -18,9 +18,10 @@ const menu = (role, tenantId = "tenant_x") => tenantId === "tenant_piattaforma" 
 
 // Tony (20/11/2026, Fase 2): "Archivio bollette" added for every company role (declared change of the expected menus).
 // Tony (24/11/2026, "COMPLETAMENTO APPLICAZIONE"): "Clienti e POD" added for every company role (declared change).
-assert.deepEqual(menu("ADMIN"), ["quote", "archive", "customers", "proposals", "cte", "market", "chain", "access"], "Amministratore: Archivio bollette in più");
-assert.deepEqual(menu("ANALYST"), ["quote", "archive", "customers", "proposals", "cte"], "Direttore/Area Manager: Archivio CTE e Archivio bollette");
-assert.deepEqual(menu("VIEWER"), ["quote", "archive", "customers", "proposals"], "Agente: Archivio bollette (solo le sue)");
+// Tony (24/11/2026, "UNIFICAZIONE MODULI"): the two entries become one, «Clienti e Forniture» (declared change).
+assert.deepEqual(menu("ADMIN"), ["quote", "customers", "proposals", "cte", "market", "chain", "access"], "Amministratore: Clienti e Forniture");
+assert.deepEqual(menu("ANALYST"), ["quote", "customers", "proposals", "cte"], "Direttore/Area Manager: Archivio CTE e Clienti e Forniture");
+assert.deepEqual(menu("VIEWER"), ["quote", "customers", "proposals"], "Agente: Clienti e Forniture (solo i suoi)");
 assert.deepEqual(menu("ADMIN", "tenant_piattaforma"), ["dashboard", "access", "system"], "Piattaforma: invariata");
 for (const role of ["ADMIN", "ANALYST", "VIEWER"]) for (const id of ["quote", "proposals"]) assert.ok(menu(role).includes(id), `${role} conserva ${id}`);
 for (const id of ["market", "chain", "access"]) assert.ok(!menu("ANALYST").includes(id), `ANALYST non vede ${id}`);

@@ -134,3 +134,34 @@ export function searchCustomerViews(views: readonly CustomerView[], query: strin
     return words.every((word) => haystack.includes(word)) || compact.includes(words.join(""));
   });
 }
+
+/**
+ * Tony (24/11/2026, "UNIFICAZIONE MODULI"): the same search on the bills still to link, over what was read on them
+ * (intestatario, codice fiscale o partita IVA, POD/PDR, indirizzo).
+ */
+export function searchBillSummaries(bills: readonly BillReadSummary[], query: string): readonly BillReadSummary[] {
+  const words = query.toLocaleLowerCase("it").split(/\s+/).filter(Boolean);
+  if (!words.length) return bills;
+  return bills.filter((bill) => {
+    const haystack = [bill.customerName ?? "", bill.taxIdentifier ?? "", bill.supplyReference ?? "", bill.supplyAddress ?? ""].join(" ").toLocaleLowerCase("it");
+    const compact = haystack.replace(/\s+/g, "");
+    return words.every((word) => haystack.includes(word)) || compact.includes(words.join(""));
+  });
+}
+
+/**
+ * Tony (24/11/2026, "AUTORIZZAZIONE CLIENTI E FORNITURE"): in the bill archive a codice fiscale or partita IVA finds
+ * - the bills linked to the customers registered with it (existing links only);
+ * - the bills not yet linked whose own reading carries it (identifier extracted from the document, nothing else).
+ * A linked bill is never found through what was read on it, and nothing is associated here: it is only a search.
+ */
+export function billIdsForTaxSearch(view: Pick<RegistryView, "customers" | "bills">, query: string): ReadonlySet<string> {
+  const typed = query.replace(/[\s.-]+/g, "").toUpperCase();
+  const wanted = /^IT\d{11}$/.test(typed) ? typed.slice(2) : typed;
+  const ids = new Set<string>();
+  if (wanted.length < 4) return ids;
+  const matches = (identifier: string | null) => Boolean(identifier && identifier.replace(/[\s.-]+/g, "").toUpperCase().includes(wanted));
+  for (const customer of view.customers) if (matches(customer.customer.taxCode) || matches(customer.customer.vatNumber)) for (const billId of customer.billIds) ids.add(billId);
+  for (const bill of view.bills) if (!bill.linked && matches(bill.taxIdentifier)) ids.add(bill.billId);
+  return ids;
+}
