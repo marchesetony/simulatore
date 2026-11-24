@@ -1,4 +1,5 @@
 import { publishedPdfText } from "../../../../app/lib/market/gme-pun-source";
+import { officialPdfText } from "../pdf-text";
 
 /**
  * PUN Index GME monthly value (Tony 21/11/2026, decisione 2): read only where GME prints it with its month, the monthly
@@ -70,11 +71,27 @@ export function readNewsletterText(text: string, month: string): NewsletterReadi
   return { checks, monthly: checks.every((check) => check.ok) ? monthly : null, number: issue ? issue[1] : null };
 }
 
-export function readNewsletterPdf(bytes: Uint8Array, month: string): NewsletterReading {
+/**
+ * Reads the newsletter PDF as downloaded. The text comes first from pdf.js (real GME newsletters, Tony 24/11/2026: the minimal
+ * reader returned no text on every real newsletter), then from the minimal reader; the first text that passes every check gives
+ * the value. Nothing is derived: a newsletter whose text cannot be read, or whose Tabella 1 does not pass the checks, gives none.
+ */
+export async function readNewsletterPdf(bytes: Uint8Array, month: string): Promise<NewsletterReading> {
   if (!isPdf(bytes)) return { checks: [{ code: "FORMAT", ok: false, detail: "atteso un file PDF (intestazione %PDF-)" }], monthly: null, number: null };
-  let text = "";
-  try { text = publishedPdfText(bytes); } catch { text = ""; }
-  if (!text.trim()) return { checks: [{ code: "FORMAT", ok: true, detail: "file PDF" }, { code: "TEXT", ok: false, detail: "testo del PDF non leggibile" }], monthly: null, number: null };
-  const reading = readNewsletterText(text, month);
-  return { ...reading, checks: [{ code: "FORMAT", ok: true, detail: "file PDF" }, { code: "TEXT", ok: true, detail: "testo del PDF leggibile" }, ...reading.checks] };
+  const extractors: readonly { readonly name: string; readonly read: () => Promise<string> }[] = [
+    { name: "pdf.js", read: () => officialPdfText(bytes) },
+    { name: "lettore interno", read: async () => publishedPdfText(bytes) },
+  ];
+  let best: NewsletterReading | null = null;
+  const failures: string[] = [];
+  for (const extractor of extractors) {
+    let text = "";
+    try { text = await extractor.read(); } catch (error) { failures.push(`${extractor.name}: ${error instanceof Error ? error.message.slice(0, 120) : "errore"}`); continue; }
+    if (!text.trim()) { failures.push(`${extractor.name}: nessun testo`); continue; }
+    const reading = readNewsletterText(text, month);
+    const result = { ...reading, checks: [{ code: "FORMAT", ok: true, detail: "file PDF" }, { code: "TEXT", ok: true, detail: `testo del PDF leggibile (${extractor.name})` }, ...reading.checks] };
+    if (result.monthly !== null) return result;
+    best ??= result;
+  }
+  return best ?? { checks: [{ code: "FORMAT", ok: true, detail: "file PDF" }, { code: "TEXT", ok: false, detail: `testo del PDF non leggibile (${failures.join("; ")})` }], monthly: null, number: null };
 }

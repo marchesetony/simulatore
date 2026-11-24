@@ -8,6 +8,7 @@
   },
   "dependencies": {
     "fflate": "0.8.3",
+    "pdfjs-dist": "6.5.438",
     "postgres": "3.4.9"
   },
   "devDependencies": {

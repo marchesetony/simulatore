@@ -65,7 +65,7 @@ export function build({ outDir = path.join(here, ".vercel", "output") } = {}) {
     fs.mkdirSync(path.dirname(target), { recursive: true });
     fs.writeFileSync(target, code);
   }
-  // fflate (PDF streams) and postgres (database client): the only external packages, pure JavaScript without dependencies.
+  // fflate (PDF streams), postgres (database client) and pdfjs-dist (PDF text): the only external packages, without dependencies.
   let fflate;
   try { fflate = path.dirname(require.resolve("fflate/package.json")); } catch { fflate = path.dirname(createRequire(path.join(repo, "package.json")).resolve("fflate/package.json")); }
   fs.cpSync(fflate, path.join(func, "node_modules", "fflate"), { recursive: true });
@@ -75,6 +75,13 @@ export function build({ outDir = path.join(here, ".vercel", "output") } = {}) {
   const postgresPackage = JSON.parse(fs.readFileSync(path.join(postgresDir, "package.json"), "utf8"));
   if (postgresPackage.version !== "3.4.9" || Object.keys(postgresPackage.dependencies ?? {}).length) throw new Error(`postgres inatteso: ${postgresPackage.version}`);
   fs.cpSync(postgresDir, path.join(func, "node_modules", "postgres"), { recursive: true });
+  // pdfjs-dist (Mozilla pdf.js, Apache-2.0): text of the real GME newsletters (Tony 24/11/2026). Only the legacy Node build, its
+  // worker and the character maps are shipped; the optional canvas package is never shipped (text extraction does not render).
+  const pdfjsDir = path.join(here, "node_modules", "pdfjs-dist");
+  if (!fs.existsSync(path.join(pdfjsDir, "package.json"))) throw new Error("pdfjs-dist non installato: eseguire npm install in services/dati-ufficiali");
+  const pdfjsPackage = JSON.parse(fs.readFileSync(path.join(pdfjsDir, "package.json"), "utf8"));
+  if (pdfjsPackage.version !== "6.5.438" || Object.keys(pdfjsPackage.dependencies ?? {}).length) throw new Error(`pdfjs-dist inatteso: ${pdfjsPackage.version}`);
+  for (const item of ["package.json", "LICENSE", "legacy/build/pdf.mjs", "legacy/build/pdf.worker.mjs", "cmaps"]) fs.cpSync(path.join(pdfjsDir, item), path.join(func, "node_modules", "pdfjs-dist", item), { recursive: true });
   fs.writeFileSync(path.join(func, "package.json"), JSON.stringify({ type: "module" }, null, 2));
   fs.writeFileSync(path.join(func, "index.mjs"), `export { default } from "./services/dati-ufficiali/src/vercel-entry.js";\n`);
   fs.writeFileSync(path.join(func, ".vc-config.json"), JSON.stringify({ runtime: "nodejs22.x", handler: "index.mjs", launcherType: "Nodejs", shouldAddHelpers: false, maxDuration: 300, memory: 1024, regions: ["fra1"] }, null, 2));

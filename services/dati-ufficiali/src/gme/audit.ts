@@ -63,7 +63,7 @@ export async function runPunAudit(input: { readonly store: ServiceStore; readonl
       if (!head?.ok || !/pdf/i.test(head.headers.get("content-type") ?? "")) continue;
       const document = await acquire(input.fetcher, input.recorded, url);
       if (!document) continue;
-      const reading = readNewsletterPdf(document.bytes, month);
+      const reading = await readNewsletterPdf(document.bytes, month);
       if (reading.checks.find((check) => check.code === "REPORT_MONTH")?.ok === false) continue;
       if (reading.monthly === null) { errors.push(`NEWSLETTER_CHECKS:${reading.checks.filter((check) => !check.ok).map((check) => check.code).join(",")}`); break; }
       monthly = reading.monthly; newsletter = reading.number; newsletterDoc = document;

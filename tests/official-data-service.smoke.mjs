@@ -127,13 +127,13 @@ const rows = (backend, collection) => [...backend.rows.values()].filter((row) =>
 
 // 4. Newsletter reader: the monthly value only from Tabella 1 of the report on that month.
 {
-  const ok = readNewsletterPdf(syntheticGmeNewsletterPdf(), "2026-05");
+  const ok = await readNewsletterPdf(syntheticGmeNewsletterPdf(), "2026-05");
   assert.equal(ok.monthly, 119.35); assert.equal(ok.number, "204");
-  assert.equal(readNewsletterPdf(syntheticGmeNewsletterPdf(), "2026-06").monthly, null, "report on May is not June");
-  assert.equal(readNewsletterPdf(syntheticGmeNewsletterPdf({ withTable: false }), "2026-05").monthly, null, "a chart or commentary alone is not a source");
-  assert.equal(readNewsletterPdf(syntheticGmeNewsletterPdf({ prose: "118,90" }), "2026-05").monthly, null, "commentary and table must agree");
-  assert.equal(readNewsletterPdf(syntheticGmeNewsletterPdf({ extraReport: "Aprile 2026" }), "2026-05").monthly, null, "two report months: ambiguous");
-  assert.equal(readNewsletterPdf(new TextEncoder().encode("<html>404</html>"), "2026-05").monthly, null);
+  assert.equal((await readNewsletterPdf(syntheticGmeNewsletterPdf(), "2026-06")).monthly, null, "report on May is not June");
+  assert.equal((await readNewsletterPdf(syntheticGmeNewsletterPdf({ withTable: false }), "2026-05")).monthly, null, "a chart or commentary alone is not a source");
+  assert.equal((await readNewsletterPdf(syntheticGmeNewsletterPdf({ prose: "118,90" }), "2026-05")).monthly, null, "commentary and table must agree");
+  assert.equal((await readNewsletterPdf(syntheticGmeNewsletterPdf({ extraReport: "Aprile 2026" }), "2026-05")).monthly, null, "two report months: ambiguous");
+  assert.equal((await readNewsletterPdf(new TextEncoder().encode("<html>404</html>"), "2026-05")).monthly, null);
   assert.ok(newsletterCandidates("2026-05").includes(NL("20260615")) && newsletterCandidates("2026-05").every((url) => /^https:\/\/(?:www|gme)\.mercatoelettrico\.org\/Portals\/0\/Documents\/Newsletter\/202606\d\dNewsletter\.pdf$/.test(url)));
 }
 

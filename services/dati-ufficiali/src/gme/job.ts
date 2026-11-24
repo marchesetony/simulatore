@@ -114,7 +114,7 @@ async function acquireBands(fetcher: OfficialFetch, recorded: readonly FetchedDo
 }
 
 /** Finds the newsletter that reports on the month by its dated file name, on the GME hosts only. */
-async function acquireNewsletter(fetcher: OfficialFetch, recorded: readonly FetchedDocument[], month: string, known: string | null): Promise<{ document: FetchedDocument; reading: ReturnType<typeof readNewsletterPdf> } | { error: string }> {
+async function acquireNewsletter(fetcher: OfficialFetch, recorded: readonly FetchedDocument[], month: string, known: string | null): Promise<{ document: FetchedDocument; reading: Awaited<ReturnType<typeof readNewsletterPdf>> } | { error: string }> {
   const candidates = known ? [known, ...newsletterCandidates(month).filter((url) => url !== known)] : newsletterCandidates(month);
   for (const url of candidates) {
     let response: Response;
@@ -122,7 +122,7 @@ async function acquireNewsletter(fetcher: OfficialFetch, recorded: readonly Fetc
     if (!response.ok || !/pdf/i.test(response.headers.get("content-type") ?? "")) continue;
     try {
       const document = await fetchDocument(fetcher, url, recorded);
-      const reading = readNewsletterPdf(document.bytes, month);
+      const reading = await readNewsletterPdf(document.bytes, month);
       if (reading.checks.find((check) => check.code === "REPORT_MONTH")?.ok === false) continue;
       return { document, reading };
     } catch (error) { return { error: `GME_NEWSLETTER_DOWNLOAD:${error instanceof Error ? error.message : "errore"}` }; }
