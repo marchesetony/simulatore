@@ -237,10 +237,53 @@ export async function requestForm<T>(path: string, form: FormData, signal?: Abor
 export const MAX_UPLOAD_BYTES = 20_000_000;
 const DIRECT_UPLOAD_THRESHOLD_BYTES = 4_000_000;
 
-export async function requestUpload<T>(path: string, file: File, headers: Record<string, string> = {}, signal?: AbortSignal): Promise<T> {
-  if (file.size <= DIRECT_UPLOAD_THRESHOLD_BYTES) { const form = new FormData(); form.append("file", file); return requestForm<T>(path, form, signal, headers); }
+/** Bytes the browser has really sent; `total` is null when the browser does not know it. */
+export type UploadProgress = (sent: number, total: number | null) => void;
+
+/** Tony (24/11/2026, "PROGRESSIONE DELLE OPERAZIONI", A): the same request fetch would send, through XMLHttpRequest, which is
+ *  the only browser API that reports the bytes sent. Same method, body, headers, cookies (same origin) and stop. */
+export function sendWithProgress(method: "POST" | "PUT", url: string, body: XMLHttpRequestBodyInit, headers: Record<string, string>, onProgress: UploadProgress, signal?: AbortSignal): Promise<{ readonly ok: boolean; readonly status: number; readonly body: unknown }> {
+  return new Promise((resolve, reject) => {
+    if (signal?.aborted) { reject(new DOMException("Aborted", "AbortError")); return; }
+    const xhr = new XMLHttpRequest();
+    xhr.open(method, url);
+    for (const [name, value] of Object.entries(headers)) xhr.setRequestHeader(name, value);
+    xhr.upload.onprogress = (event) => onProgress(event.loaded, event.lengthComputable ? event.total : null);
+    const stop = () => xhr.abort();
+    signal?.addEventListener("abort", stop, { once: true });
+    const done = () => signal?.removeEventListener("abort", stop);
+    xhr.onload = () => {
+      done();
+      let parsed: unknown = null;
+      try { parsed = xhr.responseText ? JSON.parse(xhr.responseText) : null; } catch { parsed = null; }
+      resolve({ ok: xhr.status >= 200 && xhr.status < 300, status: xhr.status, body: parsed });
+    };
+    xhr.onerror = () => { done(); reject(new TypeError("Failed to fetch")); };
+    xhr.onabort = () => { done(); reject(new DOMException("Aborted", "AbortError")); };
+    xhr.send(body);
+  });
+}
+
+function bodyOrError<T>(response: { readonly ok: boolean; readonly status: number; readonly body: unknown }): T {
+  if (!response.ok) {
+    const body = response.body;
+    const errorBody = typeof body === "object" && body !== null && "error" in body ? (body as { readonly error?: unknown }).error : body;
+    throw errorFrom(errorBody, `HTTP_${response.status}`);
+  }
+  return response.body as T;
+}
+
+export async function requestUpload<T>(path: string, file: File, headers: Record<string, string> = {}, signal?: AbortSignal, onProgress?: UploadProgress): Promise<T> {
+  if (file.size <= DIRECT_UPLOAD_THRESHOLD_BYTES) {
+    const form = new FormData(); form.append("file", file);
+    if (!onProgress) return requestForm<T>(path, form, signal, headers);
+    return bodyOrError<T>(await sendWithProgress("POST", path, form, headers, onProgress, signal));
+  }
   const target = await requestJson<{ readonly uploadId: string; readonly signedUrl: string }>("/api/uploads/target", { method: "POST", body: "{}", signal });
-  const sent = await fetch(target.signedUrl, { method: "PUT", body: file, signal, headers: { "content-type": file.type || "application/octet-stream", "x-upsert": "true" } }).catch(() => null);
+  const putHeaders = { "content-type": file.type || "application/octet-stream", "x-upsert": "true" };
+  const sent = onProgress
+    ? await sendWithProgress("PUT", target.signedUrl, file, putHeaders, onProgress, signal).catch(() => null)
+    : await fetch(target.signedUrl, { method: "PUT", body: file, signal, headers: putHeaders }).catch(() => null);
   if (signal?.aborted) throw new UiApiError("BILL_ANALYSIS_CANCELLED", "Analisi interrotta: la bolletta non è stata salvata.");
   if (!sent?.ok) throw new UiApiError("UPLOAD_TRANSFER_FAILED", "Invio del file non riuscito: riprova");
   return requestJson<T>(path, { method: "POST", body: JSON.stringify({ uploadId: target.uploadId, fileName: file.name, contentType: file.type }), headers, signal });

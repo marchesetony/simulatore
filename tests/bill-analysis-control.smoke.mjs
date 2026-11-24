@@ -141,14 +141,17 @@ assert.equal(stepStatus(null, "SENDING"), "current");
 assert.deepEqual(ANALYSIS_STEPS.map((step) => stepStatus({ state: "READING" }, step.state)), ["done", "done", "current", "todo", "todo"]);
 assert.deepEqual(ANALYSIS_STEPS.map((step) => stepStatus({ state: "COMPLETED" }, step.state)), ["done", "done", "done", "done", "done"]);
 const control = await readFile("app/components/BillAnalysisControl.tsx", "utf8");
-assert.doesNotMatch(control, /\d\s*%|\$\{[^}]*\}\s*%|<progress|aria-valuenow/i, "no invented percentages");
+// Tony (24/11/2026, "PROGRESSIONE DELLE OPERAZIONI", A): the only measure on screen is the bytes the browser reports as sent;
+// the reading phases still have none.
+assert.doesNotMatch(control, /\d\s*%|\$\{[^}]*\}\s*%|aria-valuenow/i, "no invented percentages");
+assert.deepEqual(control.match(/<progress[^>]*>/g), ['<progress className="bill-upload-progress" max={progress.total} value={Math.min(progress.sent, progress.total)} aria-label="Byte inviati" />'], "the one bar is the bytes sent");
 for (const label of ["File selezionato", "Avvia analisi", "Interrompi analisi", "Annulla", "Ricomincia"]) assert.match(control, new RegExp(label), label);
 assert.match(control, /if \(current\.current !== id\) return;/, "answers of an older analysis are ignored");
 assert.match(control, /\/cancel`, \{ method: "POST"[\s\S]*controller\.current\?\.abort\(\)/, "the server is told before the request is closed");
 // The reading opens ready to confirm: the analysis card closes with the screen change, so neither side may leave the flow
 // marked busy (before 24/11 «Annulla», «Ricomincia» and «Cerca le CTE utilizzabili» stayed disabled after a reading).
 assert.match(control, /useEffect\(\(\) => \(\) => onBusy\(false\), \[onBusy\]\);/);
-assert.match(await readFile("app/components/QuickQuoteFlow.tsx", "utf8"), /const analysisRead = useCallback\(\(document: BillDocumentModel, analysisId: string\) => \{[\s\S]{0,200}setPending\(\(value\) => value === "upload" \? undefined : value\);/);
+assert.match(await readFile("app/components/QuickQuoteFlow.tsx", "utf8"), /const analysisRead = useCallback\(\(document: BillDocumentModel, analysisId: string, summary: AnalysisSummary\) => \{[\s\S]{0,200}setPending\(\(value\) => value === "upload" \? undefined : value\);/);
 console.log("SCREEN=PASS");
 
 // 6. Routes: same company and owner only; a bill saved at the moment of the stop is removed; "Annulla" removes only the

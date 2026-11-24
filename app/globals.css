@@ -737,6 +737,35 @@ button:focus-visible,a:focus-visible,input:focus-visible,select:focus-visible,te
 .bill-analysis-label small { display:block; color:var(--brand-accent); font-size:11px; font-weight:700; }
 @keyframes bill-pulse { 50% { opacity:.35; transform:scale(.75); } }
 @media (prefers-reduced-motion:reduce) { .bill-analysis-step.current .bill-analysis-dot::after { animation:none; } }
+/* Tony (24/11/2026, "PROGRESSIONE DELLE OPERAZIONI"): failed and stopped steps, real bytes sent, times, step lists of
+   the CTE search and the activity indicator of short waits. */
+.bill-analysis-step.failed { color:#8c2d2d; font-weight:700; }.bill-analysis-step.failed .bill-analysis-dot { border-color:#c2413b; background:#c2413b; }
+.bill-analysis-step.stopped { color:#44566d; font-weight:700; }.bill-analysis-step.stopped .bill-analysis-dot { border-color:#44566d; background:#44566d; font-size:10px; }
+.bill-analysis-label small.bill-analysis-time,.bill-analysis-label small.bill-analysis-bytes { color:var(--muted); font-weight:500; font-variant-numeric:tabular-nums; }
+.bill-analysis-label small.bill-analysis-failed { color:#8c2d2d; }.bill-analysis-label small.bill-analysis-stopped { color:#44566d; }
+.bill-upload-progress { width:100%; max-width:140px; height:6px; accent-color:var(--brand-accent); }
+.bill-analysis-code { display:block; margin-top:4px; font-size:11.5px; }
+.op-steps { display:grid; gap:8px; margin:0; padding:14px 16px; border:1px solid var(--line); border-radius:12px; background:var(--surface-soft); }
+.op-steps.has-failure { border-color:#edb9b9; background:#fff7f7; }
+.op-steps-title { margin:0; color:var(--brand-ink); font-size:13px; font-weight:700; }
+.op-steps ol { display:grid; gap:8px; margin:0; padding:0; list-style:none; }
+.op-step { display:grid; grid-template-columns:auto 1fr; align-items:start; gap:10px; color:var(--muted); font-size:13px; }
+.op-step-dot { display:grid; place-items:center; width:22px; height:22px; border:2px solid #cbd6e2; border-radius:50%; background:#fff; color:#fff; font-size:11px; font-weight:800; }
+.op-step-body { display:grid; gap:1px; padding-top:2px; }
+.op-step-time { color:var(--muted); font-size:11.5px; font-variant-numeric:tabular-nums; }
+.op-step-detail { color:var(--muted); font-size:12px; }.op-step-detail.failure { color:#8c2d2d; font-weight:600; }
+.op-step.done { color:var(--brand-ink); }.op-step.done .op-step-dot { border-color:var(--brand-accent); background:var(--brand-accent); }
+.op-step.current { color:var(--brand-ink); font-weight:700; }.op-step.current .op-step-dot { border-color:var(--brand-accent); box-shadow:0 0 0 4px var(--brand-accent-soft); }
+.op-step.current .op-step-dot::after { content:""; width:8px; height:8px; border-radius:50%; background:var(--brand-accent); animation:bill-pulse 1.2s ease-in-out infinite; }
+.op-step.current .op-step-time { color:var(--brand-accent); font-weight:700; }
+.op-step.failed { color:#8c2d2d; font-weight:700; }.op-step.failed .op-step-dot { border-color:#c2413b; background:#c2413b; }
+.op-step.skipped { color:var(--muted); }.op-step.skipped .op-step-dot { border-style:dashed; color:var(--muted); background:transparent; }
+.op-steps-done { margin:0; padding:10px 14px; border:1px solid #b9ddd8; border-radius:10px; color:#155b57; background:var(--teal-soft); font-size:13px; }
+.activity-indicator { display:flex; flex-wrap:wrap; align-items:center; gap:8px; margin:0; padding:10px 14px; border:1px solid var(--line); border-radius:10px; color:var(--brand-ink); background:var(--surface-soft); font-size:13px; }
+.activity-indicator small { color:var(--muted); font-variant-numeric:tabular-nums; }
+.activity-spinner { width:16px; height:16px; border:2px solid var(--brand-accent-soft); border-top-color:var(--brand-accent); border-radius:50%; animation:activity-spin .9s linear infinite; }
+@keyframes activity-spin { to { transform:rotate(360deg); } }
+@media (prefers-reduced-motion:reduce) { .op-step.current .op-step-dot::after,.activity-spinner { animation:none; } }
 .bill-analysis-note { margin:0; }
 .bill-analysis-message { margin:0; padding:12px 14px; border-radius:10px; background:var(--surface-soft); color:var(--brand-ink); font-size:13px; }
 .quote-flow .bill-archive-panel { margin:0; padding-top:12px; border-top:1px solid var(--line); }

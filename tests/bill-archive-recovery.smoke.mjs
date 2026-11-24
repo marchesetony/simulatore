@@ -102,7 +102,7 @@ console.log("BILL_ARCHIVE_REOPEN_NO_DUPLICATE=PASS");
 // 8. No offer or proposal from a bill not approved: the UI approves only on "Cerca le CTE utilizzabili", and the server refuses
 // a simulation on a bill without an approved version.
 const confirmBody = flow.slice(flow.indexOf("const confirm = async"), flow.indexOf("const visibleOffers"));
-assert.ok(confirmBody.indexOf('operation: "approve"') > 0 && confirmBody.indexOf('operation: "approve"') < confirmBody.lastIndexOf("await loadOffers(current.id)"), "the offers are loaded only after the approval");
+assert.ok(confirmBody.indexOf('operation: "approve"') > 0 && confirmBody.indexOf('operation: "approve"') < confirmBody.lastIndexOf("await loadOffers(current.id, true)"), "the offers are loaded only after the approval");
 const unapprovedRepo = { async get() { return { id: "bill-pending-1", tenantId: "tenant_prova-a", currentApprovedVersionId: null, currentVersionId: "v1", versions: [] }; } };
 await assert.rejects(() => resolveTrustedElectricityContextFromSourceBill(unapprovedRepo, "tenant_prova-a", { sourceBill: { billId: "bill-pending-1", version: "v1" } }), (error) => error.code === "SOURCE_BILL_NOT_APPROVED");
 console.log("BILL_ARCHIVE_NO_SIMULATION_UNAPPROVED=PASS");

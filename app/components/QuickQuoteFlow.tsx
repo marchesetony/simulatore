@@ -12,7 +12,10 @@ import { billComponentLabel } from "../lib/foundation/bill-economic-analysis";
 import { billForReading, billReadSections, printedContractValues } from "../lib/ui/bill-read-details";
 import { withoutPrintedTotals } from "../lib/reading/bill-reader-checks";
 import { BillArchivePicker } from "./BillArchivePicker";
-import { BillAnalysisControl } from "./BillAnalysisControl";
+import { BillAnalysisControl, type AnalysisSummary } from "./BillAnalysisControl";
+import { ActivityIndicator, OperationSteps } from "./OperationSteps";
+import { CTE_SEARCH_STEPS, cteCountText, endStep, failRunning, finished, newSteps, startStep, totalMs, type OperationStep } from "../lib/ui/operation-steps";
+import { durationText } from "../lib/ui/bill-analysis-steps";
 import { requestBillDelete, approvedBillEntry, archiveLoadError, canDeleteBills, deleteConfirmText, deleteReportText, deleteSelectedBills, deleteSummaryText, pendingBillEntry, type ArchiveList, type BillArchiveEntry, type BillDeleteReport } from "../lib/ui/bill-archive";
 import { downloadExport, MAX_UPLOAD_BYTES, requestJson, requestUpload, toUiError, UiApiError } from "../lib/ui/client";
 import { buildQuoteReceipt, comparisonAnalysis, effectiveBillSpread, isSameOffer, regulatedVerification, sameCteHeadline, sameOfferDifferences, type QuoteReceipt, type RegulatedDomain } from "../lib/quote/receipt";
@@ -1167,9 +1170,10 @@ export default function QuickQuoteFlow({ readonly, showExcluded = false }: { rea
   // Tony (31/10, SOURCE_BILL_VOLTAGE_MISMATCH: "deve scrivere in italiano se non ha la cte adeguata ed eventualmente chiedere
   // quale usare, aggiungi qualche tasto per selezionare"): a failed calculation keeps the bill and its CTEs on screen, says why
   // in Italian and lets the agent pick the CTE to calculate with.
-  const compareWith = async (bill: BillDocumentModel, prepared: Prepared, anchor: Candidate | null) => {
+  // Returns the reason the calculation failed (also shown on the offers), or null when it was calculated or not needed.
+  const compareWith = async (bill: BillDocumentModel, prepared: Prepared, anchor: Candidate | null): Promise<string | null> => {
     const base = { bill, context: withExclusiveEnd(prepared.context), candidates: prepared.candidates, unlisted: prepared.unlisted ?? [], canAuthorizeCte: prepared.canAuthorizeCte === true, canRunTechnicalDerogation: prepared.canRunTechnicalDerogation === true };
-    if (!anchor) { setQuote({ ...base, comparison: emptyComparison(prepared.context), offers: [] }); return; }
+    if (!anchor) { setQuote({ ...base, comparison: emptyComparison(prepared.context), offers: [] }); return null; }
     try {
       // Tony (1/11, speed): the company discount is fetched while the comparison runs, not after it.
       const discountPending = requestJson<{ readonly policy: CommercialDiscount }>("/api/company/discount").then((response) => response.policy, () => null);
@@ -1179,27 +1183,49 @@ export default function QuickQuoteFlow({ readonly, showExcluded = false }: { rea
       setQuote({ ...base, comparison, offers });
       setChosen({});
       setSelectedId(offers.find((offer) => !costlierThanBill(offer, prepared.context, bill))?.calculation.calculationId ?? null);
+      return null;
     } catch (cause) {
-      setQuote({ ...base, comparison: emptyComparison(prepared.context), offers: [], failure: `Il calcolo con ${anchor.supplier} · ${anchor.offer.name || anchor.offer.code} non è riuscito. ${message(cause)}` });
+      const failure = `Il calcolo con ${anchor.supplier} · ${anchor.offer.name || anchor.offer.code} non è riuscito. ${message(cause)}`;
+      setQuote({ ...base, comparison: emptyComparison(prepared.context), offers: [], failure });
+      return failure;
     }
   };
+  // Tony (24/11/2026, "PROGRESSIONE DELLE OPERAZIONI", B): the CTE search as the requests it really makes. The ref keeps the
+  // steps in order between the awaits; the state shows them.
+  const [search, setSearch] = useState<readonly OperationStep[] | null>(null);
+  const searchRef = useRef<readonly OperationStep[]>([]);
+  const moveSearch = (update: (steps: readonly OperationStep[]) => readonly OperationStep[]) => { searchRef.current = update(searchRef.current); setSearch(searchRef.current); };
   const pickCte = async (archiveId: string) => {
     if (!quote || pending) return;
     const anchor = (quote.candidates ?? []).find((item) => item.archiveId === archiveId) ?? null;
     setPending("offers"); setError(undefined); setProposal(null);
-    try { await compareWith(quote.bill, { context: quote.context, candidates: quote.candidates ?? [], unlisted: quote.unlisted, canAuthorizeCte: quote.canAuthorizeCte, canRunTechnicalDerogation: quote.canRunTechnicalDerogation }, anchor); } finally { setPending(undefined); }
+    moveSearch(() => startStep(newSteps([{ key: "compare", label: anchor ? `Calcolo del confronto economico con ${anchor.supplier} · ${anchor.offer.name || anchor.offer.code}` : "Calcolo del confronto economico" }]), "compare", Date.now()));
+    try {
+      const failure = await compareWith(quote.bill, { context: quote.context, candidates: quote.candidates ?? [], unlisted: quote.unlisted, canAuthorizeCte: quote.canAuthorizeCte, canRunTechnicalDerogation: quote.canRunTechnicalDerogation }, anchor);
+      moveSearch((steps) => endStep(steps, "compare", failure ? "failed" : anchor ? "done" : "skipped", Date.now(), failure ?? (anchor ? undefined : "nessuna CTE selezionata")));
+    } finally { setPending(undefined); }
   };
 
-  const loadOffers = async (billId: string) => {
+  // `continued`: the confirmation and the approval were just done by confirm(); otherwise the bill was already approved.
+  const loadOffers = async (billId: string, continued = false) => {
     setPending("offers"); setError(undefined); setQuote(null); setProposal(null); setTechnical(null); setStep("offers");
+    if (!continued) moveSearch(() => newSteps(CTE_SEARCH_STEPS).map((step) => step.key === "confirm" || step.key === "approve" ? { ...step, status: "skipped" as const, detail: "bolletta già approvata" } : step));
+    moveSearch((steps) => startStep(steps, "cte", Date.now()));
     try {
       const bill = (await requestJson<{ readonly document: BillDocumentModel }>(`/api/bills/${encodeURIComponent(billId)}?view=approved`)).document;
       const prepared = await requestJson<Prepared>(`/api/simulation/context?billId=${encodeURIComponent(billId)}&taxTreatment=EXCLUDED`);
+      moveSearch((steps) => endStep(steps, "cte", "done", Date.now(), cteCountText(prepared.candidates)));
       // A CTE authorized for this bill can anchor the comparison when no other CTE fits.
       const ready = (item: Candidate) => item.calculationReadiness === "READY" && Boolean(item.cteVersionId);
       const anchor = prepared.candidates.find((item) => item.finalStatus === "ELIGIBLE" && ready(item)) ?? prepared.candidates.find((item) => item.finalStatus === "ELIGIBLE_BY_OVERRIDE" && item.eligibilityOverrideId && ready(item));
-      await compareWith(bill, prepared, anchor ?? null);
-    } catch (cause) { setError(cause instanceof Error && cause.message.startsWith("Dalla bolletta") ? cause.message : message(cause)); } finally { setPending(undefined); }
+      if (!anchor) moveSearch((steps) => endStep(steps, "compare", "skipped", Date.now(), "nessuna CTE utilizzabile: calcolo non eseguito"));
+      else moveSearch((steps) => startStep(steps, "compare", Date.now()));
+      const failure = await compareWith(bill, prepared, anchor ?? null);
+      if (anchor) moveSearch((steps) => endStep(steps, "compare", failure ? "failed" : "done", Date.now(), failure ?? undefined));
+    } catch (cause) {
+      const text = cause instanceof Error && cause.message.startsWith("Dalla bolletta") ? cause.message : message(cause);
+      setError(text); moveSearch((steps) => failRunning(steps, Date.now(), text));
+    } finally { setPending(undefined); }
   };
 
   // Tony (14/11/2026): the result is shown on its own, marked, and never stored: no offer, comparison or proposal uses it.
@@ -1230,13 +1256,16 @@ export default function QuickQuoteFlow({ readonly, showExcluded = false }: { rea
   const [analysisOfDraft, setAnalysisOfDraft] = useState<string | null>(null);
   const [discarding, setDiscarding] = useState<"confirm" | "running" | null>(null);
   const analysisBusy = useCallback((busy: boolean) => setPending((value) => busy ? "upload" : value === "upload" ? undefined : value), []);
-  const analysisRead = useCallback((document: BillDocumentModel, analysisId: string) => {
+  const [analysisSummary, setAnalysisSummary] = useState<AnalysisSummary | null>(null);
+  const analysisRead = useCallback((document: BillDocumentModel, analysisId: string, summary: AnalysisSummary) => {
     // The upload is over: the reading opens ready to be confirmed (the analysis card closes with it).
     setPending((value) => value === "upload" ? undefined : value);
     setError(undefined);
     setDraft(document);
     startReview(document);
     setAnalysisOfDraft(analysisId);
+    setAnalysisSummary(summary);
+    setSearch(null);
     setStep("review");
   // startReview only reads the bill it is given.
   }, []);
@@ -1261,6 +1290,7 @@ export default function QuickQuoteFlow({ readonly, showExcluded = false }: { rea
   const analystRetry = (bill: BillDocumentModel, offerOnly = false) => bill.printedVoltageMismatch || bill.chargeLinesUnread || offerOnly || bill.structuredBill?.analystExtractionStatus === "FAILED" ? <div className="warning-text" role="status">
     <p>{bill.printedVoltageMismatch ? `La bolletta è stampata in ${VOLTAGE_NAME[bill.printedVoltageMismatch.printed]} ma è stata letta in ${bill.printedVoltageMismatch.read ? VOLTAGE_NAME[bill.printedVoltageMismatch.read] ?? bill.printedVoltageMismatch.read : "tensione non indicata"}: perdite di rete, rete e oneri sarebbero sbagliati. Rileggila dal PDF già caricato e conferma i dati.` : "Le voci di spesa dello scontrino di questa bolletta non sono state lette, quindi il confronto con la bolletta non si può fare. Rileggile dal PDF già caricato."}</p>
     <button className="button primary" type="button" onClick={() => void rereadAnalyst(bill.id)} disabled={readonly || Boolean(pending)}>{pending === "reread" ? "Lettura delle voci in corso…" : "Rileggi le voci della bolletta"}</button>
+    {pending === "reread" ? <ActivityIndicator label="Nuova lettura delle voci dal PDF in corso" /> : null}
   </div> : null;
   // Tony (13/11/2026, "rilettura bollette approvate", soluzione A): a bill whose charge lines were read, approved too, can be read
   // again with the same "reread-analyst" operation (server checks unchanged). The reading becomes a new version to verify; the
@@ -1271,6 +1301,7 @@ export default function QuickQuoteFlow({ readonly, showExcluded = false }: { rea
     <summary>Rileggi le voci della bolletta</summary>
     <p className="muted">{bill.currentApprovedVersionId ? "La nuova lettura AI del PDF già caricato crea una nuova versione da verificare: la versione approvata, lo storico e le simulazioni già fatte restano invariati finché non confermi i nuovi dati." : "La nuova lettura AI del PDF già caricato crea una nuova versione da verificare."} Le correzioni manuali fatte in precedenza non vengono riportate: ricontrolla tutti i dati prima di confermare.</p>
     <button className="button secondary" type="button" onClick={() => void rereadAnalyst(bill.id)} disabled={Boolean(pending)}>{pending === "reread" ? "Lettura delle voci in corso…" : "Rileggi le voci della bolletta"}</button>
+    {pending === "reread" ? <ActivityIndicator label="Nuova lettura delle voci dal PDF in corso" /> : null}
   </details></>;
 
   // Tony (19/11/2026): the fattura di dettaglio issued as a separate PDF is linked to the sintetica already loaded. The server
@@ -1320,12 +1351,14 @@ export default function QuickQuoteFlow({ readonly, showExcluded = false }: { rea
     const missing = FIELDS.filter((field) => submission.missing.includes(field.name));
     if (missing.length) { setCorrectionOpen(true); setError(`Completa: ${missing.map((field) => field.label).join(", ")}.`); return; }
     setPending("confirm"); setError(undefined);
+    moveSearch(() => startStep(newSteps(CTE_SEARCH_STEPS), "confirm", Date.now()));
     try {
       let current = draft;
       const machineValue = (name: string) => toMachine(name, values[name] ?? "", draft.fields[name]?.value);
       // An already approved bill with nothing corrected goes straight to the CTE search.
       if (draft.currentApprovedVersionId && draft.currentApprovedVersionId === draft.currentVersionId && FIELDS.every((field) => machineValue(field.name) === (draft.fields[field.name]?.value ?? ""))) {
-        setDraft(null); setPending(undefined); await loadOffers(draft.id); return;
+        moveSearch((steps) => endStep(endStep(steps, "confirm", "skipped", Date.now(), "dati già confermati"), "approve", "skipped", Date.now(), "bolletta già approvata"));
+        setDraft(null); setPending(undefined); await loadOffers(draft.id, true); return;
       }
       const unchanged = submission.confirm;
       if (unchanged.length) current = (await requestJson<{ readonly document: BillDocumentModel }>(`/api/bills/${encodeURIComponent(current.id)}`, { method: "PATCH", body: JSON.stringify({ operation: "confirm-fields", versionId: current.currentVersionId, fields: unchanged }) })).document;
@@ -1333,11 +1366,14 @@ export default function QuickQuoteFlow({ readonly, showExcluded = false }: { rea
         const field = { name };
         current = (await requestJson<{ readonly document: BillDocumentModel }>(`/api/bills/${encodeURIComponent(current.id)}`, { method: "PATCH", body: JSON.stringify({ operation: "correct", field: field.name, value: values[field.name].trim(), versionId: current.currentVersionId }) })).document;
       }
+      const corrected = submission.correct.length;
+      moveSearch((steps) => startStep(endStep(steps, "confirm", "done", Date.now(), corrected ? `${corrected === 1 ? "1 correzione salvata" : `${corrected} correzioni salvate`}` : undefined), "approve", Date.now()));
       current = (await requestJson<{ readonly document: BillDocumentModel }>(`/api/bills/${encodeURIComponent(current.id)}`, { method: "PATCH", body: JSON.stringify({ operation: "approve", versionId: current.currentVersionId }) })).document;
+      moveSearch((steps) => endStep(steps, "approve", "done", Date.now()));
       setDraft(null); void loadArchive();
       setPending(undefined);
-      await loadOffers(current.id);
-    } catch (cause) { setError(message(cause)); setPending(undefined); }
+      await loadOffers(current.id, true);
+    } catch (cause) { setError(message(cause)); moveSearch((steps) => failRunning(steps, Date.now(), message(cause))); setPending(undefined); }
   };
 
   // Tony (10/11/2026): "Dati letti" shows the bill data to every user who may open the bill; the full reading stays behind
@@ -1369,7 +1405,7 @@ export default function QuickQuoteFlow({ readonly, showExcluded = false }: { rea
     } catch (cause) { setError(message(cause)); } finally { setPending(undefined); }
   };
 
-  const restart = () => { setStep("bill"); setDraft(null); setQuote(null); setSelectedId(null); setProposal(null); setError(undefined); setAnalysisOfDraft(null); setDiscarding(null); };
+  const restart = () => { setStep("bill"); setDraft(null); setQuote(null); setSelectedId(null); setProposal(null); setError(undefined); setAnalysisOfDraft(null); setAnalysisSummary(null); setSearch(null); setDiscarding(null); };
   const discardAnalysis = async () => {
     if (!analysisOfDraft || pending) return;
     setDiscarding("running"); setError(undefined);
@@ -1409,6 +1445,7 @@ export default function QuickQuoteFlow({ readonly, showExcluded = false }: { rea
     {step === "review" && draft ? <section className="ui-card quote-review">
       <div className="quote-review-head"><div><h3>Dati letti dalla bolletta</h3><p className="muted">Usati per trovare le CTE adatte. Controllali e prosegui.</p></div></div>
       {/* Tony (24/11/2026, "DIREZIONE GRAFICA DEFINITIVA"): the essentials at a glance, as read; the full reading stays below. */}
+      {analysisOfDraft && analysisSummary ? <AnalysisDone summary={analysisSummary} openChecks={readBill?.structuredBill?.readingChecks} /> : null}
       <ReadSummary values={values} vector={draft.resolvedVector} />
       {analystRetry(draft)}
       {/* Tony (5/11/2026): what does not add up after the reading, or is not printed, is said here instead of a wrong number. */}
@@ -1428,9 +1465,12 @@ export default function QuickQuoteFlow({ readonly, showExcluded = false }: { rea
         {billDetailLink(draft)}
       </div>
       {/* The one action of this step stays in view at the bottom of the screen while the agent reads. */}
+      {search && step === "review" && (pending === "confirm" || search.some((item) => item.status === "failed")) ? <OperationSteps title={pending === "confirm" ? "Ricerca delle CTE in corso" : "Ricerca delle CTE non completata"} steps={search} /> : null}
       <div className="quote-review-actions"><button className="button primary" type="button" onClick={() => void confirm()} disabled={readonly || Boolean(pending)}>{pending === "confirm" ? "Ricerca in corso" : "Cerca le CTE utilizzabili"}</button></div>
     </section> : null}
-    {step === "offers" ? pending === "offers" ? <LoadingState label="Calcolo delle offerte per questa bolletta" /> : quote ? <>
+    {step === "offers" && search && (pending === "offers" || search.some((item) => item.status === "failed")) ? <OperationSteps title={pending === "offers" ? "Ricerca delle CTE in corso" : "Ricerca delle CTE non completata"} steps={search} /> : null}
+    {step === "offers" && pending !== "offers" && search && finished(search) ? <p className="op-steps-done" role="status"><span aria-hidden="true">✓</span> Ricerca completata in {durationText(totalMs(search))}{search.find((item) => item.key === "cte")?.detail ? `: ${search.find((item) => item.key === "cte")?.detail}` : ""}.</p> : null}
+    {step === "offers" ? pending === "offers" ? search ? null : <LoadingState label="Calcolo delle offerte per questa bolletta" /> : quote ? <>
       {analystRetry(quote.bill, quote.offers.length > 0 && quote.offers.every((item) => item.receipt.status !== "COMPLETE"))}
       <BillSummary context={quote.context} bill={quote.bill} />
       <section className="ui-card"><h3>Offerte utilizzabili per {quote.context.vector === "EE" ? "questa fornitura di luce" : "questa fornitura di gas"}</h3>
@@ -1464,9 +1504,17 @@ export default function QuickQuoteFlow({ readonly, showExcluded = false }: { rea
         {quote.failure ? <CtePicker quote={quote} onPick={(archiveId) => void pickCte(archiveId)} disabled={readonly || Boolean(pending)} /> : null}
         {quote.offers.length || quote.failure ? null : <><EmptyState title="Nessuna offerta utilizzabile" detail="Nessuna CTE a te assegnata è adatta a questa bolletta. Chiedi all'amministratore di assegnartene una." /><NoOfferReasons quote={quote} onAuthorize={readonly ? undefined : authorizeCte} onTechnical={readonly ? undefined : (archiveId) => void runTechnical(archiveId)} /></>}
       </section>
-      {pending === "technical" ? <LoadingState label="Simulazione tecnica in corso" /> : technical ? <TechnicalSimulation result={technical} context={quote.context} bill={quote.bill} /> : null}
-      {selected ? <><Receipt offer={selected} today={today} business={quote.context.customerType === "NON_RESIDENTIAL"} context={quote.context} bill={quote.bill} onPresentation={keepPresentation} showExcluded={showExcluded} /><div className="button-row"><button className="button primary" type="button" onClick={() => void saveProposal()} disabled={readonly || Boolean(pending) || (selected.receipt.status === "COMPLETE" && !savingDetermined(selected.receipt))}>{pending === "proposal" ? "Preparazione" : "Scarica la proposta in PDF"}</button>{selected.receipt.status === "COMPLETE" && !savingDetermined(selected.receipt) ? <span className="muted" role="status">Proposta non disponibile: il risparmio non è determinabile (mancano: {missingComponents(selected.receipt).join("; ")}).</span> : null}{proposal ? <span className="muted" role="status">Proposta salvata in Proposte.</span> : null}</div></> : null}
+      {pending === "technical" ? <ActivityIndicator label="Simulazione tecnica in corso" /> : technical ? <TechnicalSimulation result={technical} context={quote.context} bill={quote.bill} /> : null}
+      {selected ? <><Receipt offer={selected} today={today} business={quote.context.customerType === "NON_RESIDENTIAL"} context={quote.context} bill={quote.bill} onPresentation={keepPresentation} showExcluded={showExcluded} /><div className="button-row"><button className="button primary" type="button" onClick={() => void saveProposal()} disabled={readonly || Boolean(pending) || (selected.receipt.status === "COMPLETE" && !savingDetermined(selected.receipt))}>{pending === "proposal" ? "Preparazione" : "Scarica la proposta in PDF"}</button>{selected.receipt.status === "COMPLETE" && !savingDetermined(selected.receipt) ? <span className="muted" role="status">Proposta non disponibile: il risparmio non è determinabile (mancano: {missingComponents(selected.receipt).join("; ")}).</span> : null}{proposal ? <span className="muted" role="status">Proposta salvata in Proposte.</span> : null}</div>{pending === "proposal" ? <ActivityIndicator label="Preparazione della proposta e del PDF in corso" /> : null}</> : null}
     </> : null : null}
     {error ? <ErrorState message={error} /> : null}
   </div>;
+}
+
+// Tony (24/11/2026, "PROGRESSIONE DELLE OPERAZIONI", opzione 1): the analysis that just ended, as far as it is known: its
+// time, measured by the browser, and the reading checks still open, only when the reading returned them. Whether the reader
+// read the bill a second time is not sent to the screen, so it is not said.
+function AnalysisDone({ summary, openChecks }: { readonly summary: AnalysisSummary; readonly openChecks: readonly string[] | undefined }): ReactNode {
+  const checks = openChecks === undefined ? "" : openChecks.length === 0 ? " Estrazione e controlli di lettura: nessun controllo aperto." : ` Estrazione e controlli di lettura: ${openChecks.length === 1 ? "1 controllo aperto" : `${openChecks.length} controlli aperti`}, elencati sotto.`;
+  return <p className="op-steps-done" role="status"><span aria-hidden="true">✓</span> Analisi completata in {durationText(summary.totalMs)}.{checks}</p>;
 }
