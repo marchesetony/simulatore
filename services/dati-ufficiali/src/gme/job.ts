@@ -49,9 +49,11 @@ export interface MonthResult {
   /**
    * REPLACEMENT_READY: legacy month with a computed monthly value, documents read and checked, replacement possible but not
    * written (test mode, or replacement not enabled); REPLACED: new documented version written for every company;
-   * REPLACEMENT_BLOCKED: documents missing, unreadable or inconsistent with the archive, nothing written.
+   * REPLACEMENT_BLOCKED: documents missing, unreadable or inconsistent with the archive, or a company could not be prepared:
+   * nothing approved; REPLACEMENT_PARTIAL: an approval failed after its retry, some companies already on the documented version,
+   * taken up by the next run.
    */
-  readonly state: "PUBLISHED" | "UNCHANGED" | "READY_DRY_RUN" | "LEGACY_AUDIT" | "INCOMPLETE" | "FAILED" | "REPLACEMENT_READY" | "REPLACED" | "REPLACEMENT_BLOCKED";
+  readonly state: "PUBLISHED" | "UNCHANGED" | "READY_DRY_RUN" | "LEGACY_AUDIT" | "INCOMPLETE" | "FAILED" | "REPLACEMENT_READY" | "REPLACED" | "REPLACEMENT_BLOCKED" | "REPLACEMENT_PARTIAL";
   readonly bands: { readonly f1: number; readonly f2: number; readonly f3: number; readonly hours: readonly number[]; readonly sha256: string; readonly url: string } | null;
   readonly monthly: { readonly value: number; readonly sha256: string; readonly url: string; readonly newsletter: string | null } | null;
   readonly tenants: readonly { readonly tenantId: string; readonly outcome: string; readonly archiveId?: string; readonly version?: string; readonly archived?: ArchivedValues; readonly replaces?: ReplacedVersion | null; readonly differences?: readonly string[] }[];
@@ -157,7 +159,7 @@ async function acquireNewsletter(fetcher: OfficialFetch, recorded: readonly Fetc
 }
 
 /** One new version of the month for one company, linked to the latest one; reused when the same documents are already there. */
-async function publishTenant(repository: MarketArchiveRepository, tenantId: string, month: string, values: { f1?: number; f2?: number; f3?: number; monthly?: number }, components: ServiceComponents, now: string, replaceDerived = false): Promise<{ outcome: "PUBLISHED" | "UNCHANGED" | "LEGACY_AUDIT" | "REPLACED"; archiveId?: string; version?: string; replaces?: ReplacedVersion | null }> {
+async function publishTenant(repository: MarketArchiveRepository, tenantId: string, month: string, values: { f1?: number; f2?: number; f3?: number; monthly?: number }, components: ServiceComponents, now: string, replaceDerived = false, approve = true): Promise<{ outcome: "PUBLISHED" | "UNCHANGED" | "LEGACY_AUDIT" | "REPLACED" | "PREPARED"; archiveId?: string; version?: string; replaces?: ReplacedVersion | null }> {
   const sameMonth = (await repository.list(tenantId)).filter((record) => record.vector === "EE" && record.index === "PUN" && record.month === month);
   const current = currentApproved(sameMonth, month);
   const replacing = Boolean(current && !writtenByService(current));
@@ -168,6 +170,10 @@ async function publishTenant(repository: MarketArchiveRepository, tenantId: stri
   const done = sameMonth.find((record) => sameComponents((record.record as ServicePunRecord).officialComponents, components));
   if (done) {
     if (done.status === "APPROVED") return { outcome: "UNCHANGED", archiveId: done.archiveId, version: done.record.version };
+    // A replacement prepared by an interrupted run is taken up again, never created twice.
+    if (!approve && done.status !== "REJECTED") return { outcome: "PREPARED", archiveId: done.archiveId, version: done.record.version, replaces: (done.record as unknown as { replaces?: ReplacedVersion }).replaces ?? replaces };
+    // A documented version the producer rejected is never recreated by a replacement.
+    if (replaceDerived && done.status === "REJECTED") throw new Error("REPLACEMENT_REJECTED_BY_PRODUCER");
     if (done.status !== "REJECTED") {
       await approveMarketArchive(repository, tenantId, done.archiveId, SERVICE_ACTOR, decisionId, now);
       return { outcome: "PUBLISHED", archiveId: done.archiveId, version: done.record.version };
@@ -189,6 +195,7 @@ async function publishTenant(repository: MarketArchiveRepository, tenantId: stri
     effectiveFrom: `${month}-01`, effectiveTo: nextMonthStart(month),
   } as unknown as ElectricityMonthlyPunRecord;
   const created = await createMarketArchive(repository, { tenantId, record, archiveId: recordId, now, actor: SERVICE_ACTOR });
+  if (!approve) return { outcome: "PREPARED", archiveId: created.archiveId, version: String(version), replaces };
   await approveMarketArchive(repository, tenantId, created.archiveId, SERVICE_ACTOR, decisionId, now);
   return { outcome: replaces ? "REPLACED" : "PUBLISHED", archiveId: created.archiveId, version: String(version), replaces };
 }
@@ -199,7 +206,13 @@ export async function runGmeJob(input: { readonly store: ServiceStore; readonly 
    * documented by the GME PDFs, for the producer and every enabled company, keeping the old one. Off unless the service is
    * configured for it AND publishing; otherwise legacy months with a computed monthly value are read, checked and reported only.
    */
-  readonly replaceDerived?: boolean }): Promise<readonly MonthResult[]> {
+  readonly replaceDerived?: boolean;
+  /**
+   * Tony (24/11/2026, prima dell'attivazione definitiva): the replacement authorised on its own, without the general publication.
+   * "ALL" or a list of months; it writes only the replacement of computed monthly values (and conserves their documents), even
+   * in test mode. Anything else of the service stays as the mode says.
+   */
+  readonly replaceMonths?: "ALL" | readonly string[] | null }): Promise<readonly MonthResult[]> {
   const market = input.store.market();
   const months = input.months ?? operationalMarketMonths(romeToday(new Date(input.now)));
   const window = operationalMarketMonths(romeToday(new Date(input.now)));
@@ -213,19 +226,26 @@ export async function runGmeJob(input: { readonly store: ServiceStore; readonly 
     const punop = window.includes(month) ? await acquirePunop({ store: input.store, fetcher: input.fetcher, recorded: input.recorded, month, mode: input.mode, pageHtml }).catch((error): PunopResult => ({ seriesId: GME_PUNOP_300_SERIES_ID, meaning: GME_PUNOP_300_MEANING, value: null, unit: "EUR_PER_MWH", label: null, url: null, sha256: null, conserved: null, errors: [`GME_PUNOP_FAILED:${error instanceof Error ? error.message : "errore"}`] })) : undefined;
     try {
       if (!window.includes(month)) { results.push({ month, state: "FAILED", bands: null, monthly: null, tenants: [], errors: ["OFFICIAL_PUBLISH_OUTSIDE_WINDOW"] }); continue; }
-      const currents = await Promise.all(input.tenants.map(async (tenantId) => ({ tenantId, current: currentApproved(await market.list(tenantId), month) })));
+      const currents = await Promise.all(input.tenants.map(async (tenantId) => {
+        const list = (await market.list(tenantId)).filter((record) => record.vector === "EE" && record.index === "PUN" && record.month === month);
+        // A version prepared by the service and not yet approved: an interrupted replacement to take up.
+        return { tenantId, current: currentApproved(list, month), pending: list.some((record) => record.status !== "APPROVED" && record.status !== "REJECTED" && writtenByService(record)) };
+      }));
       const serviceTargets = currents.filter((item) => !item.current || writtenByService(item.current));
       // A month with a version approved by the earlier automation in any company is left to the audit as a whole, so the
       // companies never end up with different sources for the same month (Tony 21/11/2026, decisione 4).
       const legacy = currents.some((item) => item.current && !writtenByService(item.current));
       const legacyTenants = () => currents.map((item) => ({ tenantId: item.tenantId, outcome: "LEGACY_AUDIT", archiveId: item.current?.archiveId, version: item.current?.record.version, ...(item.current ? { archived: archivedValues(item.current) } : {}) }));
       // A legacy month is replaceable only when no company holds a legacy version with a documented monthly value.
-      const replaceable = legacy && currents.every((item) => !item.current || writtenByService(item.current) || derivedLegacy(item.current));
-      const replace = replaceable && input.replaceDerived === true && input.mode === "PUBLISH";
+      const authorised = input.replaceMonths === "ALL" || (Array.isArray(input.replaceMonths) && input.replaceMonths.includes(month)) || (input.replaceDerived === true && input.mode === "PUBLISH");
+      // Partly replaced month (some companies approved, others prepared): resumed only by an authorised replacement.
+      const resume = !legacy && authorised && currents.some((item) => item.pending);
+      const replaceable = resume || (legacy && currents.every((item) => !item.current || writtenByService(item.current) || derivedLegacy(item.current)));
+      const replace = replaceable && authorised;
       // Other legacy months of the weekly audit are compared there (same documents): not read twice.
       if (legacy && !replaceable && input.auditedMonths?.includes(month)) { results.push({ month, state: "LEGACY_AUDIT", bands: null, monthly: null, tenants: legacyTenants(), errors: [] }); continue; }
       // Documents of a legacy month are read and checked; conserved only when the replacement is actually written.
-      const conserve = input.mode === "PUBLISH" && (!legacy || replace);
+      const conserve = (input.mode === "PUBLISH" && !legacy) || replace;
       const existing = serviceTargets.map((item) => (item.current?.record as ServicePunRecord | undefined)?.officialComponents).find(Boolean);
       const conserved = await listConserved(input.store, undefined, month);
       const reuse = (kind: ConservedDocument["kind"], sha?: string) => sha ? conserved.find((doc) => doc.kind === kind && doc.sha256 === sha) : undefined;
@@ -353,21 +373,44 @@ async function replaceMonth(args: {
   if (!replace) return { month, state: "REPLACEMENT_READY", bands, monthly, tenants: tenants.map(({ item }) => describe(item, "WOULD_REPLACE")), errors };
   const components: ServiceComponents = { bands: args.bandsComponent!, monthly: args.monthlyComponent! };
   const values = { f1: bands!.f1, f2: bands!.f2, f3: bands!.f3, monthly: monthly!.value };
+  // Two phases (Tony 24/11/2026): 1) the documented version is prepared, not approved, for every company: the engine reads only
+  // approved versions, so a failure here changes nothing in use; 2) only when all are prepared, each is approved, with one
+  // immediate retry. An interrupted run is taken up by the next one: prepared versions are found by their documents and approved,
+  // approved ones are left as they are; nothing is created twice.
   const out: MonthResult["tenants"][number][] = [];
   const failures: string[] = [];
+  const prepared: { item: (typeof currents)[number]; archiveId: string; version: string; replaces: ReplacedVersion | null; outcome: string }[] = [];
   for (const { item } of tenants) {
     try {
-      const written = await publishTenant(market, item.tenantId, month, values, components, input.now, true);
-      out.push({ ...describe(item, written.outcome), archiveId: written.archiveId, version: written.version, replaces: written.replaces ?? null });
-    } catch (error) { const message = error instanceof Error ? error.message : "PUBLISH_FAILED"; failures.push(`${item.tenantId}:${message}`); out.push(describe(item, `FAILED:${message}`)); }
+      const done = await publishTenant(market, item.tenantId, month, values, components, input.now, true, false);
+      prepared.push({ item, archiveId: done.archiveId!, version: done.version!, replaces: done.replaces ?? null, outcome: done.outcome });
+    } catch (error) { failures.push(`${item.tenantId}:${error instanceof Error ? error.message : "PREPARE_FAILED"}`); }
+  }
+  if (failures.length) {
+    errors.push(...failures);
+    const reason = `sostituzione non eseguita, nessuna versione approvata: ${failures.join("; ")}`;
+    const alertId = await raiseAnomaly(input.store, "GME_PUN_MONTH", month, reason, input.now);
+    await recordCheck(input.store, { code: "GME_PUN_MONTH", period: month, at: input.now, outcome: "FAILED", detail: reason, nextCheckAt: input.nextCheckAt, alertId });
+    return { month, state: "REPLACEMENT_BLOCKED", bands, monthly, tenants: currents.map((item) => { const entry = prepared.find((p) => p.item === item); return entry ? { ...describe(item, entry.outcome === "UNCHANGED" ? "UNCHANGED" : "PREPARED_NOT_APPROVED"), replaces: entry.replaces } : describe(item, "REPLACEMENT_BLOCKED"); }), errors };
+  }
+  for (const entry of prepared) {
+    if (entry.outcome === "UNCHANGED") { out.push({ ...describe(entry.item, "UNCHANGED"), archiveId: entry.archiveId, version: entry.version, replaces: entry.replaces }); continue; }
+    const decisionId = `svc-pun-${month}-${componentsKey(components)}-${entry.item.tenantId}`;
+    let failure: string | null = null;
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      try { await approveMarketArchive(market, entry.item.tenantId, entry.archiveId, SERVICE_ACTOR, decisionId, input.now); failure = null; break; }
+      catch (error) { failure = error instanceof Error ? error.message : "APPROVE_FAILED"; if (failure === "MARKET_RECORD_ALREADY_APPROVED") { failure = null; break; } }
+    }
+    if (failure) { failures.push(`${entry.item.tenantId}:${failure}`); out.push({ ...describe(entry.item, "PREPARED_NOT_APPROVED"), replaces: entry.replaces }); }
+    else out.push({ ...describe(entry.item, entry.replaces ? "REPLACED" : "PUBLISHED"), archiveId: entry.archiveId, version: entry.version, replaces: entry.replaces });
   }
   errors.push(...failures);
   const detail = `PUN mensile documentato ${monthly!.value} €/MWh (Newsletter GME n. ${monthly!.newsletter ?? "?"}, sha256 ${monthly!.sha256}); F1 ${bands!.f1} · F2 ${bands!.f2} · F3 ${bands!.f3} €/MWh (PDF fasce, sha256 ${bands!.sha256}); versioni sostituite conservate: ${out.map((entry) => `${entry.tenantId} ${entry.replaces ? `${entry.replaces.archiveId} v${entry.replaces.version} → v${entry.version}` : `nuova v${entry.version}`}`).join("; ")}`;
   let alertId: string | null = null;
-  if (failures.length) alertId = await raiseAnomaly(input.store, "GME_PUN_MONTH", month, `sostituzione incompleta: ${failures.join("; ")}`, input.now);
+  if (failures.length) alertId = await raiseAnomaly(input.store, "GME_PUN_MONTH", month, `sostituzione incompleta, ripresa alla prossima esecuzione: ${failures.join("; ")}`, input.now);
   else await resolveAnomaly(input.store, "GME_PUN_MONTH", month, "PUN mensile calcolato sostituito dalla versione documentata", input.now);
   await recordCheck(input.store, { code: "GME_PUN_MONTH", period: month, at: input.now, outcome: failures.length ? "FAILED" : "ACQUIRED", detail, nextCheckAt: input.nextCheckAt, alertId });
-  return { month, state: failures.length ? "REPLACEMENT_BLOCKED" : "REPLACED", bands, monthly, tenants: out, errors };
+  return { month, state: failures.length ? "REPLACEMENT_PARTIAL" : "REPLACED", bands, monthly, tenants: out, errors };
 }
 
 /**

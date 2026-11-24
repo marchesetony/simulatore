@@ -33,6 +33,11 @@ export interface ServiceEnvironment extends ServiceDatabaseEnvironment {
   readonly OFFICIAL_DATA_TENANT_IDS?: string;
   /** Tony 24/11/2026: "enabled" lets the GME job replace computed monthly values with documented versions; only with publish. */
   readonly OFFICIAL_DATA_REPLACE_DERIVED_PUN?: string;
+  /**
+   * Tony 24/11/2026: authorises only the replacement of computed monthly values, without the general publication: "all" or a
+   * comma-separated list of months (2026-05,2026-06). Anything else is refused and nothing is replaced.
+   */
+  readonly OFFICIAL_DATA_REPLACE_DERIVED_PUN_ONLY?: string;
 }
 export interface HandlerDependencies { readonly store?: ServiceStore; readonly fetchImpl?: typeof fetch; readonly now?: () => string; readonly sleep?: (ms: number) => Promise<void> }
 
@@ -43,6 +48,15 @@ export function authorized(request: Request, secret: string | undefined): boolea
   if (!secret || secret.trim().length < 16) return false;
   const header = request.headers.get("authorization") ?? "";
   return safeEqual(header, `Bearer ${secret.trim()}`);
+}
+
+export function replaceMonthsOf(env: ServiceEnvironment): { readonly months: "ALL" | readonly string[] | null; readonly label: string } {
+  const raw = (env.OFFICIAL_DATA_REPLACE_DERIVED_PUN_ONLY ?? "").trim();
+  if (!raw) return { months: null, label: "NOT_ENABLED" };
+  if (raw === "all") return { months: "ALL", label: "ENABLED_REPLACEMENT_ONLY" };
+  const months = raw.split(",").map((value) => value.trim()).filter(Boolean);
+  if (!months.length || months.some((value) => !/^\d{4}-(0[1-9]|1[0-2])$/.test(value))) return { months: null, label: "INVALID_CONFIGURATION" };
+  return { months, label: `ENABLED_REPLACEMENT_ONLY:${months.join(",")}` };
 }
 
 export function configuredTenants(env: ServiceEnvironment): readonly string[] {
@@ -82,9 +96,9 @@ async function runJob(job: JobName, mode: ServiceMode, env: ServiceEnvironment, 
     const clientTenants = await officialDataTenants(() => configuredTenants(env), companies);
     const lease = await withJobLease(store, job, runId, now, async () => {
       if (job === "gme") {
-        const months = await runGmeJob({ store, fetcher: official.fetch, recorded: official.recorded, tenants: [PLATFORM_TENANT, ...clientTenants], now, mode, nextCheckAt, auditedMonths: AUDIT_MONTHS, replaceDerived: env.OFFICIAL_DATA_REPLACE_DERIVED_PUN === "enabled" });
+        const months = await runGmeJob({ store, fetcher: official.fetch, recorded: official.recorded, tenants: [PLATFORM_TENANT, ...clientTenants], now, mode, nextCheckAt, auditedMonths: AUDIT_MONTHS, replaceDerived: env.OFFICIAL_DATA_REPLACE_DERIVED_PUN === "enabled", replaceMonths: replaceMonthsOf(env).months });
         const sources = await gmeSourcePages(official.fetch, official.recorded);
-        return { months, sources, replacement: mode === "PUBLISH" && env.OFFICIAL_DATA_REPLACE_DERIVED_PUN === "enabled" ? "ENABLED" : "NOT_ENABLED", errors: [...months.flatMap((month) => [...month.errors, ...(month.punop?.errors ?? [])].filter((error) => !/NOT_PUBLISHED_YET/.test(error)).map((error) => `${month.month}:${error}`)), ...sources.filter((page) => !page.reachable).map((page) => `GME_SOURCE_PAGE_UNREACHABLE:${page.id}`)] };
+        return { months, sources, replacement: mode === "PUBLISH" && env.OFFICIAL_DATA_REPLACE_DERIVED_PUN === "enabled" ? "ENABLED" : replaceMonthsOf(env).label, errors: [...(replaceMonthsOf(env).label === "INVALID_CONFIGURATION" ? ["REPLACEMENT_CONFIGURATION_INVALID"] : []), ...months.flatMap((month) => [...month.errors, ...(month.punop?.errors ?? [])].filter((error) => !/NOT_PUBLISHED_YET/.test(error)).map((error) => `${month.month}:${error}`)), ...sources.filter((page) => !page.reachable).map((page) => `GME_SOURCE_PAGE_UNREACHABLE:${page.id}`)] };
       }
       if (job === "regulatory") {
         const result = await runRegulatoryJob({ store, fetcher: official.fetch, recorded: official.recorded, tenants: clientTenants, now, mode, nextCheckAt, runId, only: scope });

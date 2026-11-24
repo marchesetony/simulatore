@@ -415,4 +415,64 @@ const legacyBefore = Object.fromEntries(["2026-06", "2026-07", "2026-08", "2026-
   console.log("DERIVED_MONTHLY_REPLACEMENT_BLOCKED=PASS");
 }
 
+// 23. Tony (24/11/2026, prima dell'attivazione definitiva): the replacement authorised on its own. In test mode, with only
+// OFFICIAL_DATA_REPLACE_DERIVED_PUN_ONLY, the authorised months are replaced; everything else stays a dry run (no general publication).
+{
+  const derivedMay = archive("tenant_piattaforma", "gme-pun-2026-05", "2026-05", 1, "APPROVED", { monthly: rate((107.17 * 220 + 131.44 * 180 + 120.81 * 344) / 744), f1: rate(107.17), f2: rate(131.44), f3: rate(120.81) }, { sourceId: "GME_PREZZO_MEDIO_FASCE", name: "GME Prezzo medio per fasce (mensile)", url: BANDS_URL(BAND_FILES["2026-05"]), authority: "GME", sourceType: "OFFICIAL", sourceSha256: "8".repeat(64) });
+  const DRY = { ...ENV, OFFICIAL_DATA_SERVICE_MODE: undefined };
+  const backend = memoryBackend([...seed(), derivedMay]);
+  const { body } = await run("gme", backend, gmeSite(), { ...DRY, OFFICIAL_DATA_REPLACE_DERIVED_PUN_ONLY: "2026-05,2026-06" });
+  assert.equal(body.mode, "DRY_RUN"); assert.equal(body.replacement, "ENABLED_REPLACEMENT_ONLY:2026-05,2026-06");
+  assert.equal(body.months.find((m) => m.month === "2026-05").state, "REPLACED");
+  assert.equal(body.months.find((m) => m.month === "2026-06").state, "REPLACED");
+  assert.equal(body.months.find((m) => m.month === "2026-07").state, "REPLACEMENT_READY", "a month not authorised is not written");
+  assert.deepEqual(pun(backend, "tenant_piattaforma", "2026-05").map((item) => item.record.version), ["1", "2"]);
+  assert.deepEqual(pun(backend, "tenant_energia-priva", "2026-07").map((item) => item.record.version), ["2"]);
+  const archived = backend.writes.filter((write) => write.collection === "market-archives").map((write) => write.recordId);
+  assert.ok(archived.every((id) => /2026-0[56]/.test(id)), `only the authorised replacements are written: ${archived}`);
+  assert.ok(rows(backend, "official-service-documents").every((row) => /2026-0[56]/.test(row.payload.period)), "documents conserved only for the replaced months");
+  // Invalid value: nothing replaced, reported.
+  const invalid = memoryBackend([...seed(), derivedMay]);
+  const bad = await run("gme", invalid, gmeSite(), { ...DRY, OFFICIAL_DATA_REPLACE_DERIVED_PUN_ONLY: "maggio" });
+  assert.equal(bad.body.replacement, "INVALID_CONFIGURATION"); assert.ok(bad.body.errors.includes("REPLACEMENT_CONFIGURATION_INVALID"));
+  assert.ok(!invalid.writes.some((write) => write.collection === "market-archives"));
+  console.log("REPLACEMENT_AUTHORISED_WITHOUT_GENERAL_PUBLICATION=PASS");
+}
+
+// 24. Partial failure across companies: preparation fails → nothing approved anywhere; approval fails after its retry → the
+// next run takes it up, no version created twice.
+{
+  const derivedMay = archive("tenant_piattaforma", "gme-pun-2026-05", "2026-05", 1, "APPROVED", { monthly: rate((107.17 * 220 + 131.44 * 180 + 120.81 * 344) / 744), f1: rate(107.17), f2: rate(131.44), f3: rate(120.81) }, { sourceId: "GME_PREZZO_MEDIO_FASCE", name: "GME Prezzo medio per fasce (mensile)", url: BANDS_URL(BAND_FILES["2026-05"]), authority: "GME", sourceType: "OFFICIAL", sourceSha256: "8".repeat(64) });
+  const ONLY = { ...ENV, OFFICIAL_DATA_SERVICE_MODE: undefined, OFFICIAL_DATA_REPLACE_DERIVED_PUN_ONLY: "2026-05" };
+  const failing = (backend, rule) => { const write = backend.write.bind(backend); let armed = true; backend.write = async (collection, input, appendOnly) => { if (armed && collection === "market-archives" && rule(input)) throw new Error("DB_DOWN"); return write(collection, input, appendOnly); }; return { backend, disarm: () => { armed = false; } }; };
+  // a) creation fails for Energia Priva: the platform's version is prepared but not approved; the engine still reads v1.
+  {
+    const { backend, disarm } = failing(memoryBackend([...seed(), derivedMay]), (input) => input.tenantId === "tenant_energia-priva" && input.payload.status !== "APPROVED");
+    const first = await run("gme", backend, gmeSite(), ONLY);
+    assert.equal(first.body.months.find((m) => m.month === "2026-05").state, "REPLACEMENT_BLOCKED");
+    assert.ok(pun(backend, "tenant_piattaforma", "2026-05").filter((item) => item.status === "APPROVED").every((item) => item.record.version === "1"), "nothing approved");
+    disarm();
+    const second = await run("gme", backend, gmeSite(), ONLY, "2026-11-22T05:20:00.000Z");
+    assert.equal(second.body.months.find((m) => m.month === "2026-05").state, "REPLACED");
+    assert.deepEqual(pun(backend, "tenant_piattaforma", "2026-05").map((item) => [item.record.version, item.status]), [["1", "APPROVED"], ["2", "APPROVED"]], "prepared version taken up, not duplicated");
+    assert.deepEqual(pun(backend, "tenant_energia-priva", "2026-05").map((item) => [item.record.version, item.status]), [["1", "REJECTED"], ["2", "APPROVED"]]);
+  }
+  // b) approval fails twice for Energia Priva: partial, signalled; next run completes.
+  {
+    let left = 2;
+    const backend = memoryBackend([...seed(), derivedMay]); const write = backend.write.bind(backend);
+    backend.write = async (collection, input, appendOnly) => { if (collection === "market-archives" && input.tenantId === "tenant_energia-priva" && input.payload.status === "APPROVED" && left > 0) { left -= 1; throw new Error("DB_DOWN"); } return write(collection, input, appendOnly); };
+    const first = await run("gme", backend, gmeSite(), ONLY);
+    const may = first.body.months.find((m) => m.month === "2026-05");
+    assert.equal(may.state, "REPLACEMENT_PARTIAL");
+    assert.deepEqual(may.tenants.map((item) => item.outcome), ["REPLACED", "PREPARED_NOT_APPROVED"]);
+    assert.ok(rows(backend, "official-alerts").some((row) => row.payload.period === "2026-05" && /incompleta/.test(row.payload.reason)));
+    const second = await run("gme", backend, gmeSite(), ONLY, "2026-11-22T05:20:00.000Z");
+    assert.equal(second.body.months.find((m) => m.month === "2026-05").state, "REPLACED");
+    assert.deepEqual(second.body.months.find((m) => m.month === "2026-05").tenants.map((item) => item.outcome), ["UNCHANGED", "PUBLISHED"]);
+    assert.equal(pun(backend, "tenant_energia-priva", "2026-05").length, 2); assert.equal(pun(backend, "tenant_piattaforma", "2026-05").length, 2);
+  }
+  console.log("REPLACEMENT_PARTIAL_FAILURE_RESUMED_WITHOUT_DUPLICATES=PASS");
+}
+
 console.log("official-data-service smoke: OK");
