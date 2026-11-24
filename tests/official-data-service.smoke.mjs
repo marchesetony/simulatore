@@ -145,7 +145,9 @@ const rows = (backend, collection) => [...backend.rows.values()].filter((row) =>
   assert.equal(status, 200); assert.equal(body.mode, "DRY_RUN");
   const may = body.months.find((month) => month.month === "2026-05");
   assert.equal(may.state, "READY_DRY_RUN"); assert.deepEqual([may.bands.f1, may.bands.f2, may.bands.f3, may.monthly.value], [107.17, 131.44, 120.81, 119.35]);
-  for (const month of ["2026-06", "2026-07", "2026-08", "2026-09", "2026-10"]) assert.equal(body.months.find((item) => item.month === month).state, "LEGACY_AUDIT", month);
+  // June–October hold a monthly value computed from the bands: read and checked every day, replacement reported, never written.
+  for (const month of ["2026-06", "2026-07", "2026-08", "2026-09", "2026-10"]) assert.equal(body.months.find((item) => item.month === month).state, "REPLACEMENT_READY", month);
+  assert.equal(body.replacement, "NOT_ENABLED");
   assert.deepEqual(new Set(backend.writes.map((write) => write.collection)), new Set(["official-service-locks", "official-service-runs"]), "dry run: only the lease and the run report");
   for (const [key, row] of before) if (!key.startsWith("official-service-")) assert.deepEqual(backend.rows.get(key), row);
 }
@@ -325,16 +327,92 @@ const legacyBefore = Object.fromEntries(["2026-06", "2026-07", "2026-08", "2026-
     const { status, body } = await run("gme", backend, site, { ...ENV, OFFICIAL_DATA_SERVICE_MODE: mode });
     assert.equal(status, 200);
     const may = body.months.find((month) => month.month === "2026-05");
-    assert.equal(may.state, "LEGACY_AUDIT", mode ?? "dry");
+    // 24/11/2026: a computed monthly value is replaceable; without the replacement switch it is reported, never written.
+    assert.equal(may.state, "REPLACEMENT_READY", mode ?? "dry");
     assert.deepEqual([may.bands.f1, may.bands.f2, may.bands.f3], [107.17, 131.44, 120.81]);
     assert.equal(may.monthly.value, 119.35); assert.equal(may.monthly.newsletter, "204"); assert.equal(may.monthly.url, NL("20260615"));
     const platform = may.tenants.find((item) => item.tenantId === "tenant_piattaforma");
     assert.equal(platform.archived.sourceId, "GME_PREZZO_MEDIO_FASCE"); assert.ok(Math.abs(platform.archived.monthly - 119.34844086021506) < 1e-9);
-    for (const month of AUDIT_MONTHS) { const item = body.months.find((entry) => entry.month === month); assert.equal(item.state, "LEGACY_AUDIT"); assert.equal(item.monthly, null, `${month} stays with the weekly audit`); }
+    // The replacement switch is off: June–October are read every day, reported as replaceable, nothing written.
+    for (const month of AUDIT_MONTHS) { const item = body.months.find((entry) => entry.month === month); assert.equal(item.state, "REPLACEMENT_READY", month); assert.equal(item.monthly.value, num(MONTHLY[month]), month); }
     for (const [key, row] of before) assert.deepEqual(backend.rows.get(key), row, `${key} untouched`);
     assert.ok(!backend.writes.some((write) => write.collection === "market-archives" || write.collection === "official-service-documents"), "nothing published or conserved for a legacy month");
   }
   console.log("LEGACY_MONTH_READ_AND_COMPARED_NOT_PUBLISHED=PASS");
+}
+
+// 21. Tony (24/11/2026, automazione PUN ufficiale): a computed monthly value is replaced by a new version documented by the GME
+// PDFs, for the producer and every enabled company, only when the service publishes AND the replacement is enabled. The old
+// versions stay approved and untouched; documents conserved with SHA-256; F1/F2/F3, monthly and 300/05 stay distinct.
+{
+  const derivedMay = archive("tenant_piattaforma", "gme-pun-2026-05", "2026-05", 1, "APPROVED", { monthly: rate((107.17 * 220 + 131.44 * 180 + 120.81 * 344) / 744), f1: rate(107.17), f2: rate(131.44), f3: rate(120.81) }, { sourceId: "GME_PREZZO_MEDIO_FASCE", name: "GME Prezzo medio per fasce (mensile)", url: BANDS_URL(BAND_FILES["2026-05"]), authority: "GME", sourceType: "OFFICIAL", sourceSha256: "8".repeat(64) });
+  const REPLACE = { ...ENV, OFFICIAL_DATA_REPLACE_DERIVED_PUN: "enabled" };
+  // a) enabled but test mode: nothing written.
+  {
+    const backend = memoryBackend([...seed(), derivedMay]);
+    const { body } = await run("gme", backend, gmeSite(), { ...REPLACE, OFFICIAL_DATA_SERVICE_MODE: undefined });
+    assert.equal(body.replacement, "NOT_ENABLED");
+    assert.equal(body.months.find((m) => m.month === "2026-05").state, "REPLACEMENT_READY");
+    assert.ok(!backend.writes.some((write) => write.collection === "market-archives" || write.collection === "official-service-documents"));
+  }
+  // b) enabled and publishing: new documented versions, old ones intact.
+  const backend = memoryBackend([...seed(), derivedMay]);
+  const before = structuredClone([...backend.rows.entries()].filter(([key]) => key.startsWith("market-archives")));
+  const { status, body } = await run("gme", backend, gmeSite(), REPLACE);
+  assert.equal(status, 200); assert.equal(body.replacement, "ENABLED");
+  for (const [key, row] of before) assert.deepEqual(backend.rows.get(key), row, `${key}: replaced version neither deleted nor changed`);
+  const may = body.months.find((m) => m.month === "2026-05");
+  assert.equal(may.state, "REPLACED");
+  const platform = pun(backend, "tenant_piattaforma", "2026-05");
+  assert.deepEqual(platform.map((item) => [item.record.version, item.status]), [["1", "APPROVED"], ["2", "APPROVED"]]);
+  const documented = platform[1].record;
+  assert.equal(documented.monthly.value, 119.35); assert.deepEqual([documented.f1.value, documented.f2.value, documented.f3.value], [107.17, 131.44, 120.81]);
+  assert.equal(documented.parentVersionId, "gme-pun-2026-05");
+  assert.deepEqual(documented.replaces, { archiveId: "gme-pun-2026-05", version: "1", monthly: (107.17 * 220 + 131.44 * 180 + 120.81 * 344) / 744, sourceId: "GME_PREZZO_MEDIO_FASCE" });
+  assert.equal(documented.officialComponents.monthly.newsletter, "204"); assert.equal(documented.officialComponents.monthly.url, NL("20260615"));
+  assert.match(documented.officialComponents.monthly.sha256, /^[0-9a-f]{64}$/); assert.match(documented.officialComponents.bands.sha256, /^[0-9a-f]{64}$/);
+  assert.ok(!("punop" in documented) && !Object.keys(documented).some((key) => /300|punop/i.test(key)), "300/05 never in the PUN archive");
+  // Energia Priva: May had only a rejected version; it gets the documented one, the rejected one stays as it is.
+  const energia = pun(backend, "tenant_energia-priva", "2026-05");
+  assert.deepEqual(energia.map((item) => [item.record.version, item.status]), [["1", "REJECTED"], ["2", "APPROVED"]]);
+  assert.equal(energia[1].record.monthly.value, 119.35);
+  // June–October: replaced in Energia Priva, v2 (computed) kept, v3 documented.
+  for (const month of AUDIT_MONTHS) {
+    const versions = pun(backend, "tenant_energia-priva", month);
+    assert.deepEqual(versions.map((item) => [item.record.version, item.status]), [["2", "APPROVED"], ["3", "APPROVED"]], month);
+    assert.equal(versions[1].record.monthly.value, num(MONTHLY[month]), month);
+    assert.equal(versions[1].record.replaces.archiveId, `gme-pun-${month}-v2`);
+  }
+  const documents = rows(backend, "official-service-documents");
+  assert.ok(documents.some((row) => row.payload.kind === "GME_NEWSLETTER_PDF" && row.payload.period === "2026-05"));
+  // Idempotent: the next day the same documents give no new version.
+  const again = await run("gme", backend, gmeSite(), REPLACE, "2026-11-22T05:20:00.000Z");
+  assert.equal(again.body.months.find((m) => m.month === "2026-05").state, "UNCHANGED");
+  assert.equal(pun(backend, "tenant_piattaforma", "2026-05").length, 2);
+  console.log("DERIVED_MONTHLY_REPLACED_WITH_DOCUMENTED_VERSION=PASS");
+}
+
+// 22. Replacement blocked: newsletter missing, or archived bands different from the PDF → nothing written for any company.
+{
+  const REPLACE = { ...ENV, OFFICIAL_DATA_REPLACE_DERIVED_PUN: "enabled" };
+  const noNewsletter = memoryBackend(seed());
+  const { body } = await run("gme", noNewsletter, gmeSite({ files: { [NL(NEWSLETTER_DATES["2026-08"])]: null } }), REPLACE);
+  const august = body.months.find((m) => m.month === "2026-08");
+  assert.equal(august.state, "REPLACEMENT_BLOCKED"); assert.equal(august.monthly, null);
+  assert.deepEqual(pun(noNewsletter, "tenant_energia-priva", "2026-08").map((item) => item.record.version), ["2"], "August not replaced without its newsletter");
+  assert.ok(rows(noNewsletter, "official-alerts").some((row) => row.payload.period === "2026-08" && /sostituzione/.test(row.payload.reason)));
+  const differentBands = memoryBackend(seed().map((row) => row.recordId === "gme-pun-2026-09-v2" ? { ...row, payload: { ...row.payload, record: { ...row.payload.record, f1: rate(201.2) } } } : row));
+  const second = await run("gme", differentBands, gmeSite(), REPLACE);
+  const september = second.body.months.find((m) => m.month === "2026-09");
+  assert.equal(september.state, "REPLACEMENT_BLOCKED");
+  assert.ok(september.errors.some((error) => /REPLACEMENT_ARCHIVE_DIFFERS/.test(error) && /F1/.test(error)));
+  assert.deepEqual(pun(differentBands, "tenant_energia-priva", "2026-09").map((item) => item.record.version), ["2"]);
+  // A legacy version with a documented monthly value (another source) is never replaced: it stays with the audit.
+  const documentedLegacy = memoryBackend(seed().map((row) => row.recordId === "gme-pun-2026-07-v2" ? { ...row, payload: { ...row.payload, record: { ...row.payload.record, source: { ...row.payload.record.source, sourceId: "GME_NEWSLETTER" } } } } : row));
+  const third = await run("gme", documentedLegacy, gmeSite(), REPLACE);
+  assert.equal(third.body.months.find((m) => m.month === "2026-07").state, "LEGACY_AUDIT");
+  assert.deepEqual(pun(documentedLegacy, "tenant_energia-priva", "2026-07").map((item) => item.record.version), ["2"]);
+  console.log("DERIVED_MONTHLY_REPLACEMENT_BLOCKED=PASS");
 }
 
 console.log("official-data-service smoke: OK");

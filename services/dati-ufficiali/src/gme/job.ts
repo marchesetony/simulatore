@@ -35,18 +35,34 @@ export interface Component { readonly sourceId: string; readonly documentId: str
 export interface ServiceComponents { readonly bands?: Component; readonly monthly?: Component & { readonly newsletter: string | null } }
 type ServicePunRecord = ElectricityMonthlyPunRecord & { readonly officialComponents?: ServiceComponents };
 
+/**
+ * Sources whose monthly value no GME document prints (Tony 23–24/11/2026): the hours-weighted bands of "Prezzo medio per fasce"
+ * and the 15-minute archive. An approved version with one of these (or with no monthly value) is replaceable by the documented
+ * version; any other legacy version stays with the audit.
+ */
+export const DERIVED_MONTHLY_SOURCES: ReadonlySet<string> = new Set(["GME_PREZZO_MEDIO_FASCE", "GME_MGP_ANNUAL_ARCHIVE"]);
+/** Archived monthly (computed) vs the newsletter value: beyond this the replacement waits for the producer. */
+export const REPLACEMENT_MONTHLY_TOLERANCE = 0.03;
+
 export interface MonthResult {
   readonly month: string;
-  readonly state: "PUBLISHED" | "UNCHANGED" | "READY_DRY_RUN" | "LEGACY_AUDIT" | "INCOMPLETE" | "FAILED";
+  /**
+   * REPLACEMENT_READY: legacy month with a computed monthly value, documents read and checked, replacement possible but not
+   * written (test mode, or replacement not enabled); REPLACED: new documented version written for every company;
+   * REPLACEMENT_BLOCKED: documents missing, unreadable or inconsistent with the archive, nothing written.
+   */
+  readonly state: "PUBLISHED" | "UNCHANGED" | "READY_DRY_RUN" | "LEGACY_AUDIT" | "INCOMPLETE" | "FAILED" | "REPLACEMENT_READY" | "REPLACED" | "REPLACEMENT_BLOCKED";
   readonly bands: { readonly f1: number; readonly f2: number; readonly f3: number; readonly hours: readonly number[]; readonly sha256: string; readonly url: string } | null;
   readonly monthly: { readonly value: number; readonly sha256: string; readonly url: string; readonly newsletter: string | null } | null;
-  readonly tenants: readonly { readonly tenantId: string; readonly outcome: string; readonly archiveId?: string; readonly version?: string; readonly archived?: ArchivedValues }[];
+  readonly tenants: readonly { readonly tenantId: string; readonly outcome: string; readonly archiveId?: string; readonly version?: string; readonly archived?: ArchivedValues; readonly replaces?: ReplacedVersion | null; readonly differences?: readonly string[] }[];
   readonly errors: readonly string[];
   /** Parametro art. 5.2 delib. ARERA 300/05: its own series, never written into the PUN archive and never a PUN substitute. */
   readonly punop?: PunopResult;
 }
 /** What an approved version not written by the service holds, for comparison only: values and the source it declares. */
 export interface ArchivedValues { readonly f1: number | null; readonly f2: number | null; readonly f3: number | null; readonly monthly: number | null; readonly sourceId: string | null; readonly sourceUrl: string | null }
+/** The approved version a documented version replaces: it stays approved and readable, the new version takes precedence. */
+export interface ReplacedVersion { readonly archiveId: string; readonly version: string; readonly monthly: number | null; readonly sourceId: string | null }
 const archivedValues = (record: MarketArchiveRecord): ArchivedValues => {
   const value = record.record as unknown as Readonly<Record<string, { readonly value?: unknown } | undefined>> & { readonly source?: { readonly sourceId?: string; readonly url?: string } };
   const read = (field: string) => typeof value[field]?.value === "number" && Number.isFinite(value[field]!.value) ? value[field]!.value as number : null;
@@ -96,6 +112,16 @@ function currentApproved(records: readonly MarketArchiveRecord[], month: string)
   return records.filter((record) => record.vector === "EE" && record.index === "PUN" && record.month === month && record.status === "APPROVED").sort(compareMarketVersions)[0];
 }
 const writtenByService = (record: MarketArchiveRecord | undefined) => Boolean(record && (record.record as ServicePunRecord).officialComponents);
+/** Legacy version whose monthly value is computed (or absent): the only kind the documented version may replace. */
+const derivedLegacy = (record: MarketArchiveRecord) => { const value = archivedValues(record); return !writtenByService(record) && (value.monthly === null || DERIVED_MONTHLY_SOURCES.has(value.sourceId ?? "")); };
+const round2 = (value: number) => Math.round(value * 100) / 100;
+/** What differs between the archived legacy version and the documents: bands at the two decimals GME prints, monthly within tolerance. */
+function replacementDifferences(archived: ArchivedValues, bands: NonNullable<MonthResult["bands"]>, monthly: NonNullable<MonthResult["monthly"]>): string[] {
+  const out: string[] = [];
+  for (const field of ["f1", "f2", "f3"] as const) if (archived[field] !== null && round2(archived[field]!) !== bands[field]) out.push(`${field.toUpperCase()} archivio ${archived[field]} ≠ PDF fasce ${bands[field]}`);
+  if (archived.monthly !== null && Math.abs(archived.monthly - monthly.value) / monthly.value > REPLACEMENT_MONTHLY_TOLERANCE) out.push(`mensile archivio ${archived.monthly} lontano dalla newsletter ${monthly.value} oltre ${(REPLACEMENT_MONTHLY_TOLERANCE * 100).toFixed(0)}%`);
+  return out;
+}
 
 /** Finds and reads the bands PDF of the month: the link on the GME page, or the exact file known in the catalog. */
 async function acquireBands(fetcher: OfficialFetch, recorded: readonly FetchedDocument[], month: string, now: string): Promise<{ document: FetchedDocument; reading: ReturnType<typeof readGmeBandsPdf> } | { error: string }> {
@@ -131,10 +157,13 @@ async function acquireNewsletter(fetcher: OfficialFetch, recorded: readonly Fetc
 }
 
 /** One new version of the month for one company, linked to the latest one; reused when the same documents are already there. */
-async function publishTenant(repository: MarketArchiveRepository, tenantId: string, month: string, values: { f1?: number; f2?: number; f3?: number; monthly?: number }, components: ServiceComponents, now: string): Promise<{ outcome: "PUBLISHED" | "UNCHANGED" | "LEGACY_AUDIT"; archiveId?: string; version?: string }> {
+async function publishTenant(repository: MarketArchiveRepository, tenantId: string, month: string, values: { f1?: number; f2?: number; f3?: number; monthly?: number }, components: ServiceComponents, now: string, replaceDerived = false): Promise<{ outcome: "PUBLISHED" | "UNCHANGED" | "LEGACY_AUDIT" | "REPLACED"; archiveId?: string; version?: string; replaces?: ReplacedVersion | null }> {
   const sameMonth = (await repository.list(tenantId)).filter((record) => record.vector === "EE" && record.index === "PUN" && record.month === month);
   const current = currentApproved(sameMonth, month);
-  if (current && !writtenByService(current)) return { outcome: "LEGACY_AUDIT", archiveId: current.archiveId, version: current.record.version };
+  const replacing = Boolean(current && !writtenByService(current));
+  if (replacing && !(replaceDerived && derivedLegacy(current!))) return { outcome: "LEGACY_AUDIT", archiveId: current!.archiveId, version: current!.record.version };
+  // The replaced version is neither deleted nor rejected: it stays approved with its history; the higher version takes precedence.
+  const replaces: ReplacedVersion | null = replacing ? { archiveId: current!.archiveId, version: current!.record.version, monthly: archivedValues(current!).monthly, sourceId: archivedValues(current!).sourceId } : null;
   const decisionId = `svc-pun-${month}-${componentsKey(components)}-${tenantId}`;
   const done = sameMonth.find((record) => sameComponents((record.record as ServicePunRecord).officialComponents, components));
   if (done) {
@@ -155,15 +184,22 @@ async function publishTenant(repository: MarketArchiveRepository, tenantId: stri
     ...(values.monthly !== undefined ? { monthly: rate(values.monthly) } : {}),
     source: { sourceId: primary.sourceId, name: components.bands && components.monthly ? "GME: Prezzo medio per fasce (F1, F2, F3) e Newsletter, Tabella 1 (PUN Index GME mensile)" : components.bands ? "GME Prezzo medio per fasce (solo F1, F2, F3)" : "GME Newsletter, Tabella 1 (solo PUN Index GME mensile)", url: primary.url, authority: "GME", sourceType: "OFFICIAL", sourceSha256: primary.sha256, relatedUrls: [components.bands?.url, components.monthly?.url].filter((url): url is string => Boolean(url)) },
     [SERVICE_COMPONENTS_FIELD]: components,
+    ...(replaces ? { replaces } : {}),
     approval: { status: "NEEDS_REVIEW", reason: "OFFICIAL_SOURCE_RECONCILED" }, publicationDate: null,
     effectiveFrom: `${month}-01`, effectiveTo: nextMonthStart(month),
   } as unknown as ElectricityMonthlyPunRecord;
   const created = await createMarketArchive(repository, { tenantId, record, archiveId: recordId, now, actor: SERVICE_ACTOR });
   await approveMarketArchive(repository, tenantId, created.archiveId, SERVICE_ACTOR, decisionId, now);
-  return { outcome: "PUBLISHED", archiveId: created.archiveId, version: String(version) };
+  return { outcome: replaces ? "REPLACED" : "PUBLISHED", archiveId: created.archiveId, version: String(version), replaces };
 }
 
-export async function runGmeJob(input: { readonly store: ServiceStore; readonly fetcher: OfficialFetch; readonly recorded: readonly FetchedDocument[]; readonly tenants: readonly string[]; readonly now: string; readonly mode: ServiceMode; readonly nextCheckAt: string; readonly months?: readonly string[]; readonly auditedMonths?: readonly string[] }): Promise<readonly MonthResult[]> {
+export async function runGmeJob(input: { readonly store: ServiceStore; readonly fetcher: OfficialFetch; readonly recorded: readonly FetchedDocument[]; readonly tenants: readonly string[]; readonly now: string; readonly mode: ServiceMode; readonly nextCheckAt: string; readonly months?: readonly string[]; readonly auditedMonths?: readonly string[];
+  /**
+   * Tony (24/11/2026, automazione PUN ufficiale): replace an approved version whose monthly value is computed with a new version
+   * documented by the GME PDFs, for the producer and every enabled company, keeping the old one. Off unless the service is
+   * configured for it AND publishing; otherwise legacy months with a computed monthly value are read, checked and reported only.
+   */
+  readonly replaceDerived?: boolean }): Promise<readonly MonthResult[]> {
   const market = input.store.market();
   const months = input.months ?? operationalMarketMonths(romeToday(new Date(input.now)));
   const window = operationalMarketMonths(romeToday(new Date(input.now)));
@@ -183,10 +219,13 @@ export async function runGmeJob(input: { readonly store: ServiceStore; readonly 
       // companies never end up with different sources for the same month (Tony 21/11/2026, decisione 4).
       const legacy = currents.some((item) => item.current && !writtenByService(item.current));
       const legacyTenants = () => currents.map((item) => ({ tenantId: item.tenantId, outcome: "LEGACY_AUDIT", archiveId: item.current?.archiveId, version: item.current?.record.version, ...(item.current ? { archived: archivedValues(item.current) } : {}) }));
-      // Months of the weekly audit are compared there (same documents): not read twice.
-      if (legacy && input.auditedMonths?.includes(month)) { results.push({ month, state: "LEGACY_AUDIT", bands: null, monthly: null, tenants: legacyTenants(), errors: [] }); continue; }
-      // Documents of a legacy month are read and checked for comparison only: never conserved, never published.
-      const conserve = input.mode === "PUBLISH" && !legacy;
+      // A legacy month is replaceable only when no company holds a legacy version with a documented monthly value.
+      const replaceable = legacy && currents.every((item) => !item.current || writtenByService(item.current) || derivedLegacy(item.current));
+      const replace = replaceable && input.replaceDerived === true && input.mode === "PUBLISH";
+      // Other legacy months of the weekly audit are compared there (same documents): not read twice.
+      if (legacy && !replaceable && input.auditedMonths?.includes(month)) { results.push({ month, state: "LEGACY_AUDIT", bands: null, monthly: null, tenants: legacyTenants(), errors: [] }); continue; }
+      // Documents of a legacy month are read and checked; conserved only when the replacement is actually written.
+      const conserve = input.mode === "PUBLISH" && (!legacy || replace);
       const existing = serviceTargets.map((item) => (item.current?.record as ServicePunRecord | undefined)?.officialComponents).find(Boolean);
       const conserved = await listConserved(input.store, undefined, month);
       const reuse = (kind: ConservedDocument["kind"], sha?: string) => sha ? conserved.find((doc) => doc.kind === kind && doc.sha256 === sha) : undefined;
@@ -246,7 +285,8 @@ export async function runGmeJob(input: { readonly store: ServiceStore; readonly 
       // Not yet published is normal early in the month; anything else (download refused, checks failed, inconsistent
       // documents) stops the month: nothing is published until the anomaly is looked at.
       const blocking = errors.filter((error) => !/NOT_PUBLISHED_YET|GME_BANDS_PDF_NOT_FOUND/.test(error));
-      if (legacy) { results.push({ month, state: "LEGACY_AUDIT", bands, monthly, tenants: legacyTenants(), errors }); continue; }
+      if (legacy && !replaceable) { results.push({ month, state: "LEGACY_AUDIT", bands, monthly, tenants: legacyTenants(), errors }); continue; }
+      if (replaceable) { results.push(await replaceMonth({ input, market, month, currents, bands, monthly, bandsComponent, monthlyComponent, errors, blocking, replace })); continue; }
       if ((!bands && !monthly) || blocking.length) {
         const pending = !blocking.length;
         const alertId = input.mode === "PUBLISH" && !pending ? await raiseAnomaly(input.store, "GME_PUN_MONTH", month, `servizio automatico: ${blocking.join("; ")}`, input.now) : null;
@@ -277,6 +317,57 @@ export async function runGmeJob(input: { readonly store: ServiceStore; readonly 
     }
   }
   return results;
+}
+
+/**
+ * Replacement of a computed monthly value (Tony 24/11/2026): both GME documents read and checked (bands PDF and newsletter
+ * Tabella 1), archived bands equal to the PDF at two decimals, archived monthly within tolerance of the newsletter. Otherwise
+ * nothing is written for any company. All companies are checked before the first write, so they never end up with different
+ * sources for the same month; the replaced versions stay approved and readable.
+ */
+async function replaceMonth(args: {
+  readonly input: Parameters<typeof runGmeJob>[0]; readonly market: MarketArchiveRepository; readonly month: string;
+  readonly currents: readonly { readonly tenantId: string; readonly current: MarketArchiveRecord | undefined }[];
+  readonly bands: MonthResult["bands"]; readonly monthly: MonthResult["monthly"]; readonly bandsComponent: Component | undefined; readonly monthlyComponent: ServiceComponents["monthly"];
+  readonly errors: string[]; readonly blocking: string[]; readonly replace: boolean;
+}): Promise<MonthResult> {
+  const { input, market, month, currents, bands, monthly, errors, replace } = args;
+  const describe = (item: (typeof currents)[number], outcome: string, differences: readonly string[] = []) => ({ tenantId: item.tenantId, outcome, archiveId: item.current?.archiveId, version: item.current?.record.version, ...(item.current ? { archived: archivedValues(item.current) } : {}), differences });
+  const reasons = [...args.blocking];
+  if (!bands) reasons.push(errors.find((error) => /BANDS/.test(error)) ?? "GME_BANDS_MISSING");
+  if (!monthly) reasons.push(errors.find((error) => /NEWSLETTER|MONTHLY/.test(error)) ?? "GME_MONTHLY_MISSING");
+  const tenants = currents.map((item) => {
+    const differences = bands && monthly && item.current && !writtenByService(item.current) ? replacementDifferences(archivedValues(item.current), bands, monthly) : [];
+    if (differences.length) reasons.push(`REPLACEMENT_ARCHIVE_DIFFERS:${item.tenantId} ${differences.join("; ")}`);
+    return { item, differences };
+  });
+  const unique = [...new Set(reasons)];
+  if (unique.length) {
+    errors.push(...unique.filter((reason) => !errors.includes(reason)));
+    if (replace) {
+      const alertId = await raiseAnomaly(input.store, "GME_PUN_MONTH", month, `sostituzione del PUN mensile calcolato bloccata: ${unique.join("; ")}`, input.now);
+      await recordCheck(input.store, { code: "GME_PUN_MONTH", period: month, at: input.now, outcome: "FAILED", detail: `sostituzione bloccata: ${unique.join("; ")}`, nextCheckAt: input.nextCheckAt, alertId });
+    }
+    return { month, state: "REPLACEMENT_BLOCKED", bands, monthly, tenants: tenants.map(({ item, differences }) => describe(item, "REPLACEMENT_BLOCKED", differences)), errors };
+  }
+  if (!replace) return { month, state: "REPLACEMENT_READY", bands, monthly, tenants: tenants.map(({ item }) => describe(item, "WOULD_REPLACE")), errors };
+  const components: ServiceComponents = { bands: args.bandsComponent!, monthly: args.monthlyComponent! };
+  const values = { f1: bands!.f1, f2: bands!.f2, f3: bands!.f3, monthly: monthly!.value };
+  const out: MonthResult["tenants"][number][] = [];
+  const failures: string[] = [];
+  for (const { item } of tenants) {
+    try {
+      const written = await publishTenant(market, item.tenantId, month, values, components, input.now, true);
+      out.push({ ...describe(item, written.outcome), archiveId: written.archiveId, version: written.version, replaces: written.replaces ?? null });
+    } catch (error) { const message = error instanceof Error ? error.message : "PUBLISH_FAILED"; failures.push(`${item.tenantId}:${message}`); out.push(describe(item, `FAILED:${message}`)); }
+  }
+  errors.push(...failures);
+  const detail = `PUN mensile documentato ${monthly!.value} €/MWh (Newsletter GME n. ${monthly!.newsletter ?? "?"}, sha256 ${monthly!.sha256}); F1 ${bands!.f1} · F2 ${bands!.f2} · F3 ${bands!.f3} €/MWh (PDF fasce, sha256 ${bands!.sha256}); versioni sostituite conservate: ${out.map((entry) => `${entry.tenantId} ${entry.replaces ? `${entry.replaces.archiveId} v${entry.replaces.version} → v${entry.version}` : `nuova v${entry.version}`}`).join("; ")}`;
+  let alertId: string | null = null;
+  if (failures.length) alertId = await raiseAnomaly(input.store, "GME_PUN_MONTH", month, `sostituzione incompleta: ${failures.join("; ")}`, input.now);
+  else await resolveAnomaly(input.store, "GME_PUN_MONTH", month, "PUN mensile calcolato sostituito dalla versione documentata", input.now);
+  await recordCheck(input.store, { code: "GME_PUN_MONTH", period: month, at: input.now, outcome: failures.length ? "FAILED" : "ACQUIRED", detail, nextCheckAt: input.nextCheckAt, alertId });
+  return { month, state: failures.length ? "REPLACEMENT_BLOCKED" : "REPLACED", bands, monthly, tenants: out, errors };
 }
 
 /**

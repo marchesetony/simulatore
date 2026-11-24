@@ -31,6 +31,8 @@ export interface ServiceEnvironment extends ServiceDatabaseEnvironment {
   readonly CRON_SECRET?: string;
   readonly OFFICIAL_DATA_SERVICE_MODE?: string;
   readonly OFFICIAL_DATA_TENANT_IDS?: string;
+  /** Tony 24/11/2026: "enabled" lets the GME job replace computed monthly values with documented versions; only with publish. */
+  readonly OFFICIAL_DATA_REPLACE_DERIVED_PUN?: string;
 }
 export interface HandlerDependencies { readonly store?: ServiceStore; readonly fetchImpl?: typeof fetch; readonly now?: () => string; readonly sleep?: (ms: number) => Promise<void> }
 
@@ -80,9 +82,9 @@ async function runJob(job: JobName, mode: ServiceMode, env: ServiceEnvironment, 
     const clientTenants = await officialDataTenants(() => configuredTenants(env), companies);
     const lease = await withJobLease(store, job, runId, now, async () => {
       if (job === "gme") {
-        const months = await runGmeJob({ store, fetcher: official.fetch, recorded: official.recorded, tenants: [PLATFORM_TENANT, ...clientTenants], now, mode, nextCheckAt, auditedMonths: AUDIT_MONTHS });
+        const months = await runGmeJob({ store, fetcher: official.fetch, recorded: official.recorded, tenants: [PLATFORM_TENANT, ...clientTenants], now, mode, nextCheckAt, auditedMonths: AUDIT_MONTHS, replaceDerived: env.OFFICIAL_DATA_REPLACE_DERIVED_PUN === "enabled" });
         const sources = await gmeSourcePages(official.fetch, official.recorded);
-        return { months, sources, errors: [...months.flatMap((month) => [...month.errors, ...(month.punop?.errors ?? [])].filter((error) => !/NOT_PUBLISHED_YET/.test(error)).map((error) => `${month.month}:${error}`)), ...sources.filter((page) => !page.reachable).map((page) => `GME_SOURCE_PAGE_UNREACHABLE:${page.id}`)] };
+        return { months, sources, replacement: mode === "PUBLISH" && env.OFFICIAL_DATA_REPLACE_DERIVED_PUN === "enabled" ? "ENABLED" : "NOT_ENABLED", errors: [...months.flatMap((month) => [...month.errors, ...(month.punop?.errors ?? [])].filter((error) => !/NOT_PUBLISHED_YET/.test(error)).map((error) => `${month.month}:${error}`)), ...sources.filter((page) => !page.reachable).map((page) => `GME_SOURCE_PAGE_UNREACHABLE:${page.id}`)] };
       }
       if (job === "regulatory") {
         const result = await runRegulatoryJob({ store, fetcher: official.fetch, recorded: official.recorded, tenants: clientTenants, now, mode, nextCheckAt, runId, only: scope });
