@@ -1,5 +1,6 @@
 import type { CteForcingRecord } from "../eligibility/forcing";
 import type { BillLinkRecord, CustomerRecord, SupplyRecord } from "../customers/model";
+import type { BillAnalysisRecord } from "../reading/bill-analysis";
 import type { CteAssignmentRepository, OrgChainRepository } from "../hierarchy/service";
 import type { AccessAccount, AccessDirectory, Company } from "../access/types";
 import type { CompanyProfile } from "../company/profile";
@@ -77,6 +78,8 @@ export interface ProductionStorageAdapter {
   readonly customers?: TenantRecordRepository<CustomerRecord>;
   readonly customerSupplies?: TenantRecordRepository<SupplyRecord>;
   readonly customerBillLinks?: TenantRecordRepository<BillLinkRecord>;
+  /** Tony (24/11/2026, "ANALISI BOLLETTE"): phase and stop request of each bill analysis. */
+  readonly billAnalyses?: TenantRecordRepository<BillAnalysisRecord>;
 }
 
 export interface RuntimeRepositories {
@@ -124,6 +127,7 @@ export interface RuntimeRepositories {
   readonly customers: TenantRecordRepository<CustomerRecord>;
   readonly customerSupplies: TenantRecordRepository<SupplyRecord>;
   readonly customerBillLinks: TenantRecordRepository<BillLinkRecord>;
+  readonly billAnalyses: TenantRecordRepository<BillAnalysisRecord>;
 }
 
 let productionStorageAdapter: ProductionStorageAdapter | null = null;
@@ -176,7 +180,7 @@ function storedRepositories(): RuntimeRepositories {
   const config = getRuntimeConfig();
   if (config.runtimeMode === "production") {
     if (!productionStorageAdapter) throw new Error("PERSISTENCE_ADAPTER_UNAVAILABLE");
-    return { ...productionStorageAdapter, eligibilityOverrides: productionStorageAdapter.eligibilityOverrides ?? productionStorageAdapter.cteArchives as EligibilityOverrideRepository, marketRefreshState: productionStorageAdapter.marketRefreshState ?? productionStorageAdapter.marketDataArchives, marketRefreshRuns: productionStorageAdapter.marketRefreshRuns ?? productionStorageAdapter.marketDataArchives, marketRefreshLocks: productionStorageAdapter.marketRefreshLocks ?? productionStorageAdapter.marketDataArchives, orgChain: productionStorageAdapter.orgChain ?? unavailableHierarchyStore() as OrgChainRepository, cteAssignments: productionStorageAdapter.cteAssignments ?? unavailableHierarchyStore() as CteAssignmentRepository, companies: productionStorageAdapter.companies ?? unavailableHierarchyStore(), companyProfiles: productionStorageAdapter.companyProfiles ?? unavailableHierarchyStore(), commercialDiscounts: productionStorageAdapter.commercialDiscounts ?? unavailableHierarchyStore(), proposalPresentations: productionStorageAdapter.proposalPresentations ?? unavailableHierarchyStore(), accessAccounts: productionStorageAdapter.accessAccounts ?? unavailableHierarchyStore(), accessDirectory: productionStorageAdapter.accessDirectory ?? unavailableAccessDirectory(), officialAlerts: productionStorageAdapter.officialAlerts ?? unavailableHierarchyStore(), officialChecks: productionStorageAdapter.officialChecks ?? unavailableHierarchyStore(), officialDocuments: productionStorageAdapter.officialDocuments ?? unavailableHierarchyStore(), officialPublications: productionStorageAdapter.officialPublications ?? unavailableHierarchyStore(), officialServiceRuns: productionStorageAdapter.officialServiceRuns ?? unavailableHierarchyStore(), officialServiceLocks: productionStorageAdapter.officialServiceLocks ?? unavailableHierarchyStore(), cteForcingRecords: productionStorageAdapter.cteForcingRecords ?? unavailableHierarchyStore(), customers: productionStorageAdapter.customers ?? unavailableHierarchyStore(), customerSupplies: productionStorageAdapter.customerSupplies ?? unavailableHierarchyStore(), customerBillLinks: productionStorageAdapter.customerBillLinks ?? unavailableHierarchyStore() };
+    return { ...productionStorageAdapter, eligibilityOverrides: productionStorageAdapter.eligibilityOverrides ?? productionStorageAdapter.cteArchives as EligibilityOverrideRepository, marketRefreshState: productionStorageAdapter.marketRefreshState ?? productionStorageAdapter.marketDataArchives, marketRefreshRuns: productionStorageAdapter.marketRefreshRuns ?? productionStorageAdapter.marketDataArchives, marketRefreshLocks: productionStorageAdapter.marketRefreshLocks ?? productionStorageAdapter.marketDataArchives, orgChain: productionStorageAdapter.orgChain ?? unavailableHierarchyStore() as OrgChainRepository, cteAssignments: productionStorageAdapter.cteAssignments ?? unavailableHierarchyStore() as CteAssignmentRepository, companies: productionStorageAdapter.companies ?? unavailableHierarchyStore(), companyProfiles: productionStorageAdapter.companyProfiles ?? unavailableHierarchyStore(), commercialDiscounts: productionStorageAdapter.commercialDiscounts ?? unavailableHierarchyStore(), proposalPresentations: productionStorageAdapter.proposalPresentations ?? unavailableHierarchyStore(), accessAccounts: productionStorageAdapter.accessAccounts ?? unavailableHierarchyStore(), accessDirectory: productionStorageAdapter.accessDirectory ?? unavailableAccessDirectory(), officialAlerts: productionStorageAdapter.officialAlerts ?? unavailableHierarchyStore(), officialChecks: productionStorageAdapter.officialChecks ?? unavailableHierarchyStore(), officialDocuments: productionStorageAdapter.officialDocuments ?? unavailableHierarchyStore(), officialPublications: productionStorageAdapter.officialPublications ?? unavailableHierarchyStore(), officialServiceRuns: productionStorageAdapter.officialServiceRuns ?? unavailableHierarchyStore(), officialServiceLocks: productionStorageAdapter.officialServiceLocks ?? unavailableHierarchyStore(), cteForcingRecords: productionStorageAdapter.cteForcingRecords ?? unavailableHierarchyStore(), customers: productionStorageAdapter.customers ?? unavailableHierarchyStore(), customerSupplies: productionStorageAdapter.customerSupplies ?? unavailableHierarchyStore(), customerBillLinks: productionStorageAdapter.customerBillLinks ?? unavailableHierarchyStore(), billAnalyses: productionStorageAdapter.billAnalyses ?? unavailableHierarchyStore() };
   }
   const local = new LocalFilesystemAdapter("var/phase6");
   return {
@@ -224,5 +228,6 @@ function storedRepositories(): RuntimeRepositories {
     customers: local.collection<CustomerRecord>("customers"),
     customerSupplies: local.collection<SupplyRecord>("customer-supplies"),
     customerBillLinks: local.collection<BillLinkRecord>("customer-bill-links"),
+    billAnalyses: local.collection<BillAnalysisRecord>("bill-analyses"),
   };
 }

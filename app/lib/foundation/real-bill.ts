@@ -214,6 +214,13 @@ type ApprovalValidation = {
 };
 type MetadataRecord = Record<string, unknown>;
 
+export type BillAnalysisPhase = "READING" | "VALIDATING" | "SAVING";
+export interface BillAnalysisHooks {
+  checkpoint(phase: BillAnalysisPhase): Promise<void>;
+  cancelled(): Promise<boolean>;
+}
+export function isBillAnalysisCancelled(error: unknown): boolean { return error instanceof Error && error.message === "BILL_ANALYSIS_CANCELLED"; }
+
 export interface DocumentStoragePort {
   store(tenantId: string, id: string, bytes: Uint8Array): Promise<string>;
   read(tenantId: string, id: string): Promise<Uint8Array>;
@@ -943,6 +950,10 @@ export async function ingestBill(input: {
   readonly mapEnergyContract?: EnergyContractMapper;
   readonly retentionClass?: BillRetentionClass;
   readonly ownerUserId?: string;
+  /** Tony (24/11/2026, "ANALISI BOLLETTE"): the analysis job that follows this ingestion (bill-analysis.ts). Each phase is
+   *  recorded before it starts and throws BILL_ANALYSIS_CANCELLED once the user has stopped the analysis: then nothing is
+   *  saved and the stored file is removed, so no partial reading can be approved or reach a later analysis. */
+  readonly analysis?: BillAnalysisHooks;
 }): Promise<BillDocument> {
   const tenantId = validateTenantId(input.tenantId);
   const safeName = input.structuredExtractor ? validateBillDocument(input.fileName, input.contentType, input.bytes, input.maxBytes) : validatePdf(input.fileName, input.contentType, input.bytes, input.maxBytes);
@@ -951,12 +962,16 @@ export async function ingestBill(input: {
   const objectKey = await input.storage.store(tenantId, id, input.bytes);
   const now = new Date().toISOString();
   const versionId = randomUUID();
+  let saved = false;
   try {
     let fields: BillFields;
     let energyContract: BillContract | undefined;
     let structuredBill: StructuredBillExtraction | undefined;
+    await input.analysis?.checkpoint("READING");
     if (input.structuredExtractor) {
-      structuredBill = applyDocumentGroundedMonthlyEvidence(input.bytes, await input.structuredExtractor.extract({ bytes: input.bytes, contentType: input.contentType }));
+      const extracted = await input.structuredExtractor.extract({ bytes: input.bytes, contentType: input.contentType });
+      await input.analysis?.checkpoint("VALIDATING");
+      structuredBill = applyDocumentGroundedMonthlyEvidence(input.bytes, extracted);
       validateStructuredBillExtraction(structuredBill);
       fields = structuredBillFields(structuredBill);
       energyContract = structuredBillContract({ extraction: structuredBill, tenantId, billId: id, versionId }) ?? undefined;
@@ -986,11 +1001,19 @@ export async function ingestBill(input: {
       provenance: [{ eventId: randomUUID(), type: "INGESTION", origin: "INGESTION", tenantId, documentId: id, sourceVersionId: null, resultVersionId: versionId, field: null, previousValue: null, nextValue: null, at: now }],
       approvals: [],
     });
+    await input.analysis?.checkpoint("SAVING");
     await input.repository.save(document);
+    saved = true;
     await input.audit.record({ type: "UPLOAD", tenantId, documentId: id, outcome: "ALLOWED" });
     await input.audit.record({ type: "EXTRACTION", tenantId, documentId: id, outcome: "ALLOWED" });
     return document;
   } catch (error) {
+    // A stopped analysis leaves nothing behind: no document, not even a failed one, and no stored file.
+    // Once the bill is saved its file stays with it: the route decides, with its checks, whether the new bill is removed.
+    if (input.analysis && !saved && (isBillAnalysisCancelled(error) || await input.analysis.cancelled())) {
+      await input.storage.remove(tenantId, id).catch(() => undefined);
+      throw new Error("BILL_ANALYSIS_CANCELLED");
+    }
     const errorCode = input.onExtractionError?.(error) ?? billErrorCode(error);
     const errorField = billErrorField(error);
     const status: ExtractionStatus = error instanceof Error && error.message === "OCR_PROVIDER_REQUIRED" ? "OCR_PROVIDER_REQUIRED" : "FAILED";

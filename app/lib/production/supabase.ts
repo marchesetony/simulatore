@@ -1,5 +1,6 @@
 import type { CteForcingRecord } from "../eligibility/forcing";
 import type { BillLinkRecord, CustomerRecord, SupplyRecord } from "../customers/model";
+import type { BillAnalysisRecord } from "../reading/bill-analysis";
 import type { CteAssignmentRepository, OrgChainRepository } from "../hierarchy/service";
 import type { CteAssignment, OrgNode } from "../hierarchy/types";
 import type { AccessAccount, AccessDirectory, Company } from "../access/types";
@@ -375,6 +376,7 @@ export class SupabaseProductionStorageAdapter implements ProductionStorageAdapte
   readonly customers: TenantRecordRepository<CustomerRecord>;
   readonly customerSupplies: TenantRecordRepository<SupplyRecord>;
   readonly customerBillLinks: TenantRecordRepository<BillLinkRecord>;
+  readonly billAnalyses: TenantRecordRepository<BillAnalysisRecord>;
 
   constructor(client: ProviderClient, storageBucket: string, authClient?: () => ProviderClient) {
     this.cteArchiveRepository = new SupabaseCteArchiveRepository(client);
@@ -413,6 +415,7 @@ export class SupabaseProductionStorageAdapter implements ProductionStorageAdapte
     this.customers = new SupabaseRecordRepository<CustomerRecord>(client, "customers");
     this.customerSupplies = new SupabaseRecordRepository<SupplyRecord>(client, "customer-supplies");
     this.customerBillLinks = new SupabaseRecordRepository<BillLinkRecord>(client, "customer-bill-links");
+    this.billAnalyses = new SupabaseRecordRepository<BillAnalysisRecord>(client, "bill-analyses");
     this.orgChain = new SupabaseRecordRepository<OrgNode>(client, "org-chain") as SupabaseRecordRepository<OrgNode> & OrgChainRepository;
     this.cteAssignments = new SupabaseRecordRepository<CteAssignment>(client, "cte-assignments");
     this.companies = new SupabaseRecordRepository<Company>(client, "companies");

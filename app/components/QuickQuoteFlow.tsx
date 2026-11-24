@@ -12,6 +12,7 @@ import { billComponentLabel } from "../lib/foundation/bill-economic-analysis";
 import { billForReading, billReadSections, printedContractValues } from "../lib/ui/bill-read-details";
 import { withoutPrintedTotals } from "../lib/reading/bill-reader-checks";
 import { BillArchivePicker } from "./BillArchivePicker";
+import { BillAnalysisControl } from "./BillAnalysisControl";
 import { requestBillDelete, approvedBillEntry, archiveLoadError, canDeleteBills, deleteConfirmText, deleteReportText, deleteSelectedBills, deleteSummaryText, pendingBillEntry, type ArchiveList, type BillArchiveEntry, type BillDeleteReport } from "../lib/ui/bill-archive";
 import { downloadExport, MAX_UPLOAD_BYTES, requestJson, requestUpload, toUiError, UiApiError } from "../lib/ui/client";
 import { buildQuoteReceipt, comparisonAnalysis, effectiveBillSpread, isSameOffer, regulatedVerification, sameCteHeadline, sameOfferDifferences, type QuoteReceipt, type RegulatedDomain } from "../lib/quote/receipt";
@@ -1164,19 +1165,19 @@ export default function QuickQuoteFlow({ readonly, showExcluded = false }: { rea
     setCorrectionOpen(reviewSubmission(FIELDS.map((field) => field.name), next, document.fields).missing.length > 0);
   };
 
-  const upload = async (event: ChangeEvent<HTMLInputElement>) => {
-    const file = event.target.files?.[0]; event.target.value = "";
-    if (!file || readonly || pending) return;
-    if (file.size > MAX_BILL_BYTES) { setError("Il file supera 20 MB."); return; }
-    setPending("upload"); setError(undefined);
-    try {
-      const document = (await requestUpload<{ readonly document: BillDocumentModel }>("/api/bills", file)).document;
-      if (document.status === "FAILED" || document.status === "PROVIDER_NOT_CONFIGURED") throw new Error("BILL_READ_FAILED");
-      setDraft(document);
-      startReview(document);
-      setStep("review");
-    } catch (cause) { setError(cause instanceof Error && cause.message === "BILL_READ_FAILED" ? "Non siamo riusciti a leggere la bolletta. Riprova con un PDF più nitido." : withDetail(cause)); } finally { setPending(undefined); }
-  };
+  // Tony (24/11/2026, "ANALISI BOLLETTE"): the upload is an analysis with real phases and a real stop (BillAnalysisControl);
+  // the bill it read opens here, and «Annulla» on the review removes only that bill while it is untouched.
+  const [analysisOfDraft, setAnalysisOfDraft] = useState<string | null>(null);
+  const [discarding, setDiscarding] = useState<"confirm" | "running" | null>(null);
+  const analysisBusy = useCallback((busy: boolean) => setPending((value) => busy ? "upload" : value === "upload" ? undefined : value), []);
+  const analysisRead = useCallback((document: BillDocumentModel, analysisId: string) => {
+    setError(undefined);
+    setDraft(document);
+    startReview(document);
+    setAnalysisOfDraft(analysisId);
+    setStep("review");
+  // startReview only reads the bill it is given.
+  }, []);
 
   // Tony (1/11, "le bollette non riesci a leggerle"): when the charge lines were not read, they are read again from the
   // stored file and the bill opens on the new reading, to be confirmed as usual.
@@ -1306,14 +1307,20 @@ export default function QuickQuoteFlow({ readonly, showExcluded = false }: { rea
     } catch (cause) { setError(message(cause)); } finally { setPending(undefined); }
   };
 
-  const restart = () => { setStep("bill"); setDraft(null); setQuote(null); setSelectedId(null); setProposal(null); setError(undefined); };
+  const restart = () => { setStep("bill"); setDraft(null); setQuote(null); setSelectedId(null); setProposal(null); setError(undefined); setAnalysisOfDraft(null); setDiscarding(null); };
+  const discardAnalysis = async () => {
+    if (!analysisOfDraft || pending) return;
+    setDiscarding("running"); setError(undefined);
+    try { await requestJson(`/api/bills/analysis/${encodeURIComponent(analysisOfDraft)}/discard`, { method: "POST", body: "{}" }); restart(); }
+    catch (cause) { setError(withDetail(cause)); setDiscarding(null); }
+  };
 
   return <div className="content-stack quote-flow">
-    <div className="section-header"><div><h2>Nuova simulazione</h2><p className="section-detail">Carica la bolletta del cliente: ti mostriamo le offerte che puoi proporgli e quanto risparmia.</p></div>{step !== "bill" ? <button className="button secondary" type="button" onClick={restart} disabled={Boolean(pending)}>Ricomincia</button> : null}</div>
+    <div className="section-header"><div><h2>Nuova simulazione</h2><p className="section-detail">Carica la bolletta del cliente: ti mostriamo le offerte che puoi proporgli e quanto risparmia.</p></div>{step !== "bill" ? <div className="button-row">{step === "review" && analysisOfDraft && !readonly ? discarding === null ? <button className="button secondary" type="button" onClick={() => setDiscarding("confirm")} disabled={Boolean(pending)}>Annulla</button> : <><span className="muted">Scartare la bolletta appena letta?</span><button className="button danger" type="button" onClick={() => void discardAnalysis()} disabled={discarding === "running"}>{discarding === "running" ? "Annullamento…" : "Sì, annulla"}</button><button className="button secondary" type="button" onClick={() => setDiscarding(null)} disabled={discarding === "running"}>No</button></> : null}<button className="button secondary" type="button" onClick={restart} disabled={Boolean(pending) || discarding === "running"}>Ricomincia</button></div> : null}</div>
     <Steps step={step} />
     {step === "bill" ? <section className="ui-card quote-upload">
-      {pending === "upload" || pending === "open" ? <LoadingState label={pending === "open" ? "Apertura della bolletta" : "Lettura della bolletta in corso"} /> : <>
-        <label className="button primary quote-upload-button">Carica bolletta (PDF)<input className="visually-hidden" type="file" accept="application/pdf" onChange={(event) => void upload(event)} disabled={readonly || Boolean(pending)} /></label>
+      <BillAnalysisControl readonly={readonly} disabled={Boolean(pending) && pending !== "upload"} onBusy={analysisBusy} onRead={analysisRead} />
+      {pending === "upload" ? null : pending === "open" ? <LoadingState label="Apertura della bolletta" /> : <>
         {/* Tony (10/11/2026): "Bollette archiviate" is a collapsible section, closed when the page opens. */}
         <details className="form-field bill-archive-panel"><summary className="form-label">Bollette archiviate{archivedCount !== null ? ` (${archivedCount})` : ""}</summary>
           <p className="muted">Riprendi una bolletta già caricata senza ripetere il caricamento del PDF.</p>

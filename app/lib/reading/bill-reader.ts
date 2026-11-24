@@ -53,7 +53,7 @@ export function billReaderReviewPrompt(previous: BillReading, checks: readonly R
   ].join("\n");
 }
 
-export interface BillReaderClient { readonly messages: { create(params: MessageCreateParamsNonStreaming): Promise<Message> } }
+export interface BillReaderClient { readonly messages: { create(params: MessageCreateParamsNonStreaming, options?: { readonly signal?: AbortSignal }): Promise<Message> } }
 
 const TOOL: Tool = { name: BILL_READER_TOOL_NAME, description: "Scheda della bolletta: ogni valore copiato come stampato, stringa vuota se non stampato.", strict: true, input_schema: BILL_READER_SCHEMA as unknown as Tool["input_schema"] };
 
@@ -102,9 +102,11 @@ export class ClaudeBillReader implements BillExtractionProvider {
   readonly #client: BillReaderClient;
   readonly #model: string;
   readonly #maxTokens: number;
+  /** Tony (24/11/2026, "ANALISI BOLLETTE"): stopping the analysis aborts the request to the reader as well. */
+  readonly #signal: AbortSignal | undefined;
 
-  constructor(client: BillReaderClient, model: string, maxTokens = ANTHROPIC_BILL_DEFAULT_MAX_TOKENS) {
-    this.#client = client; this.#model = model; this.#maxTokens = maxTokens;
+  constructor(client: BillReaderClient, model: string, maxTokens = ANTHROPIC_BILL_DEFAULT_MAX_TOKENS, signal?: AbortSignal) {
+    this.#client = client; this.#model = model; this.#maxTokens = maxTokens; this.#signal = signal;
   }
 
   async #read(bytes: Uint8Array, contentType: string, prompt: string): Promise<BillReading> {
@@ -117,13 +119,16 @@ export class ClaudeBillReader implements BillExtractionProvider {
       messages: [{ role: "user", content: [documentBlock(bytes, contentType), { type: "text", text: prompt }] }],
     });
     let message: Message;
-    try { message = await this.#client.messages.create(params(true)); }
+    const options = this.#signal ? { signal: this.#signal } : undefined;
+    if (this.#signal?.aborted) throw new Error("BILL_ANALYSIS_CANCELLED");
+    try { message = await this.#client.messages.create(params(true), options); }
     catch (error) {
       // A schema the API finds too large for strict mode is sent again without strict: the parser below still checks every field.
       if (error instanceof APIError && error.status === 400 && /schema|strict|grammar/i.test(sanitizeAnthropicTechnicalError(error))) {
-        try { message = await this.#client.messages.create(params(false)); }
+        try { message = await this.#client.messages.create(params(false), options); }
         catch (retryError) { console.error(`[BILL_READER_FAILURE] message=${sanitizeAnthropicTechnicalError(retryError)}`); throw new AnthropicBillSdkError(providerError(retryError)); }
       } else {
+        if (this.#signal?.aborted) throw new Error("BILL_ANALYSIS_CANCELLED");
         console.error(`[BILL_READER_FAILURE] message=${sanitizeAnthropicTechnicalError(error)}`);
         throw new AnthropicBillSdkError(providerError(error));
       }
@@ -140,12 +145,14 @@ export class ClaudeBillReader implements BillExtractionProvider {
     const firstChecks = checkBillReading(first);
     console.info(`[BILL_READER] checks_first=${firstChecks.map((check) => check.code).join(",") || "OK"}`);
     if (firstChecks.length === 0 || firstChecks.some((check) => check.code === "NOT_A_BILL")) return { reading: first, checks: firstChecks, reread: false };
+    if (this.#signal?.aborted) throw new Error("BILL_ANALYSIS_CANCELLED");
     try {
       const second = await this.#read(input.bytes, input.contentType, billReaderReviewPrompt(first, firstChecks));
       const secondChecks = checkBillReading(second);
       console.info(`[BILL_READER] checks_second=${secondChecks.map((check) => check.code).join(",") || "OK"}`);
       return secondChecks.length < firstChecks.length ? { reading: second, checks: secondChecks, reread: true } : { reading: first, checks: firstChecks, reread: true };
     } catch (error) {
+      if (this.#signal?.aborted) throw new Error("BILL_ANALYSIS_CANCELLED");
       console.error(`[BILL_READER_REREAD_FAILURE] message=${sanitizeAnthropicTechnicalError(error)}`);
       return { reading: first, checks: firstChecks, reread: false };
     }
@@ -156,7 +163,7 @@ export class ClaudeBillReader implements BillExtractionProvider {
   }
 }
 
-export function createClaudeBillReader(env: NodeJS.ProcessEnv = process.env, client?: BillReaderClient): ClaudeBillReader {
+export function createClaudeBillReader(env: NodeJS.ProcessEnv = process.env, client?: BillReaderClient, signal?: AbortSignal): ClaudeBillReader {
   const apiKey = env.ANTHROPIC_API_KEY?.trim();
   const model = env.ANTHROPIC_MODEL?.trim();
   if (!apiKey || !model) throw new AnthropicBillSdkError("BILL_OCR_PROVIDER_CONFIGURATION_INVALID");
@@ -164,5 +171,5 @@ export function createClaudeBillReader(env: NodeJS.ProcessEnv = process.env, cli
   const timeout = Number(env.ANTHROPIC_BILL_TIMEOUT_MS ?? "") || ANTHROPIC_BILL_DEFAULT_TIMEOUT_MS;
   let baseURL = ANTHROPIC_DEFAULT_BASE_URL;
   try { const parsed = new URL(env.ANTHROPIC_BASE_URL?.trim() || ANTHROPIC_DEFAULT_BASE_URL); if (parsed.protocol === "https:") baseURL = parsed.toString().replace(/\/+$/, ""); } catch { /* default */ }
-  return new ClaudeBillReader(client ?? new Anthropic({ apiKey, baseURL, timeout, maxRetries: 1 }), model, maxTokens);
+  return new ClaudeBillReader(client ?? new Anthropic({ apiKey, baseURL, timeout, maxRetries: 1 }), model, maxTokens, signal);
 }

@@ -5,6 +5,10 @@ import { runtimeRepositories } from "../../lib/persistence/adapter";
 import { recordRuntimeAudit } from "../../lib/persistence/audit";
 import { AuthenticationError } from "../../lib/auth/errors";
 import { createClaudeBillReader } from "../../lib/reading/bill-reader";
+import { analysisHooks, cancelRequested, finishAnalysis, startAnalysis } from "../../lib/reading/bill-analysis";
+import { deleteArchivedBill } from "../../lib/foundation/bill-archive";
+import { analysisBillDiscardable } from "../../lib/reading/bill-analysis-discard";
+import type { BillAnalysisHooks } from "../../lib/foundation/real-bill";
 import { MAX_UPLOAD_BYTES, uploadedFile } from "../../lib/foundation/large-upload";
 // createAnthropicBillSdkAdapter remains the legacy compatibility adapter; Bill routes use two-stage.
 import { attachOfficialPun, ensureOfficialPunForBill } from "../../lib/market/pun-reference";
@@ -64,6 +68,11 @@ const INTERNAL_TO_PUBLIC_CODE: Readonly<Record<string, string>> = {
   BILL_LIST_UNAVAILABLE: "BILL_LIST_UNAVAILABLE",
   INGESTION_FAILED: "INGESTION_FAILED",
   BILL_OPERATION_FAILED: "BILL_OPERATION_FAILED",
+  BILL_ANALYSIS_CANCELLED: "BILL_ANALYSIS_CANCELLED",
+  BILL_ANALYSIS_BUSY: "BILL_ANALYSIS_BUSY",
+  BILL_ANALYSIS_DUPLICATE: "BILL_ANALYSIS_DUPLICATE",
+  BILL_ANALYSIS_ID_INVALID: "BILL_ANALYSIS_ID_INVALID",
+  BILL_ANALYSIS_NOT_DISCARDABLE: "BILL_ANALYSIS_NOT_DISCARDABLE",
 };
 
 function boundedPublicCode(internalCode: unknown, fallback: string): string {
@@ -80,6 +89,7 @@ function publicStatus(code: string): number {
   if (["AUTHENTICATION_REQUIRED", "AUTHENTICATION_EXPIRED", "AUTHENTICATION_INVALID"].includes(code)) return 401;
   if (["AUTHORIZATION_DENIED", "TENANT_MISMATCH", "ROLE_INSUFFICIENT", "TENANT_ACCESS_DENIED"].includes(code)) return 403;
   if (code === "OCR_PROVIDER_REQUIRED") return 422;
+  if (["BILL_ANALYSIS_CANCELLED", "BILL_ANALYSIS_BUSY", "BILL_ANALYSIS_DUPLICATE", "BILL_ANALYSIS_NOT_DISCARDABLE"].includes(code)) return 409;
   if (code.startsWith("BILL_OCR_")) return billOcrHttpStatus(code);
   if (["BILL_VECTOR_UNKNOWN", "BILL_EXTRACTION_REQUIRED_FIELD_MISSING", "BILL_EXTRACTION_VALUE_INVALID", "BILL_CONTRACT_VALIDATION_FAILED", "BILL_METADATA_INVALID", "BILL_MAPPING_FAILED", "BILL_RETRY_FAILED"].includes(code)) return billErrorHttpStatus(code);
   return 400;
@@ -124,13 +134,25 @@ export async function DELETE(): Promise<Response> {
 }
 
 export async function POST(request: Request): Promise<Response> {
+  // Tony (24/11/2026, "ANALISI BOLLETTE"): with x-bill-analysis-id the upload is an analysis the screen follows phase by
+  // phase and can stop (bill-analysis.ts). Without it the upload works exactly as before.
+  let analysis: { readonly tenantId: string; readonly id: string; readonly hooks: BillAnalysisHooks } | null = null;
+  const repositoriesForAnalysis = () => runtimeRepositories().billAnalyses;
   try {
     const principal = await requestPrincipal(request, "OPERATE");
     const tenantId = principal.tenantId;
     const repositories = runtimeRepositories();
+    const requestedAnalysis = request.headers.get("x-bill-analysis-id");
+    if (requestedAnalysis !== null) {
+      const job = await startAnalysis(repositories.billAnalyses, principal, requestedAnalysis);
+      analysis = { tenantId, id: job.analysisId, hooks: analysisHooks(repositories.billAnalyses, tenantId, job.analysisId, request.signal) };
+    }
     const audit = { async record(event: { readonly type: string; readonly tenantId: string; readonly documentId: string; readonly outcome: string }) { await recordRuntimeAudit({ principal, action: `BILL_${event.type}`, resourceType: "BILL", resourceId: event.documentId, outcome: event.outcome === "ALLOWED" ? "ALLOWED" : "DENIED", correlationId: CORRELATION_ID }); } };
     const file = await uploadedFile(request, repositories.documentStorage, tenantId);
-    if (!file) return deny("PDF_REQUIRED", "A PDF file is required", 400);
+    if (!file) {
+      if (analysis) await finishAnalysis(repositories.billAnalyses, tenantId, analysis.id, { state: "FAILED", errorCode: "PDF_REQUIRED" });
+      return deny("PDF_REQUIRED", "A PDF file is required", 400);
+    }
     const result = await ingestEnergyBill({
       tenantId,
       ownerUserId: principal.userId,
@@ -144,8 +166,23 @@ export async function POST(request: Request): Promise<Response> {
       authenticated: true,
       localDev: process.env.FOUNDATION_LOCAL_DEV,
       audit,
-      structuredProviderFactory: () => createClaudeBillReader(),
+      structuredProviderFactory: () => createClaudeBillReader(process.env, undefined, analysis ? request.signal : undefined),
+      ...(analysis ? { analysis: analysis.hooks } : {}),
     });
+    if (analysis) {
+      // Stopped while the bill was being saved: the new bill is removed (new, unapproved, no proposal can exist yet).
+      if (request.signal.aborted || await cancelRequested(repositories.billAnalyses, tenantId, analysis.id)) {
+        // Only the bill this request has just created, still exactly as read and linked to nothing, is ever removed.
+        if (!(await analysisBillDiscardable(repositories, tenantId, result.document))) {
+          await finishAnalysis(repositories.billAnalyses, tenantId, analysis.id, { state: "FAILED", billId: result.document.id, errorCode: "BILL_ANALYSIS_NOT_DISCARDABLE" });
+          return deny("BILL_ANALYSIS_NOT_DISCARDABLE", messageFor("BILL_ANALYSIS_NOT_DISCARDABLE"), 409);
+        }
+        await deleteArchivedBill(principal, repositories, result.document, CORRELATION_ID);
+        await finishAnalysis(repositories.billAnalyses, tenantId, analysis.id, { state: "CANCELLED" });
+        return deny("BILL_ANALYSIS_CANCELLED", messageFor("BILL_ANALYSIS_CANCELLED"), 409);
+      }
+      await finishAnalysis(repositories.billAnalyses, tenantId, analysis.id, result.errorCode ? { state: "FAILED", billId: result.document.id, errorCode: String(result.errorCode) } : { state: "COMPLETED", billId: result.document.id });
+    }
     if (result.errorCode) {
       const code = boundedPublicCode(result.errorCode, "BILL_OPERATION_FAILED");
       return Response.json({ error: { code, message: messageFor(code), correlationId: CORRELATION_ID }, document: sanitizeBillForFeatureAccess(await attachOfficialPun(toPublicDocument(result.document), repositories.marketArchiveRepository), await resolveBillFeaturePermissions(principal, repositories, await billVisibilityScope(principal, repositories))), status: result.status, errorCode: code }, { status: publicStatus(code), headers: noStoreHeaders });
@@ -154,6 +191,7 @@ export async function POST(request: Request): Promise<Response> {
     return Response.json({ document: sanitizeBillForFeatureAccess(await attachOfficialPun(toPublicDocument(result.document), repositories.marketArchiveRepository), await resolveBillFeaturePermissions(principal, repositories, await billVisibilityScope(principal, repositories))), energyBill: result.contract }, { status: 201, headers: noStoreHeaders });
   } catch (error) {
     const code = publicCode(error, "INGESTION_FAILED");
+    if (analysis) await finishAnalysis(repositoriesForAnalysis(), analysis.tenantId, analysis.id, code === "BILL_ANALYSIS_CANCELLED" ? { state: "CANCELLED" } : { state: "FAILED", errorCode: code }).catch(() => undefined);
     // The cause of an unmapped failure goes to the server log, so it can be found without asking the user again.
     if (code === "INGESTION_FAILED") {
       console.error("BILL_INGESTION_FAILED", error instanceof Error ? `${error.name}: ${error.message}` : String(error));
@@ -168,6 +206,11 @@ export async function POST(request: Request): Promise<Response> {
 function messageFor(code: string): string {
   if (code.startsWith("BILL_OCR_")) return billOcrUserMessage(code);
   switch (code) {
+    case "BILL_ANALYSIS_CANCELLED": return "Analisi interrotta: la bolletta non è stata salvata.";
+    case "BILL_ANALYSIS_BUSY": return "C'è già un'analisi in corso: attendi che finisca o interrompila.";
+    case "BILL_ANALYSIS_DUPLICATE": return "Questa analisi è già stata avviata.";
+    case "BILL_ANALYSIS_ID_INVALID": return "Analisi non valida: ricomincia.";
+    case "BILL_ANALYSIS_NOT_DISCARDABLE": return "L'analisi era già conclusa e la bolletta risulta già usata o collegata: non è stata rimossa.";
     case "BILL_DELETE_ALL_DISABLED":
       return "La cancellazione di tutte le bollette è disattivata: selezionale e cancellale una per una.";
     case "BILL_VECTOR_UNKNOWN":

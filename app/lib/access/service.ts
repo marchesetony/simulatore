@@ -6,7 +6,7 @@ import { permissionsForMembershipRole } from "../foundation/memberships.ts";
 // @ts-expect-error Node's strip-only test runner requires the explicit extension.
 import { PLATFORM_TENANT_ID } from "./types.ts";
 // @ts-expect-error Node's strip-only test runner requires the explicit extension.
-import { buildOrgChainIndex, ORG_LEVELS, saveOrgNode } from "../hierarchy/service.ts";
+import { buildOrgChainIndex, childUserIds, ORG_LEVELS, orgNodeRecordId, saveOrgNode, subtreeUserIds } from "../hierarchy/service.ts";
 import type { HierarchyActor } from "../hierarchy/service";
 import type { OrgLevel } from "../hierarchy/types";
 import type { AccessAccount, AccessStores, AccountLevel, AccountStatus, Company } from "./types";
@@ -178,6 +178,62 @@ export async function setAccountStatus(stores: AccessStores, principal: Authenti
   const membership = await stores.memberships.get(tenantId, membershipId(userId));
   if (membership) await stores.memberships.put({ tenantId, recordId: membership.recordId, payload: { ...membership.payload, status, updatedAt: now }, expectedVersion: membership.version, now });
   return (await stores.accounts.put({ tenantId, recordId: userId, payload: { ...current.payload, status }, expectedVersion: current.version, now })).payload;
+}
+
+/**
+ * Tony (24/11/2026, "PERMESSI GERARCHICI"): the administrator changes the role of a person of the company and, with it, the
+ * responsabile (e.g. a sub-agente moved under another agente, an agente promoted to area manager). Server-side rules:
+ * - only who manages the team of that company (its administrator, or the platform owner), never on their own account;
+ * - the chain levels only: administrators are created and suspended, never converted to or from another role;
+ * - the responsabile must be above the new level and the people below must stay below it (no cycles);
+ * - login role, membership permissions, account and chain change together; the person's open sessions stop being valid
+ *   because the role they were issued for no longer matches (they sign in again with the new role).
+ * Nothing is written when a check fails; a failure after the first write restores what was already written.
+ */
+export async function changeAccountLevel(stores: AccessStores, principal: AuthenticatedPrincipal, body: Record<string, unknown>, now = new Date().toISOString()): Promise<{ readonly account: AccessAccount; readonly previousLevel: AccountLevel; readonly parentUserId: string }> {
+  const tenantId = managedTenant(principal, body.tenantId);
+  const userId = typeof body.userId === "string" && USER_PATTERN.test(body.userId) ? body.userId : fail("ACCESS_USER_INVALID");
+  if (userId === principal.userId) fail("ACCESS_SELF_EDIT_DENIED");
+  const nextLevel = level(body.level);
+  const current = await stores.accounts.get(tenantId, userId);
+  if (!current) fail("ACCESS_USER_NOT_FOUND");
+  if (!Number.isSafeInteger(body.expectedVersion) || body.expectedVersion !== current.version) fail("PERSISTENCE_VERSION_CONFLICT");
+  if (current.payload.level === "AMMINISTRATORE" || nextLevel === "AMMINISTRATORE") fail("ACCESS_LEVEL_CHANGE_ADMIN");
+  if (current.payload.status !== "ACTIVE") fail("ACCESS_USER_SUSPENDED");
+  const orgLevel = nextLevel as OrgLevel;
+  const parentUserId = await resolveParent(stores, principal, tenantId, orgLevel, body.parentUserId, now);
+  const index = buildOrgChainIndex(await stores.orgChain.list(tenantId));
+  const existing = index.nodes.get(userId) ?? null;
+  if (parentUserId === userId || (existing && subtreeUserIds(index, userId).has(parentUserId))) fail("ACCESS_PARENT_LEVEL_INVALID");
+  if (existing && childUserIds(index, userId).some((childId) => ORG_LEVELS.indexOf((index.nodes.get(childId) as NonNullable<typeof existing>).payload.level) <= ORG_LEVELS.indexOf(orgLevel))) fail("ACCESS_CHILDREN_LEVEL_CONFLICT");
+  const roles = LEVEL_ROLES[nextLevel];
+  const previousRoles = LEVEL_ROLES[current.payload.level];
+  const membershipRecord = await stores.memberships.get(tenantId, membershipId(userId));
+  if (!membershipRecord) fail("ACCESS_USER_NOT_FOUND");
+  const nextMembership: FoundationMembershipRecord = { ...membershipRecord.payload, role: roles.foundation, permissions: [...permissionsForMembershipRole(roles.foundation)], updatedAt: now };
+  // The chain is checked against the membership the person will have, before anything is written.
+  const memberships = (await stores.memberships.list(tenantId)).map((record) => record.payload.userId === userId ? nextMembership : record.payload);
+  const keep = existing?.payload;
+  const saved = await saveOrgNode({ orgChain: stores.orgChain, memberships }, chainActor(principal, tenantId), { userId, level: orgLevel, parentUserId, displayName: keep?.displayName ?? current.payload.displayName, limits: keep?.limits, canAuthorizeCte: keep?.canAuthorizeCte, canDelegateCte: keep?.canDelegateCte, canManageDiscount: keep?.canManageDiscount, expectedVersion: existing?.version }, now);
+  const restoreChain = async () => {
+    const recordId = orgNodeRecordId(tenantId, userId);
+    if (existing) await stores.orgChain.put({ tenantId, recordId, payload: existing.payload, expectedVersion: saved.version, now });
+    else await stores.orgChain.delete({ tenantId, recordId, expectedVersion: saved.version });
+  };
+  let membershipVersion: number | null = null;
+  let directoryChanged = false;
+  try {
+    membershipVersion = (await stores.memberships.put({ tenantId, recordId: membershipRecord.recordId, payload: nextMembership, expectedVersion: membershipRecord.version, now })).version;
+    await stores.directory.setMembership({ userId, tenantId, role: roles.runtime, status: "ACTIVE" });
+    directoryChanged = true;
+    const account = await stores.accounts.put({ tenantId, recordId: userId, payload: { ...current.payload, level: nextLevel }, expectedVersion: current.version, now });
+    return { account: account.payload, previousLevel: current.payload.level, parentUserId };
+  } catch (error) {
+    if (directoryChanged) await stores.directory.setMembership({ userId, tenantId, role: previousRoles.runtime, status: "ACTIVE" }).catch(() => undefined);
+    if (membershipVersion !== null) await stores.memberships.put({ tenantId, recordId: membershipRecord.recordId, payload: membershipRecord.payload, expectedVersion: membershipVersion, now }).catch(() => undefined);
+    await restoreChain().catch(() => undefined);
+    throw error;
+  }
 }
 
 export async function changeOwnPassword(stores: Pick<AccessStores, "directory">, principal: AuthenticatedPrincipal, body: Record<string, unknown>): Promise<void> {

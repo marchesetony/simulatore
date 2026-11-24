@@ -1,6 +1,6 @@
 import { jsonBody } from "../../../lib/archive/api";
 import { requireRequestAccess } from "../../../lib/auth/request";
-import { accessError, accountStatusResponse, createAccountResponse, teamResponse } from "../../../lib/access/api";
+import { accessError, accountLevelResponse, accountStatusResponse, createAccountResponse, teamResponse } from "../../../lib/access/api";
 
 export const runtime = "nodejs";
 
@@ -15,6 +15,7 @@ export async function POST(request: Request): Promise<Response> {
 }
 
 export async function PATCH(request: Request): Promise<Response> {
-  try { const principal = await requireRequestAccess(request, "ADMIN"); return await accountStatusResponse(principal, await jsonBody(request)); }
+  // Tony (24/11/2026): the same request changes either the status (sospendi/riattiva) or the role and responsabile.
+  try { const principal = await requireRequestAccess(request, "ADMIN"); const body = await jsonBody(request); return await ("level" in body ? accountLevelResponse(principal, body) : accountStatusResponse(principal, body)); }
   catch (error) { return accessError(error); }
 }

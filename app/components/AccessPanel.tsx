@@ -36,8 +36,38 @@ function AccountFields({ idPrefix, withLevel, value, onChange }: { readonly idPr
 
 const EMPTY = { displayName: "", email: "", password: "", level: "DIRETTORE" as Level };
 
+/** People below `userId` in the chain, from the responsabile links of the list: they cannot become its responsabile. */
+function branchOf(accounts: readonly Account[], userId: string): ReadonlySet<string> {
+  const branch = new Set([userId]);
+  for (let grew = true; grew;) { grew = false; for (const account of accounts) if (account.parentUserId && branch.has(account.parentUserId) && !branch.has(account.userId)) { branch.add(account.userId); grew = true; } }
+  return branch;
+}
+
+// Tony (24/11/2026, "PERMESSI GERARCHICI"): role and responsabile of a person already created; the server checks every rule.
+function RoleEditor({ account, accounts, tenantId, onDone, onCancel }: { readonly account: Account; readonly accounts: readonly Account[]; readonly tenantId?: string; readonly onDone: () => void; readonly onCancel: () => void }) {
+  const [level, setLevel] = useState<Level>(account.level); const [parentUserId, setParentUserId] = useState(account.parentUserId ?? "");
+  const [pending, setPending] = useState(false); const [error, setError] = useState<string>();
+  const branch = branchOf(accounts, account.userId);
+  const parents = parentOptions(accounts, level).filter((item) => !branch.has(item.userId));
+  const parent = parents.some((item) => item.userId === parentUserId) ? parentUserId : "";
+  async function submit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault(); setPending(true); setError(undefined);
+    try { await requestJson("/api/access/team", { method: "PATCH", body: JSON.stringify({ userId: account.userId, level, ...(parent ? { parentUserId: parent } : {}), expectedVersion: account.version, ...(tenantId ? { tenantId } : {}) }) }); onDone(); }
+    catch (cause) { setError(errorText(cause)); } finally { setPending(false); }
+  }
+  return <form onSubmit={(event) => void submit(event)} aria-label={`Ruolo di ${account.displayName}`}>
+    <div className="form-grid">
+      <div className="form-field"><label className="form-label" htmlFor={`role-${account.userId}`}>Ruolo</label><select id={`role-${account.userId}`} value={level} onChange={(event) => setLevel(event.target.value as Level)}>{LEVELS.filter((item) => item !== "AMMINISTRATORE").map((item) => <option key={item} value={item}>{LEVEL_LABEL[item]}</option>)}</select></div>
+      <div className="form-field"><label className="form-label" htmlFor={`parent-${account.userId}`}>Sotto a chi lavora</label><select id={`parent-${account.userId}`} value={parent} onChange={(event) => setParentUserId(event.target.value)}><option value="">Direttamente sotto l&apos;azienda</option>{parents.filter((item) => item.chainLevel !== "AZIENDA").map((item) => <option key={item.userId} value={item.userId}>{item.displayName} · {CHAIN_LABEL[item.chainLevel as ChainLevel]}</option>)}</select></div>
+    </div>
+    <p className="muted">Se il ruolo cambia, la persona deve accedere di nuovo: le sessioni aperte con il ruolo precedente non valgono più.</p>
+    <div className="button-row"><button className="button primary compact" type="submit" disabled={pending}>{pending ? "Salvataggio" : "Salva ruolo"}</button><button className="button secondary compact" type="button" onClick={onCancel} disabled={pending}>Annulla</button></div>
+    {error ? <ErrorState message={error} /> : null}
+  </form>;
+}
+
 function AccountList({ accounts, tenantId, selfUserId, onChanged }: { readonly accounts: readonly Account[]; readonly tenantId?: string; readonly selfUserId?: string; readonly onChanged: () => void }) {
-  const [pending, setPending] = useState<string | null>(null); const [error, setError] = useState<string>();
+  const [pending, setPending] = useState<string | null>(null); const [error, setError] = useState<string>(); const [editing, setEditing] = useState<string | null>(null);
   async function toggle(account: Account) {
     setPending(account.userId); setError(undefined);
     try { await requestJson("/api/access/team", { method: "PATCH", body: JSON.stringify({ userId: account.userId, status: account.status === "ACTIVE" ? "SUSPENDED" : "ACTIVE", expectedVersion: account.version, ...(tenantId ? { tenantId } : {}) }) }); onChanged(); }
@@ -47,7 +77,8 @@ function AccountList({ accounts, tenantId, selfUserId, onChanged }: { readonly a
   return <>
     <div className="responsive-table"><table><thead><tr><th>Nome</th><th>Email</th><th>Ruolo</th><th>Responsabile</th><th>Stato</th><th></th></tr></thead>
       <tbody>{accounts.map((account) => <tr key={account.userId}><td><strong>{account.displayName}</strong></td><td>{account.email}</td><td>{LEVEL_LABEL[account.level]}</td><td>{account.parentUserId ? accounts.find((item) => item.userId === account.parentUserId)?.displayName ?? "In catena" : account.chainLevel === "AZIENDA" ? "Vertice azienda" : "—"}</td><td><span className={`status-badge ${account.status === "ACTIVE" ? "positive" : "negative"}`}>{account.status === "ACTIVE" ? "Attivo" : "Sospeso"}</span></td>
-        <td>{account.version !== undefined && account.userId !== selfUserId ? <button className="button secondary compact" type="button" disabled={pending !== null} onClick={() => void toggle(account)}>{pending === account.userId ? "Salvataggio" : account.status === "ACTIVE" ? "Sospendi" : "Riattiva"}</button> : null}</td></tr>)}</tbody></table></div>
+        <td>{account.version !== undefined && account.userId !== selfUserId ? <span className="button-row">{account.level !== "AMMINISTRATORE" && account.status === "ACTIVE" ? <button className="button secondary compact" type="button" disabled={pending !== null} onClick={() => setEditing(editing === account.userId ? null : account.userId)}>Cambia ruolo</button> : null}<button className="button secondary compact" type="button" disabled={pending !== null} onClick={() => void toggle(account)}>{pending === account.userId ? "Salvataggio" : account.status === "ACTIVE" ? "Sospendi" : "Riattiva"}</button></span> : null}</td></tr>)}</tbody></table></div>
+    {editing ? (() => { const account = accounts.find((item) => item.userId === editing); return account ? <section className="ui-card"><h4>Ruolo di {account.displayName}</h4><RoleEditor key={account.userId} account={account} accounts={accounts} tenantId={tenantId} onDone={() => { setEditing(null); onChanged(); }} onCancel={() => setEditing(null)} /></section> : null; })() : null}
     {error ? <ErrorState message={error} /> : null}
   </>;
 }
