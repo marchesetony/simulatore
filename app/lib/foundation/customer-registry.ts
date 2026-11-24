@@ -45,7 +45,7 @@ export function customerBillFact(document: BillDocument): CustomerBillFact {
   const review = view?.analystReview;
   const normalized = view?.normalized ?? null;
   const vectorRead = review?.supply.vector.value;
-  const vector = vectorRead === "EE" || vectorRead === "GAS" ? vectorRead : null;
+  const vector = vectorRead === "EE" || vectorRead === "GAS" ? vectorRead : normalized?.vector === "EE" || normalized?.vector === "GAS" ? normalized.vector : null;
   const reference = vector === "GAS" ? code(review?.supply.pdr.value) : code(review?.supply.pod.value) ?? code(normalized?.supply.reference) ?? code(view?.fields.pod?.value);
   const type = review?.customer.type.value;
   return {
@@ -59,6 +59,7 @@ export function customerBillFact(document: BillDocument): CustomerBillFact {
     supplyAddress: view ? addressOf(view) : null,
     supplier: text(normalized?.currentSupplier) ?? text(review?.supply.supplier.value) ?? text(view?.fields.supplier?.value),
     periodEnd: text(normalized?.billingPeriod.periodEnd) ?? text(review?.dates.billingPeriodEnd.value),
+    periodStart: text(normalized?.billingPeriod.periodStart) ?? text(review?.dates.billingPeriodStart.value),
     approved: Boolean(document.currentApprovedVersionId),
   };
 }

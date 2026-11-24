@@ -1,4 +1,5 @@
 import type { CteForcingRecord } from "../eligibility/forcing";
+import type { BillLinkRecord, CustomerRecord, SupplyRecord } from "../customers/model";
 import type { CteAssignmentRepository, OrgChainRepository } from "../hierarchy/service";
 import type { AccessAccount, AccessDirectory, Company } from "../access/types";
 import type { CompanyProfile } from "../company/profile";
@@ -72,6 +73,10 @@ export interface ProductionStorageAdapter {
   readonly officialServiceLocks?: TenantRecordRepository<unknown>;
   /** Tony (20/11/2026): one record per offer produced with a forced CTE (who, which authorization, CTE version, customer, POD). */
   readonly cteForcingRecords?: TenantRecordRepository<CteForcingRecord>;
+  /** Tony (24/11/2026, "FASE 2: ANAGRAFICA CLIENTI E POD"): customers, POD/PDR with holder history, bill links. */
+  readonly customers?: TenantRecordRepository<CustomerRecord>;
+  readonly customerSupplies?: TenantRecordRepository<SupplyRecord>;
+  readonly customerBillLinks?: TenantRecordRepository<BillLinkRecord>;
 }
 
 export interface RuntimeRepositories {
@@ -116,6 +121,9 @@ export interface RuntimeRepositories {
   readonly officialServiceRuns: TenantRecordRepository<unknown>;
   readonly officialServiceLocks: TenantRecordRepository<unknown>;
   readonly cteForcingRecords: TenantRecordRepository<CteForcingRecord>;
+  readonly customers: TenantRecordRepository<CustomerRecord>;
+  readonly customerSupplies: TenantRecordRepository<SupplyRecord>;
+  readonly customerBillLinks: TenantRecordRepository<BillLinkRecord>;
 }
 
 let productionStorageAdapter: ProductionStorageAdapter | null = null;
@@ -168,7 +176,7 @@ function storedRepositories(): RuntimeRepositories {
   const config = getRuntimeConfig();
   if (config.runtimeMode === "production") {
     if (!productionStorageAdapter) throw new Error("PERSISTENCE_ADAPTER_UNAVAILABLE");
-    return { ...productionStorageAdapter, eligibilityOverrides: productionStorageAdapter.eligibilityOverrides ?? productionStorageAdapter.cteArchives as EligibilityOverrideRepository, marketRefreshState: productionStorageAdapter.marketRefreshState ?? productionStorageAdapter.marketDataArchives, marketRefreshRuns: productionStorageAdapter.marketRefreshRuns ?? productionStorageAdapter.marketDataArchives, marketRefreshLocks: productionStorageAdapter.marketRefreshLocks ?? productionStorageAdapter.marketDataArchives, orgChain: productionStorageAdapter.orgChain ?? unavailableHierarchyStore() as OrgChainRepository, cteAssignments: productionStorageAdapter.cteAssignments ?? unavailableHierarchyStore() as CteAssignmentRepository, companies: productionStorageAdapter.companies ?? unavailableHierarchyStore(), companyProfiles: productionStorageAdapter.companyProfiles ?? unavailableHierarchyStore(), commercialDiscounts: productionStorageAdapter.commercialDiscounts ?? unavailableHierarchyStore(), proposalPresentations: productionStorageAdapter.proposalPresentations ?? unavailableHierarchyStore(), accessAccounts: productionStorageAdapter.accessAccounts ?? unavailableHierarchyStore(), accessDirectory: productionStorageAdapter.accessDirectory ?? unavailableAccessDirectory(), officialAlerts: productionStorageAdapter.officialAlerts ?? unavailableHierarchyStore(), officialChecks: productionStorageAdapter.officialChecks ?? unavailableHierarchyStore(), officialDocuments: productionStorageAdapter.officialDocuments ?? unavailableHierarchyStore(), officialPublications: productionStorageAdapter.officialPublications ?? unavailableHierarchyStore(), officialServiceRuns: productionStorageAdapter.officialServiceRuns ?? unavailableHierarchyStore(), officialServiceLocks: productionStorageAdapter.officialServiceLocks ?? unavailableHierarchyStore(), cteForcingRecords: productionStorageAdapter.cteForcingRecords ?? unavailableHierarchyStore() };
+    return { ...productionStorageAdapter, eligibilityOverrides: productionStorageAdapter.eligibilityOverrides ?? productionStorageAdapter.cteArchives as EligibilityOverrideRepository, marketRefreshState: productionStorageAdapter.marketRefreshState ?? productionStorageAdapter.marketDataArchives, marketRefreshRuns: productionStorageAdapter.marketRefreshRuns ?? productionStorageAdapter.marketDataArchives, marketRefreshLocks: productionStorageAdapter.marketRefreshLocks ?? productionStorageAdapter.marketDataArchives, orgChain: productionStorageAdapter.orgChain ?? unavailableHierarchyStore() as OrgChainRepository, cteAssignments: productionStorageAdapter.cteAssignments ?? unavailableHierarchyStore() as CteAssignmentRepository, companies: productionStorageAdapter.companies ?? unavailableHierarchyStore(), companyProfiles: productionStorageAdapter.companyProfiles ?? unavailableHierarchyStore(), commercialDiscounts: productionStorageAdapter.commercialDiscounts ?? unavailableHierarchyStore(), proposalPresentations: productionStorageAdapter.proposalPresentations ?? unavailableHierarchyStore(), accessAccounts: productionStorageAdapter.accessAccounts ?? unavailableHierarchyStore(), accessDirectory: productionStorageAdapter.accessDirectory ?? unavailableAccessDirectory(), officialAlerts: productionStorageAdapter.officialAlerts ?? unavailableHierarchyStore(), officialChecks: productionStorageAdapter.officialChecks ?? unavailableHierarchyStore(), officialDocuments: productionStorageAdapter.officialDocuments ?? unavailableHierarchyStore(), officialPublications: productionStorageAdapter.officialPublications ?? unavailableHierarchyStore(), officialServiceRuns: productionStorageAdapter.officialServiceRuns ?? unavailableHierarchyStore(), officialServiceLocks: productionStorageAdapter.officialServiceLocks ?? unavailableHierarchyStore(), cteForcingRecords: productionStorageAdapter.cteForcingRecords ?? unavailableHierarchyStore(), customers: productionStorageAdapter.customers ?? unavailableHierarchyStore(), customerSupplies: productionStorageAdapter.customerSupplies ?? unavailableHierarchyStore(), customerBillLinks: productionStorageAdapter.customerBillLinks ?? unavailableHierarchyStore() };
   }
   const local = new LocalFilesystemAdapter("var/phase6");
   return {
@@ -213,5 +221,8 @@ function storedRepositories(): RuntimeRepositories {
     officialServiceRuns: local.collection("official-service-runs"),
     officialServiceLocks: local.collection("official-service-locks"),
     cteForcingRecords: local.collection<CteForcingRecord>("cte-forcing-records"),
+    customers: local.collection<CustomerRecord>("customers"),
+    customerSupplies: local.collection<SupplyRecord>("customer-supplies"),
+    customerBillLinks: local.collection<BillLinkRecord>("customer-bill-links"),
   };
 }

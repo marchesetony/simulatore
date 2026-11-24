@@ -1,4 +1,5 @@
 import type { CteForcingRecord } from "../eligibility/forcing";
+import type { BillLinkRecord, CustomerRecord, SupplyRecord } from "../customers/model";
 import type { CteAssignmentRepository, OrgChainRepository } from "../hierarchy/service";
 import type { CteAssignment, OrgNode } from "../hierarchy/types";
 import type { AccessAccount, AccessDirectory, Company } from "../access/types";
@@ -371,6 +372,9 @@ export class SupabaseProductionStorageAdapter implements ProductionStorageAdapte
   readonly officialServiceRuns: TenantRecordRepository<unknown>;
   readonly officialServiceLocks: TenantRecordRepository<unknown>;
   readonly cteForcingRecords: TenantRecordRepository<CteForcingRecord>;
+  readonly customers: TenantRecordRepository<CustomerRecord>;
+  readonly customerSupplies: TenantRecordRepository<SupplyRecord>;
+  readonly customerBillLinks: TenantRecordRepository<BillLinkRecord>;
 
   constructor(client: ProviderClient, storageBucket: string, authClient?: () => ProviderClient) {
     this.cteArchiveRepository = new SupabaseCteArchiveRepository(client);
@@ -406,6 +410,9 @@ export class SupabaseProductionStorageAdapter implements ProductionStorageAdapte
     this.officialServiceRuns = new SupabaseRecordRepository(client, "official-service-runs");
     this.officialServiceLocks = new SupabaseRecordRepository(client, "official-service-locks");
     this.cteForcingRecords = new SupabaseRecordRepository<CteForcingRecord>(client, "cte-forcing-records");
+    this.customers = new SupabaseRecordRepository<CustomerRecord>(client, "customers");
+    this.customerSupplies = new SupabaseRecordRepository<SupplyRecord>(client, "customer-supplies");
+    this.customerBillLinks = new SupabaseRecordRepository<BillLinkRecord>(client, "customer-bill-links");
     this.orgChain = new SupabaseRecordRepository<OrgNode>(client, "org-chain") as SupabaseRecordRepository<OrgNode> & OrgChainRepository;
     this.cteAssignments = new SupabaseRecordRepository<CteAssignment>(client, "cte-assignments");
     this.companies = new SupabaseRecordRepository<Company>(client, "companies");

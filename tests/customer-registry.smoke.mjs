@@ -61,9 +61,10 @@ console.log("DISAGREEMENTS_SHOWN_NOT_RESOLVED=PASS");
 registry = buildCustomerRegistry(A, [...facts, fact("x1", { tenantId: B, customerName: "Altra azienda", taxIdentifier: "RSSMRA80A01H501U", supplyReference: "IT001E00000001" })]);
 assert.equal(registry.billCount, 3); assert.ok(!registry.customers.some((c) => c.supplies.some((s) => s.billIds.includes("x1"))));
 assert.deepEqual(buildCustomerRegistry(B, facts).customers, []);
-const route = await readFile(new URL("../app/api/customers/route.ts", import.meta.url), "utf8");
-assert.match(route, /document\.tenantId === principal\.tenantId && billInScope\(document, scope\)/, "the route keeps the company and branch filter");
-assert.match(route, /buildCustomerRegistry\(principal\.tenantId/);
+// Since the persistent registry (24/11/2026) the route reads through app/lib/customers/registry.ts, which keeps the filter.
+const registrySource = await readFile(new URL("../app/lib/customers/registry.ts", import.meta.url), "utf8");
+assert.match(registrySource, /ownBills\.filter\(\(bill\) => billInScope\(bill, context\.scope\)\)/, "company and branch filter on the bills");
+assert.match(registrySource, /record\.tenantId === tenantId && record\.payload\?\.tenantId === tenantId/, "records of the user's company only");
 console.log("COMPANY_ISOLATION=PASS");
 
 // 6. Search by name, code, POD typed with spaces, address.

@@ -15,6 +15,7 @@ export interface CustomerBillFact {
   readonly supplyAddress: string | null;
   readonly supplier: string | null;
   readonly periodEnd: string | null;
+  readonly periodStart?: string | null;
   readonly approved: boolean;
 }
 

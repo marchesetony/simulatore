@@ -1,27 +1,26 @@
 import { requestPrincipal } from "../../lib/auth/request";
 import { AuthenticationError } from "../../lib/auth/errors";
 import { runtimeRepositories } from "../../lib/persistence/adapter";
-import { billInScope, billVisibilityScope } from "../../lib/foundation/bill-visibility";
-import { buildCustomerRegistry, customerBillFact } from "../../lib/foundation/customer-registry";
+import { registryView } from "../../lib/customers/registry";
+import { CUSTOMER_NO_STORE, registryContext, registryErrorResponse, runRegistryAction } from "../../lib/customers/http";
 
-// Tony (24/11/2026, "COMPLETAMENTO APPLICAZIONE"): anagrafica cliente e POD, read only. Identity, company and commercial
-// branch are checked on every request: the registry is built only from the bills of the user's company the user may see.
-const CORRELATION_ID = "foundation-customer-registry";
+// Tony (24/11/2026, "FASE 2: ANAGRAFICA CLIENTI E POD"): persistent customer registry. Identity, company and commercial branch
+// are checked on every request; reading and every change are decided by the server (app/lib/customers/registry.ts).
 const MAX_BILLS = 500;
-const NO_STORE = { "cache-control": "no-store, private", "vary": "Cookie, Authorization", "x-content-type-options": "nosniff" };
-const AUTH_STATUS: Readonly<Record<string, number>> = { AUTHENTICATION_REQUIRED: 401, AUTHENTICATION_EXPIRED: 401, AUTHENTICATION_INVALID: 401, AUTHORIZATION_DENIED: 403, TENANT_MISMATCH: 403, ROLE_INSUFFICIENT: 403 };
 
 export async function GET(request: Request): Promise<Response> {
   try {
     const principal = await requestPrincipal(request, "READ");
     const repositories = runtimeRepositories();
-    const scope = await billVisibilityScope(principal, repositories);
-    const documents = (await repositories.billRepository.list(principal.tenantId)).filter((document) => document.tenantId === principal.tenantId && billInScope(document, scope));
-    // Never a partial registry: over the limit it says so instead of leaving customers out.
-    if (documents.length > MAX_BILLS) return Response.json({ error: { code: "CUSTOMER_REGISTRY_TOO_LARGE", message: `Le bollette superano ${MAX_BILLS}: l'anagrafica non viene mostrata per non presentarla incompleta.`, correlationId: CORRELATION_ID } }, { status: 503, headers: NO_STORE });
-    return Response.json(buildCustomerRegistry(principal.tenantId, documents.map(customerBillFact)), { headers: NO_STORE });
-  } catch (error) {
-    const code = error instanceof AuthenticationError ? error.code : error instanceof Error && error.message in AUTH_STATUS ? error.message : "CUSTOMER_REGISTRY_UNAVAILABLE";
-    return Response.json({ error: { code, message: code === "CUSTOMER_REGISTRY_UNAVAILABLE" ? "Anagrafica clienti non disponibile: riprova." : "Accesso non consentito.", correlationId: CORRELATION_ID } }, { status: AUTH_STATUS[code] ?? 503, headers: NO_STORE });
-  }
+    if ((await repositories.billRepository.list(principal.tenantId)).length > MAX_BILLS) return Response.json({ error: { code: "CUSTOMER_REGISTRY_TOO_LARGE", message: `Le bollette superano ${MAX_BILLS}: l'anagrafica non viene mostrata per non presentarla incompleta.` } }, { status: 503, headers: CUSTOMER_NO_STORE });
+    return Response.json(await registryView(await registryContext(principal, repositories)), { headers: CUSTOMER_NO_STORE });
+  } catch (error) { return registryErrorResponse(error, AuthenticationError); }
+}
+
+export async function POST(request: Request): Promise<Response> {
+  try {
+    const principal = await requestPrincipal(request, "OPERATE");
+    const body = await request.json().catch(() => null);
+    return Response.json(await runRegistryAction(await registryContext(principal, runtimeRepositories()), body), { headers: CUSTOMER_NO_STORE });
+  } catch (error) { return registryErrorResponse(error, AuthenticationError); }
 }
