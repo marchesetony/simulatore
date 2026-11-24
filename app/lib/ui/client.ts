@@ -169,6 +169,8 @@ const messages: Readonly<Record<string, string>> = {
   ACCESS_COMPANY_NAME_INVALID: "Inserisci la ragione sociale.",
   ACCESS_COMPANY_EXISTS: "Esiste già un'azienda con questo nome.",
   ACCESS_SELF_EDIT_DENIED: "Non puoi modificare o sospendere il tuo stesso accesso.",
+  ACCESS_SCOPE_DENIED: "Puoi gestire solo le persone del tuo ramo che stanno sotto di te.",
+  ACCESS_LEVEL_NOT_ALLOWED: "Non puoi assegnare questo ruolo: puoi scegliere solo i ruoli sotto il tuo.",
   ACCESS_LEVEL_CHANGE_ADMIN: "Il ruolo di amministratore non si converte: crea un nuovo amministratore o sospendi quello attuale.",
   ACCESS_USER_SUSPENDED: "Riattiva l'accesso prima di cambiarne il ruolo.",
   ACCESS_CHILDREN_LEVEL_CONFLICT: "Sotto questa persona lavorano già persone di ruolo uguale o più alto: spostale prima.",

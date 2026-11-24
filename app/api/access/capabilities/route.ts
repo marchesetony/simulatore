@@ -4,6 +4,6 @@ import { accessCapabilitiesResponse, accessError } from "../../../lib/access/api
 export const runtime = "nodejs";
 
 export async function GET(request: Request): Promise<Response> {
-  try { return accessCapabilitiesResponse(await requireRequestAccess(request, "READ")); }
+  try { return await accessCapabilitiesResponse(await requireRequestAccess(request, "READ")); }
   catch (error) { return accessError(error); }
 }

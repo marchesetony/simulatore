@@ -71,8 +71,10 @@ const team = await listTeam(stores, giulia);
 assert.equal(team.find((item) => item.userId === subAgente.userId).parentUserId, agente.userId);
 assert.equal((await stores.memberships.get(lumenica.company.tenantId, `membership_${agente.userId.slice(5)}`)).payload.role, "SALES_OPERATOR");
 await assert.rejects(() => createAccount(stores, giulia, { tenantId: "tenant_altra", displayName: "Fuori", email: "fuori@x.test", level: "AGENTE", password: "Fuori2026xx" }), /ACCESS_DENIED/);
-await assert.rejects(() => createAccount(stores, principal(direttore.userId, lumenica.company.tenantId, "ANALYST"), { displayName: "No", email: "no@x.test", level: "AGENTE", password: "Nonpuoi2026" }), /ACCESS_DENIED/);
-await assert.rejects(() => listTeam(stores, principal(agente.userId, lumenica.company.tenantId, "VIEWER")), /ACCESS_DENIED/);
+// Tony (24/11/2026, "RIPRISTINO GESTIONE GERARCHICA"): a responsabile manages only the levels below theirs, in their branch
+// (tests/access-branch-management.smoke.mjs); a sub-agente manages nobody.
+await assert.rejects(() => createAccount(stores, principal(direttore.userId, lumenica.company.tenantId, "ANALYST"), { displayName: "No", email: "no@x.test", level: "DIRETTORE", password: "Nonpuoi2026" }), /ACCESS_LEVEL_NOT_ALLOWED/);
+await assert.rejects(() => listTeam(stores, principal(subAgente.userId, lumenica.company.tenantId, "VIEWER")), /ACCESS_DENIED/);
 await assert.rejects(() => createCompany(stores, giulia, { name: "Abusiva", admin: { displayName: "X", email: "x@x.test", password: "Abusiva2026" } }), /ACCESS_DENIED/);
 assert.deepEqual((await listTeam(stores, giulia)).map((item) => item.displayName), ["Giulia Rossi", "Luca Neri", "Marco Bianchi", "Sara Verdi"]);
 

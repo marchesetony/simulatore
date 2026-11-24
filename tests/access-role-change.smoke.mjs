@@ -76,8 +76,9 @@ const before = await snapshot();
 now = await team();
 const version = (userId) => now.get(userId).version;
 const refuse = async (who, body, code) => { await assert.rejects(() => changeAccountLevel(stores, who, body, at), new RegExp(code)); assert.equal(await snapshot(), before, `${code}: nothing written`); };
-await refuse(principal(director.userId, tenantId, "ANALYST"), { userId: agentA.userId, level: "AREA_MANAGER", expectedVersion: version(agentA.userId) }, "ACCESS_DENIED");
-await refuse(principal(agentA.userId, tenantId, "VIEWER"), { userId: agentA.userId, level: "DIRETTORE", expectedVersion: version(agentA.userId) }, "ACCESS_DENIED");
+// Since "RIPRISTINO GESTIONE GERARCHICA" (24/11) a director manages agenti and sub-agenti of the branch, never higher levels.
+await refuse(principal(director.userId, tenantId, "ANALYST"), { userId: agentA.userId, level: "AREA_MANAGER", expectedVersion: version(agentA.userId) }, "ACCESS_LEVEL_NOT_ALLOWED");
+await refuse(principal(agentA.userId, tenantId, "VIEWER"), { userId: agentA.userId, level: "DIRETTORE", expectedVersion: version(agentA.userId) }, "ACCESS_SELF_EDIT_DENIED");
 await refuse(principal(other.admin.userId, other.company.tenantId, "ADMIN"), { tenantId, userId: agentA.userId, level: "DIRETTORE", expectedVersion: version(agentA.userId) }, "ACCESS_DENIED");
 await refuse(principal(other.admin.userId, other.company.tenantId, "ADMIN"), { userId: agentA.userId, level: "DIRETTORE", expectedVersion: version(agentA.userId) }, "ACCESS_USER_NOT_FOUND");
 await refuse(boss, { userId: admin.userId, level: "DIRETTORE", expectedVersion: version(admin.userId) }, "ACCESS_SELF_EDIT_DENIED");
@@ -107,9 +108,11 @@ assert.deepEqual(payloads(after[1]).map(({ updatedAt, ...rest }) => rest), paylo
 assert.deepEqual(payloads(after[2]), payloads(was[2]), "chain restored");
 console.log("ROLLBACK=PASS");
 
-// 6. Route, audit and session: admin-only route, audited change, sessions checked against the membership role.
+// 6. Route, audit and session: server-side authority, audited change, sessions checked against the membership role.
 const route = readFileSync(new URL("../app/api/access/team/route.ts", import.meta.url), "utf8");
-assert.match(route, /export async function PATCH[\s\S]*requireRequestAccess\(request, "ADMIN"\)[\s\S]*"level" in body \? accountLevelResponse/);
+// Since "RIPRISTINO GESTIONE GERARCHICA" (24/11) the route lets every role in and teamAuthority decides (access-branch-management).
+assert.match(route, /export async function PATCH[\s\S]*requireRequestAccess\(request, "OPERATE"\)[\s\S]*"level" in body \? accountLevelResponse/);
+assert.match(readFileSync(new URL("../app/lib/access/service.ts", import.meta.url), "utf8"), /export async function changeAccountLevel[\s\S]{0,400}const authority = await teamAuthority\(stores, principal, body\.tenantId\);/);
 assert.match(readFileSync(new URL("../app/lib/access/api.ts", import.meta.url), "utf8"), /action: "ACCOUNT_ROLE_CHANGED"[^\n]*from: result\.previousLevel, to: result\.account\.level/);
 assert.match(readFileSync(new URL("../app/lib/production/supabase.ts", import.meta.url), "utf8"), /membership\.status !== "ACTIVE" \|\| membership\.role !== session\.role\) return null/);
 console.log("ROUTE_AUDIT_SESSION=PASS");

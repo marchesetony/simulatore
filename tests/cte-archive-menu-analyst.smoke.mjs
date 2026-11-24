@@ -12,7 +12,7 @@ const ADMIN = list("COMPANY_ADMIN_SECTIONS");
 const MANAGER = list("COMPANY_MANAGER_SECTIONS");
 
 // The menu rule as written in the shell, evaluated per role.
-assert.match(shell, /const visibleSection = \(id: SectionId\): boolean => platformTenant \? PLATFORM_SECTIONS\.includes\(id\) : \(companyAdmin \? COMPANY_ADMIN_SECTIONS : context\?\.role === "ANALYST" \? COMPANY_MANAGER_SECTIONS : SALES_SECTIONS\)\.includes\(id\);/);
+assert.match(shell, /const visibleSection = \(id: SectionId\): boolean => platformTenant \? PLATFORM_SECTIONS\.includes\(id\) : id === "access" && branchManager \? true : \(companyAdmin \? COMPANY_ADMIN_SECTIONS : context\?\.role === "ANALYST" \? COMPANY_MANAGER_SECTIONS : SALES_SECTIONS\)\.includes\(id\);/);
 assert.match(shell, /const companyAdmin = context\?\.role === "ADMIN";/);
 const menu = (role, tenantId = "tenant_x") => tenantId === "tenant_piattaforma" ? PLATFORM : role === "ADMIN" ? ADMIN : role === "ANALYST" ? MANAGER : SALES;
 

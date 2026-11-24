@@ -546,7 +546,16 @@ export default function OperationalShell() {
   const platformTenant = tenantId === "tenant_piattaforma";
   const section: SectionId = chosenSection ?? (platformTenant ? "dashboard" : "quote");
   const companyAdmin = context?.role === "ADMIN";
-  const visibleSection = (id: SectionId): boolean => platformTenant ? PLATFORM_SECTIONS.includes(id) : (companyAdmin ? COMPANY_ADMIN_SECTIONS : context?.role === "ANALYST" ? COMPANY_MANAGER_SECTIONS : SALES_SECTIONS).includes(id);
+  const [branchManager, setBranchManager] = useState(false);
+  useEffect(() => {
+    if (!context?.authenticated || platformTenant || companyAdmin) { setBranchManager(false); return; }
+    let alive = true;
+    void requestJson<{ readonly teamScope?: string | null; readonly manageableLevels?: readonly string[] }>("/api/access/capabilities").then((result) => { if (alive) setBranchManager(result.teamScope === "BRANCH" && Boolean(result.manageableLevels?.length)); }, () => { if (alive) setBranchManager(false); });
+    return () => { alive = false; };
+  }, [context?.authenticated, context?.principalId, context?.tenantId, platformTenant, companyAdmin]);
+  // Tony (24/11/2026, "RIPRISTINO GESTIONE GERARCHICA"): «Accessi» also for the responsabili who manage a branch, as the
+  // server says (/api/access/capabilities); a sub-agente, or anybody the server does not let manage, does not see it.
+  const visibleSection = (id: SectionId): boolean => platformTenant ? PLATFORM_SECTIONS.includes(id) : id === "access" && branchManager ? true : (companyAdmin ? COMPANY_ADMIN_SECTIONS : context?.role === "ANALYST" ? COMPANY_MANAGER_SECTIONS : SALES_SECTIONS).includes(id);
   // Tony (1/11): the fixed header's height (it changes with the logo) tells the menu where to stay while the page scrolls.
   useEffect(() => {
     const header = document.querySelector<HTMLElement>(".app-header");

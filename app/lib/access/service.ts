@@ -34,6 +34,51 @@ export function canManageTeam(principal: Pick<AuthenticatedPrincipal, "tenantId"
   return principal.tenantId !== PLATFORM_TENANT_ID && principal.role === "ADMIN";
 }
 
+/**
+ * Tony (24/11/2026, "RIPRISTINO GESTIONE GERARCHICA"): besides the administrator (whole company), every responsabile manages
+ * the people of their own branch of the chain, and only the levels below their own:
+ * - direttore and area manager: agenti and sub-agenti of their branch;
+ * - agente: only the sub-agenti assigned to them;
+ * - sub-agente: nobody.
+ * Nobody acts on themselves, on their superiors or on another branch; the company is always the caller's own.
+ */
+const BRANCH_LEVELS: Readonly<Partial<Record<AccountLevel, readonly AccountLevel[]>>> = { DIRETTORE: ["AGENTE", "SUB_AGENTE"], AREA_MANAGER: ["AGENTE", "SUB_AGENTE"], AGENTE: ["SUB_AGENTE"] };
+
+export type TeamAuthority =
+  | { readonly scope: "COMPANY"; readonly tenantId: string; readonly levels: readonly AccountLevel[] }
+  | { readonly scope: "BRANCH"; readonly tenantId: string; readonly levels: readonly AccountLevel[]; readonly selfUserId: string; readonly branch: ReadonlySet<string> };
+
+/** Who the caller may manage, read from their own account and their place in the chain; anything missing denies. */
+export async function teamAuthority(stores: Pick<AccessStores, "accounts" | "orgChain">, principal: AuthenticatedPrincipal, requested?: unknown): Promise<TeamAuthority> {
+  if (isPlatformOwner(principal) || canManageTeam(principal)) return { scope: "COMPANY", tenantId: managedTenant(principal, requested), levels: ACCOUNT_LEVELS };
+  if (principal.tenantId === PLATFORM_TENANT_ID) fail("ACCESS_DENIED");
+  if (requested !== undefined && requested !== null && requested !== principal.tenantId) fail("ACCESS_DENIED");
+  const tenantId = principal.tenantId;
+  const own = await stores.accounts.get(tenantId, principal.userId);
+  const levels = own && own.tenantId === tenantId && own.payload.tenantId === tenantId && own.payload.status === "ACTIVE" ? BRANCH_LEVELS[own.payload.level] : undefined;
+  if (!own || !levels || LEVEL_ROLES[own.payload.level].runtime !== principal.role) fail("ACCESS_DENIED");
+  const index = buildOrgChainIndex(await stores.orgChain.list(tenantId));
+  if (index.nodes.get(principal.userId)?.payload.level !== own.payload.level) fail("ACCESS_DENIED");
+  return { scope: "BRANCH", tenantId, levels, selfUserId: principal.userId, branch: subtreeUserIds(index, principal.userId) };
+}
+
+/** A branch responsabile acts only on people below them, at a level they manage. */
+function assertManages(authority: TeamAuthority, account: AccessAccount): void {
+  if (authority.scope === "COMPANY") return;
+  if (account.userId === authority.selfUserId || !authority.branch.has(account.userId) || !authority.levels.includes(account.level)) fail("ACCESS_SCOPE_DENIED");
+}
+
+function assertLevelAllowed(authority: TeamAuthority, value: AccountLevel): void {
+  if (!authority.levels.includes(value)) fail("ACCESS_LEVEL_NOT_ALLOWED");
+}
+
+/** The responsabile chosen by a branch manager is themselves or somebody of their branch. */
+function assertParentInBranch(authority: TeamAuthority, parentUserId: string): void {
+  if (authority.scope === "BRANCH" && !authority.branch.has(parentUserId)) fail("ACCESS_SCOPE_DENIED");
+}
+
+function defaultParent(authority: TeamAuthority): string | undefined { return authority.scope === "BRANCH" ? authority.selfUserId : undefined; }
+
 function managedTenant(principal: AuthenticatedPrincipal, requested: unknown): string {
   if (isPlatformOwner(principal)) {
     if (typeof requested !== "string" || !TENANT_PATTERN.test(requested) || requested === PLATFORM_TENANT_ID) fail("ACCESS_COMPANY_REQUIRED");
@@ -117,9 +162,10 @@ async function companyRoot(stores: AccessStores, principal: AuthenticatedPrincip
 }
 
 /** The responsabile must already sit in the chain at a higher level than the new account. */
-async function resolveParent(stores: AccessStores, principal: AuthenticatedPrincipal, tenantId: string, level: OrgLevel, requested: unknown, now: string): Promise<string> {
-  const root = await companyRoot(stores, principal, tenantId, now);
-  const parentUserId = requested === undefined || requested === null || requested === "" ? root : requested;
+async function resolveParent(stores: AccessStores, principal: AuthenticatedPrincipal, tenantId: string, level: OrgLevel, requested: unknown, now: string, fallback?: string): Promise<string> {
+  const empty = requested === undefined || requested === null || requested === "";
+  // A branch manager's people go under the manager by default; the company root is the administrator's default only.
+  const parentUserId = empty ? fallback ?? await companyRoot(stores, principal, tenantId, now) : requested;
   if (typeof parentUserId !== "string" || !USER_PATTERN.test(parentUserId)) fail("ACCESS_PARENT_REQUIRED");
   const parent = buildOrgChainIndex(await stores.orgChain.list(tenantId)).nodes.get(parentUserId);
   if (!parent) fail("ACCESS_PARENT_NOT_FOUND");
@@ -149,30 +195,39 @@ export async function listCompanies(stores: AccessStores, principal: Authenticat
 function byName(left: AccessAccount, right: AccessAccount): number { return left.displayName.localeCompare(right.displayName) || left.userId.localeCompare(right.userId); }
 
 export async function createAccount(stores: AccessStores, principal: AuthenticatedPrincipal, body: Record<string, unknown>, now = new Date().toISOString()): Promise<AccessAccount> {
-  const tenantId = managedTenant(principal, body.tenantId);
+  const authority = await teamAuthority(stores, principal, body.tenantId);
+  const tenantId = authority.tenantId;
   if (isPlatformOwner(principal) && !(await stores.companies.get(PLATFORM_TENANT_ID, tenantId))) fail("ACCESS_COMPANY_NOT_FOUND");
   const input = { tenantId, email: normalizeEmail(body.email), displayName: text(body.displayName, "ACCESS_NAME_INVALID", 2, 120), level: level(body.level), password: validatePassword(body.password), createdBy: principal.userId, now };
+  assertLevelAllowed(authority, input.level);
   const orgLevel = chainLevel(input.level);
-  const parentUserId = orgLevel === null ? null : await resolveParent(stores, principal, tenantId, orgLevel, body.parentUserId, now);
+  const parentUserId = orgLevel === null ? null : await resolveParent(stores, principal, tenantId, orgLevel, body.parentUserId, now, defaultParent(authority));
+  if (parentUserId !== null) assertParentInBranch(authority, parentUserId);
   const record = await provisionAccount(stores, input);
   if (orgLevel !== null) await placeInChain(stores, principal, tenantId, { userId: record.payload.userId, level: orgLevel, parentUserId, displayName: input.displayName }, now);
   return record.payload;
 }
 
-export async function listTeam(stores: AccessStores, principal: AuthenticatedPrincipal, requestedTenantId?: unknown): Promise<readonly (AccessAccount & { readonly version: number; readonly chainLevel: OrgLevel | null; readonly parentUserId: string | null })[]> {
-  const tenantId = managedTenant(principal, requestedTenantId);
+export async function listTeam(stores: AccessStores, principal: AuthenticatedPrincipal, requestedTenantId?: unknown): Promise<readonly (AccessAccount & { readonly version: number; readonly chainLevel: OrgLevel | null; readonly parentUserId: string | null; readonly manageable: boolean })[]> {
+  const authority = await teamAuthority(stores, principal, requestedTenantId);
+  const tenantId = authority.tenantId;
   const [accounts, nodes] = await Promise.all([stores.accounts.list(tenantId), stores.orgChain.list(tenantId)]);
   const index = buildOrgChainIndex(nodes);
-  return accounts.map((record) => { const node = index.nodes.get(record.payload.userId)?.payload; return { ...record.payload, version: record.version, chainLevel: node?.level ?? null, parentUserId: node?.parentUserId ?? null }; }).sort(byName);
+  // A branch manager sees themselves and their branch only: never superiors or other branches.
+  const visible = authority.scope === "COMPANY" ? accounts : accounts.filter((record) => authority.branch.has(record.payload.userId));
+  const manageable = (account: AccessAccount) => { if (account.userId === principal.userId) return false; try { assertManages(authority, account); return true; } catch { return false; } };
+  return visible.map((record) => { const node = index.nodes.get(record.payload.userId)?.payload; return { ...record.payload, version: record.version, chainLevel: node?.level ?? null, parentUserId: node?.parentUserId ?? null, manageable: manageable(record.payload) }; }).sort(byName);
 }
 
 export async function setAccountStatus(stores: AccessStores, principal: AuthenticatedPrincipal, body: Record<string, unknown>, now = new Date().toISOString()): Promise<AccessAccount> {
-  const tenantId = managedTenant(principal, body.tenantId);
+  const authority = await teamAuthority(stores, principal, body.tenantId);
+  const tenantId = authority.tenantId;
   const userId = typeof body.userId === "string" && USER_PATTERN.test(body.userId) ? body.userId : fail("ACCESS_USER_INVALID");
   const status: AccountStatus = body.status === "ACTIVE" || body.status === "SUSPENDED" ? body.status : fail("ACCESS_STATUS_INVALID");
   if (userId === principal.userId) fail("ACCESS_SELF_EDIT_DENIED");
   const current = await stores.accounts.get(tenantId, userId);
   if (!current) fail("ACCESS_USER_NOT_FOUND");
+  assertManages(authority, current.payload);
   if (!Number.isSafeInteger(body.expectedVersion) || body.expectedVersion !== current.version) fail("PERSISTENCE_VERSION_CONFLICT");
   await stores.directory.setMembership({ userId, tenantId, role: LEVEL_ROLES[current.payload.level].runtime, status });
   const membership = await stores.memberships.get(tenantId, membershipId(userId));
@@ -191,17 +246,21 @@ export async function setAccountStatus(stores: AccessStores, principal: Authenti
  * Nothing is written when a check fails; a failure after the first write restores what was already written.
  */
 export async function changeAccountLevel(stores: AccessStores, principal: AuthenticatedPrincipal, body: Record<string, unknown>, now = new Date().toISOString()): Promise<{ readonly account: AccessAccount; readonly previousLevel: AccountLevel; readonly parentUserId: string }> {
-  const tenantId = managedTenant(principal, body.tenantId);
+  const authority = await teamAuthority(stores, principal, body.tenantId);
+  const tenantId = authority.tenantId;
   const userId = typeof body.userId === "string" && USER_PATTERN.test(body.userId) ? body.userId : fail("ACCESS_USER_INVALID");
   if (userId === principal.userId) fail("ACCESS_SELF_EDIT_DENIED");
   const nextLevel = level(body.level);
   const current = await stores.accounts.get(tenantId, userId);
   if (!current) fail("ACCESS_USER_NOT_FOUND");
+  assertManages(authority, current.payload);
+  if (nextLevel !== "AMMINISTRATORE") assertLevelAllowed(authority, nextLevel);
   if (!Number.isSafeInteger(body.expectedVersion) || body.expectedVersion !== current.version) fail("PERSISTENCE_VERSION_CONFLICT");
   if (current.payload.level === "AMMINISTRATORE" || nextLevel === "AMMINISTRATORE") fail("ACCESS_LEVEL_CHANGE_ADMIN");
   if (current.payload.status !== "ACTIVE") fail("ACCESS_USER_SUSPENDED");
   const orgLevel = nextLevel as OrgLevel;
-  const parentUserId = await resolveParent(stores, principal, tenantId, orgLevel, body.parentUserId, now);
+  const parentUserId = await resolveParent(stores, principal, tenantId, orgLevel, body.parentUserId, now, defaultParent(authority));
+  assertParentInBranch(authority, parentUserId);
   const index = buildOrgChainIndex(await stores.orgChain.list(tenantId));
   const existing = index.nodes.get(userId) ?? null;
   if (parentUserId === userId || (existing && subtreeUserIds(index, userId).has(parentUserId))) fail("ACCESS_PARENT_LEVEL_INVALID");
