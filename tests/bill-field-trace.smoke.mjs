@@ -255,6 +255,15 @@ console.log("STORED=PASS");
   const path = withRows([kwRow("1l,4")]);
   assert.equal(completeSupplyProfile(path.structured.supplyProfile, path.structured).powerMaximumDrawn.rawValue, "1 kW");
   assert.throws(() => assertDefinitiveBillFields(path.result), /SOURCE_BILL_FIELDS_UNVERIFIED/);
+  // The simulated amounts on that bill are said NOT VERIFIED on screen, and the proposal button gives the reason.
+  // (The component is .tsx, which the test runner does not load: its wiring is checked on the source.)
+  const { readFile } = await import("node:fs/promises");
+  const component = await readFile("app/components/BillFieldTrace.tsx", "utf8");
+  assert.match(component, /if \(!trace\.definitiveAllowed\) return `Importi NON VERIFICATI: /);
+  const screen = await readFile("app/components/QuickQuoteFlow.tsx", "utf8");
+  assert.match(screen, /<BillSummary context=\{quote\.context\} bill=\{quote\.bill\} \/>\n\s*\{uncertainDataNote\(quote\.bill\.fieldTrace\)/, "shown above the simulated offers");
+  assert.match(screen, /definitiveProposalBlock\(quote\.bill\.fieldTrace\) !== null\}/, "proposal button disabled");
+  assert.equal(path.result.definitiveAllowed, false); assert.equal(valid.result.definitiveAllowed, true);
   // Absent and documented zero quantities do not block.
   assert.equal(withRows([kwRow("")]).result.definitiveAllowed, true, "no quantity printed");
   assert.equal(field(withRows([kwRow("")]).result, "potenzaFatturata"), undefined);

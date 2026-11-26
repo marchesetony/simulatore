@@ -59,5 +59,7 @@ export function definitiveProposalBlock(trace: BillFieldTrace | undefined): stri
 export function uncertainDataNote(trace: BillFieldTrace | undefined): string | null {
   if (!trace || (!trace.uncertainFields.length && trace.definitiveAllowed)) return null;
   const fields = trace.uncertainFields.length ? trace.uncertainFields.join(", ") : fieldLabels(trace, trace.openIssues);
+  // Tony (26/11/2026, P12): when the bill cannot support a definitive proposal, the simulated amounts are said NOT VERIFIED.
+  if (!trace.definitiveAllowed) return `Importi NON VERIFICATI: la simulazione usa dati della bolletta non verificati o non interpretabili (${fieldLabels(trace, trace.openIssues)}). Proposta definitiva non disponibile.`;
   return `Simulazione basata su dati incerti della bolletta: ${fields}.`;
 }
