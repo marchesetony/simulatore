@@ -1,6 +1,6 @@
 # Registro tecnico del Simulatore EE
 
-Versione registro: **3** · aggiornato il 26/11/2026 (attività 01 DA COLLAUDARE, commit locale `d725aa8`, non pubblicato) · versione 1 del 24/11/2026 (backlog e regola permanente approvati da Tony) · codice di riferimento: commit `e3201ff` su `feature/access-management-v1`
+Versione registro: **4** · aggiornato il 26/11/2026 (attività 01 DA COLLAUDARE, commit locali `d725aa8` e `6c7c94e` per P12, non pubblicati) · versione 1 del 24/11/2026 (backlog e regola permanente approvati da Tony) · codice di riferimento: commit `e3201ff` su `feature/access-management-v1`
 
 Questo è l'unico registro tecnico del progetto. Ogni modifica approvata aggiorna questo file nello stesso commit del codice.
 
@@ -69,7 +69,7 @@ Questo è l'unico registro tecnico del progetto. Ogni modifica approvata aggiorn
 3. il motore la usa come base della quota potenza (`calculation/trusted-ee-supply-context.ts`, `regulatoryPowerBasis`; lettura del codice);
 4. il controllo quantità × prezzo salta le righe in €/kW/mese, quindi nulla la segnalava.
 
-La potenza scritta nei dati di fornitura (es. «3l5 kW») è invece già rifiutata dal motore, perché le sue espressioni accettano solo «numero kW». | codice `d725aa8`, prova con bolletta sintetica del 26/11/2026 | **Rischio di proposta definitiva chiuso in validazione (locale, 26/11, autorizzato da Tony).** `reading/bill-field-trace.ts` controlla le stesse righe lette dal completamento: una quantità non numerica blocca la proposta (`POWER_QUANTITY_AMBIGUOUS`, BLOCCANTE) e il testo originale è conservato. **Il motore e il completamento non sono corretti:** la simulazione può ancora mostrare importi calcolati su quel valore, segnalati come basati su dati incerti. La correzione alla radice resta nell'attività 06 e richiede autorizzazione. |
+La potenza scritta nei dati di fornitura (es. «3l5 kW») è invece già rifiutata dal motore, perché le sue espressioni accettano solo «numero kW». | codice `d725aa8`, prova con bolletta sintetica del 26/11/2026 | **MITIGATO, NON RISOLTO** (commit `6c7c94e`, 26/11, autorizzato da Tony). Rischio di proposta definitiva chiuso in validazione. `reading/bill-field-trace.ts` controlla le stesse righe lette dal completamento: una quantità non numerica blocca la proposta (`POWER_QUANTITY_AMBIGUOUS`, BLOCCANTE) e il testo originale è conservato. **Il motore e il completamento non sono corretti:** la simulazione può ancora mostrare importi calcolati su quel valore, segnalati come basati su dati incerti. La correzione alla radice resta nell'attività 06 e richiede autorizzazione. |
 | P8 | La prova di ripristino completo del backup su un database isolato non è completata. È stata eseguita una prova con PostgreSQL 16.15, non con la 17.6. | `/mnt/project-files/audit/archivi-ufficiali/automazione/passo2/fase-a/post-verifica/post-verifica-fase-a-2026-11-21.md`, `.../backup/versione-1/backup-preventivo.md` | Limite registrato. |
 | P9 | Le regole di calcolo e di lettura stanno in `/mnt/project-files/regole/`, fuori da git: non sono versionate. | verificato il 24/11/2026 | Da decidere. |
 | P10 | La sequenza della simulazione (analisi → revisione → approvazione → CTE → confronto → proposta) è guidata dal client `QuickQuoteFlow.tsx`. Non esiste un esito di controllo qualità salvato con la simulazione. | codice `e3201ff` | Attività 02 e 07. |
@@ -139,6 +139,7 @@ L'Atlante del 2–3/11 prevale.
 | Commit | Contenuto |
 |---|---|
 | `4949ba5` | `main`, Production |
+| `6c7c94e` | P12: quantità in kW ambigue bloccano la proposta definitiva (locale, non pubblicato) |
 | `d725aa8` | Attività 01: affidabilità della lettura bollette (locale, non pubblicato) |
 | `cc6e75f` | Registro tecnico unico (locale, non pubblicato) |
 | `e3201ff` | Progressione operazioni (Preview attuale) |
@@ -275,7 +276,7 @@ Modifiche: Formule economiche, dati ufficiali, CTE e servizi esterni non toccati
   - nel confronto, l'avviso «Simulazione basata su dati incerti»;
   - il pulsante della proposta disattivato, con il motivo.
 
-**Correzione P12 (26/11/2026, locale, autorizzata da Tony)**
+**Correzione P12 (26/11/2026, commit `6c7c94e`, autorizzata da Tony): P12 MITIGATO, NON RISOLTO**
 - `reading/bill-field-trace.ts`:
   - nuovo campo «Potenza fatturata nelle righe in kW», distinto da potenza impegnata, disponibile e massima;
   - controllo `POWER_QUANTITY_AMBIGUOUS` (BLOCCANTE) sulle quantità che non sono un numero semplice;
