@@ -1,6 +1,6 @@
 # Registro tecnico del Simulatore EE
 
-Versione registro: **2** · aggiornato il 25/11/2026 (attività 01 in lavorazione, modifiche locali non committate) · versione 1 del 24/11/2026 (backlog e regola permanente approvati da Tony) · codice di riferimento: commit `e3201ff` su `feature/access-management-v1`
+Versione registro: **3** · aggiornato il 26/11/2026 (attività 01 DA COLLAUDARE, commit locale `d725aa8`, non pubblicato) · versione 1 del 24/11/2026 (backlog e regola permanente approvati da Tony) · codice di riferimento: commit `e3201ff` su `feature/access-management-v1`
 
 Questo è l'unico registro tecnico del progetto. Ogni modifica approvata aggiorna questo file nello stesso commit del codice.
 
@@ -63,6 +63,7 @@ Questo è l'unico registro tecnico del progetto. Ogni modifica approvata aggiorn
 | P6 | Mancano ASOS gennaio–giugno 2026. Il dispacciamento ARERA si ferma a ottobre. L'ultimo refresh ARERA è del 6/11. | `/mnt/project-files/audit/archivi-ufficiali/copertura-reale/esito.md`, `/mnt/project-files/audit/archivi-ufficiali/recupero-fonti/esito.md` | Dati realmente mancanti. |
 | P7b | Verifica GME del 25/11/2026 (run `svcrun_gme_a24ba194…`, 05:20Z): esito OK in **modalità prova** (DRY_RUN). Maggio 2026: mensile 119,35 (newsletter 204), F1 107,17, F2 131,44, F3 120,81, PUNop 122,83, stato REPLACEMENT_READY. | DB `runtime_records`, collection `official-service-runs`, letto il 25/11/2026 | Registrata come verifica. Tony (26/11): il PUN archiviato non si modifica, nessuna sostituzione dei mesi maggio–ottobre, nessun aggiornamento ufficiale senza un'autorizzazione separata. |
 | P7 | La sostituzione versionata dei PUN mensili derivati è pronta ma spenta: il flag `OFFICIAL_DATA_REPLACE_DERIVED_PUN_ONLY` vive nel branch `servizio/dati-ufficiali` e non è attivo. | `services/dati-ufficiali/src/handler.ts` su `origin/servizio/dati-ufficiali` | In attesa di Tony. |
+| P12 | **Potenzialmente critico per l'attendibilità economica.** Il motore di calcolo (`calculation/trusted-ee-supply-context.ts`, `parsePowerField`) legge la potenza dai dati di fornitura con una propria espressione e può usare un valore OCR ambiguo (es. «3l5»). I controlli di lettura dell'attività 01 non lo usano e bloccano la proposta definitiva, ma il calcolo delle simulazioni no. | codice `d725aa8`, verificato il 26/11/2026 | **NON RISOLTO.** Registrato da Tony il 26/11 per l'attività 06; il motore non si corregge senza autorizzazione. |
 | P8 | La prova di ripristino completo del backup su un database isolato non è completata. È stata eseguita una prova con PostgreSQL 16.15, non con la 17.6. | `/mnt/project-files/audit/archivi-ufficiali/automazione/passo2/fase-a/post-verifica/post-verifica-fase-a-2026-11-21.md`, `.../backup/versione-1/backup-preventivo.md` | Limite registrato. |
 | P9 | Le regole di calcolo e di lettura stanno in `/mnt/project-files/regole/`, fuori da git: non sono versionate. | verificato il 24/11/2026 | Da decidere. |
 | P10 | La sequenza della simulazione (analisi → revisione → approvazione → CTE → confronto → proposta) è guidata dal client `QuickQuoteFlow.tsx`. Non esiste un esito di controllo qualità salvato con la simulazione. | codice `e3201ff` | Attività 02 e 07. |
@@ -132,6 +133,8 @@ L'Atlante del 2–3/11 prevale.
 | Commit | Contenuto |
 |---|---|
 | `4949ba5` | `main`, Production |
+| `d725aa8` | Attività 01: affidabilità della lettura bollette (locale, non pubblicato) |
+| `cc6e75f` | Registro tecnico unico (locale, non pubblicato) |
 | `e3201ff` | Progressione operazioni (Preview attuale) |
 | `008a2fe` | CDISPD domestici senza residenza, risparmio solo se completo, scontrino a tre colonne |
 | `dc355fc` | Nuova simulazione: grafica |
@@ -148,12 +151,12 @@ Ogni attività richiede l'autorizzazione di Tony prima delle modifiche applicati
 
 | # | Attività | Stato | Problemi |
 |---|---|---|---|
-| 01 | Affidabilità della lettura bollette | IN LAVORAZIONE | P1, P2 |
+| 01 | Affidabilità della lettura bollette | DA COLLAUDARE | P1, P2 |
 | 02 | Validazione e controllo qualità | DA FARE | P10 |
 | 03 | Restyling grafico completo | DA FARE | — |
 | 04 | Progressione delle operazioni | DA COLLAUDARE | P11 |
 | 05 | Eliminazione delle bollette | DA FARE | — |
-| 06 | Affidabilità CTE e simulazioni | DA FARE | P6, P7 |
+| 06 | Affidabilità CTE e simulazioni | DA FARE | P6, P7, P12 |
 | 07 | Coordinamento operativo | DA FARE | P10 |
 | 08 | Collaudo finale | DA FARE | P3, P4, P5, P8 |
 
@@ -202,6 +205,7 @@ Ogni attività richiede l'autorizzazione di Tony prima delle modifiche applicati
 - Verificare le singole componenti economiche.
 - Bloccare confronti e risparmi non determinabili.
 - Riutilizzare il motore deterministico e l'Agente 2.
+- **P12 (potenzialmente critico per l'attendibilità economica, aperto):** il motore può ancora usare una potenza interpretata in modo ambiguo (vedi §3). Va corretto in questa attività, con autorizzazione; fino ad allora non è risolto.
 
 **07. Coordinamento operativo**
 - Implementare progressivamente il coordinatore lato server.
@@ -218,8 +222,14 @@ Ogni attività richiede l'autorizzazione di Tony prima delle modifiche applicati
 - Isolamento multi-azienda, archivi ed eliminazioni.
 - Assenza di regressioni prima della Production.
 
-### 7.1 Attività 01: avanzamento (25/11/2026, autorizzazione di Tony delle 07:29Z)
-**Stato: IN LAVORAZIONE.** Modifiche solo locali, sopra `cc6e75f`. Nessun commit, push o deploy. Formule economiche, dati ufficiali, CTE e servizi esterni non toccati.
+### 7.1 Attività 01: avanzamento (25–26/11/2026, autorizzazioni di Tony del 25/11 07:29Z e del 26/11 07:50Z)
+**Stato: DA COLLAUDARE.**
+- Commit locale `d725aa8` sul branch `controlroom/dati-ufficiali`, sopra `cc6e75f`.
+- 17 file, diff con SHA-256 `34260950077b70f5dfcf11f3fef306484f3d1a776019d10ca5f1044579e9d429`.
+- Nessun push, merge o deploy.
+- Il collaudo funzionale in Preview si potrà fare dopo un push autorizzato.
+
+Modifiche: Formule economiche, dati ufficiali, CTE e servizi esterni non toccati.
 
 **Modifiche**
 - Nuovo modulo `app/lib/reading/bill-field-trace.ts` (Agente 1, deterministico). Per ogni campo registra:
