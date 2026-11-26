@@ -1,6 +1,6 @@
 # Registro tecnico del Simulatore EE
 
-Versione registro: **4** · aggiornato il 26/11/2026 (attività 01 DA COLLAUDARE, commit locali `d725aa8` e `6c7c94e` per P12, non pubblicati) · versione 1 del 24/11/2026 (backlog e regola permanente approvati da Tony) · codice di riferimento: commit `e3201ff` su `feature/access-management-v1`
+Versione registro: **5** · aggiornato il 26/11/2026 (attività 01 DA COLLAUDARE, pubblicata in Preview con `7a05bdc` su `feature/access-management-v1`; P12 MITIGATO, NON RISOLTO; Production invariata a `4949ba5`) · versione 1 del 24/11/2026 (backlog e regola permanente approvati da Tony) · codice di riferimento: commit `e3201ff` su `feature/access-management-v1`
 
 Questo è l'unico registro tecnico del progetto. Ogni modifica approvata aggiorna questo file nello stesso commit del codice.
 
@@ -139,10 +139,13 @@ L'Atlante del 2–3/11 prevale.
 | Commit | Contenuto |
 |---|---|
 | `4949ba5` | `main`, Production |
-| `6c7c94e` | P12: quantità in kW ambigue bloccano la proposta definitiva (locale, non pubblicato) |
-| `d725aa8` | Attività 01: affidabilità della lettura bollette (locale, non pubblicato) |
-| `cc6e75f` | Registro tecnico unico (locale, non pubblicato) |
-| `e3201ff` | Progressione operazioni (Preview attuale) |
+| `7a05bdc` | P12: importi simulati su dati non verificati indicati «NON VERIFICATI» (Preview attuale, deploy Vercel riuscito il 26/11/2026) |
+| `7e710a9` | Registro: commit P12, P12 MITIGATO NON RISOLTO (Preview) |
+| `6c7c94e` | P12: quantità in kW ambigue bloccano la proposta definitiva (Preview) |
+| `011cb08` | Registro: attività 01 DA COLLAUDARE (Preview) |
+| `d725aa8` | Attività 01: affidabilità della lettura bollette (Preview) |
+| `cc6e75f` | Registro tecnico unico (Preview) |
+| `e3201ff` | Progressione operazioni (Preview precedente) |
 | `008a2fe` | CDISPD domestici senza residenza, risparmio solo se completo, scontrino a tre colonne |
 | `dc355fc` | Nuova simulazione: grafica |
 | `dd6bf4b` / `e7644bc` | Permessi gerarchici, analisi interrompibile, gestione delegata per ramo |
@@ -288,6 +291,17 @@ Modifiche: Formule economiche, dati ufficiali, CTE e servizi esterni non toccati
   - righe in kWh escluse;
   - bollette business e domestiche;
   - il percorso P12 bloccato.
+
+**Dicitura NON VERIFICATI (26/11/2026, commit `7a05bdc`, diff SHA-256 `38996963…c774`, autorizzato da Tony)**
+- `components/BillFieldTrace.tsx`: quando la proposta definitiva non è ammessa, l'avviso sotto la bolletta dice «Importi NON VERIFICATI: la simulazione usa dati della bolletta non verificati o non interpretabili (…). Proposta definitiva non disponibile.»
+- Test sul sorgente: dicitura, posizione dopo il riepilogo della bolletta, pulsante della proposta disattivato.
+
+**Pubblicazione in Preview (26/11/2026, autorizzata da Tony)**
+- Push lineare `e3201ff..7a05bdc` su `feature/access-management-v1` (6 commit: `cc6e75f`, `d725aa8`, `011cb08`, `6c7c94e`, `7e710a9`, `7a05bdc`). Nessun merge su `main`; Production invariata a `4949ba5`.
+- Deploy Vercel Preview riuscito (stato GitHub «Deployment has completed»).
+- Verificato con i test: 231 OK, 57 fallimenti preesistenti con le stesse cause, nessuna regressione; lint come baseline (34 problemi, 5 errori preesistenti); `next build` riuscita; 26 file esclusi intatti.
+- Verificato sul codice: le proposte nascono solo da `api/proposal` e `api/proposal/comparison`, entrambe con il controllo `assertProposalSourceAdmitted`; gli export leggono solo proposte salvate.
+- **Limiti:** collaudo funzionale nell'app NON eseguito (Preview non raggiungibile dall'ambiente, nessun accesso); la dicitura e il pulsante sono verificati sul sorgente. Attività 01 resta DA COLLAUDARE; P12 resta MITIGATO, NON RISOLTO, con la correzione alla radice del parsing delle potenze nell'attività 06.
 
 **Test (25/11/2026)**
 - Nuovo `tests/bill-field-trace.smoke.mjs`, 11 gruppi:
