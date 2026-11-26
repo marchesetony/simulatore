@@ -180,6 +180,10 @@ export function sanitizeBillForFeatureAccess(document: PublicBillDocument, acces
     structuredBill: technical ? document.structuredBill : null,
     // Tony (10/11/2026): the bill data of "Dati letti" go to everyone who may open the bill, whatever "Dettaglio tecnico" says.
     billReading: billReadingView(document.structuredBill),
+    // Tony (25/11/2026, attività 01): the trace of the fields goes to everyone who may open the bill (what stops a proposal must
+    // be visible to whoever prepares it); the PDF page each value was copied from is reading internals, kept for "Dettaglio
+    // tecnico" as on 10/11.
+    ...(document.fieldTrace ? { fieldTrace: technical ? document.fieldTrace : { ...document.fieldTrace, fields: document.fieldTrace.fields.map((field) => ({ ...field, page: null })) } } : {}),
     invoicePunReferences: regulatory ? document.invoicePunReferences : [],
     regulatoryAudit: regulatory ? document.regulatoryAudit : null,
     verificationSummary: fullSummary,

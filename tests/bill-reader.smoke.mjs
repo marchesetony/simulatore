@@ -69,7 +69,11 @@ assert.equal(toStructuredBill({ reading: bandsOnly, checks: [], reread: false })
 // Checks that send the bill back to Claude.
 const codes = (reading) => checkBillReading(reading).map((check) => check.code);
 assert.ok(codes(parseBillReading({ ...minniti, consumoF1: "58" })).includes("BANDS_SUM"));
-assert.ok(codes(parseBillReading({ ...minniti, consumoFatturato: "0", consumoF1: "", consumoF2: "", consumoF3: "" })).includes("CONSUMPTION_MISSING"));
+// Tony (25/11/2026, attività 01): a printed zero is not "not read" (it was before): without bands it is read once more and
+// then confirmed by the operator; an absent total is still CONSUMPTION_MISSING.
+assert.ok(codes(parseBillReading({ ...minniti, consumoFatturato: "0", consumoF1: "", consumoF2: "", consumoF3: "" })).includes("CONSUMPTION_ZERO_CHECK"));
+assert.ok(!codes(parseBillReading({ ...minniti, consumoFatturato: "0", consumoF1: "", consumoF2: "", consumoF3: "" })).includes("CONSUMPTION_MISSING"));
+assert.ok(codes(parseBillReading({ ...minniti, consumoFatturato: "", consumoF1: "", consumoF2: "", consumoF3: "" })).includes("CONSUMPTION_MISSING"));
 assert.ok(codes(parseBillReading({ ...minniti, scontrino: minniti.scontrino.filter((item) => item.tipo !== "ACCISE_IVA") })).includes("SCONTRINO_TOTAL"));
 assert.ok(codes(parseBillReading({ ...minniti, scontrino: minniti.scontrino.map((item) => item.importo === "120,55" ? { ...item, importo: "102,55" } : item) })).includes("QUOTA_SHARES"));
 assert.ok(codes(parseBillReading({ ...minniti, scontrino: minniti.scontrino.map((item) => item.importo === "141,95" ? { ...item, prezzoMedio: "0,217562" } : item) })).includes("PRODUCT"));

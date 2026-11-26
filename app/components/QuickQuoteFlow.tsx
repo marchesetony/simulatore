@@ -14,6 +14,7 @@ import { withoutPrintedTotals } from "../lib/reading/bill-reader-checks";
 import { BillArchivePicker } from "./BillArchivePicker";
 import { BillAnalysisControl, type AnalysisSummary } from "./BillAnalysisControl";
 import { ActivityIndicator, OperationSteps } from "./OperationSteps";
+import { BillFieldIssues, BillFieldTable, definitiveProposalBlock, uncertainDataNote } from "./BillFieldTrace";
 import { CTE_SEARCH_STEPS, cteCountText, endStep, failRunning, finished, newSteps, startStep, totalMs, type OperationStep } from "../lib/ui/operation-steps";
 import { durationText } from "../lib/ui/bill-analysis-steps";
 import { requestBillDelete, approvedBillEntry, archiveLoadError, canDeleteBills, deleteConfirmText, deleteReportText, deleteSelectedBills, deleteSummaryText, pendingBillEntry, type ArchiveList, type BillArchiveEntry, type BillDeleteReport } from "../lib/ui/bill-archive";
@@ -1449,7 +1450,10 @@ export default function QuickQuoteFlow({ readonly, showExcluded = false }: { rea
       <ReadSummary values={values} vector={draft.resolvedVector} />
       {analystRetry(draft)}
       {/* Tony (5/11/2026): what does not add up after the reading, or is not printed, is said here instead of a wrong number. */}
-      {readBill?.structuredBill?.readingChecks?.length ? <div className="warning-text" role="status"><strong>Da controllare sulla bolletta</strong><ul>{readBill.structuredBill.readingChecks.map((check) => <li key={check}>{check}</li>)}</ul></div> : null}
+      {/* Tony (25/11/2026, attività 01): the checks of the reading by field, with what stops a definitive proposal; bills shown
+          without the trace keep the stored list. */}
+      {draft.fieldTrace ? <BillFieldIssues trace={draft.fieldTrace} /> : readBill?.structuredBill?.readingChecks?.length ? <div className="warning-text" role="status"><strong>Da controllare sulla bolletta</strong><ul>{readBill.structuredBill.readingChecks.map((check) => <li key={check}>{check}</li>)}</ul></div> : null}
+      {draft.fieldTrace ? <BillFieldTable trace={draft.fieldTrace} /> : null}
       {readBill ? <BillReadDetails sections={billReadSections(readBill)} calculated={calculatedFacts(readBill)} /> : null}
       {/* Tony (10/11/2026, "semplificazione"): the values above are the ones confirmed; the editable fields stay (they are what
           "Cerca le CTE utilizzabili" confirms or corrects) but are folded, and open on their own when one must be filled in.
@@ -1473,6 +1477,7 @@ export default function QuickQuoteFlow({ readonly, showExcluded = false }: { rea
     {step === "offers" ? pending === "offers" ? search ? null : <LoadingState label="Calcolo delle offerte per questa bolletta" /> : quote ? <>
       {analystRetry(quote.bill, quote.offers.length > 0 && quote.offers.every((item) => item.receipt.status !== "COMPLETE"))}
       <BillSummary context={quote.context} bill={quote.bill} />
+      {uncertainDataNote(quote.bill.fieldTrace) ? <p className="warning-text" role="status">{uncertainDataNote(quote.bill.fieldTrace)}</p> : null}
       <section className="ui-card"><h3>Offerte utilizzabili per {quote.context.vector === "EE" ? "questa fornitura di luce" : "questa fornitura di gas"}</h3>
         {visibleOffers.length ? <div className="quote-offers">{visibleOffers.map((offer, index) => <button key={offer.calculation.calculationId} type="button" className={`quote-offer${offer.calculation.calculationId === selectedId ? " selected" : ""}${index === 0 ? " best" : ""}`} onClick={() => { setSelectedId(offer.calculation.calculationId); setProposal(null); }} aria-pressed={offer.calculation.calculationId === selectedId}>
           {index === 0 && savingDetermined(offer.receipt) ? <span className="status-badge positive">La più conveniente</span> : null}
@@ -1505,7 +1510,7 @@ export default function QuickQuoteFlow({ readonly, showExcluded = false }: { rea
         {quote.offers.length || quote.failure ? null : <><EmptyState title="Nessuna offerta utilizzabile" detail="Nessuna CTE a te assegnata è adatta a questa bolletta. Chiedi all'amministratore di assegnartene una." /><NoOfferReasons quote={quote} onAuthorize={readonly ? undefined : authorizeCte} onTechnical={readonly ? undefined : (archiveId) => void runTechnical(archiveId)} /></>}
       </section>
       {pending === "technical" ? <ActivityIndicator label="Simulazione tecnica in corso" /> : technical ? <TechnicalSimulation result={technical} context={quote.context} bill={quote.bill} /> : null}
-      {selected ? <><Receipt offer={selected} today={today} business={quote.context.customerType === "NON_RESIDENTIAL"} context={quote.context} bill={quote.bill} onPresentation={keepPresentation} showExcluded={showExcluded} /><div className="button-row"><button className="button primary" type="button" onClick={() => void saveProposal()} disabled={readonly || Boolean(pending) || (selected.receipt.status === "COMPLETE" && !savingDetermined(selected.receipt))}>{pending === "proposal" ? "Preparazione" : "Scarica la proposta in PDF"}</button>{selected.receipt.status === "COMPLETE" && !savingDetermined(selected.receipt) ? <span className="muted" role="status">Proposta non disponibile: il risparmio non è determinabile (mancano: {missingComponents(selected.receipt).join("; ")}).</span> : null}{proposal ? <span className="muted" role="status">Proposta salvata in Proposte.</span> : null}</div>{pending === "proposal" ? <ActivityIndicator label="Preparazione della proposta e del PDF in corso" /> : null}</> : null}
+      {selected ? <><Receipt offer={selected} today={today} business={quote.context.customerType === "NON_RESIDENTIAL"} context={quote.context} bill={quote.bill} onPresentation={keepPresentation} showExcluded={showExcluded} /><div className="button-row"><button className="button primary" type="button" onClick={() => void saveProposal()} disabled={readonly || Boolean(pending) || (selected.receipt.status === "COMPLETE" && !savingDetermined(selected.receipt)) || definitiveProposalBlock(quote.bill.fieldTrace) !== null}>{pending === "proposal" ? "Preparazione" : "Scarica la proposta in PDF"}</button>{definitiveProposalBlock(quote.bill.fieldTrace) ? <span className="muted" role="status">{definitiveProposalBlock(quote.bill.fieldTrace)}</span> : null}{selected.receipt.status === "COMPLETE" && !savingDetermined(selected.receipt) ? <span className="muted" role="status">Proposta non disponibile: il risparmio non è determinabile (mancano: {missingComponents(selected.receipt).join("; ")}).</span> : null}{proposal ? <span className="muted" role="status">Proposta salvata in Proposte.</span> : null}</div>{pending === "proposal" ? <ActivityIndicator label="Preparazione della proposta e del PDF in corso" /> : null}</> : null}
     </> : null : null}
     {error ? <ErrorState message={error} /> : null}
   </div>;

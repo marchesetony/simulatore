@@ -194,14 +194,20 @@ export function checkBillReading(reading: BillReading): readonly ReadingCheck[] 
     if (f.every((value) => value !== null) && total !== null && Math.abs((f[0]! + f[1]! + f[2]!) - total) > BANDS_SUM_TOLERANCE_KWH) {
       checks.push({ code: "BANDS_SUM", message: `F1 ${reading.consumoF1} + F2 ${reading.consumoF2} + F3 ${reading.consumoF3} non dà il consumo fatturato ${reading.consumoFatturato} kWh: rileggi i consumi per fascia e il totale.` });
     }
-    if ((total === null || total <= 0) && !f.every((value) => value !== null && value >= 0)) {
-      checks.push({ code: "CONSUMPTION_MISSING", message: "Consumo fatturato (kWh) non letto o zero: cercalo nel frontespizio, nella quota per consumi dello scontrino o nella tabella letture e consumi." });
+    // Tony (25/11/2026, attività 01): a printed zero is a documented zero, not a missing value; only an absent (or negative)
+    // total without the three bands sends the reader back.
+    if ((total === null || total < 0) && !f.every((value) => value !== null && value >= 0)) {
+      checks.push({ code: "CONSUMPTION_MISSING", message: "Consumo fatturato (kWh) non letto: cercalo nel frontespizio, nella quota per consumi dello scontrino o nella tabella letture e consumi." });
+    } else if (total === 0 && !f.every((value) => value !== null && value >= 0)) {
+      // A zero without the bands to back it is read once more (it was the value returned for an unprinted total on 5/11);
+      // if it stays, it is a documented zero for the operator to confirm, never "not read".
+      checks.push({ code: "CONSUMPTION_ZERO_CHECK", message: "Consumo fatturato stampato pari a zero senza consumi per fascia: verifica nel frontespizio e nella tabella letture e consumi che sia davvero zero." });
     }
     const quotaConsumi = reading.scontrino.find((row) => row.quota === "CONSUMI" && row.tipo === "QUOTA_TOTALE");
     const quotaKwh = italianNumber(quotaConsumi?.quantita);
     if (quotaKwh !== null && total !== null && Math.abs(quotaKwh - total) > 1) checks.push({ code: "CONSUMPTION_VS_SCONTRINO", message: `La quota per consumi dello scontrino stampa ${quotaConsumi?.quantita} kWh ma il consumo fatturato letto è ${reading.consumoFatturato}: verifica quale è il consumo del periodo.` });
   }
-  if (reading.vettore === "GAS" && (italianNumber(reading.consumoSmc) ?? italianNumber(reading.consumoFatturato) ?? 0) <= 0) {
+  if (reading.vettore === "GAS" && ((italianNumber(reading.consumoSmc) ?? italianNumber(reading.consumoFatturato)) ?? -1) < 0) {
     checks.push({ code: "CONSUMPTION_MISSING", message: "Consumo fatturato (Smc) non letto." });
   }
 

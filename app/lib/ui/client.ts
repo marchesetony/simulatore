@@ -152,6 +152,7 @@ const messages: Readonly<Record<string, string>> = {
   SOURCE_BILL_RESIDENCY_MISMATCH: "Residente o non residente non coincide con quanto letto in bolletta: controllalo in \"Dati letti\" e riprova.",
   SOURCE_BILL_VECTOR_MISMATCH: "La bolletta è di un'altra fornitura (luce o gas) rispetto alla CTE scelta.",
   SOURCE_BILL_NOT_APPROVED: "La bolletta non è ancora confermata: torna a \"Dati letti\" e premi \"Cerca le CTE utilizzabili\".",
+  SOURCE_BILL_FIELDS_UNVERIFIED: "Proposta definitiva non disponibile: nella bolletta mancano dati indispensabili, non sono validi o non sono stati verificati. Controlla i dati letti e, se serve, rileggi la bolletta.",
   SOURCE_BILL_TOO_OLD: "La bolletta si riferisce a un periodo di fornitura di oltre 5 mesi fa: si possono simulare solo bollette con tutto il periodo di fornitura negli ultimi 5 mesi. Carica una bolletta più recente.",
   SOURCE_BILL_PERIOD_INVALID: "Il periodo di fornitura della bolletta non è valido (data inesistente o fine prima dell'inizio): correggilo in \"Dati letti\" prima di simulare.",
   SOURCE_BILL_PERIOD_FUTURE: "Il periodo di fornitura della bolletta finisce dopo la data di oggi: controlla le date in \"Dati letti\" prima di simulare.",

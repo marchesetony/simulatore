@@ -23,6 +23,10 @@ import { assertCalculationResult, assertComparisonResult } from "./integrity.ts"
 // @ts-expect-error Node's strip-only test runner requires the explicit extension.
 import { supplyPeriodAdmission } from "../calculation/quote-window.ts";
 // @ts-expect-error Node's strip-only test runner requires the explicit extension.
+import { assertDefinitiveBillFields } from "../reading/bill-field-trace.ts";
+// @ts-expect-error Node's strip-only test runner requires the explicit extension.
+import { billFieldTraceOf } from "../foundation/real-bill.ts";
+// @ts-expect-error Node's strip-only test runner requires the explicit extension.
 import { operationalMarketView, romeToday } from "../market/operational-window.ts";
 import type { SimulationRequest } from "../calculation/types";
 
@@ -86,6 +90,9 @@ async function assertProposalSourceAdmitted(repositories: RuntimeRepositories, t
     const document = await repositories.billRepository.get(tenantId, request.sourceBill.billId);
     const version = document && document.tenantId === tenantId ? document.versions.find((item) => item.versionId === request.sourceBill!.version) : undefined;
     if (!version) throw new Error("SOURCE_BILL_NOT_FOUND");
+    // Tony (25/11/2026, attività 01): the indispensable fields of the bill must be read, coherent and verified before a
+    // definitive proposal rests on them; the screen shows which ones are missing (fieldTrace of the bill).
+    assertDefinitiveBillFields(billFieldTraceOf(version));
     period = version.energyContract?.billingPeriod ?? null;
   } else {
     // A calculation without a bill carries whole months with an exclusive end: its last day is the day before.

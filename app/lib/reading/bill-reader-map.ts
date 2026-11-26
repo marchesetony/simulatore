@@ -14,19 +14,42 @@ import { italianNumber } from "./bill-reader-checks.ts";
 export const BILL_READER_ID = "CLAUDE_DIRETTO";
 
 const found = (value: string): BillWireField => value.trim() ? { value: value.trim(), status: "FOUND" } : { value: "NOT_FOUND", status: "NOT_FOUND" };
-const numberText = (value: string): string => { const parsed = italianNumber(value); return parsed === null ? "" : String(parsed); };
+// Tony (25/11/2026, attività 01): a letter between digits ("1.2O0", "3l5") is an ambiguous reading, not a number: the field
+// stays empty and the text is kept as not interpretable, never turned into a smaller number.
+const AMBIGUOUS_NUMBER = /\d[A-Za-z]\d/;
+const strictNumber = (value: string | null | undefined): number | null => value && AMBIGUOUS_NUMBER.test(value) ? null : italianNumber(value);
+const numberText = (value: string): string => { const parsed = strictNumber(value); return parsed === null ? "" : String(parsed); };
 const foundNumber = (value: string): BillWireField => found(numberText(value));
 const isoDay = (value: string): string => /^\d{4}-\d{2}-\d{2}$/.test(value.trim()) ? value.trim() : "";
 
-function billedConsumption(reading: BillReading): string {
-  const total = italianNumber(reading.consumoFatturato);
-  if (total !== null && total > 0) return String(total);
+/** The period's consumption and, when it is not the printed total, how it was obtained. Tony (25/11/2026, attività 01): a
+ *  printed total of zero is a documented zero, never "not read"; an absent total stays empty, never zero. */
+export function billedConsumptionReading(reading: BillReading): { readonly value: string; readonly method: "SOMMA_FASCE" | "QUOTA_CONSUMI_SCONTRINO" | null } {
+  const total = strictNumber(reading.consumoFatturato);
+  if (total !== null && total > 0) return { value: String(total), method: null };
   // Tony (30/10): the period consumption is F1 + F2 + F3 when the three bands are read.
-  const bands = [reading.consumoF1, reading.consumoF2, reading.consumoF3].map(italianNumber);
-  if (bands.every((value) => value !== null)) return String(bands.reduce((left, right) => left! + right!, 0));
+  const bands = [reading.consumoF1, reading.consumoF2, reading.consumoF3].map(strictNumber);
+  const bandSum = bands.every((value) => value !== null) ? bands.reduce((left, right) => left! + right!, 0)! : null;
+  // A printed zero stays zero unless the three bands printed say otherwise (then BANDS_SUM reports the gap).
+  if (bandSum !== null && (total === null || bandSum > 0)) return { value: String(bandSum), method: "SOMMA_FASCE" };
+  // Then the quantity of the scontrino's quota per consumi, as before 25/11 (also when the total printed is 0: the gap is then
+  // reported by CONSUMPTION_VS_SCONTRINO).
   const quota = reading.scontrino.find((row) => row.quota === "CONSUMI" && row.tipo === "QUOTA_TOTALE" && /kwh|smc/i.test(row.unita));
-  const fromQuota = italianNumber(quota?.quantita);
-  return fromQuota !== null && fromQuota > 0 ? String(fromQuota) : "";
+  const fromQuota = strictNumber(quota?.quantita);
+  if (fromQuota !== null && fromQuota > 0) return { value: String(fromQuota), method: "QUOTA_CONSUMI_SCONTRINO" };
+  return total === 0 ? { value: "0", method: null } : { value: "", method: null };
+}
+
+function billedConsumption(reading: BillReading): string { return billedConsumptionReading(reading).value; }
+
+const NUMERIC_FIELDS = ["consumoFatturato", "consumoF1", "consumoF2", "consumoF3", "consumoSmc", "consumoAnnuo", "potenzaImpegnataKw", "potenzaDisponibileKw", "potenzaMassimaPrelevataKw", "totaleBolletta", "pcvMensile", "spread", "prezzoEnergiaF1", "prezzoEnergiaF2", "prezzoEnergiaF3", "prezzoEnergiaF23", "prezzoEnergiaMonorario"] as const;
+
+/** Values copied from the bill that hold no number where one is expected: kept as copied, the field stays empty. */
+export function uninterpretableValues(reading: BillReading): { readonly field: string; readonly text: string }[] {
+  return NUMERIC_FIELDS.flatMap((field) => {
+    const text = typeof reading[field] === "string" ? (reading[field] as string).trim() : "";
+    return text && (italianNumber(text) === null || AMBIGUOUS_NUMBER.test(text)) ? [{ field, text: text.slice(0, 80) }] : [];
+  });
 }
 
 function voltage(reading: BillReading): BillWireField {
@@ -217,6 +240,8 @@ export function toStructuredBill(outcome: ReaderOutcome): StructuredBillExtracti
     readingAbsent: reading.assenti.map((absent) => ({ field: absent.campo, reason: absent.motivo })),
     readingSources: reading.fonti.map((source) => ({ field: source.campo, page: source.pagina, text: source.testo.slice(0, 200) })),
     readingReread: outcome.reread,
+    ...(billedConsumptionReading(reading).method ? { readingDerived: [{ field: "consumoFatturato", method: billedConsumptionReading(reading).method! }] } : {}),
+    ...(uninterpretableValues(reading).length ? { readingUninterpretable: uninterpretableValues(reading) } : {}),
     ...(recognizedDocumentType(reading) ? { documentType: recognizedDocumentType(reading) as NonNullable<StructuredBillExtraction["documentType"]> } : {}),
   };
 }

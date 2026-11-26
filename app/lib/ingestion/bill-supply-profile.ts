@@ -205,11 +205,15 @@ function withNormalized(field: SupplyProfileField, normalizedValue: string | nul
 }
 
 export function buildBillSupplyProfile(facts: readonly StructuredBillExtendedFact[]): BillSupplyProfile {
-  const residenceRaw = factFor(facts, PROFILE_CODES.domesticResidenceStatus);
+  const declaredResidence = factFor(facts, PROFILE_CODES.domesticResidenceStatus);
   // A document may print the complete phrase only under its customer/residence
   // label. That explicit phrase is still documentary evidence for supply use;
   // no value is derived from the generic legacy customerType.
-  const supplyUseRaw = factFor(facts, PROFILE_CODES.supplyUseCategory) ?? residenceRaw;
+  const supplyUseRaw = factFor(facts, PROFILE_CODES.supplyUseCategory) ?? declaredResidence;
+  // Tony (25/11/2026, attività 01, P1 Elios 747c064a): "Tipologia cliente: Domestico non residente" printed in one phrase states
+  // the residence too; it was read as use only and the residence stayed NOT_FOUND. The printed phrase is the evidence: only a
+  // phrase that names the residence is used, nothing is derived from the customer type.
+  const residenceRaw = declaredResidence ?? (supplyUseRaw && /resident/i.test(supplyUseRaw.value) ? supplyUseRaw : undefined);
   const supplyUseCategory = classifySupplyUse(supplyUseRaw?.value ?? null);
   const residence = rawField(residenceRaw);
   const asosClassEvidence = buildAsosClassEvidence(facts);

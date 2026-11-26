@@ -766,6 +766,17 @@ button:focus-visible,a:focus-visible,input:focus-visible,select:focus-visible,te
 .activity-spinner { width:16px; height:16px; border:2px solid var(--brand-accent-soft); border-top-color:var(--brand-accent); border-radius:50%; animation:activity-spin .9s linear infinite; }
 @keyframes activity-spin { to { transform:rotate(360deg); } }
 @media (prefers-reduced-motion:reduce) { .op-step.current .op-step-dot::after,.activity-spinner { animation:none; } }
+/* Tony (25/11/2026, attività 01): provenance and reliability of the fields read. */
+.field-trace-issues { display:grid; gap:8px; }
+.field-trace-issues ul { margin:6px 0; padding-left:18px; }
+.field-trace-warnings > summary,.field-trace > summary { cursor:pointer; color:var(--brand); font-size:13px; font-weight:600; }
+.field-trace-table { width:100%; border-collapse:collapse; margin-top:8px; font-size:13px; }
+.field-trace-table th,.field-trace-table td { padding:6px 8px; border-bottom:1px solid var(--line); text-align:left; vertical-align:top; }
+.field-trace-table small { color:var(--muted); }
+.field-trace-note { display:block; }
+.field-trace-row.incoerente td:last-child { color:#9b2c2c; font-weight:600; }
+.field-trace-row.verificato_operatore td:last-child,.field-trace-row.coerente td:last-child { color:#155b57; }
+@media (max-width:640px) { .field-trace-table thead { display:none; } .field-trace-table tr { display:grid; padding:6px 0; border-bottom:1px solid var(--line); } .field-trace-table th,.field-trace-table td { border:0; padding:2px 0; } }
 .bill-analysis-note { margin:0; }
 .bill-analysis-message { margin:0; padding:12px 14px; border-radius:10px; background:var(--surface-soft); color:var(--brand-ink); font-size:13px; }
 .quote-flow .bill-archive-panel { margin:0; padding-top:12px; border-top:1px solid var(--line); }

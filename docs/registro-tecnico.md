@@ -1,6 +1,6 @@
 # Registro tecnico del Simulatore EE
 
-Versione registro: **1** · aggiornato il 24/11/2026 (backlog e regola permanente approvati da Tony il 24/11/2026) · codice di riferimento: commit `e3201ff` su `feature/access-management-v1`
+Versione registro: **2** · aggiornato il 25/11/2026 (attività 01 in lavorazione, modifiche locali non committate) · versione 1 del 24/11/2026 (backlog e regola permanente approvati da Tony) · codice di riferimento: commit `e3201ff` su `feature/access-management-v1`
 
 Questo è l'unico registro tecnico del progetto. Ogni modifica approvata aggiorna questo file nello stesso commit del codice.
 
@@ -55,12 +55,13 @@ Questo è l'unico registro tecnico del progetto. Ogni modifica approvata aggiorn
 ## 3. Problemi e analisi già identificati (aperti)
 | # | Problema | Fonte verificata | Stato |
 |---|---|---|---|
-| P1 | La bolletta Elios (`747c064a-2982-4b27-8e2c-b93fa1f09809`) è letta con `supplyUseCategory` = «domestico non residente» ma con `domesticResidenceStatus` = `NOT_FOUND`. | DB `runtime_records`, letto il 24/11/2026 | Il motore gestisce il caso con il CDISPD (008a2fe). Il lettore non è stato toccato. |
-| P2 | Il dato `readingReread` (seconda lettura) è salvato (`reading/bill-reader-map.ts`), ma `foundation/bill-reading-view.ts` non lo invia allo schermo. | codice `e3201ff` | Esporlo richiede una modifica all'API. |
+| P1 | La bolletta Elios (`747c064a-2982-4b27-8e2c-b93fa1f09809`) è letta con `supplyUseCategory` = «domestico non residente» ma con `domesticResidenceStatus` = `NOT_FOUND`. | DB `runtime_records`, letto il 24/11/2026 | Causa trovata il 25/11: la residenza era cercata solo nel fatto `DOMESTIC_RESIDENCE_STATUS_RAW`, che il lettore non produce; la frase stampata «Domestico non residente» arriva come tipologia d'uso. Corretto in locale (attività 01, `ingestion/bill-supply-profile.ts`): vale per le nuove letture; le bollette già salvate restano come sono finché non vengono rilette. |
+| P2 | Il dato `readingReread` (seconda lettura) è salvato (`reading/bill-reader-map.ts`), ma `foundation/bill-reading-view.ts` non lo invia allo schermo. | codice `e3201ff` | Corretto in locale (attività 01): esposto come `fieldTrace.reread` nel documento della bolletta e mostrato nella tabella di provenienza. |
 | P3 | 57 test falliscono già sulla baseline: ambiente non configurato, file locali `var/` o fixture mancanti. | suite del 24/11/2026, Appendice A | Non corretti. |
 | P4 | `eligibility-override-security.smoke.mjs` fallisce già sulla baseline perché manca la fixture `tests/fixtures/cte-product-qa.ts`. Tony lo considera un'anomalia separata. | `/mnt/project-files/audit/archivi-ufficiali/fase1-forzature-cte/esito.md` | Le sue verifiche sono coperte da un test più recente. |
 | P5 | I job dei dati ufficiali dipendono da 127 file, 70 dei quali assenti in Production: il rilascio isolato in Production non è possibile. | `/mnt/project-files/audit/archivi-ufficiali/automazione/rilascio-production-blocco.md` | In attesa di una decisione di Tony. |
 | P6 | Mancano ASOS gennaio–giugno 2026. Il dispacciamento ARERA si ferma a ottobre. L'ultimo refresh ARERA è del 6/11. | `/mnt/project-files/audit/archivi-ufficiali/copertura-reale/esito.md`, `/mnt/project-files/audit/archivi-ufficiali/recupero-fonti/esito.md` | Dati realmente mancanti. |
+| P7b | Verifica GME del 25/11/2026 (run `svcrun_gme_a24ba194…`, 05:20Z): esito OK in **modalità prova** (DRY_RUN). Maggio 2026: mensile 119,35 (newsletter 204), F1 107,17, F2 131,44, F3 120,81, PUNop 122,83, stato REPLACEMENT_READY. | DB `runtime_records`, collection `official-service-runs`, letto il 25/11/2026 | Registrata come verifica. Tony (26/11): il PUN archiviato non si modifica, nessuna sostituzione dei mesi maggio–ottobre, nessun aggiornamento ufficiale senza un'autorizzazione separata. |
 | P7 | La sostituzione versionata dei PUN mensili derivati è pronta ma spenta: il flag `OFFICIAL_DATA_REPLACE_DERIVED_PUN_ONLY` vive nel branch `servizio/dati-ufficiali` e non è attivo. | `services/dati-ufficiali/src/handler.ts` su `origin/servizio/dati-ufficiali` | In attesa di Tony. |
 | P8 | La prova di ripristino completo del backup su un database isolato non è completata. È stata eseguita una prova con PostgreSQL 16.15, non con la 17.6. | `/mnt/project-files/audit/archivi-ufficiali/automazione/passo2/fase-a/post-verifica/post-verifica-fase-a-2026-11-21.md`, `.../backup/versione-1/backup-preventivo.md` | Limite registrato. |
 | P9 | Le regole di calcolo e di lettura stanno in `/mnt/project-files/regole/`, fuori da git: non sono versionate. | verificato il 24/11/2026 | Da decidere. |
@@ -147,7 +148,7 @@ Ogni attività richiede l'autorizzazione di Tony prima delle modifiche applicati
 
 | # | Attività | Stato | Problemi |
 |---|---|---|---|
-| 01 | Affidabilità della lettura bollette | DA FARE | P1, P2 |
+| 01 | Affidabilità della lettura bollette | IN LAVORAZIONE | P1, P2 |
 | 02 | Validazione e controllo qualità | DA FARE | P10 |
 | 03 | Restyling grafico completo | DA FARE | — |
 | 04 | Progressione delle operazioni | DA COLLAUDARE | P11 |
@@ -163,6 +164,7 @@ Ogni attività richiede l'autorizzazione di Tony prima delle modifiche applicati
 - Impedire che un valore mancante venga interpretato come zero.
 - Usare i componenti esistenti dell'Agente 1 (§8.2).
 - Vincolo: la lettura avviene con il solo lettore Claude, mai dal testo del PDF (§4).
+- Avanzamento: vedi §7.1.
 
 **02. Validazione e controllo qualità**
 - Centralizzare i controlli già presenti.
@@ -215,6 +217,83 @@ Ogni attività richiede l'autorizzazione di Tony prima delle modifiche applicati
 - Ruoli Direttore, Agente e Sub-agente.
 - Isolamento multi-azienda, archivi ed eliminazioni.
 - Assenza di regressioni prima della Production.
+
+### 7.1 Attività 01: avanzamento (25/11/2026, autorizzazione di Tony delle 07:29Z)
+**Stato: IN LAVORAZIONE.** Modifiche solo locali, sopra `cc6e75f`. Nessun commit, push o deploy. Formule economiche, dati ufficiali, CTE e servizi esterni non toccati.
+
+**Modifiche**
+- Nuovo modulo `app/lib/reading/bill-field-trace.ts` (Agente 1, deterministico). Per ogni campo registra:
+  - provenienza: LETTO, CALCOLATO, STIMATO, ASSENTE;
+  - presenza: documentato, zero documentato, assente, non applicabile, stampato ma non interpretabile;
+  - affidabilità, separata dalla provenienza: verificato dall'operatore, coerente, da verificare, incoerente;
+  - metodo, pagina, motivo dell'assenza e controlli collegati.
+  Lavora sulla versione salvata della bolletta, quindi anche sulle bollette storiche. Per quelle senza lettura strutturata traccia solo i campi confermati e lo dichiara.
+- Controlli con gravità BLOCCANTE, DA_CONFERMARE, AVVISO, INFO:
+  - intestatario;
+  - POD (forma e lettere ambigue) o PDR (14 cifre);
+  - tipo cliente e tipologia d'uso (letto, ricavato dalla tipologia stampata o stimato dal solo codice fiscale);
+  - residenza dei domestici;
+  - periodo;
+  - consumi F1/F2/F3 e totale;
+  - consumo annuo letto o stimato;
+  - potenza impegnata, disponibile e massima;
+  - tensione;
+  - prezzi, PCV e scadenza se stampati (mai errore se assenti);
+  - totale e riconciliazione con lo scontrino.
+- Lettore (`reading/bill-reader-map.ts`, `bill-reader-checks.ts`):
+  - un consumo stampato pari a zero resta zero documentato e non fa più scattare «non letto». Se non ci sono i consumi per fascia a confermarlo, la bolletta viene riletta una volta (`CONSUMPTION_ZERO_CHECK`) e poi lo zero va confermato dall'operatore;
+  - un consumo assente resta vuoto;
+  - un consumo ricavato da F1+F2+F3 o dalla quota dello scontrino è marcato come calcolato (`readingDerived`);
+  - un numero con lettere tra le cifre (es. «1O0») non diventa più un numero più piccolo: il campo resta vuoto e il testo è conservato come non interpretabile (`readingUninterpretable`).
+- Residenza dalla frase stampata «Domestico (non) residente» (P1).
+- Potenza impegnata (correzione del 26/11/2026, dopo la verifica chiesta da Tony):
+  - se il campo del lettore è vuoto, vale la potenza impegnata stampata nei dati di fornitura (`POWER_COMMITTED`, la stessa fonte letta dal calcolo), con la nota di provenienza;
+  - un testo ambiguo non vale mai;
+  - la potenza disponibile da sola non la sostituisce, come nel calcolo;
+  - così le bollette lette prima del 5/11 con la potenza solo nei dati di fornitura non sono bloccate a torto.
+- Documento della bolletta: nuovo campo `fieldTrace`. Le pagine di provenienza sono visibili solo con «Dettaglio tecnico».
+- Proposte (`proposal/server.ts`): una proposta definitiva è rifiutata con `SOURCE_BILL_FIELDS_UNVERIFIED` (409) se restano problemi bloccanti o da confermare non confermati.
+- Schermo (`components/BillFieldTrace.tsx`, `QuickQuoteFlow.tsx`):
+  - in revisione, i problemi bloccanti, quelli da confrontare con la bolletta e gli avvisi;
+  - la tabella di provenienza e affidabilità;
+  - nel confronto, l'avviso «Simulazione basata su dati incerti»;
+  - il pulsante della proposta disattivato, con il motivo.
+
+**Test (25/11/2026)**
+- Nuovo `tests/bill-field-trace.smoke.mjs`, 11 gruppi:
+  - campi mancanti;
+  - zeri reali;
+  - dati incoerenti;
+  - POD errato o ambiguo e PDR;
+  - consumi non riconciliati con lo scontrino;
+  - potenza assente o non plausibile;
+  - letture OCR ambigue;
+  - bollette domestiche e business;
+  - consumo annuo letto o stimato;
+  - bollette storiche e documento salvato.
+- Suite completa: **231 OK, 57 falliti**. Sono gli stessi 57 della baseline, con le stesse cause; il test in più è quello nuovo.
+- Due test aggiornati perché verificavano il comportamento che l'attività corregge:
+  - `bill-reader.smoke.mjs`: uno zero stampato non è più «non letto»;
+  - `domestic-cdispd-unknown-residence.smoke.mjs`: la condizione del pulsante della proposta ora include il blocco per dati non verificati.
+- Altri controlli:
+  - `tsc` pulito;
+  - lint: solo gli errori preesistenti (apostrofi in `QuickQuoteFlow.tsx` e `OperationalShell.tsx`);
+  - `next build` riuscita, con l'avviso preesistente su `next.config.ts`.
+- 26 file esclusi intatti.
+
+**Regola di blocco della proposta definitiva**
+- Blocca:
+  - ogni problema BLOCCANTE;
+  - ogni DA_CONFERMARE il cui campo non è confermato dall'operatore.
+- Per i DA_CONFERMARE senza un campo confermabile (es. tipo cliente stimato o in contrasto con l'uso stampato) serve una nuova lettura.
+- Le simulazioni restano possibili e sono dichiarate incerte.
+
+**Rischi e limiti aperti**
+- La conferma dei campi avviene con «Cerca le CTE utilizzabili», che conferma anche i campi non modificati: i problemi da confrontare sono mostrati sopra il pulsante, ma la conferma resta un'azione sola.
+- Tipo cliente e potenza non hanno un campo di correzione a schermo: un valore mancante o stimato richiede una nuova lettura.
+- La correzione di P1 vale solo per le nuove letture o riletture.
+- Il collaudo funzionale in Preview non è stato fatto: le modifiche non sono pubblicate.
+- Il calcolo (`trusted-ee-supply-context.ts`, non toccato) legge la potenza dai dati di fornitura con una propria espressione: un testo ambiguo lì (es. «3l5») non è escluso dal calcolo, ma solo dalla traccia, che blocca la proposta definitiva. È da valutare nell'attività 06.
 
 ## 8. Architettura degli agenti (approvata da Tony il 24/11/2026)
 

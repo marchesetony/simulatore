@@ -161,6 +161,12 @@ export interface StructuredBillExtraction {
   readonly readingSources?: readonly { readonly field: string; readonly page: number; readonly text: string }[];
   /** True when the bill was read a second time because the first reading did not add up. */
   readonly readingReread?: boolean;
+  /** Tony (25/11/2026, attività 01): values not printed as such but computed from other printed values (e.g. the period's
+   *  consumption as F1 + F2 + F3), with the method; undefined on bills read before. */
+  readonly readingDerived?: readonly { readonly field: string; readonly method: "SOMMA_FASCE" | "QUOTA_CONSUMI_SCONTRINO" }[];
+  /** Tony (25/11/2026, attività 01): values the reader copied from the bill that are not a number where a number is expected,
+   *  as copied; the field stays empty (never zero). Undefined on bills read before. */
+  readonly readingUninterpretable?: readonly { readonly field: string; readonly text: string }[];
   /** Tony (20/11/2026, "CHIUSURA FASE 2", punto 2): the kind of document as the reader recognized it from the content (quadro
    *  sintetico, detail lines), never from the file name. Absent on bills read before 20/11/2026: then it is "not recognized". */
   readonly documentType?: StructuredBillDocumentType;

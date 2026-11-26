@@ -116,7 +116,8 @@ assert.equal(savingDetermined(cdispdMissing), false, "official value missing: no
 assert.deepEqual(missingComponents(cdispdMissing), ["dispacciamento (CDISPD ARERA del mese non ancora in archivio)"]);
 assert.equal(savingDetermined({ ...row([]), undetermined: ["Capacity market"] }), false, "undetermined by the CTE: no saving");
 const flow = (await import("node:fs")).readFileSync(new URL("../app/components/QuickQuoteFlow.tsx", import.meta.url), "utf8");
-assert.match(flow, /disabled=\{readonly \|\| Boolean\(pending\) \|\| \(selected\.receipt\.status === "COMPLETE" && !savingDetermined\(selected\.receipt\)\)\}/, "proposal PDF blocked");
+// Tony (25/11/2026, attività 01): the button is also disabled when the bill's indispensable fields are not verified.
+assert.match(flow, /disabled=\{readonly \|\| Boolean\(pending\) \|\| \(selected\.receipt\.status === "COMPLETE" && !savingDetermined\(selected\.receipt\)\)( \|\| definitiveProposalBlock\(quote\.bill\.fieldTrace\) !== null)?\}/, "proposal PDF blocked");
 
 // 7. No double count: every case has at most one CDISPD and never a separate capacity line beside it.
 for (const result of [resident, nonResident, unknown, includedUnknown, includedNonResident]) {

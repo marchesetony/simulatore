@@ -2,6 +2,8 @@
 import { readingHasScontrino } from "../ingestion/printed-scontrino.ts";
 // @ts-expect-error Node's strip-only test runner requires the explicit extension.
 import { withCurrentReadingChecks } from "../reading/stored-reading-checks.ts";
+// @ts-expect-error Node's strip-only test runner requires the explicit extension.
+import { traceBillFields, type BillFieldTrace } from "../reading/bill-field-trace.ts";
 import { createHash, randomUUID } from "node:crypto";
 import { mkdir, readFile, rm, unlink, writeFile } from "node:fs/promises";
 import path from "node:path";
@@ -189,6 +191,9 @@ export type PublicBillDocument = {
   readonly featurePermissions?: BillFeatureAccessSnapshot;
   readonly verificationSummary?: BillVerificationSummary | null;
   readonly analystReview: BillAnalystReviewDTO;
+  /** Tony (25/11/2026, attività 01): each field with provenance, presence and reliability, the issues found and whether a
+   *  definitive proposal may rest on this version (app/lib/reading/bill-field-trace.ts). */
+  readonly fieldTrace?: BillFieldTrace;
   /** The linked fattura di dettaglio, without its file location: its lines are already inside structuredBill and the analysis. */
   readonly detailDocument?: { readonly fileName: string; readonly linkedAt: string; readonly checks: readonly BillDetailCheck[] } | null;
 };
@@ -611,6 +616,12 @@ export function toPublicDocument(document: BillDocument): PublicBillDocument {
   return toPublicDocumentVersion(document, document.currentVersionId);
 }
 
+/** Tony (25/11/2026, attività 01): the trace of one stored version, as shown and as the proposal check reads it. */
+export function billFieldTraceOf(version: Pick<BillVersion, "fields" | "structuredBill" | "energyContract">, vector?: ResolvedBillVector): BillFieldTrace {
+  const resolved = vector ?? version.energyContract?.vector ?? (version.structuredBill ? resolveBillVectorFromEvidence(version.structuredBill).vector : "UNKNOWN");
+  return traceBillFields({ structuredBill: version.structuredBill ? withCurrentReadingChecks(version.structuredBill) : null, fields: version.fields, vector: resolved === "EE" || resolved === "GAS" ? resolved : "UNKNOWN" });
+}
+
 export function toPublicDocumentVersion(document: BillDocument, versionId: string): PublicBillDocument {
   const working = document.versions.find((item) => item.versionId === versionId);
   if (!working) throw new Error("DOCUMENT_VERSION_NOT_FOUND");
@@ -658,6 +669,7 @@ export function toPublicDocumentVersion(document: BillDocument, versionId: strin
     invoicePunReferences: [],
     regulatoryAudit: null,
     detailDocument: document.detailDocument ? { fileName: document.detailDocument.fileName, linkedAt: document.detailDocument.linkedAt, checks: document.detailDocument.checks } : null,
+    fieldTrace: billFieldTraceOf(working, resolvedVector),
   };
   const analystReview = buildBillAnalystReview(publicDocument);
   const billingAddress = resolveBillingAddressFromPdf(document.objectKey, { customerName: analystReview.customer.name.value, taxCode: analystReview.customer.taxIdentifier.value, supplyAddress: analystReview.supply.address.value });
