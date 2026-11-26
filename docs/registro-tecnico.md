@@ -63,7 +63,13 @@ Questo è l'unico registro tecnico del progetto. Ogni modifica approvata aggiorn
 | P6 | Mancano ASOS gennaio–giugno 2026. Il dispacciamento ARERA si ferma a ottobre. L'ultimo refresh ARERA è del 6/11. | `/mnt/project-files/audit/archivi-ufficiali/copertura-reale/esito.md`, `/mnt/project-files/audit/archivi-ufficiali/recupero-fonti/esito.md` | Dati realmente mancanti. |
 | P7b | Verifica GME del 25/11/2026 (run `svcrun_gme_a24ba194…`, 05:20Z): esito OK in **modalità prova** (DRY_RUN). Maggio 2026: mensile 119,35 (newsletter 204), F1 107,17, F2 131,44, F3 120,81, PUNop 122,83, stato REPLACEMENT_READY. | DB `runtime_records`, collection `official-service-runs`, letto il 25/11/2026 | Registrata come verifica. Tony (26/11): il PUN archiviato non si modifica, nessuna sostituzione dei mesi maggio–ottobre, nessun aggiornamento ufficiale senza un'autorizzazione separata. |
 | P7 | La sostituzione versionata dei PUN mensili derivati è pronta ma spenta: il flag `OFFICIAL_DATA_REPLACE_DERIVED_PUN_ONLY` vive nel branch `servizio/dati-ufficiali` e non è attivo. | `services/dati-ufficiali/src/handler.ts` su `origin/servizio/dati-ufficiali` | In attesa di Tony. |
-| P12 | **Potenzialmente critico per l'attendibilità economica.** Il motore di calcolo (`calculation/trusted-ee-supply-context.ts`, `parsePowerField`) legge la potenza dai dati di fornitura con una propria espressione e può usare un valore OCR ambiguo (es. «3l5»). I controlli di lettura dell'attività 01 non lo usano e bloccano la proposta definitiva, ma il calcolo delle simulazioni no. | codice `d725aa8`, verificato il 26/11/2026 | **NON RISOLTO.** Registrato da Tony il 26/11 per l'attività 06; il motore non si corregge senza autorizzazione. |
+| P12 | **Potenzialmente critico per l'attendibilità economica.** Percorso verificato il 26/11/2026:
+1. una quantità in kW di una riga fatturata a kW (dettaglio o scontrino, unità kW e non kWh) è letta in modo ambiguo, per esempio «1l,4» al posto di «13,4»;
+2. `ingestion/supply-profile-completion.ts` ne estrae il primo numero con un'espressione larga (`/\d+(?:[.,]\d+)?/`) e la registra come potenza massima prelevata del mese («1 kW»), con base `MONTHLY_MAX_DRAWN`;
+3. il motore la usa come base della quota potenza (`calculation/trusted-ee-supply-context.ts`, `regulatoryPowerBasis`; lettura del codice);
+4. il controllo quantità × prezzo salta le righe in €/kW/mese, quindi nulla la segnalava.
+
+La potenza scritta nei dati di fornitura (es. «3l5 kW») è invece già rifiutata dal motore, perché le sue espressioni accettano solo «numero kW». | codice `d725aa8`, prova con bolletta sintetica del 26/11/2026 | **Rischio di proposta definitiva chiuso in validazione (locale, 26/11, autorizzato da Tony).** `reading/bill-field-trace.ts` controlla le stesse righe lette dal completamento: una quantità non numerica blocca la proposta (`POWER_QUANTITY_AMBIGUOUS`, BLOCCANTE) e il testo originale è conservato. **Il motore e il completamento non sono corretti:** la simulazione può ancora mostrare importi calcolati su quel valore, segnalati come basati su dati incerti. La correzione alla radice resta nell'attività 06 e richiede autorizzazione. |
 | P8 | La prova di ripristino completo del backup su un database isolato non è completata. È stata eseguita una prova con PostgreSQL 16.15, non con la 17.6. | `/mnt/project-files/audit/archivi-ufficiali/automazione/passo2/fase-a/post-verifica/post-verifica-fase-a-2026-11-21.md`, `.../backup/versione-1/backup-preventivo.md` | Limite registrato. |
 | P9 | Le regole di calcolo e di lettura stanno in `/mnt/project-files/regole/`, fuori da git: non sono versionate. | verificato il 24/11/2026 | Da decidere. |
 | P10 | La sequenza della simulazione (analisi → revisione → approvazione → CTE → confronto → proposta) è guidata dal client `QuickQuoteFlow.tsx`. Non esiste un esito di controllo qualità salvato con la simulazione. | codice `e3201ff` | Attività 02 e 07. |
@@ -205,7 +211,7 @@ Ogni attività richiede l'autorizzazione di Tony prima delle modifiche applicati
 - Verificare le singole componenti economiche.
 - Bloccare confronti e risparmi non determinabili.
 - Riutilizzare il motore deterministico e l'Agente 2.
-- **P12 (potenzialmente critico per l'attendibilità economica, aperto):** il motore può ancora usare una potenza interpretata in modo ambiguo (vedi §3). Va corretto in questa attività, con autorizzazione; fino ad allora non è risolto.
+- **P12 (potenzialmente critico per l'attendibilità economica, aperto nel motore):** `supply-profile-completion.ts` può ancora ricavare la potenza massima prelevata da una quantità in kW ambigua (vedi §3). Dal 26/11 la proposta definitiva è bloccata in validazione; la correzione del completamento va fatta in questa attività, con autorizzazione, e fino ad allora P12 non è risolto.
 
 **07. Coordinamento operativo**
 - Implementare progressivamente il coordinatore lato server.
@@ -269,6 +275,19 @@ Modifiche: Formule economiche, dati ufficiali, CTE e servizi esterni non toccati
   - nel confronto, l'avviso «Simulazione basata su dati incerti»;
   - il pulsante della proposta disattivato, con il motivo.
 
+**Correzione P12 (26/11/2026, locale, autorizzata da Tony)**
+- `reading/bill-field-trace.ts`:
+  - nuovo campo «Potenza fatturata nelle righe in kW», distinto da potenza impegnata, disponibile e massima;
+  - controllo `POWER_QUANTITY_AMBIGUOUS` (BLOCCANTE) sulle quantità che non sono un numero semplice;
+  - il testo originale è conservato;
+  - zero e quantità assenti non bloccano.
+- Test: gruppo `P12_KW_QUANTITIES` in `tests/bill-field-trace.smoke.mjs`:
+  - quantità valide e ambigue («1l,4», «3l5», «l3,4», «13,4 x 2», «1O»);
+  - quantità assenti e zero;
+  - righe in kWh escluse;
+  - bollette business e domestiche;
+  - il percorso P12 bloccato.
+
 **Test (25/11/2026)**
 - Nuovo `tests/bill-field-trace.smoke.mjs`, 11 gruppi:
   - campi mancanti;
@@ -303,7 +322,7 @@ Modifiche: Formule economiche, dati ufficiali, CTE e servizi esterni non toccati
 - Tipo cliente e potenza non hanno un campo di correzione a schermo: un valore mancante o stimato richiede una nuova lettura.
 - La correzione di P1 vale solo per le nuove letture o riletture.
 - Il collaudo funzionale in Preview non è stato fatto: le modifiche non sono pubblicate.
-- Il calcolo (`trusted-ee-supply-context.ts`, non toccato) legge la potenza dai dati di fornitura con una propria espressione: un testo ambiguo lì (es. «3l5») non è escluso dal calcolo, ma solo dalla traccia, che blocca la proposta definitiva. È da valutare nell'attività 06.
+- P12 (§3): il completamento del profilo può ancora ricavare la potenza massima prelevata da una quantità in kW ambigua. Dal 26/11 i controlli di lettura bloccano la proposta definitiva (`POWER_QUANTITY_AMBIGUOUS`), ma la simulazione resta calcolata su quel valore, segnalata come incerta. Correzione alla radice nell'attività 06.
 
 ## 8. Architettura degli agenti (approvata da Tony il 24/11/2026)
 

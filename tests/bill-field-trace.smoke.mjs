@@ -230,4 +230,43 @@ console.log("ANNUAL=PASS");
   } finally { await rm(root, { recursive: true, force: true }); }
 }
 console.log("STORED=PASS");
+
+// 12. P12 (Tony 26/11/2026): the kW quantities of the lines billed per kW become, in supply-profile-completion.ts, the monthly
+//     maximum drawn power on which the power quota is calculated. An ambiguous one stops the definitive proposal; a plain one,
+//     zero included, does not. Committed, available and maximum drawn power stay three separate fields.
+{
+  const { completeSupplyProfile } = await import("../app/lib/ingestion/supply-profile-completion.ts");
+  const kwRow = (quantita, extra = {}) => ({ voce: "TRASPORTO_POTENZA", descrizione: "Quota potenza", fascia: "NESSUNA", quantita, unita: "kW", prezzo: "1,80", unitaPrezzo: "€/kW/mese", importo: "24,12", periodo: "", pagina: 3, ...extra });
+  const BUSINESS = { tipoCliente: "ALTRI_USI", tipoClienteStampato: "Altri usi", intestatario: "AZIENDA PROVA SRL", codiceFiscalePartitaIva: "01234567890", potenzaImpegnataKw: "22", potenzaDisponibileKw: "24,2" };
+  const withRows = (rows, extra = BUSINESS) => { const { structured } = read({ ...extra, dettaglio: rows }); return { structured, result: traceBillFields({ structuredBill: structured, fields: fieldsOf(structured, ALL) }) }; };
+  const valid = withRows([kwRow("13,4")]);
+  assert.equal(valid.result.definitiveAllowed, true, open(valid.result).join());
+  assert.deepEqual([field(valid.result, "potenzaFatturata").presence, field(valid.result, "potenzaFatturata").value], ["DOCUMENTATO", "13,4 kW"]);
+  assert.deepEqual(["potenzaImpegnata", "potenzaDisponibile", "potenzaMassima", "potenzaFatturata"].map((key) => Boolean(field(valid.result, key))), [true, true, true, true], "four separate fields");
+  for (const text of ["1l,4", "3l5", "l3,4", "13,4 x 2", "1O"]) {
+    const ambiguous = withRows([kwRow(text)]);
+    assert.ok(open(ambiguous.result).includes("POWER_QUANTITY_AMBIGUOUS"), text);
+    assert.equal(ambiguous.result.definitiveAllowed, false, text);
+    assert.equal(field(ambiguous.result, "potenzaFatturata").presence, "NON_INTERPRETABILE");
+    assert.ok(field(ambiguous.result, "potenzaFatturata").note.includes(`«${text}»`), "original text kept");
+    assert.equal(ambiguous.structured.economicChargeLines.find((line) => /\bkw\b/i.test(line.unit) && !/kwh/i.test(line.unit))?.quantity, text, "the stored line keeps the text as printed");
+  }
+  // The path found on 26/11: the completion still reads «1l,4» as 1 kW (engine untouched), but no definitive proposal follows.
+  const path = withRows([kwRow("1l,4")]);
+  assert.equal(completeSupplyProfile(path.structured.supplyProfile, path.structured).powerMaximumDrawn.rawValue, "1 kW");
+  assert.throws(() => assertDefinitiveBillFields(path.result), /SOURCE_BILL_FIELDS_UNVERIFIED/);
+  // Absent and documented zero quantities do not block.
+  assert.equal(withRows([kwRow("")]).result.definitiveAllowed, true, "no quantity printed");
+  assert.equal(field(withRows([kwRow("")]).result, "potenzaFatturata"), undefined);
+  const zero = withRows([kwRow("0", { importo: "0,00" })]);
+  assert.deepEqual([zero.result.definitiveAllowed, field(zero.result, "potenzaFatturata").value], [true, "0 kW"]);
+  // kWh lines are energy, not power: never checked here.
+  assert.equal(withRows([kwRow("1l,4", { unita: "kWh", unitaPrezzo: "€/kWh", voce: "TRASPORTO_ENERGIA" })]).result.definitiveAllowed, true);
+  // Household: a valid scontrino quota potenza in kW passes, an ambiguous one blocks.
+  const quota = (quantita) => [sc("Quota per consumi", "QUOTA_TOTALE", "CONSUMI", "80,00", { quantita: "300", unita: "kWh" }), sc("Quota potenza", "QUOTA_TOTALE", "POTENZA", "20,00", { quantita, unita: "kW" }), sc("Totale bolletta", "TOTALE_BOLLETTA", "NESSUNA", "100,00")];
+  const household = (quantita) => { const { structured } = read({ scontrino: quota(quantita) }); return traceBillFields({ structuredBill: structured, fields: fieldsOf(structured, ALL) }); };
+  assert.equal(household("3").definitiveAllowed, true, open(household("3")).join());
+  assert.ok(open(household("3l")).includes("POWER_QUANTITY_AMBIGUOUS"));
+}
+console.log("P12_KW_QUANTITIES=PASS");
 console.log("bill-field-trace: ok");

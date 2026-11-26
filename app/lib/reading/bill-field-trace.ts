@@ -77,6 +77,8 @@ export interface BillFieldTraceInput {
 const POD_STRICT = /^IT\d{3}E\d{8,9}$/;
 const POD_SHAPE = /^IT\d{3}E[0-9A-Z]{8,9}$/;
 const PDR_FORMAT = /^\d{14}$/;
+/** A kW quantity as a plain number ("13,4", "22", "0", "16.5"), optionally followed by its unit; anything else is not interpretable. */
+const PLAIN_KW_QUANTITY = /^\d+(?:[.,]\d+)?(?:\s*kW)?$/i;
 const VAT_NUMBER = /^\d{11}$/;
 const TAX_CODE = /^[A-Z]{6}[0-9LMNPQRSTUV]{2}[A-Z][0-9LMNPQRSTUV]{2}[A-Z][0-9LMNPQRSTUV]{3}[A-Z]$/;
 const DAY = 86_400_000;
@@ -159,7 +161,7 @@ function traced(context: Context, spec: Spec, raw: Raw, options: { readonly prov
     return {
       key: spec.key, label: spec.label, value: "", provenance: "ASSENTE", presence: unreadable ? "NON_INTERPRETABILE" : "ASSENTE", reliability: "NON_VALUTABILE", method: "NESSUNO",
       indispensable: spec.indispensable, page: pageOf(bill, spec.names),
-      note: unreadable ? `stampato ma non interpretabile${printed ? `: «${printed}»` : ""}` : absentReason(bill, spec.names),
+      note: options.note ?? (unreadable ? `stampato ma non interpretabile${printed ? `: «${printed}»` : ""}` : absentReason(bill, spec.names)),
       checks: checks.map((item) => item.code),
     };
   }
@@ -378,6 +380,19 @@ export function traceBillFields(input: BillFieldTraceInput): BillFieldTrace {
     out.push(traced(context, { key: "potenzaImpegnata", label: "Potenza impegnata", names: ["potenzaImpegnataKw"], indispensable: true, checked: available.number !== null }, committed.present ? { ...committed, value: /kw/i.test(committed.value) ? committed.value : `${committed.value} kW` } : committed, { note: committedNote }));
     out.push(traced(context, { key: "potenzaDisponibile", label: "Potenza disponibile", names: ["potenzaDisponibileKw"], indispensable: false }, available));
     out.push(traced(context, { key: "potenzaMassima", label: "Potenza massima prelevata", names: ["potenzaMassimaPrelevataKw"], indispensable: false }, maximum));
+    // Tony (26/11/2026, P12): the kW quantities of the charge lines billed per kW are read by the supply-profile completion
+    // (ingestion/supply-profile-completion.ts) as the monthly maximum drawn power, the basis of the power quota. The same lines it
+    // reads (unit kW, not kWh) are checked here: a quantity that is not a plain number ("1l,4", "3l5", "13,4 x 2") is not
+    // interpretable, its text is kept and a definitive proposal is stopped. A plain number, zero included, is accepted.
+    const kwLines = (bill!.economicChargeLines ?? []).filter((line) => /\bkw\b/i.test(line.unit ?? "") && !/kwh/i.test(line.unit ?? "") && (line.quantity ?? "").trim());
+    const ambiguousKw = kwLines.filter((line) => !PLAIN_KW_QUANTITY.test(line.quantity.trim()));
+    for (const line of ambiguousKw) issue(context, "POWER_QUANTITY_AMBIGUOUS", "BLOCCANTE", "potenzaFatturata", `Quantità in kW «${line.quantity.trim()}» della riga «${line.rawDescription ?? line.description}» non interpretabile: può alterare la potenza su cui si calcola la quota potenza. Rileggi la bolletta.`);
+    if (kwLines.length) {
+      const billedRaw: Raw = ambiguousKw.length
+        ? { present: false, value: "", number: null, unreadable: true, corrected: false }
+        : { present: true, value: [...new Set(kwLines.map((line) => `${line.quantity.trim()} kW`))].join(", "), number: null, unreadable: false, corrected: false };
+      out.push(traced(context, { key: "potenzaFatturata", label: "Potenza fatturata nelle righe in kW", names: [], indispensable: false }, billedRaw, { note: ambiguousKw.length ? `stampato ma non interpretabile: ${ambiguousKw.map((line) => `«${line.quantity.trim()}»`).join(", ")}` : null }));
+    }
     const voltage = rawOf(bill!.voltageLevel);
     if (!voltage.present) issue(context, "VOLTAGE_UNKNOWN", "AVVISO", "tensione", "Livello di tensione non letto.");
     out.push(traced(context, { key: "tensione", label: "Livello di tensione", names: ["tensioneStampata"], indispensable: false }, voltage.present ? { ...voltage, value: ({ LV: "BT", MV: "MT", HV: "AT", EHV: "AAT" } as Record<string, string>)[voltage.value] ?? voltage.value } : voltage));
