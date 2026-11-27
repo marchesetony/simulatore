@@ -192,6 +192,7 @@ Ogni attività richiede l'autorizzazione di Tony prima delle modifiche applicati
 - Migliorare dashboard, caricamento, lettura, simulazioni, CTE, archivio e proposte.
 - Garantire leggibilità e comportamento responsive.
 - Evitare correzioni estetiche isolate.
+- Anomalie da collaudo 01 (27/11/2026, caso Versace Elios, §7.2), da trattare nel restyling e non prima: unità ripetute («0,012 €/kWh EUR/KWH»); potenze equivalenti mostrate due volte («3 kW, 3,0 kW»); stati di affidabilità poco distinguibili (testo semplice nell'ultima colonna, «Assente» e «non stampato» affiancati); tabella di provenienza a 4 colonne senza adattamento agli schermi stretti.
 
 **04. Progressione delle operazioni**
 - Fasi effettive visibili.
@@ -338,6 +339,64 @@ Modifiche: Formule economiche, dati ufficiali, CTE e servizi esterni non toccati
 - La correzione di P1 vale solo per le nuove letture o riletture.
 - Il collaudo funzionale in Preview non è stato fatto: le modifiche non sono pubblicate.
 - P12 (§3): il completamento del profilo può ancora ricavare la potenza massima prelevata da una quantità in kW ambigua. Dal 26/11 i controlli di lettura bloccano la proposta definitiva (`POWER_QUANTITY_AMBIGUOUS`), ma la simulazione resta calcolata su quel valore, segnalata come incerta. Correzione alla radice nell'attività 06.
+
+### 7.2 Attività 01: collaudo sul caso Versace Maria Pia, Elios settembre 2026 (27/11/2026)
+Fonte: screenshot di Tony della Preview `7a05bdc`. Bolletta `EE21738_2026_VERSACE_MARIA_PIA.pdf` (record `a3b925f3…`, azienda Energia Priva). PDF originale e lettura salvata NON consultati: il PDF non è nei file del progetto e la lettura del record su Supabase è stata negata dai permessi. Nulla di questa sezione è verificato sul documento reale.
+
+**Problemi confermati (sul codice di `ae67ae5`)**
+- C1. Potenze equivalenti duplicate. `reading/bill-field-trace.ts` (campo «Potenza fatturata nelle righe in kW») deduplica i testi, non i numeri: «3» e «3,0» restano due valori. Le righe in kW arrivano sia dallo scontrino (`scontrinoLines`, quota potenza con quantità e unità kW) sia dal dettaglio (unità «€/kW/mese»): `reading/bill-reader-map.ts:233` le unisce in `economicChargeLines`. Solo presentazione: il completamento del profilo prende il massimo numerico (`ingestion/supply-profile-completion.ts`), quindi 3 e 3,0 danno lo stesso valore.
+- C2. Unità ripetuta. `factRaw` in `bill-field-trace.ts` aggiunge `fact.unit` anche quando il valore stampato contiene già l'unità; l'unità è nella forma normalizzata «EUR/KWH» (`ingestion/bill-two-stage.ts`, `normalizeAnalystUnit`). Riguarda Spread, PCV e prezzi energia nella tabella di provenienza. Solo presentazione.
+- C3. La tabella di provenienza non mostra se lo scontrino e le voci di dettaglio sono riconciliati: il confronto esiste solo nel calcolo (`quote/receipt.ts`, `summaryDetailComparison`).
+
+**Già coperto dal codice (non è un problema nuovo)**
+- Lettura di tutte le pagine: il lettore riceve il PDF intero (`reading/bill-reader.ts`) e lo schema chiede pagina e testo per ogni riga (`scontrino`, `dettaglio`, `componentiStampate`, `fonti`).
+- Doppio conteggio riepilogo/dettaglio: regola del 19/11 in `summaryDetailComparison`. Le righe «di cui» della sintetica sono escluse dal confronto; il dettaglio prevale per la ripartizione solo se vendita, trasporto e oneri sommano come la sintetica (tolleranza 0,02 €); il totale resta quello della sintetica; altrimenti INCOHERENT con nota.
+- Distinzione delle potenze: impegnata, disponibile, massima prelevata e fatturata sono campi separati nel tracciato.
+
+**Ipotesi da verificare (servono il PDF o la lettura salvata)**
+- I1. «3» viene dalla quota potenza dello scontrino e «3,0» da una riga di dettaglio della stessa quota.
+- I2. Le pagine finali della bolletta Elios sono lette come `dettaglio` e la riconciliazione risulta DETAIL_PREVAILS, non INCOHERENT.
+- I3. Il valore con l'unità ripetuta è lo spread (fatto SPREAD) o un prezzo energia.
+
+**Correzioni proposte (non applicate, in attesa di autorizzazione)**
+- Perimetro: solo `reading/bill-field-trace.ts` e `tests/bill-field-trace.smoke.mjs`. Lettore, motore, CTE, dati ARERA/GME invariati.
+- P-C1: raggruppare le quantità in kW per valore numerico; mostrare «3 kW» una volta, con i riferimenti delle righe originali (testo stampato, pagina, scontrino o dettaglio). Valori numericamente diversi: elencati con la loro riga e un AVVISO non bloccante (può essere legittimo, es. bolletta plurimensile). Le quantità ambigue restano BLOCCANTI (P12).
+- P-C2: non aggiungere l'unità quando il testo stampato ne contiene già una; altrimenti mostrarla in forma leggibile («€/kWh»).
+- P-C3 (rinviata all'attività 02): mostrare nel tracciato l'esito della riconciliazione sintetica/dettaglio, che oggi si calcola solo nel motore.
+
+**Correzione applicata in locale (27/11/2026, autorizzazioni di Tony delle 12:49Z e 13:23Z, NON committata)**
+- Perimetro: `reading/bill-field-trace.ts`, `components/BillFieldTrace.tsx` (dalle 13:23Z), `tests/bill-field-trace.smoke.mjs`, questo registro. Lettore, estrazione, completamento del profilo, motore, CTE, API e dati ARERA/GME invariati.
+- C1 risolto in presentazione:
+  - le quantità in kW uguali come numero e riferite allo stesso periodo sono un solo valore («3 kW»);
+  - una riga senza periodo si unisce allo stesso numero; righe con periodi diversi restano distinte;
+  - ogni riga stampata resta come fonte (`sources`: testo, riga, scontrino o dettaglio, pagina, periodo) e nella nota;
+  - valori diversi restano distinti con l'avviso `POWER_QUANTITIES_DIFFER` (AVVISO, non blocca);
+  - le quantità ambigue restano BLOCCANTI (P12 invariato); le righe salvate non sono toccate.
+- C2 risolto in presentazione: l'unità non si aggiunge se il valore stampato ne ha già una; altrimenti è mostrata leggibile («€/kWh»). Il valore e il numero letto non cambiano.
+- Fonti a schermo (completato, 13:23Z): nella tabella di provenienza, sotto il valore della potenza fatturata, «Righe della bolletta (n)» ripiegato; per ogni riga testo originale, scontrino o dettaglio, periodo se c'è, pagina solo se registrata dalla lettura, descrizione della riga.
+- C3 non toccato: resta proposto per l'attività 02.
+
+**Test effettuati (27/11/2026)**
+- Nuovo gruppo `VERSACE_KW_UNITS` in `tests/bill-field-trace.smoke.mjs`:
+  - valori equivalenti (3/3,0, 3/3.0, 3 kW/3,00, 13,4/13,40);
+  - valori diversi (3 e 4,5: avviso, nessun blocco);
+  - periodi diversi (stesso valore per due mesi: due voci, nessun avviso; valori diversi: avviso, nessun blocco);
+  - righe da scontrino e dettaglio con le fonti conservate e le righe salvate non unite;
+  - valori OCR ambigui («1l,4», «3l5», scontrino «3l»): blocco P12 invariato;
+  - completamento del profilo con lo stesso risultato;
+  - unità: «0,012 €/kWh» non ripetuta, «0,012» → «0,012 €/kWh», nessun «EUR/KWH» nel tracciato.
+- Gruppo `SOURCES_SHOWN`: visualizzazione delle fonti verificata sul sorgente di `BillFieldTrace.tsx` (il runner non carica `.tsx`): elenco nella cella del valore, ripiegato, testo e provenienza, periodo e pagina solo quando presenti.
+- Riusati senza duplicarli: riconciliazione sintetica/dettaglio e lettura di tutte le pagine sono già coperte dai test esistenti del 19/11 e del lettore.
+- Suite completa: 231 OK, 57 falliti, gli stessi della baseline con le stesse cause; `tsc` pulito; `next build` riuscita; 26 file esclusi intatti.
+- Lint: nessun problema nei file toccati. Chiarito il 34 contro 59 (stesso ambiente, stessa configurazione, `e3201ff` in una copia temporanea): `eslint app` = 34 (5 errori, 29 avvisi) sia su `e3201ff` sia ora; `eslint .` = 59 sia su `e3201ff` sia ora, file per file identici. La differenza sono 25 avvisi preesistenti in `tests/` (variabili non usate), contati solo lanciando il lint su tutto il progetto. Nessuna regressione; nulla corretto perché estraneo all'attività.
+
+**Limiti residui**
+- Nessuna verifica sul PDF reale né sulla lettura salvata della bolletta Versace.
+- Le righe di dettaglio non portano la pagina (`reading/bill-reader-map.ts` non la passa): per esse la fonte ha pagina vuota. Correggerlo richiede una modifica del lettore, non autorizzata.
+- Il resto dello stile della tabella (stati di affidabilità, schermi stretti) resta all'attività 03.
+- La visualizzazione è verificata sul sorgente, non nell'app.
+- P12: MITIGATO, NON RISOLTO.
+- Il calcolo della quota potenza e P12 nel completamento del profilo restano come prima (attività 06).
 
 ## 8. Architettura degli agenti (approvata da Tony il 24/11/2026)
 

@@ -1,6 +1,6 @@
 "use client";
 import type { ReactNode } from "react";
-import type { BillFieldTrace, TracedField, TraceIssue } from "../lib/reading/bill-field-trace";
+import type { BillFieldTrace, TracedField, TraceIssue, TraceSource } from "../lib/reading/bill-field-trace";
 
 // Tony (25/11/2026, attività 01): what the reading of the bill is worth, field by field, and what stops a definitive proposal.
 // Only what the server traced is shown: nothing is recomputed or assumed here.
@@ -34,12 +34,22 @@ export function BillFieldTable({ trace }: { readonly trace: BillFieldTrace }): R
       <thead><tr><th scope="col">Dato</th><th scope="col">Valore</th><th scope="col">Provenienza</th><th scope="col">Affidabilità</th></tr></thead>
       <tbody>{trace.fields.map((field) => <tr key={field.key} className={`field-trace-row ${field.reliability.toLowerCase()}`}>
         <th scope="row">{field.label}{field.indispensable ? <span className="visually-hidden"> (indispensabile)</span> : null}{field.indispensable ? <span aria-hidden="true"> *</span> : null}</th>
-        <td>{field.value || "—"}{PRESENCE[field.presence] ? <small> {PRESENCE[field.presence]}</small> : null}</td>
+        <td>{field.value || "—"}{PRESENCE[field.presence] ? <small> {PRESENCE[field.presence]}</small> : null}{field.sources?.length ? <FieldSources sources={field.sources} /> : null}</td>
         <td>{PROVENANCE[field.provenance]}{field.page ? <small> · pag. {field.page}</small> : null}{field.note && field.provenance !== "LETTO" ? <small className="field-trace-note">{field.note}</small> : null}</td>
         <td>{RELIABILITY[field.reliability]}</td>
       </tr>)}</tbody>
     </table>
     <p className="muted">* dato indispensabile per la proposta.</p>
+  </details>;
+}
+
+// Tony (27/11/2026, Versace Elios): the printed rows behind a value shown once ("3 kW" from «3» and «3,0»), folded so the table
+// stays light. The page is shown only when the reading recorded it: detail rows do not carry one.
+const ORIGIN: Readonly<Record<TraceSource["origin"], string>> = { SCONTRINO: "scontrino", DETTAGLIO: "dettaglio" };
+function FieldSources({ sources }: { readonly sources: readonly TraceSource[] }): ReactNode {
+  return <details className="field-trace-sources">
+    <summary>Righe della bolletta ({sources.length})</summary>
+    <ul>{sources.map((source, index) => <li key={index}>«{source.text}» · {ORIGIN[source.origin]}{source.period ? ` · ${source.period}` : ""}{source.page !== null ? ` · pag. ${source.page}` : ""}{source.row ? <small> {source.row}</small> : null}</li>)}</ul>
   </details>;
 }
 

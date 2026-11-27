@@ -40,6 +40,18 @@ export interface TracedField {
   /** How a CALCOLATO or STIMATO value was obtained, or why an absent one is absent. */
   readonly note: string | null;
   readonly checks: readonly string[];
+  /** The printed rows a value was read from, when it comes from several (e.g. the same kW in the scontrino and in the detail). */
+  readonly sources?: readonly TraceSource[];
+}
+
+/** One printed row behind a traced value: its text as printed, where it is and the period it refers to. */
+export interface TraceSource {
+  readonly text: string;
+  readonly row: string;
+  readonly origin: "SCONTRINO" | "DETTAGLIO";
+  /** Known for the scontrino rows; the detail rows do not carry their page. */
+  readonly page: number | null;
+  readonly period: string;
 }
 
 export interface TraceIssue {
@@ -125,7 +137,46 @@ function factRaw(bill: StructuredBillExtraction | null, code: string): Raw {
   if (!fact) return { present: false, value: "", number: null, unreadable: false, corrected: false };
   const text = String(fact.value ?? "").trim();
   if (fact.status !== "FOUND" || !text || /^NOT_FOUND$/i.test(text)) return { present: false, value: "", number: null, unreadable: fact.status === "INVALID" || fact.status === "NEEDS_REVIEW", corrected: false };
-  return { present: true, value: fact.unit ? `${text} ${fact.unit}` : text, number: italianNumber(text), unreadable: false, corrected: false };
+  return { present: true, value: withUnit(text, fact.unit), number: italianNumber(text), unreadable: false, corrected: false };
+}
+
+// Tony (27/11/2026, Versace Elios: «0,012 €/kWh EUR/KWH»): the unit is shown once. When the printed value already carries
+// it, nothing is added; otherwise the stored unit ("EUR/KWH", normalised by the reader) is shown in its readable form. Display
+// only: the value and its number stay as read.
+const PRINTED_UNIT = /€|\beur\b|kwh|\bkw\b|smc|\/\s*(?:mese|giorno|anno|pod)\b|%/i;
+function readableUnit(unit: string): string {
+  return unit.trim().replace(/^EUR\s*\//i, "€/").replace(/\bEUR\b/gi, "€").replace(/kwh/gi, "kWh").replace(/\bkw\b/gi, "kW").replace(/smc/gi, "Smc").replace(/\bMESE\b/g, "mese");
+}
+function withUnit(text: string, unit: string | null | undefined): string {
+  if (!unit?.trim() || PRINTED_UNIT.test(text)) return text;
+  return `${text} ${readableUnit(unit)}`;
+}
+
+// Tony (27/11/2026, Versace Elios: «3 kW, 3,0 kW»): kW quantities that are the same number for the same period are one value,
+// shown once, with every printed row kept as a source (scontrino or detail, page, period). Different numbers, or the same number
+// for different periods, stay distinct. The rows themselves are not touched: this groups only what is shown.
+interface KwGroup { readonly number: number; readonly period: string; readonly sources: TraceSource[] }
+const SCONTRINO_EVIDENCE = /^pagina\s+(\d+)$/i;
+function kwSource(line: StructuredBillExtraction["economicChargeLines"][number]): TraceSource {
+  const page = SCONTRINO_EVIDENCE.exec((line.documentEvidence ?? "").trim());
+  return { text: line.quantity.trim(), row: (line.rawDescription ?? line.description).trim(), origin: page ? "SCONTRINO" : "DETTAGLIO", page: page ? Number(page[1]) : null, period: (line.periodRaw ?? "").trim() };
+}
+function kwGroups(lines: readonly StructuredBillExtraction["economicChargeLines"][number][]): KwGroup[] {
+  const groups: KwGroup[] = [];
+  const dated = lines.filter((line) => (line.periodRaw ?? "").trim());
+  for (const line of [...dated, ...lines.filter((item) => !dated.includes(item))]) {
+    const source = kwSource(line);
+    const number = italianNumber(source.text.replace(/\s*kW$/i, ""));
+    if (number === null) continue;
+    // A row without a period joins the same number whatever its period; a dated row joins only the same number and period.
+    const group = groups.find((item) => item.number === number && (!source.period || item.period === source.period));
+    if (group) group.sources.push(source);
+    else groups.push({ number, period: source.period, sources: [source] });
+  }
+  return groups;
+}
+function sourceText(source: TraceSource): string {
+  return `«${source.text}» ${source.origin === "SCONTRINO" ? "scontrino" : "dettaglio"}${source.page ? ` pag. ${source.page}` : ""}${source.period ? ` (${source.period})` : ""}: ${source.row}`;
 }
 
 /** The field as the operator left it, when the bill has no structured reading (stored before it existed). */
@@ -388,10 +439,16 @@ export function traceBillFields(input: BillFieldTraceInput): BillFieldTrace {
     const ambiguousKw = kwLines.filter((line) => !PLAIN_KW_QUANTITY.test(line.quantity.trim()));
     for (const line of ambiguousKw) issue(context, "POWER_QUANTITY_AMBIGUOUS", "BLOCCANTE", "potenzaFatturata", `Quantità in kW «${line.quantity.trim()}» della riga «${line.rawDescription ?? line.description}» non interpretabile: può alterare la potenza su cui si calcola la quota potenza. Rileggi la bolletta.`);
     if (kwLines.length) {
+      const groups = ambiguousKw.length ? [] : kwGroups(kwLines);
+      const numbers = new Set(groups.map((group) => group.number));
+      const dated = new Set(groups.map((group) => group.period)).size > 1;
+      if (numbers.size > 1) issue(context, "POWER_QUANTITIES_DIFFER", "AVVISO", "potenzaFatturata", `Le righe in kW riportano potenze diverse (${groups.map((group) => `${group.sources[0].text.replace(/\s*kW$/i, "")} kW${group.period ? ` per ${group.period}` : ""}`).join(", ")}): controlla sulla bolletta se si riferiscono a periodi o grandezze diverse.`);
       const billedRaw: Raw = ambiguousKw.length
         ? { present: false, value: "", number: null, unreadable: true, corrected: false }
-        : { present: true, value: [...new Set(kwLines.map((line) => `${line.quantity.trim()} kW`))].join(", "), number: null, unreadable: false, corrected: false };
-      out.push(traced(context, { key: "potenzaFatturata", label: "Potenza fatturata nelle righe in kW", names: [], indispensable: false }, billedRaw, { note: ambiguousKw.length ? `stampato ma non interpretabile: ${ambiguousKw.map((line) => `«${line.quantity.trim()}»`).join(", ")}` : null }));
+        : { present: true, value: groups.map((group) => `${group.sources[0].text.replace(/\s*kW$/i, "")} kW${dated && group.period ? ` (${group.period})` : ""}`).join(", "), number: numbers.size === 1 ? groups[0].number : null, unreadable: false, corrected: false };
+      const sources = kwLines.map(kwSource);
+      const field = traced(context, { key: "potenzaFatturata", label: "Potenza fatturata nelle righe in kW", names: [], indispensable: false }, billedRaw, { note: ambiguousKw.length ? `stampato ma non interpretabile: ${ambiguousKw.map((line) => `«${line.quantity.trim()}»`).join(", ")}` : `righe: ${sources.map(sourceText).join("; ")}` });
+      out.push({ ...field, page: field.page ?? sources.find((source) => source.page !== null)?.page ?? null, sources });
     }
     const voltage = rawOf(bill!.voltageLevel);
     if (!voltage.present) issue(context, "VOLTAGE_UNKNOWN", "AVVISO", "tensione", "Livello di tensione non letto.");

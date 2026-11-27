@@ -278,4 +278,79 @@ console.log("STORED=PASS");
   assert.ok(open(household("3l")).includes("POWER_QUANTITY_AMBIGUOUS"));
 }
 console.log("P12_KW_QUANTITIES=PASS");
+
+// 13. Versace Elios (Tony 27/11/2026): «3 kW, 3,0 kW» and «0,012 €/kWh EUR/KWH» in the provenance table. Equal kW quantities
+//     are one value with every printed row kept as a source; different ones stay distinct with a non-blocking warning; the
+//     unit is shown once. Display only: the stored lines, the completion and the P12 block are unchanged.
+{
+  const { completeSupplyProfile } = await import("../app/lib/ingestion/supply-profile-completion.ts");
+  const detail = (quantita, extra = {}) => ({ voce: "TRASPORTO_POTENZA", descrizione: "Quota potenza trasporto", fascia: "NESSUNA", quantita, unita: "kW", prezzo: "1,80", unitaPrezzo: "€/kW/mese", importo: "5,40", periodo: "", pagina: 5, ...extra });
+  const scontrino = (quantita) => [sc("Quota per consumi", "QUOTA_TOTALE", "CONSUMI", "80,00", { quantita: "300", unita: "kWh" }), sc("Quota potenza", "QUOTA_TOTALE", "POTENZA", "20,00", { quantita, unita: "kW" }), sc("Totale bolletta", "TOTALE_BOLLETTA", "NESSUNA", "100,00")];
+  const trace = (rows, quantita = "3", extra = {}) => { const { structured } = read({ scontrino: scontrino(quantita), dettaglio: rows, ...extra }); return { structured, result: traceBillFields({ structuredBill: structured, fields: fieldsOf(structured, ALL) }) }; };
+  const kwOf = (structured) => structured.economicChargeLines.filter((line) => /\bkw\b/i.test(line.unit) && !/kwh/i.test(line.unit));
+
+  // Equivalent values, scontrino «3» and detail «3,0»: one value, both rows kept as sources, no warning, no block.
+  const same = trace([detail("3,0")]);
+  const billed = field(same.result, "potenzaFatturata");
+  assert.equal(billed.value, "3 kW", "one value");
+  assert.deepEqual(billed.sources.map((source) => [source.text, source.origin, source.page]), [["3", "SCONTRINO", 2], ["3,0", "DETTAGLIO", null]], "both printed rows kept");
+  assert.ok(billed.note.includes("«3» scontrino") && billed.note.includes("«3,0» dettaglio"));
+  assert.ok(!codes(same.result).includes("POWER_QUANTITIES_DIFFER"));
+  assert.equal(same.result.definitiveAllowed, true, open(same.result).join());
+  assert.deepEqual(kwOf(same.structured).map((line) => line.quantity), ["3", "3,0"], "the stored lines are not merged");
+  assert.equal(same.structured.economicChargeLines.length, read({ scontrino: scontrino("3"), dettaglio: [detail("3,0")] }).structured.economicChargeLines.length, "no line removed");
+  for (const [a, b] of [["3", "3.0"], ["3 kW", "3,00"], ["13,4", "13,40"]]) assert.equal(field(trace([detail(b)], a).result, "potenzaFatturata").value.split(", ").length, 1, `${a} = ${b}`);
+
+  // Really different values stay distinct, with a warning that does not block (e.g. a bill over several months).
+  const differ = trace([detail("4,5")]);
+  assert.equal(field(differ.result, "potenzaFatturata").value, "3 kW, 4,5 kW");
+  assert.ok(codes(differ.result).includes("POWER_QUANTITIES_DIFFER"));
+  assert.equal(differ.result.issues.find((item) => item.code === "POWER_QUANTITIES_DIFFER").severity, "AVVISO");
+  assert.equal(differ.result.definitiveAllowed, true, "a difference alone does not block");
+
+  // Different periods: the same number per month stays one entry per period; a row without period joins the first.
+  const months = trace([detail("3,0", { periodo: "01/09/2026-30/09/2026" }), detail("3", { periodo: "01/10/2026-31/10/2026" })]);
+  const monthly = field(months.result, "potenzaFatturata");
+  assert.equal(monthly.value, "3,0 kW (01/09/2026-30/09/2026), 3 kW (01/10/2026-31/10/2026)", "no merge across periods");
+  assert.equal(monthly.sources.length, 3);
+  assert.ok(!codes(months.result).includes("POWER_QUANTITIES_DIFFER"), "same power in both months");
+  const monthsDiffer = trace([detail("3,0", { periodo: "01/09/2026-30/09/2026" }), detail("4,5", { periodo: "01/10/2026-31/10/2026" })]);
+  assert.ok(codes(monthsDiffer.result).includes("POWER_QUANTITIES_DIFFER"));
+  assert.equal(monthsDiffer.result.definitiveAllowed, true, "bimonthly bills are not blocked");
+
+  // OCR ambiguity: P12 block unchanged, with or without an equivalent row next to it.
+  for (const text of ["1l,4", "3l5"]) {
+    const ambiguous = trace([detail(text)]);
+    assert.ok(open(ambiguous.result).includes("POWER_QUANTITY_AMBIGUOUS"), text);
+    assert.equal(field(ambiguous.result, "potenzaFatturata").presence, "NON_INTERPRETABILE");
+    assert.throws(() => assertDefinitiveBillFields(ambiguous.result), /SOURCE_BILL_FIELDS_UNVERIFIED/);
+  }
+  assert.ok(open(trace([detail("3,0")], "3l").result).includes("POWER_QUANTITY_AMBIGUOUS"), "ambiguous scontrino row");
+
+  // The power quota and the completion read the same lines as before.
+  const profile = completeSupplyProfile(same.structured.supplyProfile, same.structured);
+  const before = completeSupplyProfile(same.structured.supplyProfile, { ...same.structured, economicChargeLines: [...same.structured.economicChargeLines] });
+  assert.deepEqual(profile, before);
+
+  // Unit once, readable; the number read is unchanged.
+  const unitOf = (spread) => field(trace([], "3", { spread }).result, "spread");
+  assert.equal(unitOf("0,012 €/kWh").value, "0,012 €/kWh", "unit printed: not repeated");
+  assert.equal(unitOf("0,012").value, "0,012 €/kWh", "unit added in readable form");
+  assert.ok(!/EUR\/KWH/.test(JSON.stringify(trace([], "3", { spread: "0,012" }).result.fields)));
+}
+console.log("VERSACE_KW_UNITS=PASS");
+
+// 14. Sources on screen (Tony 27/11/2026): the provenance table lists the printed rows of a value, folded, with origin, period
+//     and the page only when known. (The component is .tsx, which the test runner does not load: checked on the source.)
+{
+  const { readFile } = await import("node:fs/promises");
+  const component = await readFile("app/components/BillFieldTrace.tsx", "utf8");
+  assert.match(component, /\{field\.sources\?\.length \? <FieldSources sources=\{field\.sources\} \/> : null\}<\/td>/, "sources in the value cell");
+  assert.match(component, /<details className="field-trace-sources">\s*<summary>Righe della bolletta \(\{sources\.length\}\)<\/summary>/, "folded");
+  assert.match(component, /«\{source\.text\}» · \{ORIGIN\[source\.origin\]\}/, "original text and origin");
+  assert.match(component, /source\.period \? ` · \$\{source\.period\}` : ""/, "period when known");
+  assert.match(component, /source\.page !== null \? ` · pag\. \$\{source\.page\}` : ""/, "page only when known");
+  assert.match(component, /SCONTRINO: "scontrino", DETTAGLIO: "dettaglio"/);
+}
+console.log("SOURCES_SHOWN=PASS");
 console.log("bill-field-trace: ok");
