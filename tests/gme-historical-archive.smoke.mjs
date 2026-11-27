@@ -58,10 +58,12 @@ class MemoryRepository {
 const repositories = { marketArchiveRepository: new (class { constructor() { this.records = []; } async get(_tenant, id) { return this.records.find((record) => record.archiveId === id) ?? null; } async list(_tenant) { return this.records; } async save(record) { this.records.push(structuredClone(record)); } })(), marketRefreshState: new MemoryRepository(), marketRefreshRuns: new MemoryRepository(), marketRefreshLocks: new MemoryRepository() };
 const dry = await runPunMarketRefresh({ tenantId: "tenant_a7", repositories, sourceReader: createOfficialPunSourceReader({ historicalFetcher: fetcher }), now: "2026-09-11T00:00:00.000Z", runId: "a7-dry-run", trigger: "MANUAL", dryRun: true });
 assert.deepEqual(dry.targetMonths, ["2026-08", "2026-07", "2026-06", "2026-05"]);
-assert.equal(dry.status, "SUCCESS");
+// Tony (23/11/2026): the 15-minute archive gives no published monthly value: the refresh writes and approves nothing from it.
+assert.equal(dry.status, "FAILED");
 assert.equal(dry.monthsChecked, 4);
-assert.equal(dry.monthsComplete, 4);
-assert.equal(dry.monthsFailed, 0);
+assert.equal(dry.monthsComplete, 0);
+assert.equal(dry.monthsFailed, 4);
+assert.ok(dry.errors.every((error) => /PUN_MONTHLY_NOT_DOCUMENTED/.test(error)));
 assert.equal((await repositories.marketArchiveRepository.list("tenant_a7")).length, 0);
 assert.equal((await repositories.marketRefreshRuns.list("tenant_a7")).length, 0);
 console.log("GME_HISTORICAL_DRY_RUN_4_OF_4_NO_WRITE=PASS");

@@ -34,6 +34,17 @@ export async function approveMarketArchive(repository: MarketArchiveRepository, 
 export async function rejectMarketArchive(repository: MarketArchiveRepository, tenantId: string, archiveId: string, reviewer: string, reason: string, at?: string): Promise<MarketArchiveRecord> {
   assertMarketTenantId(tenantId); if (typeof reason !== "string" || !reason.trim()) throw new Error("REJECTION_REASON_REQUIRED"); const record = await repository.get(tenantId, archiveId); if (!record) throw new Error("MARKET_ARCHIVE_NOT_FOUND"); if (record.status === "APPROVED") throw new Error("MARKET_RECORD_ALREADY_APPROVED"); const actor = actorValue(reviewer); const now = nowValue(at); const rejectedRecord = withApproval(record.record, { status: "REJECTED", reason: reason.trim() }); const next: MarketArchiveRecord = { ...record, updatedAt: now, status: "REJECTED", record: rejectedRecord, approvals: [...record.approvals, { approvalId: randomUUID(), recordId: archiveId, decision: "REJECTED", reviewer: actor, decisionId: `rejected-${archiveId}`, decidedAt: now }], history: [...record.history, event(record, "REJECTED", now, actor, reason.trim())] }; await repository.save(next); return structuredClone(next); }
 
+/**
+ * Takes an approved record out of the active archive without deleting it (retention rule): it stays readable with its
+ * history and can be restored through review and approval. Recorded as REJECTED so older deployments still read it.
+ */
+export async function retireMarketArchive(repository: MarketArchiveRepository, tenantId: string, archiveId: string, actor: string, reason: string, at?: string): Promise<MarketArchiveRecord> {
+  assertMarketTenantId(tenantId); const record = await repository.get(tenantId, archiveId); if (!record) throw new Error("MARKET_ARCHIVE_NOT_FOUND"); if (record.status !== "APPROVED") throw new Error("MARKET_RECORD_NOT_APPROVED");
+  const who = actorValue(actor); const now = nowValue(at); const why = reason.trim() || "RETENTION";
+  const next: MarketArchiveRecord = { ...record, updatedAt: now, status: "REJECTED", record: withApproval(record.record, { status: "REJECTED", reason: why }), approvals: [...record.approvals, { approvalId: randomUUID(), recordId: archiveId, decision: "REJECTED", reviewer: who, decisionId: `retired-${archiveId}`, decidedAt: now }], history: [...record.history, event(record, "REJECTED", now, who, why)] };
+  await repository.save(next); return structuredClone(next);
+}
+
 function semverParts(version: string): number[] { return version.split(".").map((part) => Number.parseInt(part, 10)); }
 export function compareMarketVersions(left: MarketArchiveRecord, right: MarketArchiveRecord): number { const l = semverParts(left.record.version); const r = semverParts(right.record.version); for (let index = 0; index < Math.max(l.length, r.length); index += 1) { const difference = (r[index] ?? 0) - (l[index] ?? 0); if (difference !== 0) return difference; } return (right.record.publicationDate ?? "").localeCompare(left.record.publicationDate ?? "") || right.updatedAt.localeCompare(left.updatedAt) || right.archiveId.localeCompare(left.archiveId); }
 

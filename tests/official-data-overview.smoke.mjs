@@ -1,0 +1,161 @@
+import assert from "node:assert/strict";
+import { describeServiceError, officialDataOverview, parseServiceRun, punUsedByEngine } from "../app/lib/official-monitor/service-overview.ts";
+
+// Control Room → Dati ufficiali (Tony 22/11/2026): read-only view of the service reports and of the PUN the engine uses.
+// The GME run below is the shape and content of the first real dry run of 22/11/2026 (values as printed by GME: May 2026
+// bands 107,17 / 131,44 / 120,81 €/MWh); the archive records are minimal test records, never written anywhere.
+const NOW = "2026-11-22T09:00:00.000Z";
+const TENANTS = [{ tenantId: "tenant_piattaforma", label: "Archivio produttore" }, { tenantId: "tenant_cliente-prova", label: "Azienda di prova" }];
+const legacy = (month) => ({ month, state: "LEGACY_AUDIT", bands: null, monthly: null, tenants: [], errors: [] });
+const gmeRun = {
+  runId: "svc_gme_prova", job: "gme", mode: "DRY_RUN", startedAt: "2026-11-22T08:22:45.966Z", finishedAt: "2026-11-22T08:22:47.751Z", identity: "user_svc-dati-ufficiali", outcome: "PARTIAL", nextCheckAt: "2026-11-23T05:20:00.000Z",
+  errors: ["2026-05:GME_NEWSLETTER_CHECKS:TEXT testo del PDF non leggibile"],
+  summary: { months: [legacy("2026-10"), legacy("2026-09"), legacy("2026-08"), legacy("2026-07"), legacy("2026-06"), { month: "2026-05", state: "FAILED", bands: { f1: 107.17, f2: 131.44, f3: 120.81, hours: [220, 180, 344], sha256: "85c55937b3a87a0449e5dbb45f13101d96b3e26a674bd6848ea43c61aa8fdf9c", url: "https://gme.mercatoelettrico.org/Portals/0/Documents/it-IT/20260601PrezzomedioperfasceMaggio2026.pdf" }, monthly: null, tenants: [], errors: ["GME_NEWSLETTER_CHECKS:TEXT testo del PDF non leggibile"] }], downloads: [{}, {}, {}] },
+};
+const rate = (value) => ({ value, currency: "EUR", unit: "EUR_PER_MWH" });
+const record = (tenantId, month, version, values, status = "APPROVED", url = "https://gme.mercatoelettrico.org/x.pdf") => {
+  const [y, m] = month.split("-").map(Number); const to = new Date(Date.UTC(y, m, 1)).toISOString().slice(0, 10);
+  return { archiveId: `gme-pun-${month}${version > 1 ? `-v${version}` : ""}`, tenantId, vector: "EE", index: "PUN", month, status, createdAt: "2026-11-06T16:00:00.000Z", updatedAt: `2026-11-0${version}T16:00:00.000Z`, approvals: [{ approvalId: "a", recordId: "r", decision: "APPROVED", reviewer: "prova", decisionId: "d", decidedAt: "2026-11-06T16:33:08.549Z" }], history: [],
+    record: { recordId: `gme-pun-${month}`, version: String(version), vector: "EE", index: "PUN", month, effectiveFrom: `${month}-01`, effectiveTo: to, publicationDate: null, source: { sourceId: "GME", name: "GME Prezzo medio per fasce (mensile)", url, authority: "GME", sourceType: "OFFICIAL" }, ...Object.fromEntries(Object.entries(values).map(([key, value]) => [key, rate(value)])) } };
+};
+function marketOf(records) {
+  let writes = 0;
+  return { repository: { async get(tenantId, id) { return records.find((item) => item.tenantId === tenantId && item.archiveId === id) ?? null; }, async list(tenantId) { return records.filter((item) => item.tenantId === tenantId); }, async save() { writes += 1; throw new Error("READ_ONLY"); } }, writes: () => writes };
+}
+const october = { f1: 233.39, f2: 252.14, f3: 215.88, monthly: 230.81532885906037 };
+const base = [
+  ...["tenant_piattaforma", "tenant_cliente-prova"].map((tenantId) => record(tenantId, "2026-10", 1, october)),
+  record("tenant_cliente-prova", "2026-09", 1, { f1: 206.3504537706613, f2: 227.57624874999993, f3: 197.02407626644703, monthly: 207.54221705555565 }),
+  record("tenant_cliente-prova", "2026-09", 2, { f1: 206.35, f2: 227.58, f3: 197.02, monthly: 207.54125 }),
+  record("tenant_cliente-prova", "2026-05", 1, { f1: 107.1740328522727, f2: 131.43756644444454, f3: 120.8147880959298, monthly: 119.35125845766144 }, "REJECTED"),
+];
+
+// 1. The real dry run: GME executed with anomalies, May bands validated but not published, May missing for the engine.
+{
+  const market = marketOf(base);
+  const overview = await officialDataOverview({ now: NOW, runs: [gmeRun, { job: "gme", mode: "?" }], alerts: [], market: market.repository, tenants: TENANTS, coverage: null });
+  assert.equal(overview.service.runs, 1, "a malformed report is ignored, never shown as data");
+  assert.equal(overview.service.publicationActive, false);
+  assert.deepEqual(overview.window, ["2026-10", "2026-09", "2026-08", "2026-07", "2026-06", "2026-05"]);
+  const gme = overview.sources.find((item) => item.source === "GME");
+  assert.equal(gme.status, "WARNING"); assert.equal(gme.lastRun.durationMs, 1785); assert.match(gme.errors[0].message, /Newsletter GME .*non leggibile/);
+  assert.equal(overview.sources.find((item) => item.source === "ARERA").status, "NEVER_RUN");
+  const may = overview.gme.find((item) => item.month === "2026-05");
+  assert.equal(may.level, "VALIDATED_NOT_PUBLISHED");
+  assert.match(may.levelLabel, /Fasce F1, F2, F3 validate, PUN mensile non validato: non pubblicato \(modalità prova\)/);
+  assert.equal(may.acquired.bands.validated, true); assert.equal(may.acquired.monthly.validated, false);
+  assert.deepEqual(may.acquired.bands.values, { f1: 107.17, f2: 131.44, f3: 120.81 });
+  assert.ok(may.used.every((item) => item.status === "MISSING"), "the rejected May version is never shown as used");
+  assert.ok(may.comparison.every((item) => item.outcome === "ENGINE_MISSING"));
+  const sept = overview.gme.find((item) => item.month === "2026-09").used.find((item) => item.tenantId === "tenant_cliente-prova");
+  assert.equal(sept.version, "2", "the engine's choice: highest approved version"); assert.equal(sept.values.f2, 227.58);
+  const blocking = overview.anomalies.filter((item) => item.severity === "BLOCKING");
+  assert.ok(blocking.some((item) => /nessun PUN approvato per maggio 2026/.test(item.message)));
+  assert.ok(overview.gme.find((item) => item.month === "2026-08").used.every((item) => item.status === "MISSING"));
+  assert.equal(market.writes(), 0, "nothing is written");
+}
+
+// 2. Audit reference values: equal at two decimals → match; a different official value → divergence signalled, nothing changed.
+{
+  const auditRun = { runId: "svc_audit", job: "audit-pun", mode: "DRY_RUN", startedAt: "2026-11-23T06:00:00.000Z", finishedAt: "2026-11-23T06:00:09.000Z", identity: "x", outcome: "OK", nextCheckAt: "2026-11-30T06:00:00.000Z", errors: [],
+    summary: { audits: [{ month: "2026-10", at: "2026-11-23T06:00:00.000Z", official: { monthly: 230.9, newsletter: "209", newsletterUrl: "https://www.mercatoelettrico.org/n.pdf", f1: 233.39, f2: 252.14, f3: 215.88, bandsUrl: "https://gme.mercatoelettrico.org/b.pdf" }, errors: [] }] } };
+  const market = marketOf(base);
+  const overview = await officialDataOverview({ now: "2026-11-23T07:00:00.000Z", runs: [gmeRun, auditRun], alerts: [], market: market.repository, tenants: TENANTS, coverage: null });
+  const october = overview.gme.find((item) => item.month === "2026-10");
+  assert.equal(october.reference.newsletter, "209");
+  const outcome = (field) => october.comparison.find((item) => item.tenantId === "tenant_piattaforma" && item.field === field);
+  assert.equal(outcome("f1").outcome, "MATCH"); assert.equal(outcome("f1").serviceOrigin, "AUDIT");
+  assert.equal(outcome("monthly").outcome, "DIVERGENT", "230,82 in the archive vs 230,90 official (test value)");
+  assert.ok(overview.anomalies.some((item) => item.origin === "Confronto con l'audit settimanale" && /PUN mensile: GME 230.9 €\/MWh, motore 230.82/.test(item.message)));
+  assert.equal(market.writes(), 0);
+}
+
+// 3. ARERA and Terna from the regulatory run; a stale run is reported late; errors in plain Italian with their code.
+{
+  const regulatory = { runId: "svc_reg", job: "regulatory", mode: "DRY_RUN", startedAt: "2026-11-20T03:40:00.000Z", finishedAt: "2026-11-20T03:41:00.000Z", identity: "x", outcome: "PARTIAL", nextCheckAt: "2026-11-21T03:40:00.000Z",
+    errors: ["tenant_cliente-prova ARERA:ARERA_SOURCE_UNAVAILABLE"], summary: { tenants: [{ tenantId: "tenant_cliente-prova", arera: "PARTIAL_FAILURE", capacity: "SUCCESS", terna: "SUCCESS", tide: "SUCCESS", errors: ["ARERA:ARERA_SOURCE_UNAVAILABLE"] }] } };
+  const overview = await officialDataOverview({ now: NOW, runs: [regulatory], alerts: [{ alertId: "al1", source: "TERNA", status: "OPEN", period: "2026", document: "TIDE", reason: "documento non trovato", lastCheckedAt: NOW }], market: marketOf([]).repository, tenants: TENANTS, coverage: null });
+  const arera = overview.sources.find((item) => item.source === "ARERA"); const terna = overview.sources.find((item) => item.source === "TERNA");
+  assert.equal(arera.status, "LATE"); assert.equal(terna.status, "LATE");
+  assert.equal(arera.errors.length, 1); assert.equal(terna.errors.length, 0);
+  assert.match(arera.details[0], /Azienda di prova: tariffe con anomalie, capacità riuscito/);
+  assert.ok(overview.anomalies.some((item) => item.origin === "Alert della Control Room" && /TIDE: documento non trovato/.test(item.message)));
+  assert.ok(overview.gme.every((month) => month.level === "MISSING"));
+}
+
+// 4. Error descriptions and the engine read path.
+assert.deepEqual(describeServiceError("2026-05:GME_NEWSLETTER_NOT_PUBLISHED_YET"), { code: "GME_NEWSLETTER_NOT_PUBLISHED_YET", message: "Newsletter GME del mese non ancora pubblicata", scope: "maggio 2026", informative: true });
+assert.equal(describeServiceError("SERVICE_DB_ERROR_28P01").message, "Connessione al database del servizio non riuscita");
+assert.deepEqual(describeServiceError("tenant_energia-priva TERNA_CAPACITY:2026Q4:TERNA_CAPACITY_VALUE_NOT_FOUND"), { code: "TERNA_CAPACITY_VALUE_NOT_FOUND", message: "Terna, capacità, 4° trimestre 2026: corrispettivo non trovato nel documento ufficiale Terna", scope: "tenant_energia-priva", informative: false }); // Tony 23/11: the quarter reads as words, not as a code
+assert.equal(parseServiceRun({ ...gmeRun, startedAt: "ieri" }), null);
+assert.equal((await punUsedByEngine(marketOf(base).repository, "tenant_cliente-prova", "2026-04", "2026-11-22")), null, "months outside the window are never used");
+
+// 5. Parametro art. 5.2 delib. ARERA 300/05 (Tony 22/11/2026): shown as its own series, never in the PUN comparison or as used.
+{
+  const punop = { seriesId: "ARERA_300_05_ART_5_2", meaning: "Parametro art. 5.2 della deliberazione ARERA 300/05 (PUNop), pubblicato dal GME", value: 122.83, unit: "EUR_PER_MWH", label: "PUNopMag2026", url: "https://gme.mercatoelettrico.org/Portals/0/Documents/it-IT/20260601Indice%205.2%20delibera%20ARERA%20300.05%20-%20Maggio%202026.pdf", sha256: "b".repeat(64), conserved: null, errors: [] };
+  const sources = [{ id: "GME_PUN_BANDS", url: "https://gme.mercatoelettrico.org/a", meaning: "fasce", reachable: true, sha256: null, detail: "pagina ufficiale raggiungibile" }, { id: "ARERA_300_05_ART_5_2", url: "https://gme.mercatoelettrico.org/b", meaning: "300/05", reachable: true, sha256: null, detail: "ok" }, { id: "GME_PUN_INDEX_GME", url: "https://gme.mercatoelettrico.org/c", meaning: "PUN Index", reachable: false, sha256: null, detail: "pagina non raggiungibile: OFFICIAL_HTTP_503" }];
+  const months = gmeRun.summary.months.map((item) => item.month === "2026-05" ? { ...item, punop } : item.month === "2026-06" ? { ...item, punop: { ...punop, value: null, label: null, url: null, sha256: null, errors: ["GME_PUNOP_CHECKS:LABEL etichetta PUNopApr2026 (attesa PUNopGiu2026)"] } } : item);
+  const overview = await officialDataOverview({ now: NOW, runs: [{ ...gmeRun, summary: { ...gmeRun.summary, months, sources } }], alerts: [], market: marketOf(base).repository, tenants: TENANTS, coverage: null });
+  const may = overview.gme.find((item) => item.month === "2026-05");
+  assert.equal(may.punop.value, 122.83); assert.equal(may.punop.validated, true); assert.equal(may.punop.conserved, false);
+  assert.match(may.punop.usage, /Non usato dal motore/);
+  assert.ok(may.comparison.every((item) => item.service !== 122.83), "never compared as if it were the PUN");
+  assert.ok(may.used.every((item) => item.status === "MISSING"), "May stays without PUN: the 300/05 parameter does not unlock it");
+  assert.equal(may.level, "VALIDATED_NOT_PUBLISHED");
+  assert.ok(overview.anomalies.some((item) => item.origin === "Parametro art. 5.2 delib. 300/05" && /giugno 2026/.test(item.period)));
+  assert.deepEqual(overview.gmePages.map((page) => page.reachable), [true, true, false]);
+}
+
+
+// 6. Tony (23/11/2026, riconciliazione): the May 2026 version of the producer's archive written by the manual refresh carries a
+// monthly value computed from the bands of "Prezzo medio per fasce" (119,348… = hours-weighted mean). It rounds to the newsletter's
+// 119,35, so the two-decimal comparison matches: its origin is shown and signalled apart, nothing is written.
+{
+  const derived = record("tenant_piattaforma", "2026-05", 1, { f1: 107.17, f2: 131.44, f3: 120.81, monthly: (107.17 * 220 + 131.44 * 180 + 120.81 * 344) / 744 }, "APPROVED", "https://gme.mercatoelettrico.org/Portals/0/Documents/it-IT/20260601PrezzomedioperfasceMaggio2026.pdf");
+  derived.record.source.sourceId = "GME_PREZZO_MEDIO_FASCE";
+  const market = marketOf([...base, derived]);
+  const overview = await officialDataOverview({ now: NOW, runs: [gmeRun], alerts: [], market: market.repository, tenants: TENANTS, coverage: null });
+  const may = overview.gme.find((item) => item.month === "2026-05");
+  assert.equal(may.used.find((item) => item.tenantId === "tenant_piattaforma").monthlyOrigin, "DERIVED");
+  assert.equal(overview.gme.find((item) => item.month === "2026-10").used[0].monthlyOrigin, "DOCUMENT");
+  assert.ok(overview.anomalies.some((item) => item.id === "derived-monthly-2026-05-tenant_piattaforma" && /119,35|119\.35/.test(item.message) && /nessun documento lo stampa/.test(item.message)));
+  assert.equal(market.writes(), 0);
+  console.log("DERIVED_MONTHLY_SIGNALLED=PASS");
+}
+
+// 7. Tony (24/11/2026, automazione PUN ufficiale): the replacement of a computed monthly value is shown per archive with the version
+// replaced (kept), the version published, outcome and differences; a blocked replacement is an anomaly; nothing is written.
+{
+  const NL = "https://www.mercatoelettrico.org/Portals/0/Documents/Newsletter/20260615Newsletter.pdf";
+  const bands = gmeRun.summary.months.find((item) => item.month === "2026-05").bands;
+  const ready = { month: "2026-05", state: "REPLACEMENT_READY", bands, monthly: { value: 119.35, sha256: "c".repeat(64), url: NL, newsletter: "204" }, errors: [],
+    tenants: [{ tenantId: "tenant_piattaforma", outcome: "WOULD_REPLACE", archiveId: "gme-pun-2026-05", version: "1", archived: { f1: 107.17, f2: 131.44, f3: 120.81, monthly: 119.3484, sourceId: "GME_PREZZO_MEDIO_FASCE", sourceUrl: null }, differences: [] }] };
+  const blocked = { month: "2026-08", state: "REPLACEMENT_BLOCKED", bands: null, monthly: null, errors: ["GME_NEWSLETTER_NOT_PUBLISHED_YET", "GME_MONTHLY_MISSING"],
+    tenants: [{ tenantId: "tenant_cliente-prova", outcome: "REPLACEMENT_BLOCKED", archiveId: "gme-pun-2026-08-v2", version: "2", archived: { monthly: 180.0012, sourceId: "GME_PREZZO_MEDIO_FASCE" }, differences: [] }] };
+  const replaced = { month: "2026-10", state: "REPLACED", bands: null, monthly: null, errors: [],
+    tenants: [{ tenantId: "tenant_cliente-prova", outcome: "REPLACED", archiveId: "gme-pun-2026-10-v2", version: "2", replaces: { archiveId: "gme-pun-2026-10", version: "1", monthly: 230.815, sourceId: "GME_PREZZO_MEDIO_FASCE" }, differences: [] }] };
+  const months = gmeRun.summary.months.map((item) => item.month === "2026-05" ? ready : item.month === "2026-08" ? blocked : item.month === "2026-10" ? replaced : item);
+  const market = marketOf(base);
+  const overview = await officialDataOverview({ now: NOW, runs: [{ ...gmeRun, summary: { ...gmeRun.summary, months, replacement: "NOT_ENABLED" } }], alerts: [], market: market.repository, tenants: TENANTS, coverage: null });
+  const may = overview.gme.find((item) => item.month === "2026-05");
+  assert.equal(may.replacement.state, "REPLACEMENT_READY"); assert.equal(may.replacement.enabled, false);
+  assert.deepEqual(may.replacement.rows[0].replaced, { archiveId: "gme-pun-2026-05", version: "1", monthly: 119.3484, sourceId: "GME_PREZZO_MEDIO_FASCE" });
+  assert.equal(may.replacement.rows[0].published, null); assert.equal(may.replacement.rows[0].label, "Archivio produttore");
+  assert.equal(may.acquired.monthly.validated, true); assert.equal(may.acquired.monthly.sha256, "c".repeat(64));
+  const october = overview.gme.find((item) => item.month === "2026-10").replacement.rows[0];
+  assert.deepEqual([october.replaced.version, october.published.version, october.outcomeLabel], ["1", "2", "Nuova versione pubblicata, precedente conservata"]);
+  assert.ok(overview.anomalies.some((item) => item.id === "replacement-blocked-2026-08"));
+  assert.ok(overview.sources.find((item) => item.source === "GME").details.some((line) => /non attiva \(solo verifica\)/.test(line)));
+  assert.equal(market.writes(), 0);
+  // Replacement authorised on its own, and a partial replacement: blocking anomaly naming who is on which version.
+  const partial = { month: "2026-05", state: "REPLACEMENT_PARTIAL", bands, monthly: ready.monthly, errors: ["tenant_cliente-prova:DB_DOWN"],
+    tenants: [{ tenantId: "tenant_piattaforma", outcome: "REPLACED", archiveId: "gme-pun-2026-05-v2", version: "2", replaces: { archiveId: "gme-pun-2026-05", version: "1", monthly: 119.3484, sourceId: "GME_PREZZO_MEDIO_FASCE" } }, { tenantId: "tenant_cliente-prova", outcome: "PREPARED_NOT_APPROVED", archiveId: "gme-pun-2026-05", version: "1" }] };
+  const second = await officialDataOverview({ now: NOW, runs: [{ ...gmeRun, summary: { ...gmeRun.summary, months: gmeRun.summary.months.map((item) => item.month === "2026-05" ? partial : item), replacement: "ENABLED_REPLACEMENT_ONLY:2026-05" } }], alerts: [], market: market.repository, tenants: TENANTS, coverage: null });
+  const may2 = second.gme.find((item) => item.month === "2026-05");
+  assert.equal(may2.replacement.enabled, true);
+  assert.ok(second.anomalies.some((item) => item.id === "replacement-partial-2026-05" && item.severity === "BLOCKING" && /Azienda di prova ancora sulla versione precedente/.test(item.message)));
+  assert.ok(second.sources.find((item) => item.source === "GME").details.some((line) => /autorizzata da sola per maggio 2026/.test(line)));
+  console.log("REPLACEMENT_SHOWN_PER_ARCHIVE=PASS");
+}
+
+console.log("official-data-overview smoke: OK");

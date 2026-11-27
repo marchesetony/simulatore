@@ -3,6 +3,12 @@ export function formatEuro(amount: number | null | undefined): string {
   return new Intl.NumberFormat("it-IT", { style: "currency", currency: "EUR" }).format(amount);
 }
 
+// Tony (11/11/2026, "visualizzazione consumi"): consumption in kWh is shown without decimals, mathematically rounded
+// (2.672,07 → 2.672; 526,62 → 527). Only the display: the data and the calculations keep the full value, and a total is
+// rounded from the exact sum, never rebuilt from rounded parts.
+const KWH = new Intl.NumberFormat("it-IT", { maximumFractionDigits: 0, useGrouping: "always" });
+export function formatKwh(value: number): string { return `${KWH.format(value)} kWh`; }
+
 export function formatNumber(value: number | null | undefined, unit = ""): string {
   if (value === null || value === undefined || !Number.isFinite(value)) return "Non disponibile";
   const absolute = Math.abs(value);

@@ -225,7 +225,8 @@ function fieldProvenance(
 
 function parseCustomerType(raw: string | null): "RESIDENTIAL" | "NON_RESIDENTIAL" {
   if (!raw) throw new BillIngestionError("EXTRACTION_REQUIRED_FIELD_MISSING");
-  if (/non\s*residente|non[-_ ]?residential|business|azienda|impresa/i.test(raw)) return "NON_RESIDENTIAL";
+  // "Domestico non residente" is a household (Tony, 29/10): residency is not the customer type.
+  if (/non\s*domestic|altri\s+usi|non[-_ ]?residential|business|azienda|impresa/i.test(raw)) return "NON_RESIDENTIAL";
   if (/residente|residential|domestic|privat/i.test(raw)) return "RESIDENTIAL";
   throw new BillIngestionError("EXTRACTION_VALUE_INVALID", "customerType");
 }

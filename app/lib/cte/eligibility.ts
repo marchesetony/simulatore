@@ -146,11 +146,11 @@ export function evaluateCteEligibility(record: CteArchiveRecord, context: CteEli
   if ((record.commercialStatus ?? "ACTIVE") !== "ACTIVE") return result(base, "CTE_COMMERCIAL_NOT_ACTIVE", "La CTE non è commercialmente attiva.");
 
   const contract = version.contract;
-  const { periodStart, periodEnd } = context.supplyPeriod;
-  if (contract.validity.periodStart > periodStart || contract.validity.periodEnd < periodEnd || context.calculationDate < contract.validity.periodStart || context.calculationDate >= contract.validity.periodEnd) {
-    return result(base, "CTE_VALIDITY_MISMATCH", "Il periodo della simulazione non è coperto dalla validità della CTE.");
+  // The bill period is only the consumption basis: the offer must be subscribable on the calculation date.
+  if (context.calculationDate < contract.validity.periodStart || context.calculationDate >= contract.validity.periodEnd) {
+    return result(base, "CTE_VALIDITY_MISMATCH", "La CTE non è sottoscrivibile alla data della simulazione.");
   }
-  if ((contract.expiry.status === "EXPIRES_ON" && (context.calculationDate > contract.expiry.date || periodEnd > contract.expiry.date)) || (contract.expiry.status === "NO_EXPIRY_DECLARED" && periodEnd > contract.validity.periodEnd)) {
+  if (contract.expiry.status === "EXPIRES_ON" && context.calculationDate >= contract.expiry.date) {
     return result(base, "CTE_EXPIRED", "La CTE è scaduta o non copre il periodo richiesto.");
   }
   const billCustomerLegalType = context.customerLegalType ?? customerLegalTypeFromLegacy(context.customerType);

@@ -104,6 +104,24 @@ const tenantMismatchRepository = new MemoryRepository();
 await tenantMismatchRepository.append({ tenantId: "tenant_a", recordId: "reg-tenant-mismatch", payload: value({ tenantId: "tenant_b", id: "reg-tenant-mismatch" }) });
 await assert.rejects(() => new ProductionRegulatoryPersistenceBridge(tenantMismatchRepository, new MemoryRepository()).list("tenant_a"), /REGULATORY_TENANT_MISMATCH/);
 
+// Tony (30/10): "ho come l'impressione che sia lento nelle elaborazioni". A calculation request reads the archive once,
+// not once per timeline; a save makes the next read fresh. Writers keep reading the repository every time.
+{
+  const counted = new MemoryRepository(); const countedApprovals = new MemoryRepository(); let reads = 0;
+  const originalList = counted.list.bind(counted); counted.list = async (tenantId) => { reads += 1; return originalList(tenantId); };
+  const cached = new ProductionRegulatoryPersistenceBridge(counted, countedApprovals, { readArchiveOncePerRequest: true });
+  const first = value({ id: "reg-cache-1" });
+  await cached.save("tenant_a", first); await seedApproval(countedApprovals, first);
+  for (let index = 0; index < 5; index += 1) await cached.list("tenant_a", { componentCode: "NETWORK_ENERGY" });
+  assert.equal(reads, 1);
+  const second = value({ id: "reg-cache-2", componentCode: "NETWORK_FIXED", normalizedUnit: "EUR/POD/YEAR" });
+  await cached.save("tenant_a", second); await seedApproval(countedApprovals, second);
+  assert.equal((await cached.list("tenant_a", { componentCode: "NETWORK_FIXED" })).length, 1);
+  assert.equal(reads, 2);
+  const plain = new ProductionRegulatoryPersistenceBridge(counted, countedApprovals);
+  await plain.list("tenant_a"); await plain.list("tenant_a");
+  assert.equal(reads, 4);
+}
 const source = await readFile("app/lib/regulatory-bridge.ts", "utf8");
 assert.equal(/(?:EUR\/KWH|EUR\/MWH|0\.\d+|NETWORK_FIXED|DISPATCHING|CAPACITY_MARKET)/.test(source), false, "production bridge has no hardcoded regulatory values");
 assert.equal(/fetch\(|axios|https:\/\//.test(source), false, "bridge makes no network calls");

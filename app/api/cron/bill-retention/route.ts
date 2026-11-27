@@ -19,6 +19,10 @@ export async function GET(request: Request): Promise<Response> {
     const results: Array<Record<string, unknown>> = [];
     for (const tenantId of configuredFoundationRetentionTenants()) {
       const observed = await observeJob({ repository: repositories.jobRuns, incidents: repositories.jobIncidents, tenantId, jobKey: "BILL_RETENTION", trigger: "CRON", now, operation: () => runBillRetention({ tenantId, repositories: { bills: repositories.billRepository, storage: repositories.documentStorage, audit: { async record(event) { const eventId = `bill-retention-${randomUUID()}`; await repositories.auditEvents.append({ recordId: eventId, tenantId: event.tenantId, payload: { schemaVersion: 1, eventId, tenantId: event.tenantId, action: `BILL_${event.type}`, resourceType: "BILL", resourceId: event.documentId, timestamp: now, outcome: event.outcome, correlationId: "bill-retention", metadata: {} }, now }); } } }, now }), summary: (result) => ({ scanned: result.scanned, deleted: result.deleted, failed: result.failed }) });
+      // Tony (20/11/2026, "CHIUSURA FASE 2", punto 1): the archive stays searchable whatever the bill's age; a bill is no
+      // longer deleted only because it cannot be quoted any more (that limit belongs to the simulation, QUOTE_WINDOW_MONTHS).
+      // The age purge of 31/10 (purgeOldBills) is not run; runBillRetention above only executes an explicit retention
+      // schedule (ARCHIVED / SCHEDULED_DELETION with a due date), which no bill reaches by age.
       results.push((observed.value ?? { status: "ALREADY_RUNNING", runId: observed.run.payload.runId, tenantId }) as unknown as Record<string, unknown>);
     }
     const failed = results.some((result) => typeof result.failed === "number" && result.failed > 0);

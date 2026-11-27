@@ -2,13 +2,14 @@ import { jsonBody } from "../../lib/archive/api";
 import { requestPrincipal } from "../../lib/auth/request";
 import { calculationError } from "../../lib/calculation/api";
 import { calculateApprovedOffer, type CalculationDependencies } from "../../lib/calculation/engine";
-import { resolveTrustedElectricityContextFromSourceBill } from "../../lib/calculation/source-bill-context";
+import { resolveTrustedElectricityContextWithReason } from "../../lib/calculation/source-bill-context";
 import { ProductionRegulatoryPersistenceBridge } from "../../lib/regulatory-bridge";
 import { ProductionCteRegulatoryRuntimeResolver } from "../../lib/calculation/regulatory-runtime-resolvers";
 import { runtimeRepositories } from "../../lib/persistence/adapter";
 import { recordRuntimeAudit } from "../../lib/persistence/audit";
 import { resolveBillDrivenExecution, BillDrivenSimulationError } from "../../lib/calculation/bill-driven";
 import { markEligibilityOverrideUsed } from "../../lib/eligibility/override";
+import { operationalMarketView } from "../../lib/market/operational-window";
 
 export const runtime = "nodejs";
 export async function POST(request: Request): Promise<Response> {
@@ -26,12 +27,12 @@ export async function POST(request: Request): Promise<Response> {
     const simulation = resolved.simulation;
     let dependencies: CalculationDependencies | undefined;
     if (simulation.vector === "EE" && simulation.sourceBill) {
-      const trustedElectricityContext = await resolveTrustedElectricityContextFromSourceBill(repositories.billRepository, tenantId, simulation);
-      if (!trustedElectricityContext) throw new Error("REGULATORY_TRUST_CONTEXT_REQUIRED");
-      const regulatoryBridge = new ProductionRegulatoryPersistenceBridge(repositories.regulatoryValues, repositories.approvalDomains);
-      dependencies = { trustedElectricityContext, regulatoryBridge, regulatoryRuntimeResolver: new ProductionCteRegulatoryRuntimeResolver(regulatoryBridge), regulatoryRefreshState: repositories.regulatoryRefreshState };
+      const { context: trustedElectricityContext, reason, currentOffer, billPeakEnergy } = await resolveTrustedElectricityContextWithReason(repositories.billRepository, tenantId, simulation);
+      // Without the bill\'s technical readings the quote runs on commercial costs only (regulated charges skipped).
+      const regulatoryBridge = new ProductionRegulatoryPersistenceBridge(repositories.regulatoryValues, repositories.approvalDomains, { readArchiveOncePerRequest: true });
+      dependencies = { ...(trustedElectricityContext ? { trustedElectricityContext } : {}), ...(reason ? { regulatedUnavailableReason: reason } : {}), ...(currentOffer ? { currentOffer } : {}), ...(billPeakEnergy ? { billPeakEnergy } : {}), regulatoryBridge, regulatoryRuntimeResolver: new ProductionCteRegulatoryRuntimeResolver(regulatoryBridge), regulatoryRefreshState: repositories.regulatoryRefreshState };
     }
-    const result = await calculateApprovedOffer(repositories.cteArchiveRepository, repositories.marketArchiveRepository, simulation, resolved.binding.selectedCteId, dependencies);
+    const result = await calculateApprovedOffer(repositories.cteArchiveRepository, operationalMarketView(repositories.marketArchiveRepository), simulation, resolved.binding.selectedCteId, dependencies);
     if (result.normalizedInput.sourceBill?.billId !== resolved.binding.billId || result.normalizedInput.sourceBill.version !== resolved.binding.billVersionId || result.sourceCte.versionId !== resolved.binding.selectedCteVersionId) throw new BillDrivenSimulationError("SIMULATION_SOURCE_BINDING_INVALID");
     await repositories.calculationResults.put({ tenantId, recordId: result.calculationId, payload: { calculationId: result.calculationId, fingerprint: result.fingerprint, result }, idempotencyKey: result.fingerprint });
     if (resolved.binding.eligibilityOverride) await markEligibilityOverrideUsed(principal, repositories, resolved.binding.eligibilityOverride.overrideId, calculationDate);

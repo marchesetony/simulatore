@@ -1,4 +1,15 @@
+import type { CteForcingRecord } from "../eligibility/forcing";
+import type { BillLinkRecord, CustomerRecord, SupplyRecord } from "../customers/model";
+import type { BillAnalysisRecord } from "../reading/bill-analysis";
 import type { CteAssignmentRepository, OrgChainRepository } from "../hierarchy/service";
+import type { AccessAccount, AccessDirectory, Company } from "../access/types";
+import type { CompanyProfile } from "../company/profile";
+import type { CommercialDiscountPolicy } from "../company/discount";
+import type { ProposalPresentation } from "../proposal/presentation";
+// @ts-expect-error Node's strip-only test runner requires the explicit extension.
+import { LocalAccessDirectory } from "../access/local-directory.ts";
+// @ts-expect-error Node's strip-only test runner requires the explicit extension.
+import { withOneOffRepair, type StoredCteReadings } from "../cte/one-off-repair.ts";
 import type { BillRepository, DocumentStoragePort } from "../foundation/real-bill";
 import type { RegulatoryValueRecord } from "../foundation/regulatory-types.ts";
 import type { RegulatoryApprovalDomainState } from "../regulatory-approval-domain.ts";
@@ -46,6 +57,29 @@ export interface ProductionStorageAdapter {
   readonly jobIncidents: TenantRecordRepository<JobIncidentRecord>;
   readonly orgChain?: OrgChainRepository;
   readonly cteAssignments?: CteAssignmentRepository;
+  readonly companies?: TenantRecordRepository<Company>;
+  readonly companyProfiles?: TenantRecordRepository<CompanyProfile>;
+  readonly commercialDiscounts?: TenantRecordRepository<CommercialDiscountPolicy>;
+  readonly proposalPresentations?: TenantRecordRepository<ProposalPresentation>;
+  readonly accessAccounts?: TenantRecordRepository<AccessAccount>;
+  readonly accessDirectory?: AccessDirectory;
+  /** Control Room produttore (Tony, 17/11): alert, esiti dei controlli e documenti ufficiali caricati. */
+  readonly officialAlerts?: TenantRecordRepository<unknown>;
+  readonly officialChecks?: TenantRecordRepository<unknown>;
+  readonly officialDocuments?: TenantRecordRepository<unknown>;
+  readonly officialPublications?: TenantRecordRepository<unknown>;
+  /** Tony (22/11/2026): reports of the independent official data service, read-only for the Control Room. */
+  readonly officialServiceRuns?: TenantRecordRepository<unknown>;
+  /** Tony (23/11/2026): leases of the service jobs, read-only, so the Control Room never starts a job that is already running. */
+  readonly officialServiceLocks?: TenantRecordRepository<unknown>;
+  /** Tony (20/11/2026): one record per offer produced with a forced CTE (who, which authorization, CTE version, customer, POD). */
+  readonly cteForcingRecords?: TenantRecordRepository<CteForcingRecord>;
+  /** Tony (24/11/2026, "FASE 2: ANAGRAFICA CLIENTI E POD"): customers, POD/PDR with holder history, bill links. */
+  readonly customers?: TenantRecordRepository<CustomerRecord>;
+  readonly customerSupplies?: TenantRecordRepository<SupplyRecord>;
+  readonly customerBillLinks?: TenantRecordRepository<BillLinkRecord>;
+  /** Tony (24/11/2026, "ANALISI BOLLETTE"): phase and stop request of each bill analysis. */
+  readonly billAnalyses?: TenantRecordRepository<BillAnalysisRecord>;
 }
 
 export interface RuntimeRepositories {
@@ -77,6 +111,23 @@ export interface RuntimeRepositories {
   readonly jobIncidents: TenantRecordRepository<JobIncidentRecord>;
   readonly orgChain: OrgChainRepository;
   readonly cteAssignments: CteAssignmentRepository;
+  readonly companies: TenantRecordRepository<Company>;
+  readonly companyProfiles: TenantRecordRepository<CompanyProfile>;
+  readonly commercialDiscounts: TenantRecordRepository<CommercialDiscountPolicy>;
+  readonly proposalPresentations: TenantRecordRepository<ProposalPresentation>;
+  readonly accessAccounts: TenantRecordRepository<AccessAccount>;
+  readonly accessDirectory: AccessDirectory;
+  readonly officialAlerts: TenantRecordRepository<unknown>;
+  readonly officialChecks: TenantRecordRepository<unknown>;
+  readonly officialDocuments: TenantRecordRepository<unknown>;
+  readonly officialPublications: TenantRecordRepository<unknown>;
+  readonly officialServiceRuns: TenantRecordRepository<unknown>;
+  readonly officialServiceLocks: TenantRecordRepository<unknown>;
+  readonly cteForcingRecords: TenantRecordRepository<CteForcingRecord>;
+  readonly customers: TenantRecordRepository<CustomerRecord>;
+  readonly customerSupplies: TenantRecordRepository<SupplyRecord>;
+  readonly customerBillLinks: TenantRecordRepository<BillLinkRecord>;
+  readonly billAnalyses: TenantRecordRepository<BillAnalysisRecord>;
 }
 
 let productionStorageAdapter: ProductionStorageAdapter | null = null;
@@ -88,6 +139,10 @@ let productionStorageAdapter: ProductionStorageAdapter | null = null;
 function unavailableHierarchyStore(): DeletableTenantRecordRepository<never> {
   const fail = async (): Promise<never> => { throw new Error("HIERARCHY_STORAGE_UNAVAILABLE"); };
   return { get: async () => null, list: async () => [], put: fail, append: fail, delete: fail };
+}
+function unavailableAccessDirectory(): AccessDirectory {
+  const fail = async (): Promise<never> => { throw new Error("ACCESS_DIRECTORY_UNAVAILABLE"); };
+  return { createLogin: fail, linkUser: fail, setMembership: fail, removeLogin: fail, loginFor: fail, verifyPassword: fail, setPassword: fail };
 }
 function hasMethods(value: unknown, methods: readonly string[]): boolean {
   if (typeof value !== "object" || value === null) return false;
@@ -118,10 +173,14 @@ export function clearProductionStorageAdapter(): void { productionStorageAdapter
 export function productionStorageAdapterConfigured(): boolean { return productionStorageAdapter !== null; }
 
 export function runtimeRepositories(): RuntimeRepositories {
+  const repositories = storedRepositories();
+  return { ...repositories, cteArchiveRepository: withOneOffRepair(repositories.cteArchiveRepository, repositories.cteArchives as unknown as StoredCteReadings) };
+}
+function storedRepositories(): RuntimeRepositories {
   const config = getRuntimeConfig();
   if (config.runtimeMode === "production") {
     if (!productionStorageAdapter) throw new Error("PERSISTENCE_ADAPTER_UNAVAILABLE");
-    return { ...productionStorageAdapter, eligibilityOverrides: productionStorageAdapter.eligibilityOverrides ?? productionStorageAdapter.cteArchives as EligibilityOverrideRepository, marketRefreshState: productionStorageAdapter.marketRefreshState ?? productionStorageAdapter.marketDataArchives, marketRefreshRuns: productionStorageAdapter.marketRefreshRuns ?? productionStorageAdapter.marketDataArchives, marketRefreshLocks: productionStorageAdapter.marketRefreshLocks ?? productionStorageAdapter.marketDataArchives, orgChain: productionStorageAdapter.orgChain ?? unavailableHierarchyStore() as OrgChainRepository, cteAssignments: productionStorageAdapter.cteAssignments ?? unavailableHierarchyStore() as CteAssignmentRepository };
+    return { ...productionStorageAdapter, eligibilityOverrides: productionStorageAdapter.eligibilityOverrides ?? productionStorageAdapter.cteArchives as EligibilityOverrideRepository, marketRefreshState: productionStorageAdapter.marketRefreshState ?? productionStorageAdapter.marketDataArchives, marketRefreshRuns: productionStorageAdapter.marketRefreshRuns ?? productionStorageAdapter.marketDataArchives, marketRefreshLocks: productionStorageAdapter.marketRefreshLocks ?? productionStorageAdapter.marketDataArchives, orgChain: productionStorageAdapter.orgChain ?? unavailableHierarchyStore() as OrgChainRepository, cteAssignments: productionStorageAdapter.cteAssignments ?? unavailableHierarchyStore() as CteAssignmentRepository, companies: productionStorageAdapter.companies ?? unavailableHierarchyStore(), companyProfiles: productionStorageAdapter.companyProfiles ?? unavailableHierarchyStore(), commercialDiscounts: productionStorageAdapter.commercialDiscounts ?? unavailableHierarchyStore(), proposalPresentations: productionStorageAdapter.proposalPresentations ?? unavailableHierarchyStore(), accessAccounts: productionStorageAdapter.accessAccounts ?? unavailableHierarchyStore(), accessDirectory: productionStorageAdapter.accessDirectory ?? unavailableAccessDirectory(), officialAlerts: productionStorageAdapter.officialAlerts ?? unavailableHierarchyStore(), officialChecks: productionStorageAdapter.officialChecks ?? unavailableHierarchyStore(), officialDocuments: productionStorageAdapter.officialDocuments ?? unavailableHierarchyStore(), officialPublications: productionStorageAdapter.officialPublications ?? unavailableHierarchyStore(), officialServiceRuns: productionStorageAdapter.officialServiceRuns ?? unavailableHierarchyStore(), officialServiceLocks: productionStorageAdapter.officialServiceLocks ?? unavailableHierarchyStore(), cteForcingRecords: productionStorageAdapter.cteForcingRecords ?? unavailableHierarchyStore(), customers: productionStorageAdapter.customers ?? unavailableHierarchyStore(), customerSupplies: productionStorageAdapter.customerSupplies ?? unavailableHierarchyStore(), customerBillLinks: productionStorageAdapter.customerBillLinks ?? unavailableHierarchyStore(), billAnalyses: productionStorageAdapter.billAnalyses ?? unavailableHierarchyStore() };
   }
   const local = new LocalFilesystemAdapter("var/phase6");
   return {
@@ -146,6 +205,12 @@ export function runtimeRepositories(): RuntimeRepositories {
     eligibilityOverrides: local.collection("eligibility-overrides"),
     orgChain: local.collection("org-chain") as OrgChainRepository,
     cteAssignments: local.collection("cte-assignments"),
+    companies: local.collection<Company>("companies"),
+    companyProfiles: local.collection<CompanyProfile>("company-profiles"),
+    commercialDiscounts: local.collection<CommercialDiscountPolicy>("commercial-discounts"),
+    proposalPresentations: local.collection<ProposalPresentation>("proposal-presentations"),
+    accessAccounts: local.collection<AccessAccount>("access-accounts"),
+    accessDirectory: new LocalAccessDirectory(local.collection("access-logins")),
     regulatoryRefreshState: local.collection("regulatory-refresh-state"),
     regulatoryRefreshRuns: local.collection("regulatory-refresh-runs"),
     marketRefreshState: local.collection("market-refresh-state"),
@@ -153,5 +218,16 @@ export function runtimeRepositories(): RuntimeRepositories {
     marketRefreshLocks: local.collection("market-refresh-locks"),
     jobRuns: local.collection<JobRunRecord>("job-runs"),
     jobIncidents: local.collection<JobIncidentRecord>("job-incidents"),
+    officialAlerts: local.collection("official-alerts"),
+    officialChecks: local.collection("official-checks"),
+    officialDocuments: local.collection("official-documents"),
+    officialPublications: local.collection("official-publications"),
+    officialServiceRuns: local.collection("official-service-runs"),
+    officialServiceLocks: local.collection("official-service-locks"),
+    cteForcingRecords: local.collection<CteForcingRecord>("cte-forcing-records"),
+    customers: local.collection<CustomerRecord>("customers"),
+    customerSupplies: local.collection<SupplyRecord>("customer-supplies"),
+    customerBillLinks: local.collection<BillLinkRecord>("customer-bill-links"),
+    billAnalyses: local.collection<BillAnalysisRecord>("bill-analyses"),
   };
 }

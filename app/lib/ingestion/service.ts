@@ -81,6 +81,7 @@ export async function ingestEnergyBill(input: {
   readonly structuredProviderFactory?: () => BillExtractionProvider;
   readonly localDev?: string;
   readonly audit?: AuditSink;
+  readonly analysis?: import("../foundation/real-bill.ts").BillAnalysisHooks;
 }): Promise<EnergyBillIngestionResult> {
   const tenantId = input.authenticated ? (/^tenant_[a-z0-9-]+$/.test(input.tenantId) ? input.tenantId : (() => { throw new Error("TENANT_ACCESS_DENIED"); })()) : assertLocalBillAccess(input.tenantId, input.localDev ?? process.env.FOUNDATION_LOCAL_DEV);
   const safeName = input.structuredProvider || input.structuredProviderFactory ? validateBillDocument(input.fileName, input.contentType, input.bytes, input.maxBytes) : validatePdf(input.fileName, input.contentType, input.bytes, input.maxBytes);
@@ -105,6 +106,7 @@ export async function ingestEnergyBill(input: {
     repository: input.repository ?? new LocalBillRepository(input.documentsRoot),
     audit: input.audit ?? { async record() {} },
     onExtractionError: (error) => { extractionErrorCode = billErrorCode(error); return extractionErrorCode; },
+    ...(input.analysis ? { analysis: input.analysis } : {}),
     ...(structuredProvider ? {} : { mapEnergyContract: ((mapperInput: EnergyContractMapperInput) => {
       try {
         classification = classifyBillText(mapperInput.text);
